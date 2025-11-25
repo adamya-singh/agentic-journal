@@ -5,6 +5,11 @@ import {
 } from '@cedar-os/backend';
 import { streamJSONEvent } from '../../utils/streamUtils';
 import { z } from 'zod';
+import { 
+  readJournalTool, 
+  appendToJournalTool, 
+  getCurrentDayJournalTool 
+} from './journalTools';
 
 // Define the schemas for our tools based on what we registered in page.tsx
 
@@ -66,7 +71,18 @@ export const TOOL_REGISTRY = {
     changeTextTool,
     addNewTextLineTool,
   },
+  journalManagement: {
+    readJournalTool,
+    appendToJournalTool,
+    getCurrentDayJournalTool,
+  },
 };
 
 // Export all tools as an array for easy registration
-export const ALL_TOOLS = [changeTextTool, addNewTextLineTool];
+export const ALL_TOOLS = [
+  changeTextTool, 
+  addNewTextLineTool,
+  readJournalTool,
+  appendToJournalTool,
+  getCurrentDayJournalTool,
+];
