@@ -16,6 +16,17 @@ import { DebuggerPanel } from '@/cedar/components/debugger';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
 
+/**
+ * Get current date in MMDDYY format
+ */
+function getCurrentDateMMDDYY(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  const year = String(now.getFullYear()).slice(-2);
+  return `${month}${day}${year}`;
+}
+
 export default function HomePage() {
   // Cedar-OS chat components with mode selector
   // Choose between caption, floating, or side panel chat modes
@@ -26,6 +37,13 @@ export default function HomePage() {
 
   // Cedar state for dynamically added text lines
   const [textLines, setTextLines] = React.useState<string[]>([]);
+
+  // Cedar state for current date in MMDDYY format
+  const [currentDate, setCurrentDate] = React.useState(getCurrentDateMMDDYY());
+
+  // State for journal creation button
+  const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
+  const [journalMessage, setJournalMessage] = React.useState<string>('');
 
   // Register the main text as Cedar state with a state setter
   useRegisterState({
@@ -51,11 +69,56 @@ export default function HomePage() {
     },
   });
 
+  // Register the current date as Cedar state
+  useRegisterState({
+    key: 'currentDate',
+    description: 'The current date in MMDDYY format (e.g., 112525 for November 25, 2025)',
+    value: currentDate,
+    setValue: setCurrentDate,
+  });
+
   // Subscribe the main text state to the backend
   useSubscribeStateToAgentContext('mainText', (mainText) => ({ mainText }), {
     showInChat: true,
     color: '#4F46E5',
   });
+
+  // Subscribe the current date to agent context
+  useSubscribeStateToAgentContext('currentDate', (currentDate) => ({ currentDate }), {
+    showInChat: false,
+  });
+
+  // Handler for creating today's journal
+  const handleCreateTodayJournal = async () => {
+    setJournalStatus('loading');
+    setJournalMessage('');
+    
+    try {
+      const response = await fetch('/api/journal/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: currentDate }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (data.alreadyExists) {
+          setJournalStatus('exists');
+          setJournalMessage(`Journal for ${currentDate} already exists`);
+        } else {
+          setJournalStatus('success');
+          setJournalMessage(`Created journal for ${currentDate}`);
+        }
+      } else {
+        setJournalStatus('error');
+        setJournalMessage(data.error || 'Failed to create journal');
+      }
+    } catch (error) {
+      setJournalStatus('error');
+      setJournalMessage('Failed to connect to server');
+    }
+  };
 
   // Register frontend tool for adding text lines
   useRegisterFrontendTool({
@@ -87,6 +150,43 @@ export default function HomePage() {
 
       {/* Main interactive content area */}
       <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 space-y-8">
+        {/* Journal creation section */}
+        <div className="flex flex-col items-center gap-3">
+          <div className="text-sm text-gray-500">
+            Today: {currentDate}
+          </div>
+          <button
+            onClick={handleCreateTodayJournal}
+            disabled={journalStatus === 'loading'}
+            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+              journalStatus === 'loading'
+                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                : journalStatus === 'success'
+                  ? 'bg-green-500 text-white hover:bg-green-600'
+                  : journalStatus === 'exists'
+                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    : journalStatus === 'error'
+                      ? 'bg-red-500 text-white hover:bg-red-600'
+                      : 'bg-indigo-500 text-white hover:bg-indigo-600'
+            }`}
+          >
+            {journalStatus === 'loading'
+              ? 'Creating...'
+              : journalStatus === 'success'
+                ? '✓ Created'
+                : journalStatus === 'exists'
+                  ? '✓ Already Exists'
+                  : journalStatus === 'error'
+                    ? 'Retry'
+                    : "Create Today's Journal"}
+          </button>
+          {journalMessage && (
+            <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+              {journalMessage}
+            </p>
+          )}
+        </div>
+
         {/* Big text that Cedar can change */}
         <div className="text-center">
           <h1 className="text-6xl font-bold text-gray-800 mb-4">{mainText}</h1>

@@ -8,73 +8,112 @@ import { fileURLToPath } from 'url';
 const currentFileUrl = fileURLToPath(import.meta.url);
 const currentDir = path.dirname(currentFileUrl);
 
-// Path to the journal file
-const JOURNAL_PATH = path.join(currentDir, '../../../data/journal.json');
+// Path to the journal directory
+const JOURNAL_DIR = path.join(currentDir, '../../../data/journal');
+const FORMAT_PATH = path.join(JOURNAL_DIR, 'format.json');
 
-// Valid days of the week
-const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const;
-type DayOfWeek = typeof DAYS[number];
+// Valid hours of the day (8am to 8pm)
+const HOURS = ['8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm'] as const;
+type HourOfDay = typeof HOURS[number];
 
-// Journal structure type
-type Journal = Record<DayOfWeek, string>;
+// Journal structure type for a single day
+type DayJournal = Record<HourOfDay, string>;
+
+// Date format regex (MMDDYY)
+const DATE_REGEX = /^\d{6}$/;
 
 /**
- * Helper function to read the journal file
+ * Helper function to validate date format (MMDDYY)
  */
-function readJournalFile(): Journal {
+function isValidDateFormat(date: string): boolean {
+  return DATE_REGEX.test(date);
+}
+
+/**
+ * Helper function to get the path to a specific day's journal file
+ */
+function getJournalFilePath(date: string): string {
+  return path.join(JOURNAL_DIR, `${date}.json`);
+}
+
+/**
+ * Helper function to read a specific day's journal file
+ */
+function readDayJournalFile(date: string): DayJournal {
+  const filePath = getJournalFilePath(date);
   try {
-    const data = fs.readFileSync(JOURNAL_PATH, 'utf-8');
-    return JSON.parse(data) as Journal;
+    const data = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(data) as DayJournal;
   } catch (error) {
-    console.error('Error reading journal file:', error);
-    throw new Error('Failed to read journal file');
+    console.error(`Error reading journal file for ${date}:`, error);
+    throw new Error(`Failed to read journal file for date ${date}. The file may not exist.`);
   }
 }
 
 /**
- * Helper function to write to the journal file
+ * Helper function to write to a specific day's journal file
  */
-function writeJournalFile(journal: Journal): void {
+function writeDayJournalFile(date: string, journal: DayJournal): void {
+  const filePath = getJournalFilePath(date);
   try {
-    fs.writeFileSync(JOURNAL_PATH, JSON.stringify(journal, null, 2), 'utf-8');
+    fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
   } catch (error) {
-    console.error('Error writing journal file:', error);
-    throw new Error('Failed to write journal file');
+    console.error(`Error writing journal file for ${date}:`, error);
+    throw new Error(`Failed to write journal file for date ${date}`);
   }
 }
 
 /**
- * Helper function to get current day of week
+ * Helper function to read the format template
  */
-function getCurrentDay(): DayOfWeek {
-  const days: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-  const dayIndex = new Date().getDay();
-  return days[dayIndex];
+function readFormatTemplate(): DayJournal {
+  try {
+    const data = fs.readFileSync(FORMAT_PATH, 'utf-8');
+    return JSON.parse(data) as DayJournal;
+  } catch (error) {
+    console.error('Error reading format template:', error);
+    throw new Error('Failed to read format template');
+  }
 }
 
 /**
- * Tool to read the journal - either entire journal or a specific day
+ * Helper function to check if a journal file exists for a given date
+ */
+function journalFileExists(date: string): boolean {
+  const filePath = getJournalFilePath(date);
+  return fs.existsSync(filePath);
+}
+
+/**
+ * Tool to read a day's journal by date (MMDDYY format)
  */
 export const readJournalTool = createTool({
   id: 'readJournal',
-  description: 'Read the weekly journal. Can read the entire journal or a specific day. If no day is specified, returns all days.',
+  description: 'Read the journal for a specific date. Returns all hourly entries for that day.',
   inputSchema: z.object({
-    day: z.enum(DAYS).optional().describe('The day of the week to read (optional - if not provided, reads entire journal)'),
+    date: z.string().regex(/^\d{6}$/).describe('The date to read in MMDDYY format (e.g., 112525 for November 25, 2025)'),
   }),
   execute: async ({ context }) => {
     try {
-      const journal = readJournalFile();
-      
-      if (context.day) {
+      if (!isValidDateFormat(context.date)) {
         return {
-          success: true,
-          day: context.day,
-          entry: journal[context.day],
+          success: false,
+          error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)',
         };
       }
+
+      if (!journalFileExists(context.date)) {
+        return {
+          success: false,
+          error: `No journal exists for date ${context.date}. Use createDayJournal to create one first.`,
+        };
+      }
+
+      const journal = readDayJournalFile(context.date);
       
       return {
         success: true,
+        date: context.date,
         journal,
       };
     } catch (error) {
@@ -87,34 +126,50 @@ export const readJournalTool = createTool({
 });
 
 /**
- * Tool to append text to a specific day's journal entry
+ * Tool to append text to a specific hour's journal entry
  */
 export const appendToJournalTool = createTool({
   id: 'appendToJournal',
-  description: 'Append text to a specific day\'s journal entry. The text will be added to the existing content with proper separation.',
+  description: 'Append text to a specific hour\'s journal entry for a given date. The text will be added to the existing content with proper separation.',
   inputSchema: z.object({
-    day: z.enum(DAYS).describe('The day of the week to append to'),
+    date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+    hour: z.enum(HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
     text: z.string().min(1).describe('The text to append to the journal entry'),
   }),
   execute: async ({ context }) => {
     try {
-      const journal = readJournalFile();
-      const currentEntry = journal[context.day];
+      if (!isValidDateFormat(context.date)) {
+        return {
+          success: false,
+          error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)',
+        };
+      }
+
+      if (!journalFileExists(context.date)) {
+        return {
+          success: false,
+          error: `No journal exists for date ${context.date}. Use createDayJournal to create one first.`,
+        };
+      }
+
+      const journal = readDayJournalFile(context.date);
+      const currentEntry = journal[context.hour];
       
       // Append with newline separation if there's existing content
       if (currentEntry && currentEntry.trim() !== '') {
-        journal[context.day] = currentEntry + '\n' + context.text;
+        journal[context.hour] = currentEntry + '\n' + context.text;
       } else {
-        journal[context.day] = context.text;
+        journal[context.hour] = context.text;
       }
       
-      writeJournalFile(journal);
+      writeDayJournalFile(context.date, journal);
       
       return {
         success: true,
-        day: context.day,
-        message: `Successfully appended to ${context.day}'s journal`,
-        updatedEntry: journal[context.day],
+        date: context.date,
+        hour: context.hour,
+        message: `Successfully appended to ${context.hour} on ${context.date}`,
+        updatedEntry: journal[context.hour],
       };
     } catch (error) {
       return {
@@ -126,21 +181,40 @@ export const appendToJournalTool = createTool({
 });
 
 /**
- * Tool to get today's journal entry
+ * Tool to create a new journal file for a specific date
  */
-export const getCurrentDayJournalTool = createTool({
-  id: 'getCurrentDayJournal',
-  description: 'Get the journal entry for today (current day of the week). Automatically determines the current day and returns its journal entry.',
-  inputSchema: z.object({}),
-  execute: async () => {
+export const createDayJournalTool = createTool({
+  id: 'createDayJournal',
+  description: 'Create a new journal file for a specific date using the format template. If a journal already exists for this date, it will not be overwritten.',
+  inputSchema: z.object({
+    date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+  }),
+  execute: async ({ context }) => {
     try {
-      const today = getCurrentDay();
-      const journal = readJournalFile();
+      if (!isValidDateFormat(context.date)) {
+        return {
+          success: false,
+          error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)',
+        };
+      }
+
+      // Check if journal already exists
+      if (journalFileExists(context.date)) {
+        return {
+          success: true,
+          alreadyExists: true,
+          message: `Journal for ${context.date} already exists.`,
+        };
+      }
+
+      // Read the format template and create new journal file
+      const template = readFormatTemplate();
+      writeDayJournalFile(context.date, template);
       
       return {
         success: true,
-        day: today,
-        entry: journal[today],
+        alreadyExists: false,
+        message: `Successfully created journal for ${context.date}`,
       };
     } catch (error) {
       return {
@@ -150,4 +224,3 @@ export const getCurrentDayJournalTool = createTool({
     }
   },
 });
-
