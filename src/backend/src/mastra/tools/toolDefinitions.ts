@@ -8,7 +8,9 @@ import { z } from 'zod';
 import { 
   readJournalTool, 
   appendToJournalTool, 
-  createDayJournalTool 
+  createDayJournalTool,
+  updateJournalEntryTool,
+  deleteJournalEntryTool,
 } from './journalTools';
 
 // Define the schemas for our tools based on what we registered in page.tsx
@@ -75,6 +77,8 @@ export const TOOL_REGISTRY = {
     readJournalTool,
     appendToJournalTool,
     createDayJournalTool,
+    updateJournalEntryTool,
+    deleteJournalEntryTool,
   },
 };
 
@@ -85,4 +89,6 @@ export const ALL_TOOLS = [
   readJournalTool,
   appendToJournalTool,
   createDayJournalTool,
+  updateJournalEntryTool,
+  deleteJournalEntryTool,
 ];

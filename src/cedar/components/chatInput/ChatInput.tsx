@@ -24,8 +24,10 @@ export const ChatInput: React.FC<{
   isInputFocused?: boolean;
   className?: string; // Additional classes for the container
   stream?: boolean; // Whether to use streaming for responses
-}> = ({ handleFocus, handleBlur, isInputFocused, className = '', stream = true }) => {
+  initialMessage?: string; // Optional message to auto-submit on mount
+}> = ({ handleFocus, handleBlur, isInputFocused, className = '', stream = true, initialMessage }) => {
   const [isFocused, setIsFocused] = React.useState(false);
+  const hasSubmittedInitialMessage = React.useRef(false);
 
   const { editor, isEditorEmpty, handleSubmit } = useCedarEditor({
     onFocus: () => {
@@ -38,6 +40,14 @@ export const ChatInput: React.FC<{
     },
     stream,
   });
+
+  // Pre-fill initial message in the input on mount (without auto-submitting)
+  useEffect(() => {
+    if (editor && initialMessage && !hasSubmittedInitialMessage.current) {
+      hasSubmittedInitialMessage.current = true;
+      editor.commands.setContent(initialMessage);
+    }
+  }, [editor, initialMessage]);
 
   // Initialize voice functionality
   const voice = useVoice();

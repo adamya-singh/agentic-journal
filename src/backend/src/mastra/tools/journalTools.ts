@@ -12,8 +12,8 @@ const currentDir = path.dirname(currentFileUrl);
 const JOURNAL_DIR = path.join(currentDir, '../../../data/journal');
 const FORMAT_PATH = path.join(JOURNAL_DIR, 'format.json');
 
-// Valid hours of the day (8am to 8pm)
-const HOURS = ['8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm'] as const;
+// Valid hours of the day (7am to 6am)
+const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 type HourOfDay = typeof HOURS[number];
 
 // Journal structure type for a single day
@@ -215,6 +215,113 @@ export const createDayJournalTool = createTool({
         success: true,
         alreadyExists: false,
         message: `Successfully created journal for ${context.date}`,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  },
+});
+
+/**
+ * Tool to update/replace a specific hour's journal entry
+ */
+export const updateJournalEntryTool = createTool({
+  id: 'updateJournalEntry',
+  description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content at that hour.',
+  inputSchema: z.object({
+    date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+    hour: z.enum(HOURS).describe('The hour to update (e.g., "8am", "12pm", "5pm")'),
+    text: z.string().describe('The new text to replace the existing entry'),
+  }),
+  execute: async ({ context }) => {
+    try {
+      if (!isValidDateFormat(context.date)) {
+        return {
+          success: false,
+          error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)',
+        };
+      }
+
+      if (!journalFileExists(context.date)) {
+        return {
+          success: false,
+          error: `No journal exists for date ${context.date}. Use createDayJournal to create one first.`,
+        };
+      }
+
+      const journal = readDayJournalFile(context.date);
+      const previousEntry = journal[context.hour];
+      journal[context.hour] = context.text;
+      writeDayJournalFile(context.date, journal);
+
+      return {
+        success: true,
+        date: context.date,
+        hour: context.hour,
+        message: `Successfully updated ${context.hour} on ${context.date}`,
+        previousEntry,
+        newEntry: context.text,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+      };
+    }
+  },
+});
+
+/**
+ * Tool to delete/clear a specific hour's journal entry
+ */
+export const deleteJournalEntryTool = createTool({
+  id: 'deleteJournalEntry',
+  description: 'Delete/clear the content of a specific hour\'s journal entry. This will set the entry to an empty string.',
+  inputSchema: z.object({
+    date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+    hour: z.enum(HOURS).describe('The hour to clear (e.g., "8am", "12pm", "5pm")'),
+  }),
+  execute: async ({ context }) => {
+    try {
+      if (!isValidDateFormat(context.date)) {
+        return {
+          success: false,
+          error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)',
+        };
+      }
+
+      if (!journalFileExists(context.date)) {
+        return {
+          success: false,
+          error: `No journal exists for date ${context.date}.`,
+        };
+      }
+
+      const journal = readDayJournalFile(context.date);
+      const deletedEntry = journal[context.hour];
+      
+      if (!deletedEntry || deletedEntry.trim() === '') {
+        return {
+          success: true,
+          date: context.date,
+          hour: context.hour,
+          message: `Entry at ${context.hour} on ${context.date} was already empty.`,
+          deletedEntry: '',
+        };
+      }
+
+      journal[context.hour] = '';
+      writeDayJournalFile(context.date, journal);
+
+      return {
+        success: true,
+        date: context.date,
+        hour: context.hour,
+        message: `Successfully deleted entry at ${context.hour} on ${context.date}`,
+        deletedEntry,
       };
     } catch (error) {
       return {

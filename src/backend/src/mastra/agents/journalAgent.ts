@@ -6,14 +6,13 @@ import { generateCategorizedToolDescriptions } from '@cedar-os/backend';
 import { memory } from '../memory';
 
 /**
- * Example starter agent for Cedar-OS + Mastra applications
+ * Journal Agent for Cedar-OS + Mastra applications
  *
- * This agent serves as a basic template that you can customize
- * for your specific use case. Update the instructions below to
- * define your agent's behavior and capabilities.
+ * This agent acts as an intelligent journal that collects information
+ * about the user's day-to-day life and organizes it by date and hour.
  */
-export const starterAgent = new Agent({
-  name: 'Starter Agent',
+export const journalAgent = new Agent({
+  name: 'Journal Agent',
   instructions: ` 
 <role>
 You are an artificial intelligence designed to collect as much information about the user and their day to day life as possible, acting as an intelligent journal that interacts with the user throughout the day and appends everything it learns to the journal entry for the current date and hour. You can interact with and modify the user interface. You have the ability to change text content and add new text elements to the screen.
@@ -69,3 +68,4 @@ When responding:
   tools: Object.fromEntries(ALL_TOOLS.map((tool) => [tool.id, tool])),
   memory,
 });
+

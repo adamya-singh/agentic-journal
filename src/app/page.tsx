@@ -6,9 +6,11 @@ import {
   useRegisterState,
   useRegisterFrontendTool,
   useSubscribeStateToAgentContext,
+  useCedarStore,
 } from 'cedar-os';
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
+import { WeekView } from '@/components/WeekView';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
@@ -27,6 +29,18 @@ function getCurrentDateMMDDYY(): string {
   return `${month}${day}${year}`;
 }
 
+/**
+ * Get current time in 12-hour format (e.g., 3:45 PM)
+ */
+function getCurrentTime(): string {
+  const now = new Date();
+  const hours = now.getHours();
+  const minutes = String(now.getMinutes()).padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const hours12 = hours % 12 || 12;
+  return `${hours12}:${minutes} ${ampm}`;
+}
+
 export default function HomePage() {
   // Cedar-OS chat components with mode selector
   // Choose between caption, floating, or side panel chat modes
@@ -41,9 +55,28 @@ export default function HomePage() {
   // Cedar state for current date in MMDDYY format
   const [currentDate, setCurrentDate] = React.useState(getCurrentDateMMDDYY());
 
+  // Cedar state for current time
+  const [currentTime, setCurrentTime] = React.useState(getCurrentTime());
+
   // State for journal creation button
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
   const [journalMessage, setJournalMessage] = React.useState<string>('');
+
+  // State for add task modal
+  const [showTaskModal, setShowTaskModal] = React.useState(false);
+  const [taskInput, setTaskInput] = React.useState('');
+  const [taskStatus, setTaskStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+
+  // Get setShowChat to ensure chat is visible on load
+  const setShowChat = useCedarStore((state) => state.setShowChat);
+
+  // System message to pre-fill in chat input when page loads
+  const systemMessage = `[System] The user has opened the journal page. Current date: ${currentDate}, Current time: ${currentTime}. Read today's journal using the readJournal tool and ask the user terse, efficient questions to help fill in the journal entries for the day. If any entries already exist for today, don't try to fill in any gaps before the latest entry.`;
+
+  // Ensure chat panel is visible on load
+  React.useEffect(() => {
+    setShowChat(true);
+  }, [setShowChat]);
 
   // Register the main text as Cedar state with a state setter
   useRegisterState({
@@ -77,6 +110,14 @@ export default function HomePage() {
     setValue: setCurrentDate,
   });
 
+  // Register the current time as Cedar state
+  useRegisterState({
+    key: 'currentTime',
+    description: 'The current time in 12-hour format (e.g., 3:45 PM)',
+    value: currentTime,
+    setValue: setCurrentTime,
+  });
+
   // Subscribe the main text state to the backend
   useSubscribeStateToAgentContext('mainText', (mainText) => ({ mainText }), {
     showInChat: true,
@@ -85,6 +126,11 @@ export default function HomePage() {
 
   // Subscribe the current date to agent context
   useSubscribeStateToAgentContext('currentDate', (currentDate) => ({ currentDate }), {
+    showInChat: false,
+  });
+
+  // Subscribe the current time to agent context
+  useSubscribeStateToAgentContext('currentTime', (currentTime) => ({ currentTime }), {
     showInChat: false,
   });
 
@@ -120,6 +166,37 @@ export default function HomePage() {
     }
   };
 
+  // Handler for adding a task
+  const handleAddTask = async () => {
+    if (!taskInput.trim()) return;
+    
+    setTaskStatus('loading');
+    
+    try {
+      const response = await fetch('/api/tasks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: taskInput.trim() }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setTaskStatus('success');
+        setTaskInput('');
+        // Close modal after brief success indication
+        setTimeout(() => {
+          setShowTaskModal(false);
+          setTaskStatus('idle');
+        }, 500);
+      } else {
+        setTaskStatus('error');
+      }
+    } catch (error) {
+      setTaskStatus('error');
+    }
+  };
+
   // Register frontend tool for adding text lines
   useRegisterFrontendTool({
     name: 'addNewTextLine',
@@ -145,47 +222,111 @@ export default function HomePage() {
   });
 
   const renderContent = () => (
-    <div className="relative h-screen w-full">
+    <div className="relative min-h-screen w-full">
       <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
 
+      {/* Week View */}
+      <div className="pt-16 pb-4">
+        <WeekView />
+      </div>
+
       {/* Main interactive content area */}
-      <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 space-y-8">
+      <div className="flex flex-col items-center justify-center p-8 space-y-8">
         {/* Journal creation section */}
         <div className="flex flex-col items-center gap-3">
           <div className="text-sm text-gray-500">
             Today: {currentDate}
           </div>
-          <button
-            onClick={handleCreateTodayJournal}
-            disabled={journalStatus === 'loading'}
-            className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-              journalStatus === 'loading'
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+          <div className="flex gap-3">
+            <button
+              onClick={handleCreateTodayJournal}
+              disabled={journalStatus === 'loading'}
+              className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                journalStatus === 'loading'
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : journalStatus === 'success'
+                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    : journalStatus === 'exists'
+                      ? 'bg-blue-500 text-white hover:bg-blue-600'
+                      : journalStatus === 'error'
+                        ? 'bg-red-500 text-white hover:bg-red-600'
+                        : 'bg-indigo-500 text-white hover:bg-indigo-600'
+              }`}
+            >
+              {journalStatus === 'loading'
+                ? 'Creating...'
                 : journalStatus === 'success'
-                  ? 'bg-green-500 text-white hover:bg-green-600'
+                  ? '✓ Created'
                   : journalStatus === 'exists'
-                    ? 'bg-blue-500 text-white hover:bg-blue-600'
+                    ? '✓ Already Exists'
                     : journalStatus === 'error'
-                      ? 'bg-red-500 text-white hover:bg-red-600'
-                      : 'bg-indigo-500 text-white hover:bg-indigo-600'
-            }`}
-          >
-            {journalStatus === 'loading'
-              ? 'Creating...'
-              : journalStatus === 'success'
-                ? '✓ Created'
-                : journalStatus === 'exists'
-                  ? '✓ Already Exists'
-                  : journalStatus === 'error'
-                    ? 'Retry'
-                    : "Create Today's Journal"}
-          </button>
+                      ? 'Retry'
+                      : "Create Today's Journal"}
+            </button>
+            <button
+              onClick={() => setShowTaskModal(true)}
+              className="px-6 py-2 rounded-lg font-medium transition-colors bg-amber-500 text-white hover:bg-amber-600"
+            >
+              Add Task
+            </button>
+          </div>
           {journalMessage && (
             <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
               {journalMessage}
             </p>
           )}
         </div>
+
+        {/* Add Task Modal */}
+        {showTaskModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
+              <h2 className="text-xl font-semibold text-gray-800 mb-4">Add New Task</h2>
+              <input
+                type="text"
+                value={taskInput}
+                onChange={(e) => setTaskInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
+                placeholder="Enter your task..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent mb-4"
+                autoFocus
+              />
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => {
+                    setShowTaskModal(false);
+                    setTaskInput('');
+                    setTaskStatus('idle');
+                  }}
+                  className="px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleAddTask}
+                  disabled={taskStatus === 'loading' || !taskInput.trim()}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    taskStatus === 'loading' || !taskInput.trim()
+                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      : taskStatus === 'success'
+                        ? 'bg-green-500 text-white'
+                        : taskStatus === 'error'
+                          ? 'bg-red-500 text-white hover:bg-red-600'
+                          : 'bg-amber-500 text-white hover:bg-amber-600'
+                  }`}
+                >
+                  {taskStatus === 'loading'
+                    ? 'Adding...'
+                    : taskStatus === 'success'
+                      ? '✓ Added'
+                      : taskStatus === 'error'
+                        ? 'Retry'
+                        : 'Add Task'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Big text that Cedar can change */}
         <div className="text-center">
@@ -246,6 +387,7 @@ export default function HomePage() {
         title="Cedarling Chat"
         collapsedLabel="Chat with Cedar"
         showCollapsedButton={true}
+        initialMessage={systemMessage}
       >
         <DebuggerPanel />
         {renderContent()}
