@@ -5,20 +5,9 @@ import {
 } from '@cedar-os/backend';
 import { streamJSONEvent } from '../../utils/streamUtils';
 import { z } from 'zod';
-import { 
-  readJournalTool, 
-  appendToJournalTool, 
-  createDayJournalTool,
-  updateJournalEntryTool,
-  deleteJournalEntryTool,
-} from './journalTools';
-import {
-  readPlanTool,
-  appendToPlanTool,
-  createDayPlanTool,
-  updatePlanEntryTool,
-  deletePlanEntryTool,
-} from './planTools';
+
+// Valid hours of the day (7am to 6am) - matches frontend
+const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 
 // Define the schemas for our tools based on what we registered in page.tsx
 
@@ -84,6 +73,60 @@ export const AddTaskToTodaySchema = z.object({
 export const RemoveTaskFromTodaySchema = z.object({
   text: z.string().min(1).describe('The exact text of the task to remove'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
+});
+
+// ==================== JOURNAL STATE SETTER SCHEMAS ====================
+
+// Schema for createDayJournal state setter
+export const CreateDayJournalSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+});
+
+// Schema for appendToJournal state setter
+export const AppendToJournalSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
+  text: z.string().min(1).describe('The text to append to the journal entry'),
+});
+
+// Schema for updateJournalEntry state setter
+export const UpdateJournalEntrySchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to update'),
+  text: z.string().describe('The new text to replace the existing entry'),
+});
+
+// Schema for deleteJournalEntry state setter
+export const DeleteJournalEntrySchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to clear'),
+});
+
+// ==================== PLAN STATE SETTER SCHEMAS ====================
+
+// Schema for createDayPlan state setter
+export const CreateDayPlanSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+});
+
+// Schema for appendToPlan state setter
+export const AppendToPlanSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
+  text: z.string().min(1).describe('The text to append to the plan entry'),
+});
+
+// Schema for updatePlanEntry state setter
+export const UpdatePlanEntrySchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to update'),
+  text: z.string().describe('The new text to replace the existing entry'),
+});
+
+// Schema for deletePlanEntry state setter
+export const DeletePlanEntrySchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  hour: z.enum(VALID_HOURS).describe('The hour to clear'),
 });
 
 // ==================== TOOL CREATION ====================
@@ -191,6 +234,106 @@ export const removeTaskFromTodayTool = createMastraToolForStateSetter(
   },
 );
 
+// ==================== JOURNAL STATE SETTER TOOLS ====================
+
+export const createDayJournalTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'createDayJournal',
+  CreateDayJournalSchema,
+  {
+    description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
+    toolId: 'createDayJournal',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const appendToJournalTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'appendToJournal',
+  AppendToJournalSchema,
+  {
+    description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation.',
+    toolId: 'appendToJournal',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const updateJournalEntryTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'updateJournalEntry',
+  UpdateJournalEntrySchema,
+  {
+    description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content.',
+    toolId: 'updateJournalEntry',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const deleteJournalEntryTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'deleteJournalEntry',
+  DeleteJournalEntrySchema,
+  {
+    description: 'Delete/clear the content of a specific hour\'s journal entry.',
+    toolId: 'deleteJournalEntry',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+// ==================== PLAN STATE SETTER TOOLS ====================
+
+export const createDayPlanTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'createDayPlan',
+  CreateDayPlanSchema,
+  {
+    description: 'Create a new plan file for a specific date. If a plan already exists, it will not be overwritten.',
+    toolId: 'createDayPlan',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const appendToPlanTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'appendToPlan',
+  AppendToPlanSchema,
+  {
+    description: 'Append text to a specific hour\'s plan entry. The text will be added to existing content with proper separation.',
+    toolId: 'appendToPlan',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const updatePlanEntryTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'updatePlanEntry',
+  UpdatePlanEntrySchema,
+  {
+    description: 'Update/replace the content of a specific hour\'s plan entry. This will overwrite any existing content.',
+    toolId: 'updatePlanEntry',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const deletePlanEntryTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'deletePlanEntry',
+  DeletePlanEntrySchema,
+  {
+    description: 'Delete/clear the content of a specific hour\'s plan entry.',
+    toolId: 'deletePlanEntry',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
 export const requestAdditionalContextTool = createRequestAdditionalContextTool();
 
 /**
@@ -203,16 +346,14 @@ export const TOOL_REGISTRY = {
     addNewTextLineTool,
   },
   journalManagement: {
-    readJournalTool,
-    appendToJournalTool,
     createDayJournalTool,
+    appendToJournalTool,
     updateJournalEntryTool,
     deleteJournalEntryTool,
   },
   planManagement: {
-    readPlanTool,
-    appendToPlanTool,
     createDayPlanTool,
+    appendToPlanTool,
     updatePlanEntryTool,
     deletePlanEntryTool,
   },
@@ -230,14 +371,12 @@ export const TOOL_REGISTRY = {
 export const ALL_TOOLS = [
   changeTextTool, 
   addNewTextLineTool,
-  readJournalTool,
-  appendToJournalTool,
   createDayJournalTool,
+  appendToJournalTool,
   updateJournalEntryTool,
   deleteJournalEntryTool,
-  readPlanTool,
-  appendToPlanTool,
   createDayPlanTool,
+  appendToPlanTool,
   updatePlanEntryTool,
   deletePlanEntryTool,
   addTaskTool,

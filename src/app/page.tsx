@@ -10,7 +10,7 @@ import {
 } from 'cedar-os';
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
-import { WeekView, WeekViewData } from '@/components/WeekView';
+import { WeekView, WeekViewData, DayJournal, DayPlan } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
@@ -68,6 +68,9 @@ export default function HomePage() {
   // Refresh trigger for TaskLists component - increment to trigger re-fetch
   const [taskRefreshTrigger, setTaskRefreshTrigger] = React.useState(0);
 
+  // Refresh trigger for WeekView component - increment to trigger re-fetch
+  const [weekViewRefreshTrigger, setWeekViewRefreshTrigger] = React.useState(0);
+
   // State for journal creation button
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
   const [journalMessage, setJournalMessage] = React.useState<string>('');
@@ -123,12 +126,316 @@ export default function HomePage() {
     setValue: setCurrentTime,
   });
 
-  // Register week view data as Cedar state
+  // Valid hours for journal/plan entries
+  const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
+  type HourOfDay = typeof VALID_HOURS[number];
+
+  // Register week view data as Cedar state with setters for journal and plan management
   useRegisterState({
     key: 'weekJournals',
-    description: 'Journal entries for the current week (Monday-Sunday). Contains date info and journal entries with hour-by-hour text.',
+    description: 'Journal and plan entries for the current week (Monday-Sunday). Contains date info, journal entries, and plan entries with hour-by-hour text.',
     value: weekViewData,
     setValue: setWeekViewData,
+    stateSetters: {
+      // ==================== JOURNAL SETTERS ====================
+      createDayJournal: {
+        name: 'createDayJournal',
+        description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string }
+        ) => {
+          // Call API to create journal
+          await fetch('/api/journal/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: args.date }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      appendToJournal: {
+        name: 'appendToJournal',
+        description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
+          text: z.string().min(1).describe('The text to append to the journal entry'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentJournal = currentData.weekData[args.date] || {};
+          const currentEntry = currentJournal[args.hour] || '';
+          const updatedEntry = currentEntry && currentEntry.trim() !== '' 
+            ? currentEntry + '\n' + args.text 
+            : args.text;
+
+          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: updatedEntry };
+          setValue({
+            ...currentData,
+            weekData: {
+              ...currentData.weekData,
+              [args.date]: updatedJournal,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/journal/append', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+              text: args.text,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      updateJournalEntry: {
+        name: 'updateJournalEntry',
+        description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to update'),
+          text: z.string().describe('The new text to replace the existing entry'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentJournal = currentData.weekData[args.date] || {};
+          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: args.text };
+          setValue({
+            ...currentData,
+            weekData: {
+              ...currentData.weekData,
+              [args.date]: updatedJournal,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/journal/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+              text: args.text,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      deleteJournalEntry: {
+        name: 'deleteJournalEntry',
+        description: 'Delete/clear the content of a specific hour\'s journal entry.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to clear'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentJournal = currentData.weekData[args.date] || {};
+          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: '' };
+          setValue({
+            ...currentData,
+            weekData: {
+              ...currentData.weekData,
+              [args.date]: updatedJournal,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/journal/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      // ==================== PLAN SETTERS ====================
+      createDayPlan: {
+        name: 'createDayPlan',
+        description: 'Create a new plan file for a specific date. If a plan already exists, it will not be overwritten.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string }
+        ) => {
+          // Call API to create plan
+          await fetch('/api/plans/create', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ date: args.date }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      appendToPlan: {
+        name: 'appendToPlan',
+        description: 'Append text to a specific hour\'s plan entry. The text will be added to existing content with proper separation.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
+          text: z.string().min(1).describe('The text to append to the plan entry'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentPlan = currentData.weekPlanData[args.date] || {};
+          const currentEntry = currentPlan[args.hour] || '';
+          const updatedEntry = currentEntry && currentEntry.trim() !== '' 
+            ? currentEntry + '\n' + args.text 
+            : args.text;
+
+          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: updatedEntry };
+          setValue({
+            ...currentData,
+            weekPlanData: {
+              ...currentData.weekPlanData,
+              [args.date]: updatedPlan,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/plans/append', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+              text: args.text,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      updatePlanEntry: {
+        name: 'updatePlanEntry',
+        description: 'Update/replace the content of a specific hour\'s plan entry. This will overwrite any existing content.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to update'),
+          text: z.string().describe('The new text to replace the existing entry'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentPlan = currentData.weekPlanData[args.date] || {};
+          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: args.text };
+          setValue({
+            ...currentData,
+            weekPlanData: {
+              ...currentData.weekPlanData,
+              [args.date]: updatedPlan,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/plans/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+              text: args.text,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      deletePlanEntry: {
+        name: 'deletePlanEntry',
+        description: 'Delete/clear the content of a specific hour\'s plan entry.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          hour: z.enum(VALID_HOURS).describe('The hour to clear'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; hour: HourOfDay }
+        ) => {
+          if (!currentData) return;
+
+          // Optimistically update state
+          const currentPlan = currentData.weekPlanData[args.date] || {};
+          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: '' };
+          setValue({
+            ...currentData,
+            weekPlanData: {
+              ...currentData.weekPlanData,
+              [args.date]: updatedPlan,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/plans/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              hour: args.hour,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+    },
   });
 
   // Register task lists data as Cedar state with setters for task management
@@ -525,7 +832,7 @@ export default function HomePage() {
 
       {/* Week View */}
       <div className="pt-16 pb-4">
-        <WeekView onDataChange={setWeekViewData} />
+        <WeekView onDataChange={setWeekViewData} refreshTrigger={weekViewRefreshTrigger} />
       </div>
 
       {/* Task Lists */}

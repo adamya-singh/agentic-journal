@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 
 // Journal entry type - exported for cedar state
 export type DayJournal = Record<string, string>;
@@ -35,6 +35,7 @@ export interface WeekViewData {
 
 interface WeekViewProps {
   onDataChange?: (data: WeekViewData) => void;
+  refreshTrigger?: number;
 }
 
 /**
@@ -109,57 +110,66 @@ function getCombinedEntries(journal: DayJournal | null, plan: DayPlan | null): T
   return entries;
 }
 
-export function WeekView({ onDataChange }: WeekViewProps) {
+export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [weekDates] = useState<DayInfo[]>(getCurrentWeekDates);
   const [weekData, setWeekData] = useState<WeekData>({});
   const [weekPlanData, setWeekPlanData] = useState<WeekPlanData>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchWeekData() {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        const dates = weekDates.map(d => d.date);
-        
-        // Fetch both journals and plans in parallel
-        const [journalResponse, planResponse] = await Promise.all([
-          fetch('/api/journal/read', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dates }),
-          }),
-          fetch('/api/plans/read', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ dates }),
-          }),
-        ]);
-        
-        const journalData = await journalResponse.json();
-        const planData = await planResponse.json();
-        
-        if (journalData.success) {
-          setWeekData(journalData.journals);
-        } else {
-          setError(journalData.error || 'Failed to fetch journals');
-        }
-        
-        if (planData.success) {
-          setWeekPlanData(planData.plans);
-        }
-        // Don't error if plans fail - they're optional
-      } catch (err) {
-        setError('Failed to connect to server');
-      } finally {
-        setLoading(false);
+  // Fetch week data function
+  const fetchWeekData = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const dates = weekDates.map(d => d.date);
+      
+      // Fetch both journals and plans in parallel
+      const [journalResponse, planResponse] = await Promise.all([
+        fetch('/api/journal/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dates }),
+        }),
+        fetch('/api/plans/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dates }),
+        }),
+      ]);
+      
+      const journalData = await journalResponse.json();
+      const planData = await planResponse.json();
+      
+      if (journalData.success) {
+        setWeekData(journalData.journals);
+      } else {
+        setError(journalData.error || 'Failed to fetch journals');
       }
+      
+      if (planData.success) {
+        setWeekPlanData(planData.plans);
+      }
+      // Don't error if plans fail - they're optional
+    } catch (err) {
+      setError('Failed to connect to server');
+    } finally {
+      setLoading(false);
     }
-    
-    fetchWeekData();
   }, [weekDates]);
+
+  // Initial fetch on mount
+  useEffect(() => {
+    fetchWeekData();
+  }, [fetchWeekData]);
+
+  // Re-fetch when refreshTrigger changes (triggered by Cedar state setters)
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      fetchWeekData();
+    }
+  }, [refreshTrigger, fetchWeekData]);
 
   // Notify parent when data changes
   useEffect(() => {
