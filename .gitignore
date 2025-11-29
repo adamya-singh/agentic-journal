@@ -42,3 +42,6 @@ next-env.d.ts
 
 # database
 src/backend/storage.db
+
+#journal data
+src/backend/data
