@@ -12,7 +12,6 @@ import {
 import { ChatModeSelector } from '@/components/ChatModeSelector';
 import { WeekView } from '@/components/WeekView';
 import { TaskLists } from '@/components/TaskLists';
-import { PriorityComparisonModal } from '@/components/PriorityComparisonModal';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
@@ -63,10 +62,6 @@ export default function HomePage() {
   // State for journal creation button
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
   const [journalMessage, setJournalMessage] = React.useState<string>('');
-
-  // State for add task modal
-  const [showTaskModal, setShowTaskModal] = React.useState(false);
-  const [activeListType, setActiveListType] = React.useState<'have-to-do' | 'want-to-do'>('have-to-do');
 
   // Get setShowChat to ensure chat is visible on load
   const setShowChat = useCedarStore((state) => state.setShowChat);
@@ -237,24 +232,6 @@ export default function HomePage() {
                       ? 'Retry'
                       : "Create Today's Journal"}
             </button>
-            <button
-              onClick={() => {
-                setActiveListType('have-to-do');
-                setShowTaskModal(true);
-              }}
-              className="px-6 py-2 rounded-lg font-medium transition-colors bg-amber-500 text-white hover:bg-amber-600"
-            >
-              + Have to Do
-            </button>
-            <button
-              onClick={() => {
-                setActiveListType('want-to-do');
-                setShowTaskModal(true);
-              }}
-              className="px-6 py-2 rounded-lg font-medium transition-colors bg-teal-500 text-white hover:bg-teal-600"
-            >
-              + Want to Do
-            </button>
           </div>
           {journalMessage && (
             <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
@@ -262,16 +239,6 @@ export default function HomePage() {
             </p>
           )}
         </div>
-
-        {/* Add Task Modal with Priority Comparison */}
-        <PriorityComparisonModal
-          isOpen={showTaskModal}
-          onClose={() => setShowTaskModal(false)}
-          onTaskAdded={() => {
-            // Could refresh task list or show notification here
-          }}
-          listType={activeListType}
-        />
 
         {/* Big text that Cedar can change */}
         <div className="text-center">
