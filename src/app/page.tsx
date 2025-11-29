@@ -11,6 +11,7 @@ import {
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
 import { WeekView } from '@/components/WeekView';
+import { PriorityComparisonModal } from '@/components/PriorityComparisonModal';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
@@ -64,8 +65,7 @@ export default function HomePage() {
 
   // State for add task modal
   const [showTaskModal, setShowTaskModal] = React.useState(false);
-  const [taskInput, setTaskInput] = React.useState('');
-  const [taskStatus, setTaskStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [activeListType, setActiveListType] = React.useState<'have-to-do' | 'want-to-do'>('have-to-do');
 
   // Get setShowChat to ensure chat is visible on load
   const setShowChat = useCedarStore((state) => state.setShowChat);
@@ -166,36 +166,6 @@ export default function HomePage() {
     }
   };
 
-  // Handler for adding a task
-  const handleAddTask = async () => {
-    if (!taskInput.trim()) return;
-    
-    setTaskStatus('loading');
-    
-    try {
-      const response = await fetch('/api/tasks/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: taskInput.trim() }),
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setTaskStatus('success');
-        setTaskInput('');
-        // Close modal after brief success indication
-        setTimeout(() => {
-          setShowTaskModal(false);
-          setTaskStatus('idle');
-        }, 500);
-      } else {
-        setTaskStatus('error');
-      }
-    } catch (error) {
-      setTaskStatus('error');
-    }
-  };
 
   // Register frontend tool for adding text lines
   useRegisterFrontendTool({
@@ -264,10 +234,22 @@ export default function HomePage() {
                       : "Create Today's Journal"}
             </button>
             <button
-              onClick={() => setShowTaskModal(true)}
+              onClick={() => {
+                setActiveListType('have-to-do');
+                setShowTaskModal(true);
+              }}
               className="px-6 py-2 rounded-lg font-medium transition-colors bg-amber-500 text-white hover:bg-amber-600"
             >
-              Add Task
+              + Have to Do
+            </button>
+            <button
+              onClick={() => {
+                setActiveListType('want-to-do');
+                setShowTaskModal(true);
+              }}
+              className="px-6 py-2 rounded-lg font-medium transition-colors bg-teal-500 text-white hover:bg-teal-600"
+            >
+              + Want to Do
             </button>
           </div>
           {journalMessage && (
@@ -277,56 +259,15 @@ export default function HomePage() {
           )}
         </div>
 
-        {/* Add Task Modal */}
-        {showTaskModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
-              <h2 className="text-xl font-semibold text-gray-800 mb-4">Add New Task</h2>
-              <input
-                type="text"
-                value={taskInput}
-                onChange={(e) => setTaskInput(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
-                placeholder="Enter your task..."
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent mb-4"
-                autoFocus
-              />
-              <div className="flex justify-end gap-3">
-                <button
-                  onClick={() => {
-                    setShowTaskModal(false);
-                    setTaskInput('');
-                    setTaskStatus('idle');
-                  }}
-                  className="px-4 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-100 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddTask}
-                  disabled={taskStatus === 'loading' || !taskInput.trim()}
-                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
-                    taskStatus === 'loading' || !taskInput.trim()
-                      ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                      : taskStatus === 'success'
-                        ? 'bg-green-500 text-white'
-                        : taskStatus === 'error'
-                          ? 'bg-red-500 text-white hover:bg-red-600'
-                          : 'bg-amber-500 text-white hover:bg-amber-600'
-                  }`}
-                >
-                  {taskStatus === 'loading'
-                    ? 'Adding...'
-                    : taskStatus === 'success'
-                      ? '✓ Added'
-                      : taskStatus === 'error'
-                        ? 'Retry'
-                        : 'Add Task'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* Add Task Modal with Priority Comparison */}
+        <PriorityComparisonModal
+          isOpen={showTaskModal}
+          onClose={() => setShowTaskModal(false)}
+          onTaskAdded={() => {
+            // Could refresh task list or show notification here
+          }}
+          listType={activeListType}
+        />
 
         {/* Big text that Cedar can change */}
         <div className="text-center">

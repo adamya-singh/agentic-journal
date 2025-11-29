@@ -1,5 +1,15 @@
 {
   "_comment": "Stack structure - last element is top of stack",
   "tasks": [
+    {
+      "text": "music theory hw",
+      "dueDate": "2025-12-02"
+    },
+    {
+      "text": "finish intro ai robot arm project and make presentation"
+    },
+    {
+      "text": "fix resume and apply to jobs"
+    }
   ]
 }
