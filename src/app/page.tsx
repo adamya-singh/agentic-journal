@@ -11,6 +11,7 @@ import {
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
 import { WeekView } from '@/components/WeekView';
+import { TaskLists } from '@/components/TaskLists';
 import { PriorityComparisonModal } from '@/components/PriorityComparisonModal';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
@@ -199,6 +200,9 @@ export default function HomePage() {
       <div className="pt-16 pb-4">
         <WeekView />
       </div>
+
+      {/* Task Lists */}
+      <TaskLists />
 
       {/* Main interactive content area */}
       <div className="flex flex-col items-center justify-center p-8 space-y-8">
