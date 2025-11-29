@@ -47,19 +47,19 @@ function writeTasks(data: TasksData, listType: ListType): void {
 }
 
 /**
- * POST /api/tasks/add
- * Adds a new task to the list at the specified position (or appends to end if no position given)
+ * POST /api/tasks/update
+ * Updates a task's text and/or dueDate
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string }
- * - task: The task text to add
- * - position: Optional index where to insert the task (0 = highest priority)
- * - listType: Which task list to add to (defaults to 'have-to-do')
- * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
+ * Body: { oldText: string, newText?: string, dueDate?: string, listType?: 'have-to-do' | 'want-to-do' }
+ * - oldText: The current text of the task to update
+ * - newText: The new text for the task (optional)
+ * - dueDate: The new due date in ISO format, or empty string to remove (optional)
+ * - listType: Which task list to update in (defaults to 'have-to-do')
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate } = body;
+    const { oldText, newText, dueDate, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -69,36 +69,50 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!task || typeof task !== 'string') {
+    if (!oldText || typeof oldText !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Task parameter is required and must be a string' },
+        { success: false, error: 'oldText parameter is required and must be a string' },
         { status: 400 }
       );
     }
 
-    const trimmedTask = task.trim();
-    if (trimmedTask.length === 0) {
+    const trimmedOldText = oldText.trim();
+    if (trimmedOldText.length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Task cannot be empty' },
+        { success: false, error: 'oldText cannot be empty' },
         { status: 400 }
       );
-    }
-
-    // Build task object
-    const newTask: Task = { text: trimmedTask };
-    if (dueDate && typeof dueDate === 'string') {
-      newTask.dueDate = dueDate;
     }
 
     // Read current tasks
     const data = readTasks(listType);
 
-    // Insert at specified position or append to end
-    if (typeof position === 'number' && position >= 0 && position <= data.tasks.length) {
-      data.tasks.splice(position, 0, newTask);
-    } else {
-      // Default: push to end
-      data.tasks.push(newTask);
+    // Find the task
+    const taskIndex = data.tasks.findIndex(task => task.text === trimmedOldText);
+    if (taskIndex === -1) {
+      return NextResponse.json({
+        success: false,
+        error: `Task not found: "${trimmedOldText}"`,
+      });
+    }
+
+    const previousTask = { ...data.tasks[taskIndex] };
+
+    // Update text if provided
+    if (newText !== undefined && typeof newText === 'string') {
+      const trimmedNewText = newText.trim();
+      if (trimmedNewText.length > 0) {
+        data.tasks[taskIndex].text = trimmedNewText;
+      }
+    }
+
+    // Update or remove due date
+    if (dueDate !== undefined) {
+      if (dueDate === '') {
+        delete data.tasks[taskIndex].dueDate;
+      } else if (typeof dueDate === 'string') {
+        data.tasks[taskIndex].dueDate = dueDate;
+      }
     }
 
     // Write updated tasks
@@ -106,12 +120,12 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      message: 'Task added successfully',
-      taskCount: data.tasks.length,
-      insertedAt: typeof position === 'number' ? position : data.tasks.length - 1,
+      message: 'Task updated successfully',
+      previousTask,
+      updatedTask: data.tasks[taskIndex],
     });
   } catch (error) {
-    console.error('Error adding task:', error);
+    console.error('Error updating task:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }

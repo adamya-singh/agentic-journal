@@ -2,16 +2,39 @@
 
 import React, { useEffect, useState } from 'react';
 
-// Journal entry type
-type DayJournal = Record<string, string>;
+// Journal entry type - exported for cedar state
+export type DayJournal = Record<string, string>;
 
-// Week data type
-type WeekData = Record<string, DayJournal | null>;
+// Plan entry type - same structure as journal
+export type DayPlan = Record<string, string>;
 
-interface DayInfo {
+// Week data type - exported for cedar state
+export type WeekData = Record<string, DayJournal | null>;
+
+// Week plan data type
+export type WeekPlanData = Record<string, DayPlan | null>;
+
+// Entry with type indicator for rendering
+export interface TypedEntry {
+  hour: string;
+  text: string;
+  type: 'journal' | 'plan';
+}
+
+export interface DayInfo {
   date: string; // MMDDYY format
   dayName: string; // e.g., "Mon"
   displayDate: string; // e.g., "11/25"
+}
+
+export interface WeekViewData {
+  weekDates: DayInfo[];
+  weekData: WeekData;
+  weekPlanData: WeekPlanData;
+}
+
+interface WeekViewProps {
+  onDataChange?: (data: WeekViewData) => void;
 }
 
 /**
@@ -50,42 +73,84 @@ function getCurrentWeekDates(): DayInfo[] {
 }
 
 /**
- * Filter journal entries to only include non-empty ones
+ * Get combined entries from both journal and plan, with type indicators
  */
-function getNonEmptyEntries(journal: DayJournal | null): { hour: string; text: string }[] {
-  if (!journal) return [];
+function getCombinedEntries(journal: DayJournal | null, plan: DayPlan | null): TypedEntry[] {
+  const entries: TypedEntry[] = [];
+  const allHours = new Set<string>();
   
-  return Object.entries(journal)
-    .filter(([, text]) => text && text.trim() !== '')
-    .map(([hour, text]) => ({ hour, text }));
+  // Collect all hours that have entries
+  if (journal) {
+    Object.keys(journal).forEach(hour => allHours.add(hour));
+  }
+  if (plan) {
+    Object.keys(plan).forEach(hour => allHours.add(hour));
+  }
+  
+  // Sort hours in chronological order
+  const hourOrder = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+  const sortedHours = Array.from(allHours).sort((a, b) => hourOrder.indexOf(a) - hourOrder.indexOf(b));
+  
+  for (const hour of sortedHours) {
+    const planText = plan?.[hour];
+    const journalText = journal?.[hour];
+    
+    // Add plan entry first (if exists)
+    if (planText && planText.trim() !== '') {
+      entries.push({ hour, text: planText, type: 'plan' });
+    }
+    
+    // Add journal entry (if exists)
+    if (journalText && journalText.trim() !== '') {
+      entries.push({ hour, text: journalText, type: 'journal' });
+    }
+  }
+  
+  return entries;
 }
 
-export function WeekView() {
+export function WeekView({ onDataChange }: WeekViewProps) {
   const [weekDates] = useState<DayInfo[]>(getCurrentWeekDates);
   const [weekData, setWeekData] = useState<WeekData>({});
+  const [weekPlanData, setWeekPlanData] = useState<WeekPlanData>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    async function fetchWeekJournals() {
+    async function fetchWeekData() {
       try {
         setLoading(true);
         setError(null);
         
         const dates = weekDates.map(d => d.date);
-        const response = await fetch('/api/journal/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dates }),
-        });
         
-        const data = await response.json();
+        // Fetch both journals and plans in parallel
+        const [journalResponse, planResponse] = await Promise.all([
+          fetch('/api/journal/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dates }),
+          }),
+          fetch('/api/plans/read', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dates }),
+          }),
+        ]);
         
-        if (data.success) {
-          setWeekData(data.journals);
+        const journalData = await journalResponse.json();
+        const planData = await planResponse.json();
+        
+        if (journalData.success) {
+          setWeekData(journalData.journals);
         } else {
-          setError(data.error || 'Failed to fetch journals');
+          setError(journalData.error || 'Failed to fetch journals');
         }
+        
+        if (planData.success) {
+          setWeekPlanData(planData.plans);
+        }
+        // Don't error if plans fail - they're optional
       } catch (err) {
         setError('Failed to connect to server');
       } finally {
@@ -93,8 +158,15 @@ export function WeekView() {
       }
     }
     
-    fetchWeekJournals();
+    fetchWeekData();
   }, [weekDates]);
+
+  // Notify parent when data changes
+  useEffect(() => {
+    if (onDataChange && !loading) {
+      onDataChange({ weekDates, weekData, weekPlanData });
+    }
+  }, [weekData, weekPlanData, weekDates, loading, onDataChange]);
 
   if (loading) {
     return (
@@ -121,9 +193,20 @@ export function WeekView() {
   return (
     <div className="w-full max-w-7xl mx-auto p-4">
       <h2 className="text-2xl font-semibold text-gray-700 mb-4 text-center">This Week</h2>
+      {/* Legend */}
+      <div className="flex justify-center gap-6 mb-4 text-sm">
+        <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-teal-500"></span>
+          <span className="text-gray-600">Planned</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-gray-500"></span>
+          <span className="text-gray-600">Journal</span>
+        </div>
+      </div>
       <div className="grid grid-cols-7 gap-3">
         {weekDates.map((dayInfo) => {
-          const entries = getNonEmptyEntries(weekData[dayInfo.date]);
+          const entries = getCombinedEntries(weekData[dayInfo.date], weekPlanData[dayInfo.date]);
           const isToday = dayInfo.date === weekDates.find(d => {
             const today = new Date();
             const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -153,16 +236,27 @@ export function WeekView() {
                 <div className="text-sm opacity-80">{dayInfo.displayDate}</div>
               </div>
 
-              {/* Journal entries */}
+              {/* Journal and plan entries */}
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
                 {entries.length > 0 ? (
                   <div className="space-y-2">
-                    {entries.map(({ hour, text }) => (
-                      <div key={hour} className="text-sm">
-                        <span className={`font-medium ${isToday ? 'text-indigo-600' : 'text-gray-500'}`}>
+                    {entries.map(({ hour, text, type }, index) => (
+                      <div key={`${hour}-${type}-${index}`} className="text-sm">
+                        <span className={`font-medium ${
+                          type === 'plan' 
+                            ? 'text-teal-600' 
+                            : isToday 
+                              ? 'text-indigo-600' 
+                              : 'text-gray-500'
+                        }`}>
                           {hour}:
                         </span>{' '}
-                        <span className="text-gray-700">{text}</span>
+                        <span className={type === 'plan' ? 'text-teal-700' : 'text-gray-700'}>
+                          {text}
+                        </span>
+                        {type === 'plan' && (
+                          <span className="ml-1 text-xs text-teal-500 italic">(plan)</span>
+                        )}
                       </div>
                     ))}
                   </div>

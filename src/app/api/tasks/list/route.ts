@@ -26,7 +26,7 @@ function readTasks(listType: ListType): TasksData {
   const tasksFile = getTasksFilePath(listType);
   if (!fs.existsSync(tasksFile)) {
     return {
-      _comment: 'Stack structure - last element is top of stack',
+      _comment: 'Queue structure - first element is highest priority',
       tasks: [],
     };
   }

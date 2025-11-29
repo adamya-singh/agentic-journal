@@ -10,8 +10,8 @@ import {
 } from 'cedar-os';
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
-import { WeekView } from '@/components/WeekView';
-import { TaskLists } from '@/components/TaskLists';
+import { WeekView, WeekViewData } from '@/components/WeekView';
+import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
@@ -58,6 +58,15 @@ export default function HomePage() {
 
   // Cedar state for current time
   const [currentTime, setCurrentTime] = React.useState(getCurrentTime());
+
+  // Cedar state for week view data (journals for the week)
+  const [weekViewData, setWeekViewData] = React.useState<WeekViewData | null>(null);
+
+  // Cedar state for task lists data (general and today lists)
+  const [taskListsData, setTaskListsData] = React.useState<TaskListsData | null>(null);
+
+  // Refresh trigger for TaskLists component - increment to trigger re-fetch
+  const [taskRefreshTrigger, setTaskRefreshTrigger] = React.useState(0);
 
   // State for journal creation button
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
@@ -114,6 +123,319 @@ export default function HomePage() {
     setValue: setCurrentTime,
   });
 
+  // Register week view data as Cedar state
+  useRegisterState({
+    key: 'weekJournals',
+    description: 'Journal entries for the current week (Monday-Sunday). Contains date info and journal entries with hour-by-hour text.',
+    value: weekViewData,
+    setValue: setWeekViewData,
+  });
+
+  // Register task lists data as Cedar state with setters for task management
+  useRegisterState({
+    key: 'taskLists',
+    description: 'Task lists containing general tasks (have-to-do and want-to-do) and today\'s tasks. Tasks are prioritized with the first item being highest priority.',
+    value: taskListsData,
+    setValue: setTaskListsData,
+    stateSetters: {
+      // ==================== GENERAL TASK SETTERS ====================
+      addTask: {
+        name: 'addTask',
+        description: 'Add a new task to a general task list (have-to-do or want-to-do). Tasks are added to the end (lowest priority) by default.',
+        argsSchema: z.object({
+          text: z.string().min(1).describe('The task text/description'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
+          position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
+          dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { text: string; listType: ListType; position?: number; dueDate?: string }
+        ) => {
+          if (!currentData) return;
+
+          const newTask: Task = { text: args.text.trim() };
+          if (args.dueDate) newTask.dueDate = args.dueDate;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const currentTasks = [...currentData.generalTasks[key]];
+          
+          // Insert at position or append to end
+          if (typeof args.position === 'number' && args.position >= 0 && args.position <= currentTasks.length) {
+            currentTasks.splice(args.position, 0, newTask);
+          } else {
+            currentTasks.push(newTask);
+          }
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: currentTasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              task: args.text,
+              listType: args.listType,
+              position: args.position,
+              dueDate: args.dueDate,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      removeTask: {
+        name: 'removeTask',
+        description: 'Remove a task from a general task list by its text.',
+        argsSchema: z.object({
+          text: z.string().min(1).describe('The exact text of the task to remove'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { text: string; listType: ListType }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const filteredTasks = currentData.generalTasks[key].filter(t => t.text !== args.text.trim());
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: filteredTasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: args.text,
+              listType: args.listType,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      updateTask: {
+        name: 'updateTask',
+        description: 'Update an existing task\'s text or due date in a general task list.',
+        argsSchema: z.object({
+          oldText: z.string().min(1).describe('The current text of the task to update'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
+          newText: z.string().optional().describe('The new text for the task'),
+          dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { oldText: string; listType: ListType; newText?: string; dueDate?: string }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const updatedTasks = currentData.generalTasks[key].map(task => {
+            if (task.text === args.oldText.trim()) {
+              const updated: Task = { ...task };
+              if (args.newText) updated.text = args.newText.trim();
+              if (args.dueDate !== undefined) {
+                if (args.dueDate === '') {
+                  delete updated.dueDate;
+                } else {
+                  updated.dueDate = args.dueDate;
+                }
+              }
+              return updated;
+            }
+            return task;
+          });
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: updatedTasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              oldText: args.oldText,
+              newText: args.newText,
+              dueDate: args.dueDate,
+              listType: args.listType,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      reorderTask: {
+        name: 'reorderTask',
+        description: 'Move a task to a new position in the priority queue. Position 0 is highest priority.',
+        argsSchema: z.object({
+          text: z.string().min(1).describe('The text of the task to move'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
+          newPosition: z.number().int().min(0).describe('The new position index (0 = highest priority)'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { text: string; listType: ListType; newPosition: number }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const tasks = [...currentData.generalTasks[key]];
+          const currentIndex = tasks.findIndex(t => t.text === args.text.trim());
+          
+          if (currentIndex === -1) return;
+
+          const clampedPosition = Math.min(args.newPosition, tasks.length - 1);
+          const [task] = tasks.splice(currentIndex, 1);
+          tasks.splice(clampedPosition, 0, task);
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: tasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/reorder', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: args.text,
+              newPosition: args.newPosition,
+              listType: args.listType,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      // ==================== DAILY TASK SETTERS ====================
+      addTaskToToday: {
+        name: 'addTaskToToday',
+        description: 'Add a task to today\'s task list. If the task already exists in today\'s list, it will not be duplicated.',
+        argsSchema: z.object({
+          text: z.string().min(1).describe('The task text to add'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
+          dueDate: z.string().optional().describe('Optional due date in ISO format'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { text: string; listType: ListType; dueDate?: string }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const trimmedText = args.text.trim();
+          
+          // Check if already exists
+          if (currentData.todayTasks[key].some(t => t.text === trimmedText)) {
+            return; // Already exists, don't duplicate
+          }
+
+          const newTask: Task = { text: trimmedText };
+          if (args.dueDate) newTask.dueDate = args.dueDate;
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            todayTasks: {
+              ...currentData.todayTasks,
+              [key]: [...currentData.todayTasks[key], newTask],
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/today/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskText: args.text,
+              listType: args.listType,
+              date: currentData.currentDate,
+              dueDate: args.dueDate,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      removeTaskFromToday: {
+        name: 'removeTaskFromToday',
+        description: 'Remove a task from today\'s task list.',
+        argsSchema: z.object({
+          text: z.string().min(1).describe('The exact text of the task to remove'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { text: string; listType: ListType }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          const filteredTasks = currentData.todayTasks[key].filter(t => t.text !== args.text.trim());
+
+          // Optimistically update state
+          setValue({
+            ...currentData,
+            todayTasks: {
+              ...currentData.todayTasks,
+              [key]: filteredTasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/today/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskText: args.text,
+              listType: args.listType,
+              date: currentData.currentDate,
+            }),
+          });
+
+          // Trigger TaskLists to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+    },
+  });
+
   // Subscribe the main text state to the backend
   useSubscribeStateToAgentContext('mainText', (mainText) => ({ mainText }), {
     showInChat: true,
@@ -127,6 +449,16 @@ export default function HomePage() {
 
   // Subscribe the current time to agent context
   useSubscribeStateToAgentContext('currentTime', (currentTime) => ({ currentTime }), {
+    showInChat: false,
+  });
+
+  // Subscribe week journals to agent context
+  useSubscribeStateToAgentContext('weekJournals', (weekJournals) => ({ weekJournals }), {
+    showInChat: false,
+  });
+
+  // Subscribe task lists to agent context
+  useSubscribeStateToAgentContext('taskLists', (taskLists) => ({ taskLists }), {
     showInChat: false,
   });
 
@@ -193,11 +525,11 @@ export default function HomePage() {
 
       {/* Week View */}
       <div className="pt-16 pb-4">
-        <WeekView />
+        <WeekView onDataChange={setWeekViewData} />
       </div>
 
       {/* Task Lists */}
-      <TaskLists />
+      <TaskLists onDataChange={setTaskListsData} refreshTrigger={taskRefreshTrigger} />
 
       {/* Main interactive content area */}
       <div className="flex flex-col items-center justify-center p-8 space-y-8">
@@ -309,3 +641,5 @@ export default function HomePage() {
 
   return renderContent();
 }
+
+

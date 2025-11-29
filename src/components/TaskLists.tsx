@@ -3,12 +3,31 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 
-interface Task {
+// Exported for cedar state
+export interface Task {
   text: string;
   dueDate?: string;
 }
 
-type ListType = 'have-to-do' | 'want-to-do';
+export type ListType = 'have-to-do' | 'want-to-do';
+
+// Data structure for cedar context
+export interface TaskListsData {
+  generalTasks: {
+    haveToDo: Task[];
+    wantToDo: Task[];
+  };
+  todayTasks: {
+    haveToDo: Task[];
+    wantToDo: Task[];
+  };
+  currentDate: string;
+}
+
+interface TaskListsProps {
+  onDataChange?: (data: TaskListsData) => void;
+  refreshTrigger?: number;
+}
 
 interface TaskListProps {
   title: string;
@@ -35,8 +54,7 @@ function TaskList({
   clickedTasks,
   onAddClick
 }: TaskListProps) {
-  // Reverse tasks since they're stored as a stack (last = highest priority)
-  const orderedTasks = [...tasks].reverse();
+  const orderedTasks = tasks;
 
   const headerContent = (
     <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 flex items-center justify-between`}>
@@ -122,8 +140,7 @@ interface TodayTaskListProps {
 }
 
 function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove }: TodayTaskListProps) {
-  // Reverse tasks since they're stored as a stack (last = highest priority)
-  const orderedTasks = [...tasks].reverse();
+  const orderedTasks = tasks;
 
   if (loading) {
     return (
@@ -204,7 +221,7 @@ function getCurrentDateMMDDYY(): string {
   return `${month}${day}${year}`;
 }
 
-export function TaskLists() {
+export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [currentDate] = useState(getCurrentDateMMDDYY());
   
   // Modal state
@@ -230,6 +247,35 @@ export function TaskLists() {
   // Track which tasks are in today's lists
   const [todayHaveTasks, setTodayHaveTasks] = useState<Set<string>>(new Set());
   const [todayWantTasks, setTodayWantTasks] = useState<Set<string>>(new Set());
+
+  // Notify parent when task data changes
+  useEffect(() => {
+    const isLoading = loadingHave || loadingWant || loadingHaveToday || loadingWantToday;
+    if (onDataChange && !isLoading) {
+      onDataChange({
+        generalTasks: {
+          haveToDo,
+          wantToDo,
+        },
+        todayTasks: {
+          haveToDo: haveToDoToday,
+          wantToDo: wantToDoToday,
+        },
+        currentDate,
+      });
+    }
+  }, [
+    haveToDo,
+    wantToDo,
+    haveToDoToday,
+    wantToDoToday,
+    loadingHave,
+    loadingWant,
+    loadingHaveToday,
+    loadingWantToday,
+    currentDate,
+    onDataChange,
+  ]);
 
   // Fetch general tasks
   const fetchGeneralTasks = useCallback(async () => {
@@ -306,6 +352,14 @@ export function TaskLists() {
   useEffect(() => {
     fetchTodayTasks();
   }, [fetchTodayTasks]);
+
+  // Re-fetch when refreshTrigger changes (triggered by Cedar state setters)
+  useEffect(() => {
+    if (refreshTrigger !== undefined && refreshTrigger > 0) {
+      fetchGeneralTasks();
+      fetchTodayTasks();
+    }
+  }, [refreshTrigger, fetchGeneralTasks, fetchTodayTasks]);
 
   // Handler to add task to today's list
   const handleAddToToday = async (task: Task, listType: ListType) => {

@@ -47,19 +47,18 @@ function writeTasks(data: TasksData, listType: ListType): void {
 }
 
 /**
- * POST /api/tasks/add
- * Adds a new task to the list at the specified position (or appends to end if no position given)
+ * POST /api/tasks/reorder
+ * Moves a task to a new position in the priority queue
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string }
- * - task: The task text to add
- * - position: Optional index where to insert the task (0 = highest priority)
- * - listType: Which task list to add to (defaults to 'have-to-do')
- * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
+ * Body: { text: string, newPosition: number, listType?: 'have-to-do' | 'want-to-do' }
+ * - text: The text of the task to move
+ * - newPosition: The new position index (0 = highest priority)
+ * - listType: Which task list to reorder in (defaults to 'have-to-do')
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate } = body;
+    const { text, newPosition, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -69,49 +68,67 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!task || typeof task !== 'string') {
+    if (!text || typeof text !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Task parameter is required and must be a string' },
+        { success: false, error: 'Text parameter is required and must be a string' },
         { status: 400 }
       );
     }
 
-    const trimmedTask = task.trim();
-    if (trimmedTask.length === 0) {
+    if (typeof newPosition !== 'number' || newPosition < 0) {
       return NextResponse.json(
-        { success: false, error: 'Task cannot be empty' },
+        { success: false, error: 'newPosition must be a non-negative number' },
         { status: 400 }
       );
     }
 
-    // Build task object
-    const newTask: Task = { text: trimmedTask };
-    if (dueDate && typeof dueDate === 'string') {
-      newTask.dueDate = dueDate;
+    const trimmedText = text.trim();
+    if (trimmedText.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Text cannot be empty' },
+        { status: 400 }
+      );
     }
 
     // Read current tasks
     const data = readTasks(listType);
 
-    // Insert at specified position or append to end
-    if (typeof position === 'number' && position >= 0 && position <= data.tasks.length) {
-      data.tasks.splice(position, 0, newTask);
-    } else {
-      // Default: push to end
-      data.tasks.push(newTask);
+    // Find the task
+    const currentIndex = data.tasks.findIndex(task => task.text === trimmedText);
+    if (currentIndex === -1) {
+      return NextResponse.json({
+        success: false,
+        error: `Task not found: "${trimmedText}"`,
+      });
     }
+
+    // Clamp position to valid range
+    const clampedPosition = Math.min(newPosition, data.tasks.length - 1);
+
+    if (currentIndex === clampedPosition) {
+      return NextResponse.json({
+        success: true,
+        message: 'Task is already at the specified position',
+        position: clampedPosition,
+      });
+    }
+
+    // Remove from current position and insert at new position
+    const [task] = data.tasks.splice(currentIndex, 1);
+    data.tasks.splice(clampedPosition, 0, task);
 
     // Write updated tasks
     writeTasks(data, listType);
 
     return NextResponse.json({
       success: true,
-      message: 'Task added successfully',
-      taskCount: data.tasks.length,
-      insertedAt: typeof position === 'number' ? position : data.tasks.length - 1,
+      message: `Task moved from position ${currentIndex} to ${clampedPosition}`,
+      previousPosition: currentIndex,
+      newPosition: clampedPosition,
+      task,
     });
   } catch (error) {
-    console.error('Error adding task:', error);
+    console.error('Error reordering task:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
