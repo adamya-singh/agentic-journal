@@ -60,6 +60,54 @@ export interface ResolvedPlanEntry {
   completed?: boolean;
 }
 
+// ============ Range Entry Types ============
+
+/**
+ * A journal range entry spanning multiple hours
+ */
+export interface JournalRangeEntry {
+  start: string;  // e.g., "12pm"
+  end: string;    // e.g., "2pm"
+  text: string;
+}
+
+/**
+ * A plan range entry with free-form text
+ */
+export interface TextPlanRangeEntry {
+  start: string;
+  end: string;
+  text: string;
+}
+
+/**
+ * A plan range entry that references a task
+ */
+export interface TaskPlanRangeEntry {
+  start: string;
+  end: string;
+  taskId: string;
+  listType: ListType;
+}
+
+/**
+ * A plan range entry can be text-based or task-based
+ */
+export type PlanRangeEntry = TextPlanRangeEntry | TaskPlanRangeEntry;
+
+/**
+ * A resolved range entry with all display information
+ */
+export interface ResolvedRangeEntry {
+  start: string;
+  end: string;
+  text: string;
+  type: 'task' | 'text';
+  taskId?: string;
+  listType?: ListType;
+  completed?: boolean;
+}
+
 // ============ Type Guards ============
 
 export function isTaskPlanEntry(entry: PlanEntry): entry is TaskPlanEntry {
@@ -72,5 +120,13 @@ export function isTextPlanEntry(entry: PlanEntry): entry is TextPlanEntry {
 
 export function isLegacyStringEntry(entry: PlanEntry): entry is string {
   return typeof entry === 'string';
+}
+
+export function isTaskPlanRangeEntry(entry: PlanRangeEntry): entry is TaskPlanRangeEntry {
+  return 'taskId' in entry && 'listType' in entry;
+}
+
+export function isTextPlanRangeEntry(entry: PlanRangeEntry): entry is TextPlanRangeEntry {
+  return 'text' in entry && !('taskId' in entry);
 }
 

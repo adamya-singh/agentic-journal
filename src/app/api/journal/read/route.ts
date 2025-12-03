@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JournalRangeEntry } from '@/lib/types';
 
 // Path to the journal directory (relative to project root)
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -8,10 +9,12 @@ const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
 
-// Valid hours of the day
-const HOURS = ['8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm'] as const;
-type HourOfDay = typeof HOURS[number];
-type DayJournal = Record<HourOfDay, string>;
+// Journal with ranges support
+type DayJournalWithRanges = {
+  [hour: string]: string;
+} & {
+  ranges?: JournalRangeEntry[];
+};
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -30,14 +33,19 @@ function getJournalFilePath(date: string): string {
 /**
  * Helper function to read a journal file if it exists
  */
-function readJournalFile(date: string): DayJournal | null {
+function readJournalFile(date: string): DayJournalWithRanges | null {
   const filePath = getJournalFilePath(date);
   if (!fs.existsSync(filePath)) {
     return null;
   }
   try {
     const data = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(data) as DayJournal;
+    const journal = JSON.parse(data) as DayJournalWithRanges;
+    // Ensure ranges array exists for backward compatibility
+    if (!journal.ranges) {
+      journal.ranges = [];
+    }
+    return journal;
   } catch {
     return null;
   }
@@ -70,7 +78,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Read all journal entries
-    const journals: Record<string, DayJournal | null> = {};
+    const journals: Record<string, DayJournalWithRanges | null> = {};
     for (const date of dates) {
       journals[date] = readJournalFile(date);
     }

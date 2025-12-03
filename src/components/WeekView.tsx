@@ -1,28 +1,42 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ResolvedPlanEntry, ListType } from '@/lib/types';
+import { ResolvedPlanEntry, ResolvedRangeEntry, JournalRangeEntry, ListType } from '@/lib/types';
 
-// Journal entry type - exported for cedar state
-export type DayJournal = Record<string, string>;
+// Journal entry type with ranges support - exported for cedar state
+export type DayJournalWithRanges = {
+  [hour: string]: string;
+} & {
+  ranges?: JournalRangeEntry[];
+};
 
-// Resolved plan data - entries resolved to display format
-export type ResolvedDayPlan = Record<string, ResolvedPlanEntry | null>;
+// Resolved plan data with ranges - entries resolved to display format
+export type ResolvedDayPlanWithRanges = {
+  [hour: string]: ResolvedPlanEntry | null;
+} & {
+  ranges?: ResolvedRangeEntry[];
+};
 
 // Week data type - exported for cedar state
-export type WeekData = Record<string, DayJournal | null>;
+export type WeekData = Record<string, DayJournalWithRanges | null>;
 
-// Week plan data type - now uses resolved entries
-export type WeekPlanData = Record<string, ResolvedDayPlan | null>;
+// Week plan data type - now uses resolved entries with ranges
+export type WeekPlanData = Record<string, ResolvedDayPlanWithRanges | null>;
+
+// Legacy exports for backward compatibility
+export type DayJournal = DayJournalWithRanges;
+export type DayPlan = ResolvedDayPlanWithRanges;
 
 // Entry with type indicator for rendering
 export interface TypedEntry {
-  hour: string;
+  hour: string;       // For single-hour entries, this is the hour. For ranges, this is "start-end" format
   text: string;
   type: 'journal' | 'plan';
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
+  isRange?: boolean;  // True if this is a range entry
+  startHour?: string; // For sorting range entries by their start time
 }
 
 export interface DayInfo {
@@ -77,31 +91,42 @@ function getCurrentWeekDates(): DayInfo[] {
   return weekDates;
 }
 
+// Hour order for sorting
+const HOUR_ORDER = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+
 /**
  * Get combined entries from both journal and resolved plan, with type indicators
  */
-function getCombinedEntries(journal: DayJournal | null, plan: ResolvedDayPlan | null): TypedEntry[] {
+function getCombinedEntries(journal: DayJournalWithRanges | null, plan: ResolvedDayPlanWithRanges | null): TypedEntry[] {
   const entries: TypedEntry[] = [];
   const allHours = new Set<string>();
   
-  // Collect all hours that have entries
+  // Collect all hours that have entries (excluding special keys)
   if (journal) {
-    Object.keys(journal).forEach(hour => allHours.add(hour));
+    Object.keys(journal).forEach(hour => {
+      if (hour !== 'ranges' && HOUR_ORDER.includes(hour)) {
+        allHours.add(hour);
+      }
+    });
   }
   if (plan) {
-    Object.keys(plan).forEach(hour => allHours.add(hour));
+    Object.keys(plan).forEach(hour => {
+      if (hour !== 'ranges' && HOUR_ORDER.includes(hour)) {
+        allHours.add(hour);
+      }
+    });
   }
   
-  // Sort hours in chronological order
-  const hourOrder = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
-  const sortedHours = Array.from(allHours).sort((a, b) => hourOrder.indexOf(a) - hourOrder.indexOf(b));
+  const sortedHours = Array.from(allHours).sort((a, b) => HOUR_ORDER.indexOf(a) - HOUR_ORDER.indexOf(b));
   
+  // Add hourly entries
   for (const hour of sortedHours) {
-    const planEntry = plan?.[hour];
-    const journalText = journal?.[hour];
+    const planEntry = plan?.[hour] as ResolvedPlanEntry | null | undefined;
+    const journalValue = journal?.[hour];
+    const journalText = typeof journalValue === 'string' ? journalValue : undefined;
     
     // Add plan entry first (if exists and has text)
-    if (planEntry && planEntry.text && planEntry.text.trim() !== '') {
+    if (planEntry && typeof planEntry === 'object' && 'text' in planEntry && planEntry.text && planEntry.text.trim() !== '') {
       entries.push({ 
         hour, 
         text: planEntry.text, 
@@ -109,14 +134,59 @@ function getCombinedEntries(journal: DayJournal | null, plan: ResolvedDayPlan | 
         taskId: planEntry.taskId,
         listType: planEntry.listType,
         completed: planEntry.completed,
+        startHour: hour,
       });
     }
     
     // Add journal entry (if exists)
     if (journalText && journalText.trim() !== '') {
-      entries.push({ hour, text: journalText, type: 'journal' });
+      entries.push({ hour, text: journalText, type: 'journal', startHour: hour });
     }
   }
+  
+  // Add journal range entries
+  if (journal?.ranges && Array.isArray(journal.ranges)) {
+    for (const range of journal.ranges) {
+      if (range.text && range.text.trim() !== '') {
+        entries.push({
+          hour: `${range.start}-${range.end}`,
+          text: range.text,
+          type: 'journal',
+          isRange: true,
+          startHour: range.start,
+        });
+      }
+    }
+  }
+  
+  // Add plan range entries
+  if (plan?.ranges && Array.isArray(plan.ranges)) {
+    for (const range of plan.ranges) {
+      if (range.text && range.text.trim() !== '') {
+        entries.push({
+          hour: `${range.start}-${range.end}`,
+          text: range.text,
+          type: 'plan',
+          taskId: range.taskId,
+          listType: range.listType,
+          completed: range.completed,
+          isRange: true,
+          startHour: range.start,
+        });
+      }
+    }
+  }
+  
+  // Sort all entries by start hour
+  entries.sort((a, b) => {
+    const aIdx = HOUR_ORDER.indexOf(a.startHour || a.hour);
+    const bIdx = HOUR_ORDER.indexOf(b.startHour || b.hour);
+    if (aIdx !== bIdx) return aIdx - bIdx;
+    // If same start hour, show plans before journals
+    if (a.type === 'plan' && b.type === 'journal') return -1;
+    if (a.type === 'journal' && b.type === 'plan') return 1;
+    return 0;
+  });
   
   return entries;
 }
@@ -266,7 +336,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
                 {entries.length > 0 ? (
                   <div className="space-y-2">
-                    {entries.map(({ hour, text, type, taskId, completed }, index) => {
+                    {entries.map(({ hour, text, type, taskId, completed, isRange }, index) => {
                       const isTask = type === 'plan' && taskId;
                       const isCompleted = isTask && completed;
                       

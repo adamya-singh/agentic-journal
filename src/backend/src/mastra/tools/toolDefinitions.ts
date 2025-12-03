@@ -102,6 +102,21 @@ export const DeleteJournalEntrySchema = z.object({
   hour: z.enum(VALID_HOURS).describe('The hour to clear'),
 });
 
+// Schema for addJournalRange state setter
+export const AddJournalRangeSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
+  end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
+  text: z.string().min(1).describe('The text describing what happened during this time range'),
+});
+
+// Schema for removeJournalRange state setter
+export const RemoveJournalRangeSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
+  end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
+});
+
 // ==================== PLAN STATE SETTER SCHEMAS ====================
 
 // Schema for createDayPlan state setter
@@ -127,6 +142,21 @@ export const UpdatePlanEntrySchema = z.object({
 export const DeletePlanEntrySchema = z.object({
   date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
   hour: z.enum(VALID_HOURS).describe('The hour to clear'),
+});
+
+// Schema for addPlanRange state setter
+export const AddPlanRangeSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
+  end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
+  text: z.string().min(1).describe('The text describing what is planned during this time range'),
+});
+
+// Schema for removePlanRange state setter
+export const RemovePlanRangeSchema = z.object({
+  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
+  end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
 
 // ==================== TOOL CREATION ====================
@@ -284,6 +314,30 @@ export const deleteJournalEntryTool = createMastraToolForStateSetter(
   },
 );
 
+export const addJournalRangeTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'addJournalRange',
+  AddJournalRangeSchema,
+  {
+    description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm"). This creates a single entry displayed as "12pm-2pm: worked on project".',
+    toolId: 'addJournalRange',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const removeJournalRangeTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'removeJournalRange',
+  RemoveJournalRangeSchema,
+  {
+    description: 'Remove a journal range entry by specifying its start and end hours.',
+    toolId: 'removeJournalRange',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
 // ==================== PLAN STATE SETTER TOOLS ====================
 
 export const createDayPlanTool = createMastraToolForStateSetter(
@@ -334,6 +388,30 @@ export const deletePlanEntryTool = createMastraToolForStateSetter(
   },
 );
 
+export const addPlanRangeTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'addPlanRange',
+  AddPlanRangeSchema,
+  {
+    description: 'Add a plan entry that spans multiple hours. Use this when scheduling an activity for a range of time (e.g., "meeting from 2pm to 4pm"). This creates a single entry displayed as "2pm-4pm: meeting".',
+    toolId: 'addPlanRange',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const removePlanRangeTool = createMastraToolForStateSetter(
+  'weekJournals',
+  'removePlanRange',
+  RemovePlanRangeSchema,
+  {
+    description: 'Remove a plan range entry by specifying its start and end hours.',
+    toolId: 'removePlanRange',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
 export const requestAdditionalContextTool = createRequestAdditionalContextTool();
 
 /**
@@ -350,12 +428,16 @@ export const TOOL_REGISTRY = {
     appendToJournalTool,
     updateJournalEntryTool,
     deleteJournalEntryTool,
+    addJournalRangeTool,
+    removeJournalRangeTool,
   },
   planManagement: {
     createDayPlanTool,
     appendToPlanTool,
     updatePlanEntryTool,
     deletePlanEntryTool,
+    addPlanRangeTool,
+    removePlanRangeTool,
   },
   taskManagement: {
     addTaskTool,
@@ -375,10 +457,14 @@ export const ALL_TOOLS = [
   appendToJournalTool,
   updateJournalEntryTool,
   deleteJournalEntryTool,
+  addJournalRangeTool,
+  removeJournalRangeTool,
   createDayPlanTool,
   appendToPlanTool,
   updatePlanEntryTool,
   deletePlanEntryTool,
+  addPlanRangeTool,
+  removePlanRangeTool,
   addTaskTool,
   removeTaskTool,
   updateTaskTool,

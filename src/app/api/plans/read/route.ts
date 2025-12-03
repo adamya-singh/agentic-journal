@@ -4,12 +4,15 @@ import * as path from 'path';
 import {
   DayPlan,
   PlanEntry,
+  PlanRangeEntry,
   ResolvedPlanEntry,
+  ResolvedRangeEntry,
   ListType,
   Task,
   TasksData,
   isTaskPlanEntry,
   isTextPlanEntry,
+  isTaskPlanRangeEntry,
 } from '@/lib/types';
 
 // Path to the daily-plans directory (relative to project root)
@@ -22,6 +25,18 @@ const DATE_REGEX = /^\d{6}$/;
 // Valid hours of the day
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 type HourOfDay = typeof HOURS[number];
+
+// Plan with ranges support
+type DayPlanWithRanges = DayPlan & {
+  ranges?: PlanRangeEntry[];
+};
+
+// Resolved plan with ranges
+type ResolvedDayPlanWithRanges = {
+  [hour: string]: ResolvedPlanEntry | null;
+} & {
+  ranges?: ResolvedRangeEntry[];
+};
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -40,14 +55,19 @@ function getPlanFilePath(date: string): string {
 /**
  * Helper function to read a plan file if it exists
  */
-function readPlanFile(date: string): DayPlan | null {
+function readPlanFile(date: string): DayPlanWithRanges | null {
   const filePath = getPlanFilePath(date);
   if (!fs.existsSync(filePath)) {
     return null;
   }
   try {
     const data = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(data) as DayPlan;
+    const plan = JSON.parse(data) as DayPlanWithRanges;
+    // Ensure ranges array exists for backward compatibility
+    if (!plan.ranges) {
+      plan.ranges = [];
+    }
+    return plan;
   } catch {
     return null;
   }
@@ -160,21 +180,66 @@ function resolveEntry(hour: string, entry: PlanEntry, date: string): ResolvedPla
 }
 
 /**
+ * Resolve a range entry to displayable format
+ */
+function resolveRangeEntry(entry: PlanRangeEntry, date: string): ResolvedRangeEntry {
+  if (isTaskPlanRangeEntry(entry)) {
+    const task = findTaskById(entry.taskId, entry.listType, date);
+    if (task) {
+      return {
+        start: entry.start,
+        end: entry.end,
+        text: task.text,
+        type: 'task',
+        taskId: entry.taskId,
+        listType: entry.listType,
+        completed: task.completed,
+      };
+    }
+    // Task not found - return placeholder
+    return {
+      start: entry.start,
+      end: entry.end,
+      text: '[Task not found]',
+      type: 'task',
+      taskId: entry.taskId,
+      listType: entry.listType,
+      completed: false,
+    };
+  }
+
+  // Text range entry
+  return {
+    start: entry.start,
+    end: entry.end,
+    text: entry.text,
+    type: 'text',
+  };
+}
+
+/**
  * Resolve all entries in a plan
  */
-function resolvePlan(plan: DayPlan, date: string): Record<HourOfDay, ResolvedPlanEntry | null> {
-  const resolved: Record<string, ResolvedPlanEntry | null> = {};
+function resolvePlan(plan: DayPlanWithRanges, date: string): ResolvedDayPlanWithRanges {
+  const resolved: ResolvedDayPlanWithRanges = {};
   
   for (const hour of HOURS) {
     const entry = plan[hour];
     if (entry) {
-      resolved[hour] = resolveEntry(hour, entry, date);
+      resolved[hour] = resolveEntry(hour, entry as PlanEntry, date);
     } else {
       resolved[hour] = null;
     }
   }
+
+  // Resolve range entries
+  if (plan.ranges && plan.ranges.length > 0) {
+    resolved.ranges = plan.ranges.map(r => resolveRangeEntry(r, date));
+  } else {
+    resolved.ranges = [];
+  }
   
-  return resolved as Record<HourOfDay, ResolvedPlanEntry | null>;
+  return resolved;
 }
 
 /**
@@ -209,7 +274,7 @@ export async function POST(request: NextRequest) {
 
     if (resolve) {
       // Return resolved plans with task details
-      const resolvedPlans: Record<string, Record<HourOfDay, ResolvedPlanEntry | null> | null> = {};
+      const resolvedPlans: Record<string, ResolvedDayPlanWithRanges | null> = {};
       for (const date of dates) {
         const plan = readPlanFile(date);
         if (plan) {
@@ -226,7 +291,7 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // Return raw plans
-      const plans: Record<string, DayPlan | null> = {};
+      const plans: Record<string, DayPlanWithRanges | null> = {};
       for (const date of dates) {
         plans[date] = readPlanFile(date);
       }

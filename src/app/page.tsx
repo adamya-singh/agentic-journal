@@ -286,6 +286,66 @@ export default function HomePage() {
           setWeekViewRefreshTrigger(prev => prev + 1);
         },
       },
+      // ==================== JOURNAL RANGE SETTERS ====================
+      addJournalRange: {
+        name: 'addJournalRange',
+        description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm").',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
+          end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
+          text: z.string().min(1).describe('The text describing what happened during this time range'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; start: HourOfDay; end: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Persist to JSON via API
+          await fetch('/api/journal/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              range: { start: args.start, end: args.end, text: args.text },
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      removeJournalRange: {
+        name: 'removeJournalRange',
+        description: 'Remove a journal range entry by specifying its start and end hours.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
+          end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; start: HourOfDay; end: HourOfDay }
+        ) => {
+          if (!currentData) return;
+
+          // Persist to JSON via API
+          await fetch('/api/journal/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              removeRange: { start: args.start, end: args.end },
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
       // ==================== PLAN SETTERS ====================
       createDayPlan: {
         name: 'createDayPlan',
@@ -326,12 +386,16 @@ export default function HomePage() {
 
           // Optimistically update state
           const currentPlan = currentData.weekPlanData[args.date] || {};
-          const currentEntry = currentPlan[args.hour] || '';
-          const updatedEntry = currentEntry && currentEntry.trim() !== '' 
-            ? currentEntry + '\n' + args.text 
+          const currentEntry = currentPlan[args.hour];
+          const currentText = currentEntry?.text || '';
+          const updatedText = currentText && currentText.trim() !== '' 
+            ? currentText + '\n' + args.text 
             : args.text;
 
-          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: updatedEntry };
+          const updatedPlan: DayPlan = { 
+            ...currentPlan, 
+            [args.hour]: { hour: args.hour, text: updatedText, type: 'text' as const } 
+          };
           setValue({
             ...currentData,
             weekPlanData: {
@@ -372,7 +436,10 @@ export default function HomePage() {
 
           // Optimistically update state
           const currentPlan = currentData.weekPlanData[args.date] || {};
-          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: args.text };
+          const updatedPlan: DayPlan = { 
+            ...currentPlan, 
+            [args.hour]: { hour: args.hour, text: args.text, type: 'text' as const } 
+          };
           setValue({
             ...currentData,
             weekPlanData: {
@@ -412,7 +479,7 @@ export default function HomePage() {
 
           // Optimistically update state
           const currentPlan = currentData.weekPlanData[args.date] || {};
-          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: '' };
+          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: null };
           setValue({
             ...currentData,
             weekPlanData: {
@@ -428,6 +495,66 @@ export default function HomePage() {
             body: JSON.stringify({
               date: args.date,
               hour: args.hour,
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      // ==================== PLAN RANGE SETTERS ====================
+      addPlanRange: {
+        name: 'addPlanRange',
+        description: 'Add a plan entry that spans multiple hours. Use this when scheduling an activity for a range of time (e.g., "meeting from 2pm to 4pm").',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
+          end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
+          text: z.string().min(1).describe('The text describing what is planned during this time range'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; start: HourOfDay; end: HourOfDay; text: string }
+        ) => {
+          if (!currentData) return;
+
+          // Persist to JSON via API
+          await fetch('/api/plans/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              range: { start: args.start, end: args.end, text: args.text },
+            }),
+          });
+
+          // Trigger WeekView to refresh
+          setWeekViewRefreshTrigger(prev => prev + 1);
+        },
+      },
+      removePlanRange: {
+        name: 'removePlanRange',
+        description: 'Remove a plan range entry by specifying its start and end hours.',
+        argsSchema: z.object({
+          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
+          end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
+        }),
+        execute: async (
+          currentData: WeekViewData | null,
+          setValue: (newValue: WeekViewData | null) => void,
+          args: { date: string; start: HourOfDay; end: HourOfDay }
+        ) => {
+          if (!currentData) return;
+
+          // Persist to JSON via API
+          await fetch('/api/plans/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              date: args.date,
+              removeRange: { start: args.start, end: args.end },
             }),
           });
 

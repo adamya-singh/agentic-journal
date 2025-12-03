@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { JournalRangeEntry } from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -11,7 +12,12 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
 
-type DayJournal = Record<string, string>;
+// Journal with ranges support
+type DayJournalWithRanges = {
+  [hour: string]: string;
+} & {
+  ranges?: JournalRangeEntry[];
+};
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -38,51 +44,42 @@ function journalFileExists(date: string): boolean {
 /**
  * Helper function to read a journal file
  */
-function readJournalFile(date: string): DayJournal {
+function readJournalFile(date: string): DayJournalWithRanges {
   const filePath = getJournalFilePath(date);
   const content = fs.readFileSync(filePath, 'utf-8');
-  return JSON.parse(content);
+  const journal = JSON.parse(content) as DayJournalWithRanges;
+  // Ensure ranges array exists for backward compatibility
+  if (!journal.ranges) {
+    journal.ranges = [];
+  }
+  return journal;
 }
 
 /**
  * Helper function to write a journal file
  */
-function writeJournalFile(date: string, journal: DayJournal): void {
+function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
   const filePath = getJournalFilePath(date);
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
 }
 
 /**
  * POST /api/journal/update
- * Updates/replaces a specific hour's journal entry
+ * Updates/replaces a specific hour's journal entry OR adds/updates a range entry
  * 
- * Body: { date: string, hour: string, text: string }
+ * For hourly update: { date: string, hour: string, text: string }
+ * For range update: { date: string, range: { start: string, end: string, text: string } }
+ * For range removal: { date: string, removeRange: { start: string, end: string } }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text } = body;
+    const { date, hour, text, range, removeRange } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
       return NextResponse.json(
         { success: false, error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)' },
-        { status: 400 }
-      );
-    }
-
-    // Validate hour
-    if (!hour || !VALID_HOURS.includes(hour)) {
-      return NextResponse.json(
-        { success: false, error: `Invalid hour. Must be one of: ${VALID_HOURS.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    // Validate text (can be empty string to clear entry)
-    if (text === undefined || text === null) {
-      return NextResponse.json(
-        { success: false, error: 'Text parameter is required' },
         { status: 400 }
       );
     }
@@ -97,12 +94,110 @@ export async function POST(request: NextRequest) {
 
     // Read current journal
     const journal = readJournalFile(date);
+
+    // Handle range removal
+    if (removeRange) {
+      const { start, end } = removeRange;
+      if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid range. start and end must be valid hours.' },
+          { status: 400 }
+        );
+      }
+
+      const initialLength = journal.ranges?.length || 0;
+      journal.ranges = (journal.ranges || []).filter(
+        r => !(r.start === start && r.end === end)
+      );
+
+      writeJournalFile(date, journal);
+
+      return NextResponse.json({
+        success: true,
+        date,
+        message: `Removed range ${start}-${end} from ${date}`,
+        removed: initialLength !== journal.ranges.length,
+      });
+    }
+
+    // Handle range update/add
+    if (range) {
+      const { start, end, text: rangeText } = range;
+      
+      if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid range. start and end must be valid hours.' },
+          { status: 400 }
+        );
+      }
+
+      if (rangeText === undefined || rangeText === null) {
+        return NextResponse.json(
+          { success: false, error: 'Range text is required' },
+          { status: 400 }
+        );
+      }
+
+      // Validate start comes before end
+      const startIdx = VALID_HOURS.indexOf(start);
+      const endIdx = VALID_HOURS.indexOf(end);
+      if (startIdx >= endIdx) {
+        return NextResponse.json(
+          { success: false, error: 'Range start must be before end' },
+          { status: 400 }
+        );
+      }
+
+      // Check if range already exists and update it, or add new
+      const existingIdx = (journal.ranges || []).findIndex(
+        r => r.start === start && r.end === end
+      );
+
+      const newRange: JournalRangeEntry = { start, end, text: rangeText };
+
+      if (existingIdx >= 0) {
+        const previousRange = journal.ranges![existingIdx];
+        journal.ranges![existingIdx] = newRange;
+        writeJournalFile(date, journal);
+
+        return NextResponse.json({
+          success: true,
+          date,
+          message: `Updated range ${start}-${end} on ${date}`,
+          previousRange,
+          newRange,
+        });
+      } else {
+        journal.ranges = journal.ranges || [];
+        journal.ranges.push(newRange);
+        writeJournalFile(date, journal);
+
+        return NextResponse.json({
+          success: true,
+          date,
+          message: `Added range ${start}-${end} on ${date}`,
+          newRange,
+        });
+      }
+    }
+
+    // Handle hourly update (original behavior)
+    if (!hour || !VALID_HOURS.includes(hour)) {
+      return NextResponse.json(
+        { success: false, error: `Invalid hour. Must be one of: ${VALID_HOURS.join(', ')}` },
+        { status: 400 }
+      );
+    }
+
+    if (text === undefined || text === null) {
+      return NextResponse.json(
+        { success: false, error: 'Text parameter is required' },
+        { status: 400 }
+      );
+    }
+
     const previousEntry = journal[hour] || '';
-
-    // Update the entry
     journal[hour] = typeof text === 'string' ? text : '';
-
-    // Write updated journal
     writeJournalFile(date, journal);
 
     return NextResponse.json({
