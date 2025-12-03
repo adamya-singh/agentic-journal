@@ -9,6 +9,11 @@ function getDailyTasksFilePath(date: string, listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
 }
 
+// Get the path for the general task list
+function getGeneralTasksFilePath(listType: ListType): string {
+  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
+}
+
 interface Task {
   text: string;
   dueDate?: string;
@@ -17,6 +22,16 @@ interface Task {
 interface TasksData {
   _comment: string;
   tasks: Task[];
+}
+
+/**
+ * Convert MMDDYY to YYYY-MM-DD format
+ */
+function mmddyyToIso(mmddyy: string): string {
+  const month = mmddyy.slice(0, 2);
+  const day = mmddyy.slice(2, 4);
+  const year = '20' + mmddyy.slice(4, 6);
+  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -32,6 +47,58 @@ function readDailyTasks(date: string, listType: ListType): TasksData {
   }
   const content = fs.readFileSync(tasksFile, 'utf-8');
   return JSON.parse(content);
+}
+
+/**
+ * Helper function to write daily tasks to file
+ */
+function writeDailyTasks(data: TasksData, date: string, listType: ListType): void {
+  const tasksFile = getDailyTasksFilePath(date, listType);
+  const dir = path.dirname(tasksFile);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+}
+
+/**
+ * Helper function to read general tasks from file
+ */
+function readGeneralTasks(listType: ListType): TasksData {
+  const tasksFile = getGeneralTasksFilePath(listType);
+  if (!fs.existsSync(tasksFile)) {
+    return {
+      _comment: 'Queue structure - first element is highest priority',
+      tasks: [],
+    };
+  }
+  const content = fs.readFileSync(tasksFile, 'utf-8');
+  return JSON.parse(content);
+}
+
+/**
+ * Auto-add tasks from general list that are due on the given date
+ * Returns the updated daily tasks data
+ */
+function autoAddDueTasks(date: string, listType: ListType): TasksData {
+  const dailyData = readDailyTasks(date, listType);
+  const generalData = readGeneralTasks(listType);
+  
+  const isoDate = mmddyyToIso(date);
+  const existingTaskTexts = new Set(dailyData.tasks.map(t => t.text));
+  
+  // Find tasks due on this date that aren't already in today's list
+  const tasksToAdd = generalData.tasks.filter(
+    task => task.dueDate === isoDate && !existingTaskTexts.has(task.text)
+  );
+  
+  if (tasksToAdd.length > 0) {
+    // Add due tasks to the beginning of the list (they're urgent)
+    dailyData.tasks = [...tasksToAdd, ...dailyData.tasks];
+    writeDailyTasks(dailyData, date, listType);
+  }
+  
+  return dailyData;
 }
 
 /**
@@ -64,7 +131,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = readDailyTasks(date, listType);
+    // Auto-add tasks that are due on this date, then return the list
+    const data = autoAddDueTasks(date, listType);
 
     return NextResponse.json({
       success: true,
