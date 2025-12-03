@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DayPlan, PlanEntry, isTextPlanEntry, isTaskPlanEntry } from '@/lib/types';
 
 // Path to the daily-plans directory
 const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
@@ -10,8 +11,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
-
-type DayPlan = Record<string, string>;
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -53,8 +52,25 @@ function writePlanFile(date: string, plan: DayPlan): void {
 }
 
 /**
+ * Get text content from an entry (for appending purposes)
+ */
+function getEntryText(entry: PlanEntry): string {
+  if (typeof entry === 'string') {
+    return entry;
+  }
+  if (isTextPlanEntry(entry)) {
+    return entry.text;
+  }
+  // Task entries can't be appended to - they're references
+  return '';
+}
+
+/**
  * POST /api/plans/append
  * Appends text to a specific hour's plan entry
+ * 
+ * Note: This only works for text entries. If the current entry is a task reference,
+ * the append will fail because task references are atomic.
  * 
  * Body: { date: string, hour: string, text: string }
  */
@@ -97,14 +113,29 @@ export async function POST(request: NextRequest) {
 
     // Read current plan
     const plan = readPlanFile(date);
-    const currentEntry = plan[hour] || '';
+    const currentEntry = plan[hour];
+
+    // Check if current entry is a task reference (can't append to those)
+    if (currentEntry && isTaskPlanEntry(currentEntry)) {
+      return NextResponse.json(
+        { success: false, error: 'Cannot append text to a task reference. Use update to replace it.' },
+        { status: 400 }
+      );
+    }
+
+    // Get current text content
+    const currentText = currentEntry ? getEntryText(currentEntry) : '';
 
     // Append with newline separation if there's existing content
-    if (currentEntry && currentEntry.trim() !== '') {
-      plan[hour] = currentEntry + '\n' + text.trim();
+    let newText: string;
+    if (currentText && currentText.trim() !== '') {
+      newText = currentText + '\n' + text.trim();
     } else {
-      plan[hour] = text.trim();
+      newText = text.trim();
     }
+
+    // Store as TextPlanEntry format
+    plan[hour] = { text: newText };
 
     // Write updated plan
     writePlanFile(date, plan);
@@ -124,4 +155,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

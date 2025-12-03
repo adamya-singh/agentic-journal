@@ -10,6 +10,7 @@ function getDailyTasksFilePath(date: string, listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -50,8 +51,9 @@ function writeDailyTasks(data: TasksData, date: string, listType: ListType): voi
  * POST /api/tasks/today/add
  * Adds a task to the daily list if not already present
  * 
- * Body: { taskText: string, listType: 'have-to-do' | 'want-to-do', date: string, dueDate?: string }
- * - taskText: The task text to add (serves as identifier)
+ * Body: { taskId: string, taskText: string, listType: 'have-to-do' | 'want-to-do', date: string, dueDate?: string }
+ * - taskId: The unique ID of the task
+ * - taskText: The task text
  * - listType: Which task list to add to
  * - date: The date in MMDDYY format
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
@@ -59,12 +61,20 @@ function writeDailyTasks(data: TasksData, date: string, listType: ListType): voi
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskText, listType, date, dueDate } = body;
+    const { taskId, taskText, listType, date, dueDate } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
       return NextResponse.json(
         { success: false, error: 'Invalid listType. Must be "have-to-do" or "want-to-do"' },
+        { status: 400 }
+      );
+    }
+
+    // Validate taskId
+    if (!taskId || typeof taskId !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'taskId parameter is required and must be a string' },
         { status: 400 }
       );
     }
@@ -96,8 +106,8 @@ export async function POST(request: NextRequest) {
     // Read current daily tasks
     const data = readDailyTasks(date, listType);
 
-    // Check if task already exists in today's list
-    const alreadyExists = data.tasks.some((task) => task.text === trimmedTaskText);
+    // Check if task already exists in today's list by ID
+    const alreadyExists = data.tasks.some((task) => task.id === taskId);
     if (alreadyExists) {
       return NextResponse.json({
         success: true,
@@ -106,8 +116,11 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Build task object
-    const newTask: Task = { text: trimmedTaskText };
+    // Build task object with the same ID from general list
+    const newTask: Task = { 
+      id: taskId,
+      text: trimmedTaskText 
+    };
     if (dueDate && typeof dueDate === 'string') {
       newTask.dueDate = dueDate;
     }

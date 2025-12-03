@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 
 type ListType = 'have-to-do' | 'want-to-do';
 
@@ -10,6 +11,7 @@ function getTasksFilePath(listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -84,8 +86,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Build task object
-    const newTask: Task = { text: trimmedTask };
+    // Build task object with generated UUID
+    const newTask: Task = { 
+      id: randomUUID(),
+      text: trimmedTask 
+    };
     if (dueDate && typeof dueDate === 'string') {
       newTask.dueDate = dueDate;
     }
@@ -107,6 +112,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Task added successfully',
+      taskId: newTask.id,
       taskCount: data.tasks.length,
       insertedAt: typeof position === 'number' ? position : data.tasks.length - 1,
     });

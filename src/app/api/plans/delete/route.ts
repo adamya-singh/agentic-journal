@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DayPlan } from '@/lib/types';
 
 // Path to the daily-plans directory
 const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
@@ -10,8 +11,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
-
-type DayPlan = Record<string, string>;
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -53,6 +52,22 @@ function writePlanFile(date: string, plan: DayPlan): void {
 }
 
 /**
+ * Check if an entry is empty
+ */
+function isEmptyEntry(entry: unknown): boolean {
+  if (!entry) return true;
+  if (typeof entry === 'string') return entry.trim() === '';
+  if (typeof entry === 'object' && entry !== null) {
+    if ('text' in entry && typeof (entry as { text: string }).text === 'string') {
+      return (entry as { text: string }).text.trim() === '';
+    }
+    // Task references are not empty
+    if ('taskId' in entry) return false;
+  }
+  return true;
+}
+
+/**
  * POST /api/plans/delete
  * Deletes/clears a specific hour's plan entry
  * 
@@ -89,16 +104,16 @@ export async function POST(request: NextRequest) {
 
     // Read current plan
     const plan = readPlanFile(date);
-    const deletedEntry = plan[hour] || '';
+    const deletedEntry = plan[hour];
 
     // Check if entry was already empty
-    if (!deletedEntry || deletedEntry.trim() === '') {
+    if (isEmptyEntry(deletedEntry)) {
       return NextResponse.json({
         success: true,
         date,
         hour,
         message: `Plan entry at ${hour} on ${date} was already empty.`,
-        deletedEntry: '',
+        deletedEntry: null,
       });
     }
 
@@ -123,4 +138,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

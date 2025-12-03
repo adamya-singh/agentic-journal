@@ -1,24 +1,28 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
+import { ResolvedPlanEntry, ListType } from '@/lib/types';
 
 // Journal entry type - exported for cedar state
 export type DayJournal = Record<string, string>;
 
-// Plan entry type - same structure as journal
-export type DayPlan = Record<string, string>;
+// Resolved plan data - entries resolved to display format
+export type ResolvedDayPlan = Record<string, ResolvedPlanEntry | null>;
 
 // Week data type - exported for cedar state
 export type WeekData = Record<string, DayJournal | null>;
 
-// Week plan data type
-export type WeekPlanData = Record<string, DayPlan | null>;
+// Week plan data type - now uses resolved entries
+export type WeekPlanData = Record<string, ResolvedDayPlan | null>;
 
 // Entry with type indicator for rendering
 export interface TypedEntry {
   hour: string;
   text: string;
   type: 'journal' | 'plan';
+  taskId?: string;
+  listType?: ListType;
+  completed?: boolean;
 }
 
 export interface DayInfo {
@@ -74,9 +78,9 @@ function getCurrentWeekDates(): DayInfo[] {
 }
 
 /**
- * Get combined entries from both journal and plan, with type indicators
+ * Get combined entries from both journal and resolved plan, with type indicators
  */
-function getCombinedEntries(journal: DayJournal | null, plan: DayPlan | null): TypedEntry[] {
+function getCombinedEntries(journal: DayJournal | null, plan: ResolvedDayPlan | null): TypedEntry[] {
   const entries: TypedEntry[] = [];
   const allHours = new Set<string>();
   
@@ -93,12 +97,19 @@ function getCombinedEntries(journal: DayJournal | null, plan: DayPlan | null): T
   const sortedHours = Array.from(allHours).sort((a, b) => hourOrder.indexOf(a) - hourOrder.indexOf(b));
   
   for (const hour of sortedHours) {
-    const planText = plan?.[hour];
+    const planEntry = plan?.[hour];
     const journalText = journal?.[hour];
     
-    // Add plan entry first (if exists)
-    if (planText && planText.trim() !== '') {
-      entries.push({ hour, text: planText, type: 'plan' });
+    // Add plan entry first (if exists and has text)
+    if (planEntry && planEntry.text && planEntry.text.trim() !== '') {
+      entries.push({ 
+        hour, 
+        text: planEntry.text, 
+        type: 'plan',
+        taskId: planEntry.taskId,
+        listType: planEntry.listType,
+        completed: planEntry.completed,
+      });
     }
     
     // Add journal entry (if exists)
@@ -126,6 +137,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       const dates = weekDates.map(d => d.date);
       
       // Fetch both journals and plans in parallel
+      // Use resolve=true to get task details
       const [journalResponse, planResponse] = await Promise.all([
         fetch('/api/journal/read', {
           method: 'POST',
@@ -135,7 +147,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         fetch('/api/plans/read', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dates }),
+          body: JSON.stringify({ dates, resolve: true }),
         }),
       ]);
       
@@ -152,7 +164,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         setWeekPlanData(planData.plans);
       }
       // Don't error if plans fail - they're optional
-    } catch (err) {
+    } catch {
       setError('Failed to connect to server');
     } finally {
       setLoading(false);
@@ -210,6 +222,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           <span className="text-gray-600">Planned</span>
         </div>
         <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-green-500"></span>
+          <span className="text-gray-600">Completed</span>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-gray-500"></span>
           <span className="text-gray-600">Journal</span>
         </div>
@@ -250,25 +266,42 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
                 {entries.length > 0 ? (
                   <div className="space-y-2">
-                    {entries.map(({ hour, text, type }, index) => (
-                      <div key={`${hour}-${type}-${index}`} className="text-sm">
-                        <span className={`font-medium ${
-                          type === 'plan' 
-                            ? 'text-teal-600' 
-                            : isToday 
-                              ? 'text-indigo-600' 
-                              : 'text-gray-500'
-                        }`}>
-                          {hour}:
-                        </span>{' '}
-                        <span className={type === 'plan' ? 'text-teal-700' : 'text-gray-700'}>
-                          {text}
-                        </span>
-                        {type === 'plan' && (
-                          <span className="ml-1 text-xs text-teal-500 italic">(plan)</span>
-                        )}
-                      </div>
-                    ))}
+                    {entries.map(({ hour, text, type, taskId, completed }, index) => {
+                      const isTask = type === 'plan' && taskId;
+                      const isCompleted = isTask && completed;
+                      
+                      return (
+                        <div key={`${hour}-${type}-${index}`} className="text-sm">
+                          <span className={`font-medium ${
+                            isCompleted
+                              ? 'text-green-600'
+                              : type === 'plan' 
+                                ? 'text-teal-600' 
+                                : isToday 
+                                  ? 'text-indigo-600' 
+                                  : 'text-gray-500'
+                          }`}>
+                            {hour}:
+                          </span>{' '}
+                          <span className={`${
+                            isCompleted 
+                              ? 'text-green-600 line-through' 
+                              : type === 'plan' 
+                                ? 'text-teal-700' 
+                                : 'text-gray-700'
+                          }`}>
+                            {text}
+                          </span>
+                          {type === 'plan' && (
+                            <span className={`ml-1 text-xs italic ${
+                              isCompleted ? 'text-green-500' : 'text-teal-500'
+                            }`}>
+                              {isCompleted ? '(done)' : isTask ? '(task)' : '(plan)'}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
@@ -283,4 +316,3 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     </div>
   );
 }
-

@@ -10,6 +10,7 @@ function getTasksFilePath(listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }

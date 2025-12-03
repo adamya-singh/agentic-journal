@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DayPlan, PlanEntry } from '@/lib/types';
 
 // Path to the daily-plans directory
 const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
@@ -10,8 +11,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
-
-type DayPlan = Record<string, string>;
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -56,12 +55,21 @@ function writePlanFile(date: string, plan: DayPlan): void {
  * POST /api/plans/update
  * Updates/replaces a specific hour's plan entry
  * 
+ * Body: { date: string, hour: string, entry: PlanEntry }
+ * 
+ * entry can be:
+ * - { taskId: string, listType: 'have-to-do' | 'want-to-do' } - task reference
+ * - { text: string } - free-form text
+ * - string - legacy plain text (for backward compatibility)
+ * - '' or null - clears the entry
+ * 
+ * Legacy format also supported:
  * Body: { date: string, hour: string, text: string }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text } = body;
+    const { date, hour, entry, text, taskId, listType } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -79,10 +87,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate text (can be empty string to clear entry)
-    if (text === undefined || text === null) {
+    // Determine the entry to save
+    let entryToSave: PlanEntry;
+
+    if (entry !== undefined) {
+      // New format: entry is provided directly
+      entryToSave = entry;
+    } else if (taskId !== undefined && listType !== undefined) {
+      // Task reference format
+      entryToSave = { taskId, listType };
+    } else if (text !== undefined) {
+      // Legacy format: plain text
+      if (text === '' || text === null) {
+        entryToSave = '';
+      } else if (typeof text === 'string') {
+        // Wrap in TextPlanEntry for new format
+        entryToSave = { text };
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Invalid text parameter' },
+          { status: 400 }
+        );
+      }
+    } else {
       return NextResponse.json(
-        { success: false, error: 'Text parameter is required' },
+        { success: false, error: 'Entry, text, or taskId+listType parameter is required' },
         { status: 400 }
       );
     }
@@ -100,7 +129,7 @@ export async function POST(request: NextRequest) {
     const previousEntry = plan[hour] || '';
 
     // Update the entry
-    plan[hour] = typeof text === 'string' ? text : '';
+    plan[hour] = entryToSave;
 
     // Write updated plan
     writePlanFile(date, plan);
@@ -121,4 +150,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

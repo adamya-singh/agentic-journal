@@ -5,8 +5,10 @@ import { PriorityComparisonModal } from './PriorityComparisonModal';
 
 // Exported for cedar state
 export interface Task {
+  id: string;
   text: string;
   dueDate?: string;
+  completed?: boolean;
 }
 
 export type ListType = 'have-to-do' | 'want-to-do';
@@ -98,11 +100,11 @@ function TaskList({
       <div className="p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
         {orderedTasks.length > 0 ? (
           <ol className="space-y-2 list-decimal list-inside">
-            {orderedTasks.map((task, index) => {
-              const isInToday = clickedTasks?.has(task.text);
+            {orderedTasks.map((task) => {
+              const isInToday = clickedTasks?.has(task.id);
               return (
                 <li 
-                  key={index} 
+                  key={task.id} 
                   className={`text-sm text-gray-700 ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
                   onClick={() => onTaskClick?.(task)}
                 >
@@ -137,9 +139,10 @@ interface TodayTaskListProps {
   accentColor: string;
   bgColor: string;
   onRemove?: (task: Task) => void;
+  onComplete?: (task: Task) => void;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
@@ -176,12 +179,32 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
       <div className="p-4 min-h-[80px] max-h-[200px] overflow-y-auto">
         {orderedTasks.length > 0 ? (
           <ol className="space-y-2 list-decimal list-inside">
-            {orderedTasks.map((task, index) => (
-              <li key={index} className="text-sm text-gray-700 flex items-center justify-between group">
-                <span className="flex-1">
-                  <span>{task.text}</span>
+            {orderedTasks.map((task) => (
+              <li 
+                key={task.id} 
+                className={`text-sm flex items-center justify-between group ${
+                  task.completed ? 'text-gray-400' : 'text-gray-700'
+                }`}
+              >
+                <span className="flex items-center flex-1">
+                  {onComplete && (
+                    <button
+                      onClick={() => onComplete(task)}
+                      className={`mr-2 p-1 rounded transition-colors ${
+                        task.completed 
+                          ? 'text-green-500 hover:text-green-700 hover:bg-green-50' 
+                          : 'text-gray-300 hover:text-green-500 hover:bg-green-50'
+                      }`}
+                      title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  )}
+                  <span className={task.completed ? 'line-through' : ''}>{task.text}</span>
                   {task.dueDate && (
-                    <span className="ml-2 text-xs text-gray-400">
+                    <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300' : 'text-gray-400'}`}>
                       (due: {task.dueDate})
                     </span>
                   )}
@@ -322,7 +345,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const haveData = await haveRes.json();
       if (haveData.success) {
         setHaveToDoToday(haveData.tasks);
-        setTodayHaveTasks(new Set(haveData.tasks.map((t: Task) => t.text)));
+        setTodayHaveTasks(new Set(haveData.tasks.map((t: Task) => t.id)));
       } else {
         setErrorHaveToday(haveData.error || 'Failed to fetch');
       }
@@ -338,7 +361,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const wantData = await wantRes.json();
       if (wantData.success) {
         setWantToDoToday(wantData.tasks);
-        setTodayWantTasks(new Set(wantData.tasks.map((t: Task) => t.text)));
+        setTodayWantTasks(new Set(wantData.tasks.map((t: Task) => t.id)));
       } else {
         setErrorWantToday(wantData.error || 'Failed to fetch');
       }
@@ -368,6 +391,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          taskId: task.id,
           taskText: task.text,
           listType,
           date: currentDate,
@@ -392,7 +416,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          taskText: task.text,
+          taskId: task.id,
           listType,
           date: currentDate,
         }),
@@ -405,6 +429,30 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       }
     } catch (error) {
       console.error('Failed to remove task from today:', error);
+    }
+  };
+
+  // Handler to toggle task completion status
+  const handleCompleteTask = async (task: Task, listType: ListType) => {
+    try {
+      const response = await fetch('/api/tasks/today/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task.id,
+          listType,
+          date: currentDate,
+        }),
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        // Refresh both today's tasks and general tasks (since completion affects both)
+        fetchTodayTasks();
+        fetchGeneralTasks();
+      }
+    } catch (error) {
+      console.error('Failed to toggle task completion:', error);
     }
   };
 
@@ -423,6 +471,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           accentColor="text-amber-700"
           bgColor="bg-amber-100"
           onRemove={(task) => handleRemoveFromToday(task, 'have-to-do')}
+          onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
         />
         <TodayTaskList
           title="Want to Do Today"
@@ -432,6 +481,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           accentColor="text-teal-700"
           bgColor="bg-teal-100"
           onRemove={(task) => handleRemoveFromToday(task, 'want-to-do')}
+          onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
         />
       </div>
 

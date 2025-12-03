@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { DayPlan } from '@/lib/types';
 
 // Path to the daily-plans directory
 const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
@@ -10,8 +11,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
-
-type DayPlan = Record<string, string>;
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -99,4 +98,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

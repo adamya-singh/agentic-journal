@@ -15,6 +15,7 @@ function getGeneralTasksFilePath(listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -85,11 +86,11 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
   const generalData = readGeneralTasks(listType);
   
   const isoDate = mmddyyToIso(date);
-  const existingTaskTexts = new Set(dailyData.tasks.map(t => t.text));
+  const existingTaskIds = new Set(dailyData.tasks.map(t => t.id));
   
-  // Find tasks due on this date that aren't already in today's list
+  // Find tasks due on this date that aren't already in today's list (by ID)
   const tasksToAdd = generalData.tasks.filter(
-    task => task.dueDate === isoDate && !existingTaskTexts.has(task.text)
+    task => task.dueDate === isoDate && !existingTaskIds.has(task.id)
   );
   
   if (tasksToAdd.length > 0) {

@@ -10,6 +10,7 @@ function getTasksFilePath(listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -50,15 +51,15 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/reorder
  * Moves a task to a new position in the priority queue
  * 
- * Body: { text: string, newPosition: number, listType?: 'have-to-do' | 'want-to-do' }
- * - text: The text of the task to move
+ * Body: { taskId: string, newPosition: number, listType?: 'have-to-do' | 'want-to-do' }
+ * - taskId: The unique ID of the task to move
  * - newPosition: The new position index (0 = highest priority)
  * - listType: Which task list to reorder in (defaults to 'have-to-do')
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { text, newPosition, listType = 'have-to-do' } = body;
+    const { taskId, newPosition, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -68,9 +69,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!text || typeof text !== 'string') {
+    if (!taskId || typeof taskId !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Text parameter is required and must be a string' },
+        { success: false, error: 'taskId parameter is required and must be a string' },
         { status: 400 }
       );
     }
@@ -82,23 +83,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const trimmedText = text.trim();
-    if (trimmedText.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Text cannot be empty' },
-        { status: 400 }
-      );
-    }
-
     // Read current tasks
     const data = readTasks(listType);
 
-    // Find the task
-    const currentIndex = data.tasks.findIndex(task => task.text === trimmedText);
+    // Find the task by ID
+    const currentIndex = data.tasks.findIndex(task => task.id === taskId);
     if (currentIndex === -1) {
       return NextResponse.json({
         success: false,
-        error: `Task not found: "${trimmedText}"`,
+        error: `Task not found with ID: "${taskId}"`,
       });
     }
 

@@ -10,6 +10,7 @@ function getDailyTasksFilePath(date: string, listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -50,15 +51,15 @@ function writeDailyTasks(data: TasksData, date: string, listType: ListType): voi
  * POST /api/tasks/today/remove
  * Removes a task from the daily list
  * 
- * Body: { taskText: string, listType: 'have-to-do' | 'want-to-do', date: string }
- * - taskText: The task text to remove (serves as identifier)
+ * Body: { taskId: string, listType: 'have-to-do' | 'want-to-do', date: string }
+ * - taskId: The unique ID of the task to remove
  * - listType: Which task list to remove from
  * - date: The date in MMDDYY format
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskText, listType, date } = body;
+    const { taskId, listType, date } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -68,10 +69,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate taskText
-    if (!taskText || typeof taskText !== 'string') {
+    // Validate taskId
+    if (!taskId || typeof taskId !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'taskText parameter is required and must be a string' },
+        { success: false, error: 'taskId parameter is required and must be a string' },
         { status: 400 }
       );
     }
@@ -84,14 +85,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const trimmedTaskText = taskText.trim();
-
     // Read current daily tasks
     const data = readDailyTasks(date, listType);
 
-    // Find and remove the task
+    // Find and remove the task by ID
     const initialLength = data.tasks.length;
-    data.tasks = data.tasks.filter((task) => task.text !== trimmedTaskText);
+    data.tasks = data.tasks.filter((task) => task.id !== taskId);
 
     if (data.tasks.length === initialLength) {
       return NextResponse.json({
