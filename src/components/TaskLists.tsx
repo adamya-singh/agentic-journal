@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
+import { AddToPlanModal } from './AddToPlanModal';
 
 // Exported for cedar state
 export interface Task {
@@ -140,9 +141,10 @@ interface TodayTaskListProps {
   bgColor: string;
   onRemove?: (task: Task) => void;
   onComplete?: (task: Task) => void;
+  onAddToPlan?: (task: Task) => void;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
@@ -209,7 +211,18 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                     </span>
                   )}
                 </span>
-                {onRemove && (
+                {onAddToPlan && (
+                  <button
+                    onClick={() => onAddToPlan(task)}
+                    className="ml-2 p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors opacity-60 hover:opacity-100"
+                    title="Add to daily plan"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
+                {onRemove && !task.completed && (
                   <button
                     onClick={() => onRemove(task)}
                     className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-60 hover:opacity-100"
@@ -250,6 +263,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [activeListType, setActiveListType] = useState<ListType>('have-to-do');
+  
+  // Add to plan modal state
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [planTask, setPlanTask] = useState<Task | null>(null);
+  const [planListType, setPlanListType] = useState<ListType>('have-to-do');
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -456,6 +474,13 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
+  // Handler to open add to plan modal
+  const handleAddToPlan = (task: Task, listType: ListType) => {
+    setPlanTask(task);
+    setPlanListType(listType);
+    setShowPlanModal(true);
+  };
+
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
       <h2 className="text-2xl font-semibold text-gray-700 mb-4 text-center">Tasks</h2>
@@ -472,6 +497,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           bgColor="bg-amber-100"
           onRemove={(task) => handleRemoveFromToday(task, 'have-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
+          onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
         />
         <TodayTaskList
           title="Want to Do Today"
@@ -482,6 +508,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           bgColor="bg-teal-100"
           onRemove={(task) => handleRemoveFromToday(task, 'want-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
+          onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
         />
       </div>
 
@@ -525,6 +552,15 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         onClose={() => setShowTaskModal(false)}
         onTaskAdded={fetchGeneralTasks}
         listType={activeListType}
+      />
+
+      {/* Add to Plan Modal */}
+      <AddToPlanModal
+        isOpen={showPlanModal}
+        onClose={() => setShowPlanModal(false)}
+        task={planTask}
+        listType={planListType}
+        date={currentDate}
       />
     </div>
   );
