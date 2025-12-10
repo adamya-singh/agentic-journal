@@ -54,7 +54,7 @@ function writeDailyTasks(data: TasksData, date: string, listType: ListType): voi
  * Body: { taskId: string, listType: 'have-to-do' | 'want-to-do', date: string }
  * - taskId: The unique ID of the task to remove
  * - listType: Which task list to remove from
- * - date: The date in MMDDYY format
+ * - date: The date in ISO format (YYYY-MM-DD)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
     // Validate date
     if (!date || typeof date !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'date parameter is required and must be a string in MMDDYY format' },
+        { success: false, error: 'date parameter is required and must be a string in ISO format (YYYY-MM-DD)' },
         { status: 400 }
       );
     }

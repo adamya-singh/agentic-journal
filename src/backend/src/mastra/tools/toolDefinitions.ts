@@ -79,32 +79,32 @@ export const RemoveTaskFromTodaySchema = z.object({
 
 // Schema for createDayJournal state setter
 export const CreateDayJournalSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
 });
 
 // Schema for appendToJournal state setter
 export const AppendToJournalSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
   text: z.string().min(1).describe('The text to append to the journal entry'),
 });
 
 // Schema for updateJournalEntry state setter
 export const UpdateJournalEntrySchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to update'),
   text: z.string().describe('The new text to replace the existing entry'),
 });
 
 // Schema for deleteJournalEntry state setter
 export const DeleteJournalEntrySchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to clear'),
 });
 
 // Schema for addJournalRange state setter
 export const AddJournalRangeSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
   text: z.string().min(1).describe('The text describing what happened during this time range'),
@@ -112,7 +112,7 @@ export const AddJournalRangeSchema = z.object({
 
 // Schema for removeJournalRange state setter
 export const RemoveJournalRangeSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
@@ -121,32 +121,32 @@ export const RemoveJournalRangeSchema = z.object({
 
 // Schema for createDayPlan state setter
 export const CreateDayPlanSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
 });
 
 // Schema for appendToPlan state setter
 export const AppendToPlanSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
   text: z.string().min(1).describe('The text to append to the plan entry'),
 });
 
 // Schema for updatePlanEntry state setter
 export const UpdatePlanEntrySchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to update'),
   text: z.string().describe('The new text to replace the existing entry'),
 });
 
 // Schema for deletePlanEntry state setter
 export const DeletePlanEntrySchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to clear'),
 });
 
 // Schema for addPlanRange state setter
 export const AddPlanRangeSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
   text: z.string().min(1).describe('The text describing what is planned during this time range'),
@@ -154,7 +154,7 @@ export const AddPlanRangeSchema = z.object({
 
 // Schema for removePlanRange state setter
 export const RemovePlanRangeSchema = z.object({
-  date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });

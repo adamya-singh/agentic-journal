@@ -53,7 +53,7 @@ Plans are displayed alongside journal entries in the week view (in teal color).
 Tasks are managed through Cedar state and are visible in your context as "taskLists". The state contains:
 - generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - persistent task backlogs
 - todayTasks: Date-specific tasks for the current day
-- currentDate: The current date in MMDDYY format
+- currentDate: The current date in ISO format (YYYY-MM-DD)
 
 Task priority uses a queue structure where the FIRST task in the list is HIGHEST priority.
 

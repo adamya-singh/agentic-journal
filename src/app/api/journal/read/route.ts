@@ -19,8 +19,8 @@ import {
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const TASKS_DIR = path.join(process.cwd(), 'src/backend/data/tasks');
 
-// Date format regex (MMDDYY)
-const DATE_REGEX = /^\d{6}$/;
+// Date format regex (ISO: YYYY-MM-DD)
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 // Valid hours of the day
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
@@ -39,7 +39,7 @@ type ResolvedDayJournalWithRanges = {
 };
 
 /**
- * Helper function to validate date format (MMDDYY)
+ * Helper function to validate date format (ISO: YYYY-MM-DD)
  */
 function isValidDateFormat(date: string): boolean {
   return DATE_REGEX.test(date);
@@ -247,7 +247,7 @@ function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDa
  * Reads journal entries for multiple dates
  * 
  * Body: { dates: string[], resolve?: boolean }
- * - dates: Array of dates in MMDDYY format
+ * - dates: Array of dates in ISO format (YYYY-MM-DD)
  * - resolve: If true, resolves task IDs to full task objects (default: false)
  */
 export async function POST(request: NextRequest) {
@@ -266,7 +266,7 @@ export async function POST(request: NextRequest) {
     for (const date of dates) {
       if (!isValidDateFormat(date)) {
         return NextResponse.json(
-          { success: false, error: `Invalid date format: ${date}. Please use MMDDYY format` },
+          { success: false, error: `Invalid date format: ${date}. Please use ISO format (YYYY-MM-DD)` },
           { status: 400 }
         );
       }

@@ -24,15 +24,6 @@ const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
 const DAILY_LISTS_DIR = path.join(process.cwd(), 'src/backend/data/tasks/daily-lists');
 
 /**
- * Convert ISO date (YYYY-MM-DD) to MMDDYY format
- */
-export function isoToMmddyy(isoDate: string): string {
-  const [year, month, day] = isoDate.split('-');
-  const yy = year.slice(2);
-  return `${month}${day}${yy}`;
-}
-
-/**
  * Get the empty plan template
  */
 function getEmptyPlanTemplate(): DayPlan {
@@ -66,11 +57,11 @@ function getEmptyPlanTemplate(): DayPlan {
 }
 
 /**
- * Ensure the daily plan file exists for the given date (MMDDYY format)
+ * Ensure the daily plan file exists for the given date (ISO format: YYYY-MM-DD)
  * Creates an empty plan from template if it doesn't exist
  */
-export function ensureDailyPlanExists(dateMmddyy: string): void {
-  const planFilePath = path.join(PLANS_DIR, `${dateMmddyy}.json`);
+export function ensureDailyPlanExists(dateIso: string): void {
+  const planFilePath = path.join(PLANS_DIR, `${dateIso}.json`);
   
   if (!fs.existsSync(planFilePath)) {
     // Ensure directory exists
@@ -88,11 +79,11 @@ export function ensureDailyPlanExists(dateMmddyy: string): void {
  * Creates the list file if it doesn't exist, adds the task if not already present
  */
 export function ensureTodayListExists(
-  dateMmddyy: string,
+  dateIso: string,
   listType: ListType,
   task: Task
 ): void {
-  const listFilePath = path.join(DAILY_LISTS_DIR, `${dateMmddyy}-${listType}.json`);
+  const listFilePath = path.join(DAILY_LISTS_DIR, `${dateIso}-${listType}.json`);
   
   // Ensure directory exists
   if (!fs.existsSync(DAILY_LISTS_DIR)) {
@@ -126,11 +117,11 @@ export function ensureTodayListExists(
  * Only adds if the 8am slot is empty
  */
 export function addTaskToPlanAt8am(
-  dateMmddyy: string,
+  dateIso: string,
   taskId: string,
   listType: ListType
 ): void {
-  const planFilePath = path.join(PLANS_DIR, `${dateMmddyy}.json`);
+  const planFilePath = path.join(PLANS_DIR, `${dateIso}.json`);
   
   if (!fs.existsSync(planFilePath)) {
     return; // Plan should exist from ensureDailyPlanExists
@@ -149,16 +140,14 @@ export function addTaskToPlanAt8am(
 /**
  * Handle due date setup: creates plan, today list, and adds task to 8am slot
  * Call this when a task is created or updated with a due date
+ * @param dateIso - Date in ISO format (YYYY-MM-DD)
  */
 export function handleDueDateSetup(
-  isoDate: string,
+  dateIso: string,
   listType: ListType,
   task: Task
 ): void {
-  const dateMmddyy = isoToMmddyy(isoDate);
-  
-  ensureDailyPlanExists(dateMmddyy);
-  ensureTodayListExists(dateMmddyy, listType, task);
-  addTaskToPlanAt8am(dateMmddyy, task.id, listType);
+  ensureDailyPlanExists(dateIso);
+  ensureTodayListExists(dateIso, listType, task);
+  addTaskToPlanAt8am(dateIso, task.id, listType);
 }
-

@@ -6,11 +6,11 @@ import * as path from 'path';
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const FORMAT_PATH = path.join(JOURNAL_DIR, 'format.json');
 
-// Date format regex (MMDDYY)
-const DATE_REGEX = /^\d{6}$/;
+// Date format regex (ISO: YYYY-MM-DD)
+const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
- * Helper function to validate date format (MMDDYY)
+ * Helper function to validate date format (ISO: YYYY-MM-DD)
  */
 function isValidDateFormat(date: string): boolean {
   return DATE_REGEX.test(date);
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     if (!isValidDateFormat(date)) {
       return NextResponse.json(
-        { success: false, error: 'Invalid date format. Please use MMDDYY format (e.g., 112525)' },
+        { success: false, error: 'Invalid date format. Please use ISO format (YYYY-MM-DD, e.g., 2025-11-25)' },
         { status: 400 }
       );
     }

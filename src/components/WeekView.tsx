@@ -40,7 +40,7 @@ export interface TypedEntry {
 }
 
 export interface DayInfo {
-  date: string; // MMDDYY format
+  date: string; // ISO format (YYYY-MM-DD)
   dayName: string; // e.g., "Mon"
   displayDate: string; // e.g., "11/25"
 }
@@ -77,12 +77,12 @@ function getCurrentWeekDates(): DayInfo[] {
     const date = new Date(monday);
     date.setDate(monday.getDate() + i);
     
+    const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    const year = String(date.getFullYear()).slice(-2);
     
     weekDates.push({
-      date: `${month}${day}${year}`,
+      date: `${year}-${month}-${day}`,
       dayName: dayNames[i],
       displayDate: `${month}/${day}`,
     });
@@ -305,10 +305,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           const entries = getCombinedEntries(weekData[dayInfo.date], weekPlanData[dayInfo.date]);
           const isToday = dayInfo.date === weekDates.find(d => {
             const today = new Date();
+            const year = today.getFullYear();
             const month = String(today.getMonth() + 1).padStart(2, '0');
             const day = String(today.getDate()).padStart(2, '0');
-            const year = String(today.getFullYear()).slice(-2);
-            return d.date === `${month}${day}${year}`;
+            return d.date === `${year}-${month}-${day}`;
           })?.date;
 
           return (

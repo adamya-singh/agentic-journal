@@ -267,18 +267,18 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
 }
 
 /**
- * Get current date in MMDDYY format
+ * Get current date in ISO format (YYYY-MM-DD)
  */
-function getCurrentDateMMDDYY(): string {
+function getCurrentDateISO(): string {
   const now = new Date();
+  const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
-  const year = String(now.getFullYear()).slice(-2);
-  return `${month}${day}${year}`;
+  return `${year}-${month}-${day}`;
 }
 
 export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
-  const [currentDate] = useState(getCurrentDateMMDDYY());
+  const [currentDate] = useState(getCurrentDateISO());
   
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false);

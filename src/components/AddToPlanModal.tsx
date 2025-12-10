@@ -19,7 +19,7 @@ interface AddToPlanModalProps {
   onClose: () => void;
   task: Task | null;
   listType: ListType;
-  date: string; // MMDDYY format
+  date: string; // ISO format (YYYY-MM-DD)
 }
 
 export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToPlanModalProps) {

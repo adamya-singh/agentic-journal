@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
     // Validate date
     if (!date || typeof date !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'date parameter is required and must be a string in MMDDYY format' },
+        { success: false, error: 'date parameter is required and must be a string in ISO format (YYYY-MM-DD)' },
         { status: 400 }
       );
     }

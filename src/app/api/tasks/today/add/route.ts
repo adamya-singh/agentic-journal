@@ -55,7 +55,7 @@ function writeDailyTasks(data: TasksData, date: string, listType: ListType): voi
  * - taskId: The unique ID of the task
  * - taskText: The task text
  * - listType: Which task list to add to
- * - date: The date in MMDDYY format
+ * - date: The date in ISO format (YYYY-MM-DD)
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
  */
 export async function POST(request: NextRequest) {
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
     // Validate date
     if (!date || typeof date !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'date parameter is required and must be a string in MMDDYY format' },
+        { success: false, error: 'date parameter is required and must be a string in ISO format (YYYY-MM-DD)' },
         { status: 400 }
       );
     }

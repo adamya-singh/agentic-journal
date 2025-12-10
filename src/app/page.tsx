@@ -20,14 +20,14 @@ import { DebuggerPanel } from '@/cedar/components/debugger';
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
 
 /**
- * Get current date in MMDDYY format
+ * Get current date in ISO format (YYYY-MM-DD)
  */
-function getCurrentDateMMDDYY(): string {
+function getCurrentDateISO(): string {
   const now = new Date();
+  const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
-  const year = String(now.getFullYear()).slice(-2);
-  return `${month}${day}${year}`;
+  return `${year}-${month}-${day}`;
 }
 
 /**
@@ -53,8 +53,8 @@ export default function HomePage() {
   // Cedar state for dynamically added text lines
   const [textLines, setTextLines] = React.useState<string[]>([]);
 
-  // Cedar state for current date in MMDDYY format
-  const [currentDate, setCurrentDate] = React.useState(getCurrentDateMMDDYY());
+  // Cedar state for current date in ISO format (YYYY-MM-DD)
+  const [currentDate, setCurrentDate] = React.useState(getCurrentDateISO());
 
   // Cedar state for current time
   const [currentTime, setCurrentTime] = React.useState(getCurrentTime());
@@ -113,7 +113,7 @@ export default function HomePage() {
   // Register the current date as Cedar state
   useRegisterState({
     key: 'currentDate',
-    description: 'The current date in MMDDYY format (e.g., 112525 for November 25, 2025)',
+    description: 'The current date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)',
     value: currentDate,
     setValue: setCurrentDate,
   });
@@ -142,7 +142,7 @@ export default function HomePage() {
         name: 'createDayJournal',
         description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
         }),
         execute: async (
           currentData: WeekViewData | null,
@@ -164,7 +164,7 @@ export default function HomePage() {
         name: 'appendToJournal',
         description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
           text: z.string().min(1).describe('The text to append to the journal entry'),
         }),
@@ -210,7 +210,7 @@ export default function HomePage() {
         name: 'updateJournalEntry',
         description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to update'),
           text: z.string().describe('The new text to replace the existing entry'),
         }),
@@ -251,7 +251,7 @@ export default function HomePage() {
         name: 'deleteJournalEntry',
         description: 'Delete/clear the content of a specific hour\'s journal entry.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to clear'),
         }),
         execute: async (
@@ -291,7 +291,7 @@ export default function HomePage() {
         name: 'addJournalRange',
         description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm").',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
           text: z.string().min(1).describe('The text describing what happened during this time range'),
@@ -321,7 +321,7 @@ export default function HomePage() {
         name: 'removeJournalRange',
         description: 'Remove a journal range entry by specifying its start and end hours.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
         }),
@@ -351,7 +351,7 @@ export default function HomePage() {
         name: 'createDayPlan',
         description: 'Create a new plan file for a specific date. If a plan already exists, it will not be overwritten.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format (e.g., 112525 for November 25, 2025)'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
         }),
         execute: async (
           currentData: WeekViewData | null,
@@ -373,7 +373,7 @@ export default function HomePage() {
         name: 'appendToPlan',
         description: 'Append text to a specific hour\'s plan entry. The text will be added to existing content with proper separation.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
           text: z.string().min(1).describe('The text to append to the plan entry'),
         }),
@@ -423,7 +423,7 @@ export default function HomePage() {
         name: 'updatePlanEntry',
         description: 'Update/replace the content of a specific hour\'s plan entry. This will overwrite any existing content.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to update'),
           text: z.string().describe('The new text to replace the existing entry'),
         }),
@@ -467,7 +467,7 @@ export default function HomePage() {
         name: 'deletePlanEntry',
         description: 'Delete/clear the content of a specific hour\'s plan entry.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to clear'),
         }),
         execute: async (
@@ -507,7 +507,7 @@ export default function HomePage() {
         name: 'addPlanRange',
         description: 'Add a plan entry that spans multiple hours. Use this when scheduling an activity for a range of time (e.g., "meeting from 2pm to 4pm").',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
           text: z.string().min(1).describe('The text describing what is planned during this time range'),
@@ -537,7 +537,7 @@ export default function HomePage() {
         name: 'removePlanRange',
         description: 'Remove a plan range entry by specifying its start and end hours.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{6}$/).describe('The date in MMDDYY format'),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
         }),

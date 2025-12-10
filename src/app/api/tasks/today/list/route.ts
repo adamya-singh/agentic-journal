@@ -25,15 +25,6 @@ interface TasksData {
   tasks: Task[];
 }
 
-/**
- * Convert MMDDYY to YYYY-MM-DD format
- */
-function mmddyyToIso(mmddyy: string): string {
-  const month = mmddyy.slice(0, 2);
-  const day = mmddyy.slice(2, 4);
-  const year = '20' + mmddyy.slice(4, 6);
-  return `${year}-${month}-${day}`;
-}
 
 /**
  * Helper function to read daily tasks from file
@@ -85,12 +76,12 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
   const dailyData = readDailyTasks(date, listType);
   const generalData = readGeneralTasks(listType);
   
-  const isoDate = mmddyyToIso(date);
   const existingTaskIds = new Set(dailyData.tasks.map(t => t.id));
   
   // Find tasks due on this date that aren't already in today's list (by ID)
+  // Date is already in ISO format (YYYY-MM-DD), same as dueDate
   const tasksToAdd = generalData.tasks.filter(
-    task => task.dueDate === isoDate && !existingTaskIds.has(task.id)
+    task => task.dueDate === date && !existingTaskIds.has(task.id)
   );
   
   if (tasksToAdd.length > 0) {
@@ -108,7 +99,7 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
  * 
  * Query params:
  * - listType: 'have-to-do' | 'want-to-do' (defaults to 'have-to-do')
- * - date: The date in MMDDYY format (required)
+ * - date: The date in ISO format (YYYY-MM-DD) (required)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -127,7 +118,7 @@ export async function GET(request: NextRequest) {
     // Validate date
     if (!date) {
       return NextResponse.json(
-        { success: false, error: 'date parameter is required in MMDDYY format' },
+        { success: false, error: 'date parameter is required in ISO format (YYYY-MM-DD)' },
         { status: 400 }
       );
     }
