@@ -64,14 +64,13 @@ export const ReorderTaskSchema = z.object({
 
 // Schema for addTaskToToday state setter
 export const AddTaskToTodaySchema = z.object({
-  text: z.string().min(1).describe('The task text to add'),
-  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
-  dueDate: z.string().optional().describe('Optional due date in ISO format'),
+  taskId: z.string().min(1).describe('The ID of an existing task from the general list to add to today'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
 });
 
 // Schema for removeTaskFromToday state setter
 export const RemoveTaskFromTodaySchema = z.object({
-  text: z.string().min(1).describe('The exact text of the task to remove'),
+  taskId: z.string().min(1).describe('The ID of the task to remove from today\'s list'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
 });
 
@@ -119,26 +118,6 @@ export const RemoveJournalRangeSchema = z.object({
   start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
-
-// ==================== DEPRECATED PLAN SCHEMAS (use Journal with isPlan: true) ====================
-
-/** @deprecated Use CreateDayJournalSchema instead */
-export const CreateDayPlanSchema = CreateDayJournalSchema;
-
-/** @deprecated Use AppendToJournalSchema with isPlan: true instead */
-export const AppendToPlanSchema = AppendToJournalSchema;
-
-/** @deprecated Use UpdateJournalEntrySchema with isPlan: true instead */
-export const UpdatePlanEntrySchema = UpdateJournalEntrySchema;
-
-/** @deprecated Use DeleteJournalEntrySchema instead */
-export const DeletePlanEntrySchema = DeleteJournalEntrySchema;
-
-/** @deprecated Use AddJournalRangeSchema with isPlan: true instead */
-export const AddPlanRangeSchema = AddJournalRangeSchema;
-
-/** @deprecated Use RemoveJournalRangeSchema instead */
-export const RemovePlanRangeSchema = RemoveJournalRangeSchema;
 
 // ==================== TOOL CREATION ====================
 
@@ -226,7 +205,7 @@ export const addTaskToTodayTool = createMastraToolForStateSetter(
   'addTaskToToday',
   AddTaskToTodaySchema,
   {
-    description: 'Add a task to today\'s task list. If the task already exists, it will not be duplicated.',
+    description: 'Add an EXISTING task from a general list to today\'s task list by its ID. Use this ONLY when the user explicitly asks to schedule an existing task for today. Do NOT call this automatically after addTask.',
     toolId: 'addTaskToToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -238,7 +217,7 @@ export const removeTaskFromTodayTool = createMastraToolForStateSetter(
   'removeTaskFromToday',
   RemoveTaskFromTodaySchema,
   {
-    description: 'Remove a task from today\'s task list.',
+    description: 'Remove a task from today\'s task list by its ID.',
     toolId: 'removeTaskFromToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -319,87 +298,6 @@ export const removeJournalRangeTool = createMastraToolForStateSetter(
   },
 );
 
-// ==================== DEPRECATED PLAN STATE SETTER TOOLS ====================
-// These tools are kept for backward compatibility but internally use journal tools with isPlan: true
-
-/** @deprecated Use createDayJournalTool instead */
-export const createDayPlanTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'createDayJournal',
-  CreateDayJournalSchema,
-  {
-    description: '[DEPRECATED: Use createDayJournal] Create a new journal file for a specific date for planning. If a journal already exists, it will not be overwritten.',
-    toolId: 'createDayPlan',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-/** @deprecated Use appendToJournalTool with isPlan: true instead */
-export const appendToPlanTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'appendToJournal',
-  AppendToJournalSchema,
-  {
-    description: '[DEPRECATED: Use appendToJournal with isPlan: true] Append text to a specific hour\'s plan entry.',
-    toolId: 'appendToPlan',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-/** @deprecated Use updateJournalEntryTool with isPlan: true instead */
-export const updatePlanEntryTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'updateJournalEntry',
-  UpdateJournalEntrySchema,
-  {
-    description: '[DEPRECATED: Use updateJournalEntry with isPlan: true] Update/replace the content of a specific hour\'s plan entry.',
-    toolId: 'updatePlanEntry',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-/** @deprecated Use deleteJournalEntryTool instead */
-export const deletePlanEntryTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'deleteJournalEntry',
-  DeleteJournalEntrySchema,
-  {
-    description: '[DEPRECATED: Use deleteJournalEntry] Delete/clear the content of a specific hour\'s plan entry.',
-    toolId: 'deletePlanEntry',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-/** @deprecated Use addJournalRangeTool with isPlan: true instead */
-export const addPlanRangeTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'addJournalRange',
-  AddJournalRangeSchema,
-  {
-    description: '[DEPRECATED: Use addJournalRange with isPlan: true] Add a plan entry that spans multiple hours.',
-    toolId: 'addPlanRange',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-/** @deprecated Use removeJournalRangeTool instead */
-export const removePlanRangeTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'removeJournalRange',
-  RemoveJournalRangeSchema,
-  {
-    description: '[DEPRECATED: Use removeJournalRange] Remove a plan range entry by specifying its start and end hours.',
-    toolId: 'removePlanRange',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
 export const requestAdditionalContextTool = createRequestAdditionalContextTool();
 
 /**
@@ -418,15 +316,6 @@ export const TOOL_REGISTRY = {
     deleteJournalEntryTool,
     addJournalRangeTool,
     removeJournalRangeTool,
-  },
-  // Deprecated: use journalManagement with isPlan: true
-  planManagement: {
-    createDayPlanTool,
-    appendToPlanTool,
-    updatePlanEntryTool,
-    deletePlanEntryTool,
-    addPlanRangeTool,
-    removePlanRangeTool,
   },
   taskManagement: {
     addTaskTool,

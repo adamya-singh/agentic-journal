@@ -42,6 +42,14 @@ function getCurrentTime(): string {
   return `${hours12}:${minutes} ${ampm}`;
 }
 
+/**
+ * Generate a temporary UUID for optimistic updates
+ * The real ID will be generated server-side
+ */
+function generateTempId(): string {
+  return 'temp-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
 export default function HomePage() {
   // Cedar-OS chat components with mode selector
   // Choose between caption, floating, or side panel chat modes
@@ -346,222 +354,6 @@ export default function HomePage() {
           setWeekViewRefreshTrigger(prev => prev + 1);
         },
       },
-      // ==================== PLAN SETTERS ====================
-      createDayPlan: {
-        name: 'createDayPlan',
-        description: 'Create a new plan file for a specific date. If a plan already exists, it will not be overwritten.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string }
-        ) => {
-          // Call API to create plan
-          await fetch('/api/plans/create', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ date: args.date }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
-      appendToPlan: {
-        name: 'appendToPlan',
-        description: 'Append text to a specific hour\'s plan entry. The text will be added to existing content with proper separation.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
-          text: z.string().min(1).describe('The text to append to the plan entry'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text: string }
-        ) => {
-          if (!currentData) return;
-
-          // Optimistically update state
-          const currentPlan = currentData.weekPlanData[args.date] || {};
-          const currentEntry = currentPlan[args.hour];
-          const currentText = currentEntry?.text || '';
-          const updatedText = currentText && currentText.trim() !== '' 
-            ? currentText + '\n' + args.text 
-            : args.text;
-
-          const updatedPlan: DayPlan = { 
-            ...currentPlan, 
-            [args.hour]: { hour: args.hour, text: updatedText, type: 'text' as const } 
-          };
-          setValue({
-            ...currentData,
-            weekPlanData: {
-              ...currentData.weekPlanData,
-              [args.date]: updatedPlan,
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/plans/append', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              hour: args.hour,
-              text: args.text,
-            }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
-      updatePlanEntry: {
-        name: 'updatePlanEntry',
-        description: 'Update/replace the content of a specific hour\'s plan entry. This will overwrite any existing content.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          hour: z.enum(VALID_HOURS).describe('The hour to update'),
-          text: z.string().describe('The new text to replace the existing entry'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text: string }
-        ) => {
-          if (!currentData) return;
-
-          // Optimistically update state
-          const currentPlan = currentData.weekPlanData[args.date] || {};
-          const updatedPlan: DayPlan = { 
-            ...currentPlan, 
-            [args.hour]: { hour: args.hour, text: args.text, type: 'text' as const } 
-          };
-          setValue({
-            ...currentData,
-            weekPlanData: {
-              ...currentData.weekPlanData,
-              [args.date]: updatedPlan,
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/plans/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              hour: args.hour,
-              text: args.text,
-            }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
-      deletePlanEntry: {
-        name: 'deletePlanEntry',
-        description: 'Delete/clear the content of a specific hour\'s plan entry.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          hour: z.enum(VALID_HOURS).describe('The hour to clear'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay }
-        ) => {
-          if (!currentData) return;
-
-          // Optimistically update state
-          const currentPlan = currentData.weekPlanData[args.date] || {};
-          const updatedPlan: DayPlan = { ...currentPlan, [args.hour]: null };
-          setValue({
-            ...currentData,
-            weekPlanData: {
-              ...currentData.weekPlanData,
-              [args.date]: updatedPlan,
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/plans/delete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              hour: args.hour,
-            }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
-      // ==================== PLAN RANGE SETTERS ====================
-      addPlanRange: {
-        name: 'addPlanRange',
-        description: 'Add a plan entry that spans multiple hours. Use this when scheduling an activity for a range of time (e.g., "meeting from 2pm to 4pm").',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
-          end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
-          text: z.string().min(1).describe('The text describing what is planned during this time range'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay; text: string }
-        ) => {
-          if (!currentData) return;
-
-          // Persist to JSON via API
-          await fetch('/api/plans/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              range: { start: args.start, end: args.end, text: args.text },
-            }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
-      removePlanRange: {
-        name: 'removePlanRange',
-        description: 'Remove a plan range entry by specifying its start and end hours.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
-          end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay }
-        ) => {
-          if (!currentData) return;
-
-          // Persist to JSON via API
-          await fetch('/api/plans/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              removeRange: { start: args.start, end: args.end },
-            }),
-          });
-
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
-        },
-      },
     },
   });
 
@@ -589,8 +381,12 @@ export default function HomePage() {
         ) => {
           if (!currentData) return;
 
-          const newTask: Task = { text: args.text.trim() };
-          if (args.dueDate) newTask.dueDate = args.dueDate;
+          // Generate a temporary ID for optimistic update (real ID comes from server)
+          const newTask: Task = { 
+            id: generateTempId(),
+            text: args.text.trim(),
+            ...(args.dueDate && { dueDate: args.dueDate }),
+          };
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
           const currentTasks = [...currentData.generalTasks[key]];
@@ -623,7 +419,7 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
+          // Trigger TaskLists to refresh (will get the real ID from server)
           setTaskRefreshTrigger(prev => prev + 1);
         },
       },
@@ -777,36 +573,45 @@ export default function HomePage() {
       // ==================== DAILY TASK SETTERS ====================
       addTaskToToday: {
         name: 'addTaskToToday',
-        description: 'Add a task to today\'s task list. If the task already exists in today\'s list, it will not be duplicated.',
+        description: 'Add an EXISTING task from a general list to today\'s task list by its ID. Only use when user explicitly asks to schedule an existing task for today.',
         argsSchema: z.object({
-          text: z.string().min(1).describe('The task text to add'),
-          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
-          dueDate: z.string().optional().describe('Optional due date in ISO format'),
+          taskId: z.string().min(1).describe('The ID of an existing task from the general list'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { text: string; listType: ListType; dueDate?: string }
+          args: { taskId: string; listType: ListType }
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const trimmedText = args.text.trim();
           
-          // Check if already exists
-          if (currentData.todayTasks[key].some(t => t.text === trimmedText)) {
+          // Find the task in the general list by ID
+          const sourceTask = currentData.generalTasks[key].find(t => t.id === args.taskId);
+          if (!sourceTask) {
+            console.error(`Task with ID ${args.taskId} not found in ${args.listType} list`);
+            return;
+          }
+          
+          // Check if already exists in today's list by ID
+          if (currentData.todayTasks[key].some(t => t.id === args.taskId)) {
             return; // Already exists, don't duplicate
           }
 
-          const newTask: Task = { text: trimmedText };
-          if (args.dueDate) newTask.dueDate = args.dueDate;
+          // Add the task reference to today's list
+          const taskForToday: Task = { 
+            id: sourceTask.id,
+            text: sourceTask.text,
+            ...(sourceTask.dueDate && { dueDate: sourceTask.dueDate }),
+          };
 
           // Optimistically update state
           setValue({
             ...currentData,
             todayTasks: {
               ...currentData.todayTasks,
-              [key]: [...currentData.todayTasks[key], newTask],
+              [key]: [...currentData.todayTasks[key], taskForToday],
             },
           });
 
@@ -815,10 +620,11 @@ export default function HomePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              taskText: args.text,
+              taskId: sourceTask.id,
+              taskText: sourceTask.text,
               listType: args.listType,
               date: currentData.currentDate,
-              dueDate: args.dueDate,
+              dueDate: sourceTask.dueDate,
             }),
           });
 
@@ -828,20 +634,20 @@ export default function HomePage() {
       },
       removeTaskFromToday: {
         name: 'removeTaskFromToday',
-        description: 'Remove a task from today\'s task list.',
+        description: 'Remove a task from today\'s task list by its ID.',
         argsSchema: z.object({
-          text: z.string().min(1).describe('The exact text of the task to remove'),
+          taskId: z.string().min(1).describe('The ID of the task to remove from today\'s list'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { text: string; listType: ListType }
+          args: { taskId: string; listType: ListType }
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const filteredTasks = currentData.todayTasks[key].filter(t => t.text !== args.text.trim());
+          const filteredTasks = currentData.todayTasks[key].filter(t => t.id !== args.taskId);
 
           // Optimistically update state
           setValue({
@@ -857,7 +663,7 @@ export default function HomePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              taskText: args.text,
+              taskId: args.taskId,
               listType: args.listType,
               date: currentData.currentDate,
             }),

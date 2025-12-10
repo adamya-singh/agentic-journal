@@ -14,26 +14,27 @@ interface TasksData {
   tasks: Task[];
 }
 
-interface TaskPlanRangeEntry {
+interface TaskJournalRangeEntry {
   start: string;
   end: string;
   taskId: string;
   listType: ListType;
+  isPlan: boolean;
 }
 
-interface DayPlan {
-  [hour: string]: string | { taskId: string; listType: ListType } | { text: string };
-  ranges?: TaskPlanRangeEntry[];
+interface DayJournal {
+  [hour: string]: string | { taskId: string; listType: ListType; isPlan?: boolean } | { text: string; isPlan?: boolean };
+  ranges?: TaskJournalRangeEntry[];
 }
 
 // Paths
-const PLANS_DIR = path.join(process.cwd(), 'src/backend/data/daily-plans');
+const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DAILY_LISTS_DIR = path.join(process.cwd(), 'src/backend/data/tasks/daily-lists');
 
 /**
- * Get the empty plan template
+ * Get the empty journal template
  */
-function getEmptyPlanTemplate(): DayPlan {
+function getEmptyJournalTemplate(): DayJournal {
   return {
     '7am': '',
     '8am': '',
@@ -64,20 +65,20 @@ function getEmptyPlanTemplate(): DayPlan {
 }
 
 /**
- * Ensure the daily plan file exists for the given date (ISO format: YYYY-MM-DD)
- * Creates an empty plan from template if it doesn't exist
+ * Ensure the daily journal file exists for the given date (ISO format: YYYY-MM-DD)
+ * Creates an empty journal from template if it doesn't exist
  */
-export function ensureDailyPlanExists(dateIso: string): void {
-  const planFilePath = path.join(PLANS_DIR, `${dateIso}.json`);
+export function ensureDailyJournalExists(dateIso: string): void {
+  const journalFilePath = path.join(JOURNAL_DIR, `${dateIso}.json`);
   
-  if (!fs.existsSync(planFilePath)) {
+  if (!fs.existsSync(journalFilePath)) {
     // Ensure directory exists
-    if (!fs.existsSync(PLANS_DIR)) {
-      fs.mkdirSync(PLANS_DIR, { recursive: true });
+    if (!fs.existsSync(JOURNAL_DIR)) {
+      fs.mkdirSync(JOURNAL_DIR, { recursive: true });
     }
     
-    const template = getEmptyPlanTemplate();
-    fs.writeFileSync(planFilePath, JSON.stringify(template, null, 2), 'utf-8');
+    const template = getEmptyJournalTemplate();
+    fs.writeFileSync(journalFilePath, JSON.stringify(template, null, 2), 'utf-8');
   }
 }
 
@@ -120,7 +121,7 @@ export function ensureTodayListExists(
 }
 
 /**
- * Add a task as a range entry at 8am (8am-8am) in the daily plan
+ * Add a task as a range entry at 8am (8am-8am) in the daily journal with isPlan: true
  * All due tasks are added as ranges so multiple tasks can share the same time
  */
 export function addTaskAsRangeAt8am(
@@ -128,39 +129,40 @@ export function addTaskAsRangeAt8am(
   taskId: string,
   listType: ListType
 ): void {
-  const planFilePath = path.join(PLANS_DIR, `${dateIso}.json`);
+  const journalFilePath = path.join(JOURNAL_DIR, `${dateIso}.json`);
   
-  if (!fs.existsSync(planFilePath)) {
-    return; // Plan should exist from ensureDailyPlanExists
+  if (!fs.existsSync(journalFilePath)) {
+    return; // Journal should exist from ensureDailyJournalExists
   }
   
-  const content = fs.readFileSync(planFilePath, 'utf-8');
-  const plan: DayPlan = JSON.parse(content);
+  const content = fs.readFileSync(journalFilePath, 'utf-8');
+  const journal: DayJournal = JSON.parse(content);
   
   // Ensure ranges array exists
-  if (!plan.ranges) {
-    plan.ranges = [];
+  if (!journal.ranges) {
+    journal.ranges = [];
   }
   
   // Check if this task is already in ranges
-  const taskAlreadyExists = plan.ranges.some(
+  const taskAlreadyExists = journal.ranges.some(
     (range) => range.taskId === taskId
   );
   
   if (!taskAlreadyExists) {
-    // Add task as a range entry at 8am
-    plan.ranges.push({
+    // Add task as a range entry at 8am with isPlan: true
+    journal.ranges.push({
       start: '8am',
       end: '8am',
       taskId,
       listType,
+      isPlan: true,
     });
-    fs.writeFileSync(planFilePath, JSON.stringify(plan, null, 2), 'utf-8');
+    fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
   }
 }
 
 /**
- * Handle due date setup: creates plan, today list, and adds task as range at 8am
+ * Handle due date setup: creates journal, today list, and adds task as range at 8am
  * Call this when a task is created or updated with a due date
  * @param dateIso - Date in ISO format (YYYY-MM-DD)
  */
@@ -169,7 +171,7 @@ export function handleDueDateSetup(
   listType: ListType,
   task: Task
 ): void {
-  ensureDailyPlanExists(dateIso);
+  ensureDailyJournalExists(dateIso);
   ensureTodayListExists(dateIso, listType, task);
   addTaskAsRangeAt8am(dateIso, task.id, listType);
 }
