@@ -1,37 +1,30 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ResolvedPlanEntry, ResolvedRangeEntry, JournalRangeEntry, ListType } from '@/lib/types';
+import { ResolvedJournalEntry, ResolvedJournalRangeEntry, JournalRangeEntry, ListType } from '@/lib/types';
 
-// Journal entry type with ranges support - exported for cedar state
-export type DayJournalWithRanges = {
-  [hour: string]: string;
+// Resolved journal data with ranges - entries resolved to display format
+export type ResolvedDayJournalWithRanges = {
+  [hour: string]: ResolvedJournalEntry | null;
 } & {
-  ranges?: JournalRangeEntry[];
+  ranges?: ResolvedJournalRangeEntry[];
 };
 
-// Resolved plan data with ranges - entries resolved to display format
-export type ResolvedDayPlanWithRanges = {
-  [hour: string]: ResolvedPlanEntry | null;
-} & {
-  ranges?: ResolvedRangeEntry[];
-};
-
-// Week data type - exported for cedar state
-export type WeekData = Record<string, DayJournalWithRanges | null>;
-
-// Week plan data type - now uses resolved entries with ranges
-export type WeekPlanData = Record<string, ResolvedDayPlanWithRanges | null>;
+// Week data type - exported for cedar state (now uses resolved entries)
+export type WeekData = Record<string, ResolvedDayJournalWithRanges | null>;
 
 // Legacy exports for backward compatibility
-export type DayJournal = DayJournalWithRanges;
-export type DayPlan = ResolvedDayPlanWithRanges;
+export type DayJournalWithRanges = ResolvedDayJournalWithRanges;
+export type DayJournal = ResolvedDayJournalWithRanges;
+export type WeekPlanData = WeekData; // Deprecated: plans are now part of journals with isPlan flag
+export type DayPlan = ResolvedDayJournalWithRanges; // Deprecated: use DayJournal
+export type ResolvedDayPlanWithRanges = ResolvedDayJournalWithRanges; // Deprecated
 
 // Entry with type indicator for rendering
 export interface TypedEntry {
   hour: string;       // For single-hour entries, this is the hour. For ranges, this is "start-end" format
   text: string;
-  type: 'journal' | 'plan';
+  type: 'journal' | 'plan';  // 'plan' when isPlan is true, 'journal' otherwise
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
@@ -48,7 +41,7 @@ export interface DayInfo {
 export interface WeekViewData {
   weekDates: DayInfo[];
   weekData: WeekData;
-  weekPlanData: WeekPlanData;
+  weekPlanData: WeekData; // Kept for backward compatibility, same as weekData
 }
 
 interface WeekViewProps {
@@ -95,78 +88,40 @@ function getCurrentWeekDates(): DayInfo[] {
 const HOUR_ORDER = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
 
 /**
- * Get combined entries from both journal and resolved plan, with type indicators
+ * Get entries from a unified journal source, differentiating by isPlan flag
  */
-function getCombinedEntries(journal: DayJournalWithRanges | null, plan: ResolvedDayPlanWithRanges | null): TypedEntry[] {
+function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): TypedEntry[] {
   const entries: TypedEntry[] = [];
-  const allHours = new Set<string>();
   
-  // Collect all hours that have entries (excluding special keys)
-  if (journal) {
-    Object.keys(journal).forEach(hour => {
-      if (hour !== 'ranges' && HOUR_ORDER.includes(hour)) {
-        allHours.add(hour);
-      }
-    });
-  }
-  if (plan) {
-    Object.keys(plan).forEach(hour => {
-      if (hour !== 'ranges' && HOUR_ORDER.includes(hour)) {
-        allHours.add(hour);
-      }
-    });
+  if (!journal) {
+    return entries;
   }
   
-  const sortedHours = Array.from(allHours).sort((a, b) => HOUR_ORDER.indexOf(a) - HOUR_ORDER.indexOf(b));
-  
-  // Add hourly entries
-  for (const hour of sortedHours) {
-    const planEntry = plan?.[hour] as ResolvedPlanEntry | null | undefined;
-    const journalValue = journal?.[hour];
-    const journalText = typeof journalValue === 'string' ? journalValue : undefined;
+  // Process hourly entries
+  for (const hour of HOUR_ORDER) {
+    const entry = journal[hour] as ResolvedJournalEntry | null | undefined;
     
-    // Add plan entry first (if exists and has text)
-    if (planEntry && typeof planEntry === 'object' && 'text' in planEntry && planEntry.text && planEntry.text.trim() !== '') {
-      entries.push({ 
-        hour, 
-        text: planEntry.text, 
-        type: 'plan',
-        taskId: planEntry.taskId,
-        listType: planEntry.listType,
-        completed: planEntry.completed,
+    if (entry && typeof entry === 'object' && 'text' in entry && entry.text && entry.text.trim() !== '') {
+      entries.push({
+        hour,
+        text: entry.text,
+        type: entry.isPlan ? 'plan' : 'journal',
+        taskId: entry.taskId,
+        listType: entry.listType,
+        completed: entry.completed,
         startHour: hour,
       });
     }
-    
-    // Add journal entry (if exists)
-    if (journalText && journalText.trim() !== '') {
-      entries.push({ hour, text: journalText, type: 'journal', startHour: hour });
-    }
   }
   
-  // Add journal range entries
-  if (journal?.ranges && Array.isArray(journal.ranges)) {
+  // Process range entries
+  if (journal.ranges && Array.isArray(journal.ranges)) {
     for (const range of journal.ranges) {
       if (range.text && range.text.trim() !== '') {
         entries.push({
           hour: `${range.start}-${range.end}`,
           text: range.text,
-          type: 'journal',
-          isRange: true,
-          startHour: range.start,
-        });
-      }
-    }
-  }
-  
-  // Add plan range entries
-  if (plan?.ranges && Array.isArray(plan.ranges)) {
-    for (const range of plan.ranges) {
-      if (range.text && range.text.trim() !== '') {
-        entries.push({
-          hour: `${range.start}-${range.end}`,
-          text: range.text,
-          type: 'plan',
+          type: range.isPlan ? 'plan' : 'journal',
           taskId: range.taskId,
           listType: range.listType,
           completed: range.completed,
@@ -177,7 +132,7 @@ function getCombinedEntries(journal: DayJournalWithRanges | null, plan: Resolved
     }
   }
   
-  // Sort all entries by start hour
+  // Sort all entries by start hour, then by type (plans before journals at same hour)
   entries.sort((a, b) => {
     const aIdx = HOUR_ORDER.indexOf(a.startHour || a.hour);
     const bIdx = HOUR_ORDER.indexOf(b.startHour || b.hour);
@@ -194,7 +149,6 @@ function getCombinedEntries(journal: DayJournalWithRanges | null, plan: Resolved
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [weekDates] = useState<DayInfo[]>(getCurrentWeekDates);
   const [weekData, setWeekData] = useState<WeekData>({});
-  const [weekPlanData, setWeekPlanData] = useState<WeekPlanData>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -206,34 +160,20 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       
       const dates = weekDates.map(d => d.date);
       
-      // Fetch both journals and plans in parallel
-      // Use resolve=true to get task details
-      const [journalResponse, planResponse] = await Promise.all([
-        fetch('/api/journal/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dates }),
-        }),
-        fetch('/api/plans/read', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dates, resolve: true }),
-        }),
-      ]);
+      // Fetch only journals - plans are now part of journals with isPlan flag
+      const journalResponse = await fetch('/api/journal/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dates, resolve: true }),
+      });
       
       const journalData = await journalResponse.json();
-      const planData = await planResponse.json();
       
       if (journalData.success) {
         setWeekData(journalData.journals);
       } else {
         setError(journalData.error || 'Failed to fetch journals');
       }
-      
-      if (planData.success) {
-        setWeekPlanData(planData.plans);
-      }
-      // Don't error if plans fail - they're optional
     } catch {
       setError('Failed to connect to server');
     } finally {
@@ -256,9 +196,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Notify parent when data changes
   useEffect(() => {
     if (onDataChange && !loading) {
-      onDataChange({ weekDates, weekData, weekPlanData });
+      // For backward compatibility, weekPlanData is same as weekData
+      onDataChange({ weekDates, weekData, weekPlanData: weekData });
     }
-  }, [weekData, weekPlanData, weekDates, loading, onDataChange]);
+  }, [weekData, weekDates, loading, onDataChange]);
 
   if (loading) {
     return (
@@ -302,7 +243,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       </div>
       <div className="grid grid-cols-7 gap-3">
         {weekDates.map((dayInfo) => {
-          const entries = getCombinedEntries(weekData[dayInfo.date], weekPlanData[dayInfo.date]);
+          const entries = getEntriesFromJournal(weekData[dayInfo.date]);
           const isToday = dayInfo.date === weekDates.find(d => {
             const today = new Date();
             const year = today.getFullYear();
@@ -336,7 +277,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
                 {entries.length > 0 ? (
                   <div className="space-y-2">
-                    {entries.map(({ hour, text, type, taskId, completed, isRange }, index) => {
+                    {entries.map(({ hour, text, type, taskId, completed }, index) => {
                       const isTask = type === 'plan' && taskId;
                       const isCompleted = isTask && completed;
                       

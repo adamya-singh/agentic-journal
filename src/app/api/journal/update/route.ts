@@ -66,27 +66,27 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
  * Updates/replaces a specific hour's journal entry OR adds/updates a range entry
  * 
  * For hourly update:
- * Body: { date: string, hour: string, entry: JournalEntry }
+ * Body: { date: string, hour: string, entry: JournalEntry, isPlan?: boolean }
  * 
  * entry can be:
- * - { taskId: string, listType: 'have-to-do' | 'want-to-do' } - task reference
- * - { text: string } - free-form text
+ * - { taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean } - task reference
+ * - { text: string, isPlan?: boolean } - free-form text
  * - string - legacy plain text (for backward compatibility)
  * - '' or null - clears the entry
  * 
  * For range update:
- * Body: { date: string, range: { start: string, end: string, text?: string, taskId?: string, listType?: string } }
+ * Body: { date: string, range: { start: string, end: string, text?: string, taskId?: string, listType?: string, isPlan?: boolean } }
  * 
  * For range removal:
  * Body: { date: string, removeRange: { start: string, end: string } }
  * 
  * Legacy format also supported:
- * Body: { date: string, hour: string, text: string }
+ * Body: { date: string, hour: string, text: string, isPlan?: boolean }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, entry, text, taskId, listType, range, removeRange } = body;
+    const { date, hour, entry, text, taskId, listType, range, removeRange, isPlan } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -134,7 +134,7 @@ export async function POST(request: NextRequest) {
 
     // Handle range update/add
     if (range) {
-      const { start, end, text: rangeText, taskId: rangeTaskId, listType: rangeListType } = range;
+      const { start, end, text: rangeText, taskId: rangeTaskId, listType: rangeListType, isPlan: rangeIsPlan } = range;
       
       if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
         return NextResponse.json(
@@ -155,10 +155,11 @@ export async function POST(request: NextRequest) {
 
       // Determine the range entry to save
       let newRange: JournalRangeEntry;
+      const isPlanFlag = rangeIsPlan ?? isPlan;
       if (rangeTaskId && rangeListType) {
-        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType };
+        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType, ...(isPlanFlag ? { isPlan: isPlanFlag } : {}) };
       } else if (rangeText !== undefined) {
-        newRange = { start, end, text: rangeText };
+        newRange = { start, end, text: rangeText, ...(isPlanFlag ? { isPlan: isPlanFlag } : {}) };
       } else {
         return NextResponse.json(
           { success: false, error: 'Range must have either text or taskId+listType' },
@@ -210,17 +211,22 @@ export async function POST(request: NextRequest) {
 
     if (entry !== undefined) {
       // New format: entry is provided directly
-      entryToSave = entry;
+      // If isPlan is provided at top level, merge it into the entry
+      if (isPlan !== undefined && typeof entry === 'object' && entry !== null) {
+        entryToSave = { ...entry, isPlan };
+      } else {
+        entryToSave = entry;
+      }
     } else if (taskId !== undefined && listType !== undefined) {
       // Task reference format
-      entryToSave = { taskId, listType };
+      entryToSave = { taskId, listType, ...(isPlan ? { isPlan } : {}) };
     } else if (text !== undefined) {
       // Legacy format: plain text
       if (text === '' || text === null) {
         entryToSave = '';
       } else if (typeof text === 'string') {
         // Wrap in TextJournalEntry for new format
-        entryToSave = { text };
+        entryToSave = { text, ...(isPlan ? { isPlan } : {}) };
       } else {
         return NextResponse.json(
           { success: false, error: 'Invalid text parameter' },

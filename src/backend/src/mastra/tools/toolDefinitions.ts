@@ -87,6 +87,7 @@ export const AppendToJournalSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
   text: z.string().min(1).describe('The text to append to the journal entry'),
+  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
 });
 
 // Schema for updateJournalEntry state setter
@@ -94,6 +95,7 @@ export const UpdateJournalEntrySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to update'),
   text: z.string().describe('The new text to replace the existing entry'),
+  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
 });
 
 // Schema for deleteJournalEntry state setter
@@ -108,6 +110,7 @@ export const AddJournalRangeSchema = z.object({
   start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
   text: z.string().min(1).describe('The text describing what happened during this time range'),
+  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
 });
 
 // Schema for removeJournalRange state setter
@@ -117,47 +120,25 @@ export const RemoveJournalRangeSchema = z.object({
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
 
-// ==================== PLAN STATE SETTER SCHEMAS ====================
+// ==================== DEPRECATED PLAN SCHEMAS (use Journal with isPlan: true) ====================
 
-// Schema for createDayPlan state setter
-export const CreateDayPlanSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
-});
+/** @deprecated Use CreateDayJournalSchema instead */
+export const CreateDayPlanSchema = CreateDayJournalSchema;
 
-// Schema for appendToPlan state setter
-export const AppendToPlanSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
-  text: z.string().min(1).describe('The text to append to the plan entry'),
-});
+/** @deprecated Use AppendToJournalSchema with isPlan: true instead */
+export const AppendToPlanSchema = AppendToJournalSchema;
 
-// Schema for updatePlanEntry state setter
-export const UpdatePlanEntrySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  hour: z.enum(VALID_HOURS).describe('The hour to update'),
-  text: z.string().describe('The new text to replace the existing entry'),
-});
+/** @deprecated Use UpdateJournalEntrySchema with isPlan: true instead */
+export const UpdatePlanEntrySchema = UpdateJournalEntrySchema;
 
-// Schema for deletePlanEntry state setter
-export const DeletePlanEntrySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  hour: z.enum(VALID_HOURS).describe('The hour to clear'),
-});
+/** @deprecated Use DeleteJournalEntrySchema instead */
+export const DeletePlanEntrySchema = DeleteJournalEntrySchema;
 
-// Schema for addPlanRange state setter
-export const AddPlanRangeSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "2pm")'),
-  end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "4pm"). Must be after start.'),
-  text: z.string().min(1).describe('The text describing what is planned during this time range'),
-});
+/** @deprecated Use AddJournalRangeSchema with isPlan: true instead */
+export const AddPlanRangeSchema = AddJournalRangeSchema;
 
-// Schema for removePlanRange state setter
-export const RemovePlanRangeSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
-  end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
-});
+/** @deprecated Use RemoveJournalRangeSchema instead */
+export const RemovePlanRangeSchema = RemoveJournalRangeSchema;
 
 // ==================== TOOL CREATION ====================
 
@@ -271,7 +252,7 @@ export const createDayJournalTool = createMastraToolForStateSetter(
   'createDayJournal',
   CreateDayJournalSchema,
   {
-    description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
+    description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten. Use this for both actual journal entries and planned entries.',
     toolId: 'createDayJournal',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -283,7 +264,7 @@ export const appendToJournalTool = createMastraToolForStateSetter(
   'appendToJournal',
   AppendToJournalSchema,
   {
-    description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation.',
+    description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation. Set isPlan: true for planned entries.',
     toolId: 'appendToJournal',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -295,7 +276,7 @@ export const updateJournalEntryTool = createMastraToolForStateSetter(
   'updateJournalEntry',
   UpdateJournalEntrySchema,
   {
-    description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content.',
+    description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content. Set isPlan: true for planned entries.',
     toolId: 'updateJournalEntry',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -319,7 +300,7 @@ export const addJournalRangeTool = createMastraToolForStateSetter(
   'addJournalRange',
   AddJournalRangeSchema,
   {
-    description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm"). This creates a single entry displayed as "12pm-2pm: worked on project".',
+    description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm"). This creates a single entry displayed as "12pm-2pm: worked on project". Set isPlan: true for planned entries.',
     toolId: 'addJournalRange',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -338,74 +319,81 @@ export const removeJournalRangeTool = createMastraToolForStateSetter(
   },
 );
 
-// ==================== PLAN STATE SETTER TOOLS ====================
+// ==================== DEPRECATED PLAN STATE SETTER TOOLS ====================
+// These tools are kept for backward compatibility but internally use journal tools with isPlan: true
 
+/** @deprecated Use createDayJournalTool instead */
 export const createDayPlanTool = createMastraToolForStateSetter(
   'weekJournals',
-  'createDayPlan',
-  CreateDayPlanSchema,
+  'createDayJournal',
+  CreateDayJournalSchema,
   {
-    description: 'Create a new plan file for a specific date. If a plan already exists, it will not be overwritten.',
+    description: '[DEPRECATED: Use createDayJournal] Create a new journal file for a specific date for planning. If a journal already exists, it will not be overwritten.',
     toolId: 'createDayPlan',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
+/** @deprecated Use appendToJournalTool with isPlan: true instead */
 export const appendToPlanTool = createMastraToolForStateSetter(
   'weekJournals',
-  'appendToPlan',
-  AppendToPlanSchema,
+  'appendToJournal',
+  AppendToJournalSchema,
   {
-    description: 'Append text to a specific hour\'s plan entry. The text will be added to existing content with proper separation.',
+    description: '[DEPRECATED: Use appendToJournal with isPlan: true] Append text to a specific hour\'s plan entry.',
     toolId: 'appendToPlan',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
+/** @deprecated Use updateJournalEntryTool with isPlan: true instead */
 export const updatePlanEntryTool = createMastraToolForStateSetter(
   'weekJournals',
-  'updatePlanEntry',
-  UpdatePlanEntrySchema,
+  'updateJournalEntry',
+  UpdateJournalEntrySchema,
   {
-    description: 'Update/replace the content of a specific hour\'s plan entry. This will overwrite any existing content.',
+    description: '[DEPRECATED: Use updateJournalEntry with isPlan: true] Update/replace the content of a specific hour\'s plan entry.',
     toolId: 'updatePlanEntry',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
+/** @deprecated Use deleteJournalEntryTool instead */
 export const deletePlanEntryTool = createMastraToolForStateSetter(
   'weekJournals',
-  'deletePlanEntry',
-  DeletePlanEntrySchema,
+  'deleteJournalEntry',
+  DeleteJournalEntrySchema,
   {
-    description: 'Delete/clear the content of a specific hour\'s plan entry.',
+    description: '[DEPRECATED: Use deleteJournalEntry] Delete/clear the content of a specific hour\'s plan entry.',
     toolId: 'deletePlanEntry',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
+/** @deprecated Use addJournalRangeTool with isPlan: true instead */
 export const addPlanRangeTool = createMastraToolForStateSetter(
   'weekJournals',
-  'addPlanRange',
-  AddPlanRangeSchema,
+  'addJournalRange',
+  AddJournalRangeSchema,
   {
-    description: 'Add a plan entry that spans multiple hours. Use this when scheduling an activity for a range of time (e.g., "meeting from 2pm to 4pm"). This creates a single entry displayed as "2pm-4pm: meeting".',
+    description: '[DEPRECATED: Use addJournalRange with isPlan: true] Add a plan entry that spans multiple hours.',
     toolId: 'addPlanRange',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
+/** @deprecated Use removeJournalRangeTool instead */
 export const removePlanRangeTool = createMastraToolForStateSetter(
   'weekJournals',
-  'removePlanRange',
-  RemovePlanRangeSchema,
+  'removeJournalRange',
+  RemoveJournalRangeSchema,
   {
-    description: 'Remove a plan range entry by specifying its start and end hours.',
+    description: '[DEPRECATED: Use removeJournalRange] Remove a plan range entry by specifying its start and end hours.',
     toolId: 'removePlanRange',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -431,6 +419,7 @@ export const TOOL_REGISTRY = {
     addJournalRangeTool,
     removeJournalRangeTool,
   },
+  // Deprecated: use journalManagement with isPlan: true
   planManagement: {
     createDayPlanTool,
     appendToPlanTool,
@@ -450,6 +439,7 @@ export const TOOL_REGISTRY = {
 };
 
 // Export all tools as an array for easy registration
+// Only include the main journal tools, not the deprecated plan tools
 export const ALL_TOOLS = [
   changeTextTool, 
   addNewTextLineTool,
@@ -459,12 +449,6 @@ export const ALL_TOOLS = [
   deleteJournalEntryTool,
   addJournalRangeTool,
   removeJournalRangeTool,
-  createDayPlanTool,
-  appendToPlanTool,
-  updatePlanEntryTool,
-  deletePlanEntryTool,
-  addPlanRangeTool,
-  removePlanRangeTool,
   addTaskTool,
   removeTaskTool,
   updateTaskTool,

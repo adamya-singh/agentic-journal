@@ -84,7 +84,7 @@ function getEntryText(entry: JournalEntry): string {
  * POST /api/journal/append
  * Appends text to a specific hour's journal entry
  * 
- * Body: { date: string, hour: string, text: string }
+ * Body: { date: string, hour: string, text: string, isPlan?: boolean }
  * 
  * Note: Cannot append to task reference entries. Use the update endpoint
  * to change a task entry to a text entry if you need to add notes.
@@ -92,7 +92,7 @@ function getEntryText(entry: JournalEntry): string {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text } = body;
+    const { date, hour, text, isPlan } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -138,17 +138,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the current text content
+    // Get the current text content and isPlan status
     const currentText = currentEntry ? getEntryText(currentEntry) : '';
+    // Preserve existing isPlan status if appending, otherwise use provided value
+    const currentIsPlan = currentEntry && isTextJournalEntry(currentEntry) ? currentEntry.isPlan : undefined;
+    const finalIsPlan = isPlan ?? currentIsPlan;
 
     // Determine the new entry
     let newEntry: JournalEntry;
     if (currentText && currentText.trim() !== '') {
       // Append with newline separation
-      newEntry = { text: currentText + '\n' + text.trim() };
+      newEntry = { text: currentText + '\n' + text.trim(), ...(finalIsPlan ? { isPlan: finalIsPlan } : {}) };
     } else {
       // Start fresh
-      newEntry = { text: text.trim() };
+      newEntry = { text: text.trim(), ...(finalIsPlan ? { isPlan: finalIsPlan } : {}) };
     }
 
     // Update the entry

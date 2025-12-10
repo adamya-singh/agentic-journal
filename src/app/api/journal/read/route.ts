@@ -139,6 +139,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
+        isPlan: entry.isPlan,
       };
     }
     // Task not found - return placeholder
@@ -149,6 +150,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
+      isPlan: entry.isPlan,
     };
   }
 
@@ -161,6 +163,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       hour,
       text: entry.text,
       type: 'text',
+      isPlan: entry.isPlan,
     };
   }
 
@@ -194,6 +197,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
+        isPlan: entry.isPlan,
       };
     }
     // Task not found - return placeholder
@@ -205,6 +209,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
+      isPlan: entry.isPlan,
     };
   }
 
@@ -214,6 +219,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
     end: entry.end,
     text: entry.text,
     type: 'text',
+    isPlan: entry.isPlan,
   };
 }
 

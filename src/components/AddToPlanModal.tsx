@@ -60,8 +60,8 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
     setPhase('submitting');
 
     try {
-      // First, ensure the plan exists for today
-      const createResponse = await fetch('/api/plans/create', {
+      // First, ensure the journal exists for the date
+      const createResponse = await fetch('/api/journal/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ date }),
@@ -69,10 +69,10 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
       
       const createData = await createResponse.json();
       if (!createData.success) {
-        throw new Error(createData.error || 'Failed to create plan');
+        throw new Error(createData.error || 'Failed to create journal');
       }
 
-      // Now update the plan with the task
+      // Now update the journal with the task as a plan entry (isPlan: true)
       let updateBody;
       if (timeMode === 'single') {
         updateBody = {
@@ -80,6 +80,7 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
           hour: selectedHour,
           taskId: task.id,
           listType,
+          isPlan: true,
         };
       } else {
         updateBody = {
@@ -89,11 +90,12 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
             end: endHour,
             taskId: task.id,
             listType,
+            isPlan: true,
           },
         };
       }
 
-      const updateResponse = await fetch('/api/plans/update', {
+      const updateResponse = await fetch('/api/journal/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updateBody),
@@ -101,7 +103,7 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
 
       const updateData = await updateResponse.json();
       if (!updateData.success) {
-        throw new Error(updateData.error || 'Failed to update plan');
+        throw new Error(updateData.error || 'Failed to add to plan');
       }
 
       setPhase('complete');
