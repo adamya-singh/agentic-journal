@@ -43,6 +43,7 @@ interface TaskListProps {
   onTaskClick?: (task: Task) => void;
   clickedTasks?: Set<string>;
   onAddClick?: () => void;
+  onDelete?: (task: Task) => void;
 }
 
 function TaskList({ 
@@ -55,7 +56,8 @@ function TaskList({
   buttonColor,
   onTaskClick,
   clickedTasks,
-  onAddClick
+  onAddClick,
+  onDelete
 }: TaskListProps) {
   const orderedTasks = tasks;
 
@@ -106,17 +108,35 @@ function TaskList({
               return (
                 <li 
                   key={task.id} 
-                  className={`text-sm text-gray-700 ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
-                  onClick={() => onTaskClick?.(task)}
+                  className={`text-sm text-gray-700 flex items-center justify-between group ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
                 >
-                  <span>{task.text}</span>
-                  {task.dueDate && (
-                    <span className="ml-2 text-xs text-gray-400">
-                      (due: {task.dueDate})
-                    </span>
-                  )}
-                  {isInToday && (
-                    <span className="ml-2 text-xs text-green-600">✓ in today</span>
+                  <span 
+                    className="flex-1"
+                    onClick={() => onTaskClick?.(task)}
+                  >
+                    <span>{task.text}</span>
+                    {task.dueDate && (
+                      <span className="ml-2 text-xs text-gray-400">
+                        (due: {task.dueDate})
+                      </span>
+                    )}
+                    {isInToday && (
+                      <span className="ml-2 text-xs text-green-600">✓ in today</span>
+                    )}
+                  </span>
+                  {onDelete && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(task);
+                      }}
+                      className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                      title="Delete task"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </button>
                   )}
                 </li>
               );
@@ -268,6 +288,10 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [planTask, setPlanTask] = useState<Task | null>(null);
   const [planListType, setPlanListType] = useState<ListType>('have-to-do');
+  
+  // Delete confirmation modal state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [taskToDelete, setTaskToDelete] = useState<{ task: Task; listType: ListType } | null>(null);
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -481,6 +505,40 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     setShowPlanModal(true);
   };
 
+  // Handler to show delete confirmation
+  const confirmDeleteTask = (task: Task, listType: ListType) => {
+    setTaskToDelete({ task, listType });
+    setShowDeleteConfirm(true);
+  };
+
+  // Handler to actually delete the task after confirmation
+  const handleDeleteTask = async () => {
+    if (!taskToDelete) return;
+    
+    try {
+      const response = await fetch('/api/tasks/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: taskToDelete.task.text,
+          listType: taskToDelete.listType,
+        }),
+      });
+      
+      const data = await response.json();
+      if (data.success && data.removed) {
+        // Refresh both general and today's tasks
+        fetchGeneralTasks();
+        fetchTodayTasks();
+      }
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+    } finally {
+      setShowDeleteConfirm(false);
+      setTaskToDelete(null);
+    }
+  };
+
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
       <h2 className="text-2xl font-semibold text-gray-700 mb-4 text-center">Tasks</h2>
@@ -528,6 +586,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             setActiveListType('have-to-do');
             setShowTaskModal(true);
           }}
+          onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
         />
         <TaskList
           title="Want to Do"
@@ -543,6 +602,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             setActiveListType('want-to-do');
             setShowTaskModal(true);
           }}
+          onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
         />
       </div>
 
@@ -562,6 +622,44 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         listType={planListType}
         date={currentDate}
       />
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && taskToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-800 mb-2">Delete Task?</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to permanently delete this task?
+            </p>
+            <div className="bg-gray-50 rounded p-3 mb-4">
+              <p className="text-sm text-gray-700 font-medium">{taskToDelete.task.text}</p>
+              {taskToDelete.task.dueDate && (
+                <p className="text-xs text-gray-500 mt-1">Due: {taskToDelete.task.dueDate}</p>
+              )}
+            </div>
+            <p className="text-xs text-red-500 mb-4">
+              This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setTaskToDelete(null);
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteTask()}
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

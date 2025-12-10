@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  DayJournal,
+  JournalEntry,
+  JournalRangeEntry,
+  isTaskJournalEntry,
+  isTextJournalEntry,
+} from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -11,7 +18,10 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 // Date format regex (MMDDYY)
 const DATE_REGEX = /^\d{6}$/;
 
-type DayJournal = Record<string, string>;
+// Journal with ranges support
+type DayJournalWithRanges = DayJournal & {
+  ranges?: JournalRangeEntry[];
+};
 
 /**
  * Helper function to validate date format (MMDDYY)
@@ -38,18 +48,36 @@ function journalFileExists(date: string): boolean {
 /**
  * Helper function to read a journal file
  */
-function readJournalFile(date: string): DayJournal {
+function readJournalFile(date: string): DayJournalWithRanges {
   const filePath = getJournalFilePath(date);
   const content = fs.readFileSync(filePath, 'utf-8');
-  return JSON.parse(content);
+  const journal = JSON.parse(content) as DayJournalWithRanges;
+  // Ensure ranges array exists for backward compatibility
+  if (!journal.ranges) {
+    journal.ranges = [];
+  }
+  return journal;
 }
 
 /**
  * Helper function to write a journal file
  */
-function writeJournalFile(date: string, journal: DayJournal): void {
+function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
   const filePath = getJournalFilePath(date);
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
+}
+
+/**
+ * Get the text content from a journal entry
+ */
+function getEntryText(entry: JournalEntry): string {
+  if (typeof entry === 'string') {
+    return entry;
+  }
+  if (isTextJournalEntry(entry)) {
+    return entry.text;
+  }
+  return '';
 }
 
 /**
@@ -57,6 +85,9 @@ function writeJournalFile(date: string, journal: DayJournal): void {
  * Appends text to a specific hour's journal entry
  * 
  * Body: { date: string, hour: string, text: string }
+ * 
+ * Note: Cannot append to task reference entries. Use the update endpoint
+ * to change a task entry to a text entry if you need to add notes.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -97,14 +128,31 @@ export async function POST(request: NextRequest) {
 
     // Read current journal
     const journal = readJournalFile(date);
-    const currentEntry = journal[hour] || '';
+    const currentEntry = journal[hour];
 
-    // Append with newline separation if there's existing content
-    if (currentEntry && currentEntry.trim() !== '') {
-      journal[hour] = currentEntry + '\n' + text.trim();
-    } else {
-      journal[hour] = text.trim();
+    // Check if current entry is a task reference - cannot append to task entries
+    if (currentEntry && isTaskJournalEntry(currentEntry)) {
+      return NextResponse.json(
+        { success: false, error: 'Cannot append text to a task reference entry. Use the update endpoint to replace it with a text entry.' },
+        { status: 400 }
+      );
     }
+
+    // Get the current text content
+    const currentText = currentEntry ? getEntryText(currentEntry) : '';
+
+    // Determine the new entry
+    let newEntry: JournalEntry;
+    if (currentText && currentText.trim() !== '') {
+      // Append with newline separation
+      newEntry = { text: currentText + '\n' + text.trim() };
+    } else {
+      // Start fresh
+      newEntry = { text: text.trim() };
+    }
+
+    // Update the entry
+    journal[hour] = newEntry;
 
     // Write updated journal
     writeJournalFile(date, journal);
@@ -124,4 +172,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

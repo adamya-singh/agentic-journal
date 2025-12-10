@@ -60,15 +60,87 @@ export interface ResolvedPlanEntry {
   completed?: boolean;
 }
 
+// ============ Journal Entry Types ============
+
+/**
+ * A journal entry that references a task by ID
+ */
+export interface TaskJournalEntry {
+  taskId: string;
+  listType: ListType;
+}
+
+/**
+ * A journal entry with free-form text (not linked to a task)
+ */
+export interface TextJournalEntry {
+  text: string;
+}
+
+/**
+ * A journal entry can be:
+ * - TaskJournalEntry: references a task by ID
+ * - TextJournalEntry: free-form text
+ * - string: legacy plain text (backward compatibility)
+ */
+export type JournalEntry = TaskJournalEntry | TextJournalEntry | string;
+
+/**
+ * A day's journal mapping hours to entries
+ */
+export type DayJournal = Record<string, JournalEntry>;
+
+// ============ Resolved Journal Entry (for display) ============
+
+/**
+ * A resolved journal entry with all display information
+ */
+export interface ResolvedJournalEntry {
+  hour: string;
+  text: string;
+  type: 'task' | 'text';
+  taskId?: string;
+  listType?: ListType;
+  completed?: boolean;
+}
+
 // ============ Range Entry Types ============
 
 /**
- * A journal range entry spanning multiple hours
+ * A text-based journal range entry spanning multiple hours
  */
-export interface JournalRangeEntry {
+export interface TextJournalRangeEntry {
   start: string;  // e.g., "12pm"
   end: string;    // e.g., "2pm"
   text: string;
+}
+
+/**
+ * A task-based journal range entry spanning multiple hours
+ */
+export interface TaskJournalRangeEntry {
+  start: string;
+  end: string;
+  taskId: string;
+  listType: ListType;
+}
+
+/**
+ * A journal range entry can be text-based or task-based
+ */
+export type JournalRangeEntry = TextJournalRangeEntry | TaskJournalRangeEntry;
+
+/**
+ * A resolved journal range entry with all display information
+ */
+export interface ResolvedJournalRangeEntry {
+  start: string;
+  end: string;
+  text: string;
+  type: 'task' | 'text';
+  taskId?: string;
+  listType?: ListType;
+  completed?: boolean;
 }
 
 /**
@@ -127,6 +199,28 @@ export function isTaskPlanRangeEntry(entry: PlanRangeEntry): entry is TaskPlanRa
 }
 
 export function isTextPlanRangeEntry(entry: PlanRangeEntry): entry is TextPlanRangeEntry {
+  return 'text' in entry && !('taskId' in entry);
+}
+
+// ============ Journal Type Guards ============
+
+export function isTaskJournalEntry(entry: JournalEntry): entry is TaskJournalEntry {
+  return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry;
+}
+
+export function isTextJournalEntry(entry: JournalEntry): entry is TextJournalEntry {
+  return typeof entry === 'object' && entry !== null && 'text' in entry && !('taskId' in entry);
+}
+
+export function isLegacyJournalStringEntry(entry: JournalEntry): entry is string {
+  return typeof entry === 'string';
+}
+
+export function isTaskJournalRangeEntry(entry: JournalRangeEntry): entry is TaskJournalRangeEntry {
+  return 'taskId' in entry && 'listType' in entry;
+}
+
+export function isTextJournalRangeEntry(entry: JournalRangeEntry): entry is TextJournalRangeEntry {
   return 'text' in entry && !('taskId' in entry);
 }
 

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { handleDueDateSetup } from '../due-date-utils';
 
 type ListType = 'have-to-do' | 'want-to-do';
 
@@ -10,6 +11,7 @@ function getTasksFilePath(listType: ListType): string {
 }
 
 interface Task {
+  id: string;
   text: string;
   dueDate?: string;
 }
@@ -118,11 +120,17 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeTasks(data, listType);
 
+    // If task has a due date set (not removed), auto-create plan/today list and add to 8am slot
+    const updatedTask = data.tasks[taskIndex];
+    if (updatedTask.dueDate) {
+      handleDueDateSetup(updatedTask.dueDate, listType, updatedTask);
+    }
+
     return NextResponse.json({
       success: true,
       message: 'Task updated successfully',
       previousTask,
-      updatedTask: data.tasks[taskIndex],
+      updatedTask,
     });
   } catch (error) {
     console.error('Error updating task:', error);

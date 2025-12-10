@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { JournalRangeEntry } from '@/lib/types';
+import { DayJournal, JournalEntry, JournalRangeEntry } from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -13,9 +13,7 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 const DATE_REGEX = /^\d{6}$/;
 
 // Journal with ranges support
-type DayJournalWithRanges = {
-  [hour: string]: string;
-} & {
+type DayJournalWithRanges = DayJournal & {
   ranges?: JournalRangeEntry[];
 };
 
@@ -67,14 +65,28 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
  * POST /api/journal/update
  * Updates/replaces a specific hour's journal entry OR adds/updates a range entry
  * 
- * For hourly update: { date: string, hour: string, text: string }
- * For range update: { date: string, range: { start: string, end: string, text: string } }
- * For range removal: { date: string, removeRange: { start: string, end: string } }
+ * For hourly update:
+ * Body: { date: string, hour: string, entry: JournalEntry }
+ * 
+ * entry can be:
+ * - { taskId: string, listType: 'have-to-do' | 'want-to-do' } - task reference
+ * - { text: string } - free-form text
+ * - string - legacy plain text (for backward compatibility)
+ * - '' or null - clears the entry
+ * 
+ * For range update:
+ * Body: { date: string, range: { start: string, end: string, text?: string, taskId?: string, listType?: string } }
+ * 
+ * For range removal:
+ * Body: { date: string, removeRange: { start: string, end: string } }
+ * 
+ * Legacy format also supported:
+ * Body: { date: string, hour: string, text: string }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text, range, removeRange } = body;
+    const { date, hour, entry, text, taskId, listType, range, removeRange } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -122,18 +134,11 @@ export async function POST(request: NextRequest) {
 
     // Handle range update/add
     if (range) {
-      const { start, end, text: rangeText } = range;
+      const { start, end, text: rangeText, taskId: rangeTaskId, listType: rangeListType } = range;
       
       if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
         return NextResponse.json(
           { success: false, error: 'Invalid range. start and end must be valid hours.' },
-          { status: 400 }
-        );
-      }
-
-      if (rangeText === undefined || rangeText === null) {
-        return NextResponse.json(
-          { success: false, error: 'Range text is required' },
           { status: 400 }
         );
       }
@@ -148,12 +153,23 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Determine the range entry to save
+      let newRange: JournalRangeEntry;
+      if (rangeTaskId && rangeListType) {
+        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType };
+      } else if (rangeText !== undefined) {
+        newRange = { start, end, text: rangeText };
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Range must have either text or taskId+listType' },
+          { status: 400 }
+        );
+      }
+
       // Check if range already exists and update it, or add new
       const existingIdx = (journal.ranges || []).findIndex(
         r => r.start === start && r.end === end
       );
-
-      const newRange: JournalRangeEntry = { start, end, text: rangeText };
 
       if (existingIdx >= 0) {
         const previousRange = journal.ranges![existingIdx];
@@ -189,22 +205,48 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (text === undefined || text === null) {
+    // Determine the entry to save
+    let entryToSave: JournalEntry;
+
+    if (entry !== undefined) {
+      // New format: entry is provided directly
+      entryToSave = entry;
+    } else if (taskId !== undefined && listType !== undefined) {
+      // Task reference format
+      entryToSave = { taskId, listType };
+    } else if (text !== undefined) {
+      // Legacy format: plain text
+      if (text === '' || text === null) {
+        entryToSave = '';
+      } else if (typeof text === 'string') {
+        // Wrap in TextJournalEntry for new format
+        entryToSave = { text };
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'Invalid text parameter' },
+          { status: 400 }
+        );
+      }
+    } else {
       return NextResponse.json(
-        { success: false, error: 'Text parameter is required' },
+        { success: false, error: 'Entry, text, or taskId+listType parameter is required' },
         { status: 400 }
       );
     }
 
     const previousEntry = journal[hour] || '';
-    journal[hour] = typeof text === 'string' ? text : '';
+
+    // Update the entry
+    journal[hour] = entryToSave;
+
+    // Write updated journal
     writeJournalFile(date, journal);
 
     return NextResponse.json({
       success: true,
       date,
       hour,
-      message: `Successfully updated ${hour} on ${date}`,
+      message: `Successfully updated journal at ${hour} on ${date}`,
       previousEntry,
       newEntry: journal[hour],
     });
@@ -216,4 +258,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { handleDueDateSetup } from '../due-date-utils';
 
 type ListType = 'have-to-do' | 'want-to-do';
 
@@ -108,6 +109,11 @@ export async function POST(request: NextRequest) {
 
     // Write updated tasks
     writeTasks(data, listType);
+
+    // If task has a due date, auto-create plan/today list and add to 8am slot
+    if (newTask.dueDate) {
+      handleDueDateSetup(newTask.dueDate, listType, newTask);
+    }
 
     return NextResponse.json({
       success: true,
