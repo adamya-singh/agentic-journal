@@ -14,9 +14,16 @@ interface TasksData {
   tasks: Task[];
 }
 
+interface TaskPlanRangeEntry {
+  start: string;
+  end: string;
+  taskId: string;
+  listType: ListType;
+}
+
 interface DayPlan {
   [hour: string]: string | { taskId: string; listType: ListType } | { text: string };
-  ranges?: unknown[];
+  ranges?: TaskPlanRangeEntry[];
 }
 
 // Paths
@@ -113,10 +120,10 @@ export function ensureTodayListExists(
 }
 
 /**
- * Add a task reference to the 8am slot in the daily plan
- * Only adds if the 8am slot is empty
+ * Add a task as a range entry at 8am (8am-8am) in the daily plan
+ * All due tasks are added as ranges so multiple tasks can share the same time
  */
-export function addTaskToPlanAt8am(
+export function addTaskAsRangeAt8am(
   dateIso: string,
   taskId: string,
   listType: ListType
@@ -130,15 +137,30 @@ export function addTaskToPlanAt8am(
   const content = fs.readFileSync(planFilePath, 'utf-8');
   const plan: DayPlan = JSON.parse(content);
   
-  // Only add if 8am slot is empty
-  if (plan['8am'] === '' || plan['8am'] === null || plan['8am'] === undefined) {
-    plan['8am'] = { taskId, listType };
+  // Ensure ranges array exists
+  if (!plan.ranges) {
+    plan.ranges = [];
+  }
+  
+  // Check if this task is already in ranges
+  const taskAlreadyExists = plan.ranges.some(
+    (range) => range.taskId === taskId
+  );
+  
+  if (!taskAlreadyExists) {
+    // Add task as a range entry at 8am
+    plan.ranges.push({
+      start: '8am',
+      end: '8am',
+      taskId,
+      listType,
+    });
     fs.writeFileSync(planFilePath, JSON.stringify(plan, null, 2), 'utf-8');
   }
 }
 
 /**
- * Handle due date setup: creates plan, today list, and adds task to 8am slot
+ * Handle due date setup: creates plan, today list, and adds task as range at 8am
  * Call this when a task is created or updated with a due date
  * @param dateIso - Date in ISO format (YYYY-MM-DD)
  */
@@ -149,5 +171,5 @@ export function handleDueDateSetup(
 ): void {
   ensureDailyPlanExists(dateIso);
   ensureTodayListExists(dateIso, listType, task);
-  addTaskToPlanAt8am(dateIso, task.id, listType);
+  addTaskAsRangeAt8am(dateIso, task.id, listType);
 }
