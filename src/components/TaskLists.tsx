@@ -162,9 +162,10 @@ interface TodayTaskListProps {
   onRemove?: (task: Task) => void;
   onComplete?: (task: Task) => void;
   onAddToPlan?: (task: Task) => void;
+  currentDate?: string;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, currentDate }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
@@ -243,15 +244,25 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                   </button>
                 )}
                 {onRemove && !task.completed && (
-                  <button
-                    onClick={() => onRemove(task)}
-                    className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-60 hover:opacity-100"
-                    title="Remove from today"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                    </svg>
-                  </button>
+                  (() => {
+                    const isDueToday = task.dueDate === currentDate;
+                    return (
+                      <button
+                        onClick={isDueToday ? undefined : () => onRemove(task)}
+                        disabled={isDueToday}
+                        className={`ml-2 p-1 rounded transition-colors ${
+                          isDueToday
+                            ? 'text-gray-300 cursor-not-allowed opacity-30'
+                            : 'text-red-400 hover:text-red-600 hover:bg-red-50 opacity-60 hover:opacity-100'
+                        }`}
+                        title={isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                      </button>
+                    );
+                  })()
                 )}
               </li>
             ))}
@@ -556,6 +567,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onRemove={(task) => handleRemoveFromToday(task, 'have-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
+          currentDate={currentDate}
         />
         <TodayTaskList
           title="Want to Do Today"
@@ -567,6 +579,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onRemove={(task) => handleRemoveFromToday(task, 'want-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
+          currentDate={currentDate}
         />
       </div>
 
