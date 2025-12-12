@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ensureDailyJournalExists, addTaskToStaged } from '../../due-date-utils';
 
 type ListType = 'have-to-do' | 'want-to-do';
 
@@ -130,6 +131,10 @@ export async function POST(request: NextRequest) {
 
     // Write updated tasks
     writeDailyTasks(data, date, listType);
+
+    // Ensure journal exists and add task to staged area
+    ensureDailyJournalExists(date);
+    addTaskToStaged(date, taskId, listType);
 
     return NextResponse.json({
       success: true,

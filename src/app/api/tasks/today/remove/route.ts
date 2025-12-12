@@ -20,6 +20,102 @@ interface TasksData {
   tasks: Task[];
 }
 
+// Journal types
+interface TaskJournalEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan?: boolean;
+}
+
+interface JournalRangeEntry {
+  start: string;
+  end: string;
+  taskId?: string;
+  listType?: ListType;
+  text?: string;
+  isPlan?: boolean;
+}
+
+interface StagedEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan?: boolean;
+}
+
+type JournalEntry = string | TaskJournalEntry | { text: string; isPlan?: boolean };
+
+interface DayJournal {
+  [hour: string]: JournalEntry;
+  ranges?: JournalRangeEntry[];
+  staged?: StagedEntry[];
+}
+
+const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+
+// Get the path for a journal file
+function getJournalFilePath(date: string): string {
+  return path.join(process.cwd(), `src/backend/data/journal/${date}.json`);
+}
+
+/**
+ * Helper function to read journal from file
+ */
+function readJournal(date: string): DayJournal | null {
+  const journalFile = getJournalFilePath(date);
+  if (!fs.existsSync(journalFile)) {
+    return null;
+  }
+  const content = fs.readFileSync(journalFile, 'utf-8');
+  return JSON.parse(content);
+}
+
+/**
+ * Helper function to write journal to file
+ */
+function writeJournal(date: string, journal: DayJournal): void {
+  const journalFile = getJournalFilePath(date);
+  fs.writeFileSync(journalFile, JSON.stringify(journal, null, 2), 'utf-8');
+}
+
+/**
+ * Remove all journal entries (hour slots, ranges, staged) referencing a task
+ */
+function removeTaskFromJournal(date: string, taskId: string): boolean {
+  const journal = readJournal(date);
+  if (!journal) return false;
+  
+  let modified = false;
+  
+  // Clear hour slots referencing this task
+  for (const hour of HOURS) {
+    const entry = journal[hour];
+    if (entry && typeof entry === 'object' && 'taskId' in entry && entry.taskId === taskId) {
+      journal[hour] = '';
+      modified = true;
+    }
+  }
+  
+  // Filter out range entries referencing this task
+  if (journal.ranges) {
+    const before = journal.ranges.length;
+    journal.ranges = journal.ranges.filter(r => r.taskId !== taskId);
+    if (journal.ranges.length !== before) modified = true;
+  }
+  
+  // Filter out staged entries referencing this task
+  if (journal.staged) {
+    const before = journal.staged.length;
+    journal.staged = journal.staged.filter(s => s.taskId !== taskId);
+    if (journal.staged.length !== before) modified = true;
+  }
+  
+  if (modified) {
+    writeJournal(date, journal);
+  }
+  
+  return modified;
+}
+
 /**
  * Helper function to read daily tasks from file
  */
@@ -103,11 +199,15 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeDailyTasks(data, date, listType);
 
+    // Clean up journal entries for this task
+    const journalCleaned = removeTaskFromJournal(date, taskId);
+
     return NextResponse.json({
       success: true,
       removed: true,
       message: 'Task removed from today\'s list',
       taskCount: data.tasks.length,
+      journalCleaned,
     });
   } catch (error) {
     console.error('Error removing task from daily list:', error);
