@@ -7,6 +7,8 @@ import {
   JournalRangeEntry,
   ResolvedJournalEntry,
   ResolvedJournalRangeEntry,
+  ResolvedStagedEntry,
+  StagedTaskEntry,
   ListType,
   Task,
   TasksData,
@@ -26,16 +28,18 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 type HourOfDay = typeof HOURS[number];
 
-// Journal with ranges support
+// Journal with ranges and staged support
 type DayJournalWithRanges = DayJournal & {
   ranges?: JournalRangeEntry[];
+  staged?: StagedTaskEntry[];
 };
 
-// Resolved journal with ranges
+// Resolved journal with ranges and staged
 type ResolvedDayJournalWithRanges = {
   [hour: string]: ResolvedJournalEntry | null;
 } & {
   ranges?: ResolvedJournalRangeEntry[];
+  staged?: ResolvedStagedEntry[];
 };
 
 /**
@@ -114,9 +118,12 @@ function readJournalFile(date: string): DayJournalWithRanges | null {
   try {
     const data = fs.readFileSync(filePath, 'utf-8');
     const journal = JSON.parse(data) as DayJournalWithRanges;
-    // Ensure ranges array exists for backward compatibility
+    // Ensure ranges and staged arrays exist for backward compatibility
     if (!journal.ranges) {
       journal.ranges = [];
+    }
+    if (!journal.staged) {
+      journal.staged = [];
     }
     return journal;
   } catch {
@@ -224,6 +231,30 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
 }
 
 /**
+ * Resolve a staged entry to displayable format
+ */
+function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStagedEntry | null {
+  const task = findTaskById(entry.taskId, entry.listType, date);
+  if (task) {
+    return {
+      text: task.text,
+      taskId: entry.taskId,
+      listType: entry.listType,
+      completed: task.completed,
+      isPlan: entry.isPlan,
+    };
+  }
+  // Task not found - return placeholder
+  return {
+    text: '[Task not found]',
+    taskId: entry.taskId,
+    listType: entry.listType,
+    completed: false,
+    isPlan: entry.isPlan,
+  };
+}
+
+/**
  * Resolve all entries in a journal
  */
 function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDayJournalWithRanges {
@@ -243,6 +274,15 @@ function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDa
     resolved.ranges = journal.ranges.map(r => resolveRangeEntry(r, date));
   } else {
     resolved.ranges = [];
+  }
+
+  // Resolve staged entries
+  if (journal.staged && journal.staged.length > 0) {
+    resolved.staged = journal.staged
+      .map(s => resolveStagedEntry(s, date))
+      .filter((s): s is ResolvedStagedEntry => s !== null);
+  } else {
+    resolved.staged = [];
   }
   
   return resolved;

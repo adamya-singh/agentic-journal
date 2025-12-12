@@ -109,6 +109,29 @@ export interface ResolvedJournalRangeEntry {
   isPlan?: boolean;
 }
 
+// ============ Staged Entry Types ============
+
+/**
+ * A staged task entry - a task that is due on this day but not yet scheduled to a specific time.
+ * These appear in the "staging area" / "unscheduled" section of the day.
+ */
+export interface StagedTaskEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan?: boolean;
+}
+
+/**
+ * A resolved staged entry with all display information
+ */
+export interface ResolvedStagedEntry {
+  text: string;
+  taskId: string;
+  listType: ListType;
+  completed?: boolean;
+  isPlan?: boolean;
+}
+
 // ============ Deprecated Plan Types (aliases for backward compatibility) ============
 
 /** @deprecated Use TaskJournalEntry instead */
@@ -158,6 +181,10 @@ export function isTaskJournalRangeEntry(entry: JournalRangeEntry): entry is Task
 
 export function isTextJournalRangeEntry(entry: JournalRangeEntry): entry is TextJournalRangeEntry {
   return 'text' in entry && !('taskId' in entry);
+}
+
+export function isStagedTaskEntry(entry: StagedTaskEntry): entry is StagedTaskEntry {
+  return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry && !('start' in entry);
 }
 
 // ============ Deprecated Type Guards (aliases for backward compatibility) ============

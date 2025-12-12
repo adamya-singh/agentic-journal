@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ResolvedJournalEntry, ResolvedJournalRangeEntry, JournalRangeEntry, ListType } from '@/lib/types';
+import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, JournalRangeEntry, ListType } from '@/lib/types';
 
-// Resolved journal data with ranges - entries resolved to display format
+// Resolved journal data with ranges and staged - entries resolved to display format
 export type ResolvedDayJournalWithRanges = {
   [hour: string]: ResolvedJournalEntry | null;
 } & {
   ranges?: ResolvedJournalRangeEntry[];
+  staged?: ResolvedStagedEntry[];
 };
 
 // Week data type - exported for cedar state (now uses resolved entries)
@@ -30,6 +31,14 @@ export interface TypedEntry {
   completed?: boolean;
   isRange?: boolean;  // True if this is a range entry
   startHour?: string; // For sorting range entries by their start time
+}
+
+// Staged entry for unscheduled tasks
+export interface StagedEntry {
+  text: string;
+  taskId: string;
+  listType: ListType;
+  completed?: boolean;
 }
 
 export interface DayInfo {
@@ -146,6 +155,24 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
   return entries;
 }
 
+/**
+ * Get staged (unscheduled) entries from a journal
+ */
+function getStagedFromJournal(journal: ResolvedDayJournalWithRanges | null): StagedEntry[] {
+  if (!journal || !journal.staged || !Array.isArray(journal.staged)) {
+    return [];
+  }
+  
+  return journal.staged
+    .filter(entry => entry.text && entry.text.trim() !== '')
+    .map(entry => ({
+      text: entry.text,
+      taskId: entry.taskId,
+      listType: entry.listType,
+      completed: entry.completed,
+    }));
+}
+
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [weekDates] = useState<DayInfo[]>(getCurrentWeekDates);
   const [weekData, setWeekData] = useState<WeekData>({});
@@ -229,6 +256,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       {/* Legend */}
       <div className="flex justify-center gap-6 mb-4 text-sm">
         <div className="flex items-center gap-2">
+          <span className="w-3 h-3 rounded-full bg-amber-500"></span>
+          <span className="text-gray-600">Unscheduled</span>
+        </div>
+        <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-teal-500"></span>
           <span className="text-gray-600">Planned</span>
         </div>
@@ -244,6 +275,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       <div className="grid grid-cols-7 gap-3">
         {weekDates.map((dayInfo) => {
           const entries = getEntriesFromJournal(weekData[dayInfo.date]);
+          const stagedEntries = getStagedFromJournal(weekData[dayInfo.date]);
           const isToday = dayInfo.date === weekDates.find(d => {
             const today = new Date();
             const year = today.getFullYear();
@@ -251,6 +283,8 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
             const day = String(today.getDate()).padStart(2, '0');
             return d.date === `${year}-${month}-${day}`;
           })?.date;
+          
+          const hasContent = entries.length > 0 || stagedEntries.length > 0;
 
           return (
             <div
@@ -275,8 +309,39 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
 
               {/* Journal and plan entries */}
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
-                {entries.length > 0 ? (
+                {hasContent ? (
                   <div className="space-y-2">
+                    {/* Staged/Unscheduled tasks section */}
+                    {stagedEntries.length > 0 && (
+                      <div className="mb-3">
+                        <div className="text-xs font-medium text-amber-600 uppercase tracking-wide mb-1">
+                          Unscheduled
+                        </div>
+                        <div className="space-y-1 pl-1 border-l-2 border-amber-300">
+                          {stagedEntries.map((staged, index) => {
+                            const isCompleted = staged.completed;
+                            return (
+                              <div key={`staged-${staged.taskId}-${index}`} className="text-sm pl-2">
+                                <span className={`${
+                                  isCompleted 
+                                    ? 'text-green-600 line-through' 
+                                    : 'text-amber-700'
+                                }`}>
+                                  {staged.text}
+                                </span>
+                                <span className={`ml-1 text-xs italic ${
+                                  isCompleted ? 'text-green-500' : 'text-amber-500'
+                                }`}>
+                                  {isCompleted ? '(done)' : '(due)'}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Scheduled entries */}
                     {entries.map(({ hour, text, type, taskId, completed }, index) => {
                       const isTask = type === 'plan' && taskId;
                       const isCompleted = isTask && completed;

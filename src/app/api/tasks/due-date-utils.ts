@@ -22,9 +22,16 @@ interface TaskJournalRangeEntry {
   isPlan: boolean;
 }
 
+interface StagedTaskEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan: boolean;
+}
+
 interface DayJournal {
   [hour: string]: string | { taskId: string; listType: ListType; isPlan?: boolean } | { text: string; isPlan?: boolean };
   ranges?: TaskJournalRangeEntry[];
+  staged?: StagedTaskEntry[];
 }
 
 // Paths
@@ -61,6 +68,7 @@ function getEmptyJournalTemplate(): DayJournal {
     '5am': '',
     '6am': '',
     ranges: [],
+    staged: [],
   };
 }
 
@@ -121,10 +129,10 @@ export function ensureTodayListExists(
 }
 
 /**
- * Add a task as a range entry at 8am (8am-8am) in the daily journal with isPlan: true
- * All due tasks are added as ranges so multiple tasks can share the same time
+ * Add a task to the staged area in the daily journal with isPlan: true
+ * Staged tasks are due on this day but not yet scheduled to a specific time
  */
-export function addTaskAsRangeAt8am(
+export function addTaskToStaged(
   dateIso: string,
   taskId: string,
   listType: ListType
@@ -138,21 +146,19 @@ export function addTaskAsRangeAt8am(
   const content = fs.readFileSync(journalFilePath, 'utf-8');
   const journal: DayJournal = JSON.parse(content);
   
-  // Ensure ranges array exists
-  if (!journal.ranges) {
-    journal.ranges = [];
+  // Ensure staged array exists
+  if (!journal.staged) {
+    journal.staged = [];
   }
   
-  // Check if this task is already in ranges
-  const taskAlreadyExists = journal.ranges.some(
-    (range) => range.taskId === taskId
+  // Check if this task is already staged
+  const taskAlreadyExists = journal.staged.some(
+    (entry) => entry.taskId === taskId
   );
   
   if (!taskAlreadyExists) {
-    // Add task as a range entry at 8am with isPlan: true
-    journal.ranges.push({
-      start: '8am',
-      end: '8am',
+    // Add task to staged area with isPlan: true
+    journal.staged.push({
       taskId,
       listType,
       isPlan: true,
@@ -162,7 +168,7 @@ export function addTaskAsRangeAt8am(
 }
 
 /**
- * Handle due date setup: creates journal, today list, and adds task as range at 8am
+ * Handle due date setup: creates journal, today list, and adds task to staged area
  * Call this when a task is created or updated with a due date
  * @param dateIso - Date in ISO format (YYYY-MM-DD)
  */
@@ -173,5 +179,5 @@ export function handleDueDateSetup(
 ): void {
   ensureDailyJournalExists(dateIso);
   ensureTodayListExists(dateIso, listType, task);
-  addTaskAsRangeAt8am(dateIso, task.id, listType);
+  addTaskToStaged(dateIso, task.id, listType);
 }
