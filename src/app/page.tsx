@@ -170,34 +170,21 @@ export default function HomePage() {
       },
       appendToJournal: {
         name: 'appendToJournal',
-        description: 'Append text to a specific hour\'s journal entry. The text will be added to existing content with proper separation.',
+        description: 'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
         argsSchema: z.object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
-          text: z.string().min(1).describe('The text to append to the journal entry'),
+          text: z.string().optional().describe('The text to append (use this OR taskId+listType)'),
+          taskId: z.string().optional().describe('The ID of an existing task to reference'),
+          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
+          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text: string }
+          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
         ) => {
           if (!currentData) return;
-
-          // Optimistically update state
-          const currentJournal = currentData.weekData[args.date] || {};
-          const currentEntry = currentJournal[args.hour] || '';
-          const updatedEntry = currentEntry && currentEntry.trim() !== '' 
-            ? currentEntry + '\n' + args.text 
-            : args.text;
-
-          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: updatedEntry };
-          setValue({
-            ...currentData,
-            weekData: {
-              ...currentData.weekData,
-              [args.date]: updatedJournal,
-            },
-          });
 
           // Persist to JSON via API
           await fetch('/api/journal/append', {
@@ -206,39 +193,34 @@ export default function HomePage() {
             body: JSON.stringify({
               date: args.date,
               hour: args.hour,
-              text: args.text,
+              ...(args.text ? { text: args.text } : {}),
+              ...(args.taskId ? { taskId: args.taskId } : {}),
+              ...(args.listType ? { listType: args.listType } : {}),
+              ...(args.isPlan !== undefined ? { isPlan: args.isPlan } : {}),
             }),
           });
 
-          // Trigger WeekView to refresh
+          // Trigger WeekView to refresh (handles resolved entry creation)
           setWeekViewRefreshTrigger(prev => prev + 1);
         },
       },
       updateJournalEntry: {
         name: 'updateJournalEntry',
-        description: 'Update/replace the content of a specific hour\'s journal entry. This will overwrite any existing content.',
+        description: 'Update/replace the content of a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
         argsSchema: z.object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to update'),
-          text: z.string().describe('The new text to replace the existing entry'),
+          text: z.string().optional().describe('The new text to replace the entry (use this OR taskId+listType)'),
+          taskId: z.string().optional().describe('The ID of an existing task to reference'),
+          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
+          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text: string }
+          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
         ) => {
           if (!currentData) return;
-
-          // Optimistically update state
-          const currentJournal = currentData.weekData[args.date] || {};
-          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: args.text };
-          setValue({
-            ...currentData,
-            weekData: {
-              ...currentData.weekData,
-              [args.date]: updatedJournal,
-            },
-          });
 
           // Persist to JSON via API
           await fetch('/api/journal/update', {
@@ -247,7 +229,10 @@ export default function HomePage() {
             body: JSON.stringify({
               date: args.date,
               hour: args.hour,
-              text: args.text,
+              ...(args.text !== undefined ? { text: args.text } : {}),
+              ...(args.taskId ? { taskId: args.taskId } : {}),
+              ...(args.listType ? { listType: args.listType } : {}),
+              ...(args.isPlan !== undefined ? { isPlan: args.isPlan } : {}),
             }),
           });
 
@@ -269,17 +254,6 @@ export default function HomePage() {
         ) => {
           if (!currentData) return;
 
-          // Optimistically update state
-          const currentJournal = currentData.weekData[args.date] || {};
-          const updatedJournal: DayJournal = { ...currentJournal, [args.hour]: '' };
-          setValue({
-            ...currentData,
-            weekData: {
-              ...currentData.weekData,
-              [args.date]: updatedJournal,
-            },
-          });
-
           // Persist to JSON via API
           await fetch('/api/journal/delete', {
             method: 'POST',
@@ -290,34 +264,43 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger WeekView to refresh
+          // Trigger WeekView to refresh (handles state update properly)
           setWeekViewRefreshTrigger(prev => prev + 1);
         },
       },
       // ==================== JOURNAL RANGE SETTERS ====================
       addJournalRange: {
         name: 'addJournalRange',
-        description: 'Add a journal entry that spans multiple hours. Use this when an activity lasted for a range of time (e.g., "worked on project from 12pm to 2pm").',
+        description: 'Add a journal entry that spans multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
         argsSchema: z.object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
-          text: z.string().min(1).describe('The text describing what happened during this time range'),
+          text: z.string().optional().describe('The text describing the activity (use this OR taskId+listType)'),
+          taskId: z.string().optional().describe('The ID of an existing task to reference'),
+          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
+          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay; text: string }
+          args: { date: string; start: HourOfDay; end: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
         ) => {
           if (!currentData) return;
 
-          // Persist to JSON via API
+          // Persist to JSON via API - build range object with appropriate fields
+          const rangePayload: Record<string, unknown> = { start: args.start, end: args.end };
+          if (args.text) rangePayload.text = args.text;
+          if (args.taskId) rangePayload.taskId = args.taskId;
+          if (args.listType) rangePayload.listType = args.listType;
+          if (args.isPlan !== undefined) rangePayload.isPlan = args.isPlan;
+
           await fetch('/api/journal/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               date: args.date,
-              range: { start: args.start, end: args.end, text: args.text },
+              range: rangePayload,
             }),
           });
 
@@ -671,6 +654,58 @@ export default function HomePage() {
 
           // Trigger TaskLists to refresh
           setTaskRefreshTrigger(prev => prev + 1);
+        },
+      },
+      completeTask: {
+        name: 'completeTask',
+        description: 'Mark a task as completed. This removes it from the general task list and marks it done in today\'s list.',
+        argsSchema: z.object({
+          taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { taskId: string; listType: ListType }
+        ) => {
+          if (!currentData) return;
+
+          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          
+          // Optimistically update state - mark as completed in today's list
+          const updatedTodayTasks = currentData.todayTasks[key].map(task => 
+            task.id === args.taskId ? { ...task, completed: true } : task
+          );
+          
+          // Remove from general list
+          const updatedGeneralTasks = currentData.generalTasks[key].filter(t => t.id !== args.taskId);
+
+          setValue({
+            ...currentData,
+            todayTasks: {
+              ...currentData.todayTasks,
+              [key]: updatedTodayTasks,
+            },
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: updatedGeneralTasks,
+            },
+          });
+
+          // Persist to JSON via API
+          await fetch('/api/tasks/today/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: args.taskId,
+              listType: args.listType,
+              date: currentData.currentDate,
+            }),
+          });
+
+          // Trigger TaskLists and WeekView to refresh
+          setTaskRefreshTrigger(prev => prev + 1);
+          setWeekViewRefreshTrigger(prev => prev + 1);
         },
       },
     },

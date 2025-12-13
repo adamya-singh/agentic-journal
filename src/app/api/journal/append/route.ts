@@ -82,17 +82,18 @@ function getEntryText(entry: JournalEntry): string {
 
 /**
  * POST /api/journal/append
- * Appends text to a specific hour's journal entry
+ * Appends to a specific hour's journal entry
  * 
- * Body: { date: string, hour: string, text: string, isPlan?: boolean }
+ * Body (text entry): { date: string, hour: string, text: string, isPlan?: boolean }
+ * Body (task reference): { date: string, hour: string, taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean }
  * 
- * Note: Cannot append to task reference entries. Use the update endpoint
- * to change a task entry to a text entry if you need to add notes.
+ * For text entries: appends to existing content with newline separation.
+ * For task references: replaces the entry with a task reference (cannot append to existing task entries).
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text, isPlan } = body;
+    const { date, hour, text, taskId, listType, isPlan } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -110,10 +111,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate text
-    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+    // Validate: must have text OR (taskId + listType)
+    const hasText = text && typeof text === 'string' && text.trim().length > 0;
+    const hasTaskRef = taskId && listType && (listType === 'have-to-do' || listType === 'want-to-do');
+
+    if (!hasText && !hasTaskRef) {
       return NextResponse.json(
-        { success: false, error: 'Text parameter is required and cannot be empty' },
+        { success: false, error: 'Provide either text OR (taskId + listType)' },
         { status: 400 }
       );
     }
@@ -130,28 +134,34 @@ export async function POST(request: NextRequest) {
     const journal = readJournalFile(date);
     const currentEntry = journal[hour];
 
-    // Check if current entry is a task reference - cannot append to task entries
-    if (currentEntry && isTaskJournalEntry(currentEntry)) {
-      return NextResponse.json(
-        { success: false, error: 'Cannot append text to a task reference entry. Use the update endpoint to replace it with a text entry.' },
-        { status: 400 }
-      );
-    }
-
-    // Get the current text content and isPlan status
-    const currentText = currentEntry ? getEntryText(currentEntry) : '';
-    // Preserve existing isPlan status if appending, otherwise use provided value
-    const currentIsPlan = currentEntry && isTextJournalEntry(currentEntry) ? currentEntry.isPlan : undefined;
-    const finalIsPlan = isPlan ?? currentIsPlan;
-
-    // Determine the new entry
     let newEntry: JournalEntry;
-    if (currentText && currentText.trim() !== '') {
-      // Append with newline separation
-      newEntry = { text: currentText + '\n' + text.trim(), ...(finalIsPlan ? { isPlan: finalIsPlan } : {}) };
+
+    if (hasTaskRef) {
+      // Task reference entry - replaces existing entry
+      newEntry = { taskId, listType, ...(isPlan !== undefined ? { isPlan } : {}) };
     } else {
-      // Start fresh
-      newEntry = { text: text.trim(), ...(finalIsPlan ? { isPlan: finalIsPlan } : {}) };
+      // Text entry - can append to existing text entries
+      // Check if current entry is a task reference - cannot append text to task entries
+      if (currentEntry && isTaskJournalEntry(currentEntry)) {
+        return NextResponse.json(
+          { success: false, error: 'Cannot append text to a task reference entry. Use the update endpoint to replace it.' },
+          { status: 400 }
+        );
+      }
+
+      // Get the current text content and isPlan status
+      const currentText = currentEntry ? getEntryText(currentEntry) : '';
+      // Preserve existing isPlan status if appending, otherwise use provided value
+      const currentIsPlan = currentEntry && isTextJournalEntry(currentEntry) ? currentEntry.isPlan : undefined;
+      const finalIsPlan = isPlan ?? currentIsPlan;
+
+      if (currentText && currentText.trim() !== '') {
+        // Append with newline separation
+        newEntry = { text: currentText + '\n' + text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
+      } else {
+        // Start fresh
+        newEntry = { text: text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
+      }
     }
 
     // Update the entry

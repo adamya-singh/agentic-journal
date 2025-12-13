@@ -1,5 +1,7 @@
 //import { openai } from '@ai-sdk/openai';
-import { google } from '@ai-sdk/google';
+// import { google } from '@ai-sdk/google';
+// import { vertex } from '@ai-sdk/google-vertex';
+import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import { ALL_TOOLS, TOOL_REGISTRY } from '../tools/toolDefinitions';
 import { generateCategorizedToolDescriptions } from '@cedar-os/backend';
@@ -66,6 +68,7 @@ To MODIFY tasks, use these state setter tools:
 - reorderTask: Change task priority by moving to a new position
 - addTaskToToday: Add an EXISTING task to today's list BY ITS ID. Only use when user explicitly asks to schedule an existing task for today. Do NOT call this after addTask.
 - removeTaskFromToday: Remove a task from today's list by its ID
+- completeTask: Mark a task as completed. Use when user reports having done a task.
 
 IMPORTANT: When adding NEW tasks, ONLY use addTask. Do NOT automatically call addTaskToToday after addTask.
 The addTaskToToday tool is ONLY for when a user explicitly wants to schedule an existing task for today.
@@ -97,6 +100,31 @@ Example for planning an existing task "try polymarket" from want-to-do at 8pm:
 2. addTaskToToday({ taskId: "d0e1f2a3-b4c5-...", listType: "want-to-do" })
 3. appendToJournal({ date: "2025-12-11", hour: "8pm", taskId: "d0e1f2a3-b4c5-...", listType: "want-to-do", isPlan: true })
 </planning_tasks>
+
+<completing_tasks>
+When a user reports COMPLETING or HAVING DONE a task (e.g., "I did X from Y to Z"):
+
+1. Find the task in your context (taskLists.todayTasks, generalTasks, or weekJournals staged entries)
+
+2. If the task is NOT already in todayTasks, add it first:
+   - addTaskToToday({ taskId, listType })
+
+3. Add the journal entry as a PLAN using taskId + listType (NOT text):
+   - For a time range: addJournalRange({ date, start, end, taskId, listType, isPlan: true })
+   - For a single hour: appendToJournal({ date, hour, taskId, listType, isPlan: true })
+
+4. Mark the task complete: completeTask({ taskId, listType })
+
+CRITICAL: The task MUST be in todayTasks before you can complete it. Always call addTaskToToday first if it's only in generalTasks.
+CRITICAL: Use isPlan: true to add the entry as a scheduled task. The completion status is tracked separately via completeTask.
+CRITICAL: Always use taskId + listType to properly link the entry to the task, so it shows as completed in the UI.
+
+Example for completing "test task 2" from have-to-do (only in general list) done at 7pm:
+1. Find taskId from context: "abc123..."
+2. addTaskToToday({ taskId: "abc123...", listType: "have-to-do" })
+3. appendToJournal({ date: "2025-12-13", hour: "7pm", taskId: "abc123...", listType: "have-to-do", isPlan: true })
+4. completeTask({ taskId: "abc123...", listType: "have-to-do" })
+</completing_tasks>
 
 <primary_function>
 Your primary function is to help users by:
@@ -141,12 +169,15 @@ When responding:
 - Use "have-to-do" for obligations and responsibilities, "want-to-do" for desires and optional activities
 - Remember that task priority is determined by position - first item in the list is highest priority
 - When planning/scheduling a task for a specific time, follow the <planning_tasks> workflow: use taskId+listType (NOT text) in journal tools to properly link the task
+- When a user reports completing a task, follow the <completing_tasks> workflow: ensure task is in todayTasks (call addTaskToToday if needed), add journal entry with taskId+listType and isPlan: true, then call completeTask
 - For free-form journal entries (not linked to tasks), use the text parameter
 </response_guidelines>
 
   `,
   //model: openai('gpt-4o-mini'),
-  model: google('gemini-2.5-flash'),
+  // model: google('gemini-2.5-flash'),
+  // model: vertex('gemini-2.5-flash'),
+  model: anthropic('claude-3-5-haiku-20241022'),
   tools: Object.fromEntries(ALL_TOOLS.map((tool) => [tool.id, tool])),
   memory,
 });

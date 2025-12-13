@@ -74,6 +74,12 @@ export const RemoveTaskFromTodaySchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
 });
 
+// Schema for completeTask state setter
+export const CompleteTaskSchema = z.object({
+  taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+});
+
 // ==================== JOURNAL STATE SETTER SCHEMAS ====================
 
 // Schema for createDayJournal state setter
@@ -256,6 +262,18 @@ export const removeTaskFromTodayTool = createMastraToolForStateSetter(
   },
 );
 
+export const completeTaskTool = createMastraToolForStateSetter(
+  'taskLists',
+  'completeTask',
+  CompleteTaskSchema,
+  {
+    description: 'Mark a task as completed. This removes it from the general task list and marks it done in today\'s list.',
+    toolId: 'completeTask',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
 // ==================== JOURNAL STATE SETTER TOOLS ====================
 
 export const createDayJournalTool = createMastraToolForStateSetter(
@@ -356,6 +374,7 @@ export const TOOL_REGISTRY = {
     reorderTaskTool,
     addTaskToTodayTool,
     removeTaskFromTodayTool,
+    completeTaskTool,
   },
 };
 
@@ -376,4 +395,5 @@ export const ALL_TOOLS = [
   reorderTaskTool,
   addTaskToTodayTool,
   removeTaskFromTodayTool,
+  completeTaskTool,
 ];
