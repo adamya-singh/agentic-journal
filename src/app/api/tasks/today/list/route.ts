@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ensureDailyJournalExists } from '../../due-date-utils';
 
 type ListType = 'have-to-do' | 'want-to-do';
 
@@ -93,6 +94,119 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
   return dailyData;
 }
 
+interface StagedTaskEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan: boolean;
+}
+
+interface TaskJournalEntry {
+  taskId: string;
+  listType: ListType;
+  isPlan?: boolean;
+}
+
+interface TaskJournalRangeEntry {
+  start: string;
+  end: string;
+  taskId: string;
+  listType: ListType;
+  isPlan?: boolean;
+}
+
+interface DayJournal {
+  [key: string]: unknown;
+  staged?: StagedTaskEntry[];
+  ranges?: TaskJournalRangeEntry[];
+}
+
+const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
+const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+
+/**
+ * Check if a journal entry is a task reference (has taskId)
+ */
+function isTaskEntry(entry: unknown): entry is TaskJournalEntry {
+  return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry;
+}
+
+/**
+ * Collect all task IDs that are scheduled to specific time slots (hours or ranges)
+ */
+function getScheduledTaskIds(journal: DayJournal): Set<string> {
+  const scheduledIds = new Set<string>();
+  
+  // Check hour slots
+  for (const hour of VALID_HOURS) {
+    const entry = journal[hour];
+    if (isTaskEntry(entry)) {
+      scheduledIds.add(entry.taskId);
+    }
+  }
+  
+  // Check ranges
+  if (journal.ranges && Array.isArray(journal.ranges)) {
+    for (const range of journal.ranges) {
+      if (range.taskId) {
+        scheduledIds.add(range.taskId);
+      }
+    }
+  }
+  
+  return scheduledIds;
+}
+
+/**
+ * Sync all tasks from the today list to the journal's staged section.
+ * - Adds tasks from today list that aren't staged AND aren't scheduled to a time
+ * - Removes tasks from staged that ARE scheduled to a specific time slot
+ */
+function syncTodayTasksToJournalStaged(date: string, listType: ListType, dailyData: TasksData): void {
+  ensureDailyJournalExists(date);
+  
+  const journalFilePath = path.join(JOURNAL_DIR, `${date}.json`);
+  
+  if (!fs.existsSync(journalFilePath)) {
+    return; // Journal should exist from ensureDailyJournalExists
+  }
+  
+  const content = fs.readFileSync(journalFilePath, 'utf-8');
+  const journal: DayJournal = JSON.parse(content);
+  
+  // Ensure staged array exists
+  if (!journal.staged) {
+    journal.staged = [];
+  }
+  
+  // Get all task IDs that are scheduled to specific times
+  const scheduledTaskIds = getScheduledTaskIds(journal);
+  
+  // Remove scheduled tasks from staged
+  const originalStagedLength = journal.staged.length;
+  journal.staged = journal.staged.filter(entry => !scheduledTaskIds.has(entry.taskId));
+  
+  // Find tasks in today's list that aren't staged AND aren't scheduled
+  const existingStagedIds = new Set(journal.staged.map(entry => entry.taskId));
+  const tasksToStage = dailyData.tasks.filter(
+    task => !existingStagedIds.has(task.id) && !scheduledTaskIds.has(task.id)
+  );
+  
+  // Add missing tasks to staged area
+  for (const task of tasksToStage) {
+    journal.staged.push({
+      taskId: task.id,
+      listType,
+      isPlan: true,
+    });
+  }
+  
+  // Write if there were any changes
+  const hasChanges = journal.staged.length !== originalStagedLength || tasksToStage.length > 0;
+  if (hasChanges) {
+    fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+  }
+}
+
 /**
  * GET /api/tasks/today/list
  * Returns the tasks for a specific date
@@ -125,6 +239,9 @@ export async function GET(request: NextRequest) {
 
     // Auto-add tasks that are due on this date, then return the list
     const data = autoAddDueTasks(date, listType);
+    
+    // Sync today's tasks to journal's staged/unscheduled section
+    syncTodayTasksToJournalStaged(date, listType, data);
 
     return NextResponse.json({
       success: true,
