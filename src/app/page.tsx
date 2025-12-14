@@ -255,7 +255,7 @@ export default function HomePage() {
           if (!currentData) return;
 
           // Persist to JSON via API
-          await fetch('/api/journal/delete', {
+          const response = await fetch('/api/journal/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -263,6 +263,12 @@ export default function HomePage() {
               hour: args.hour,
             }),
           });
+
+          if (!response.ok) {
+            const error = await response.json();
+            console.error('Failed to delete journal entry:', error);
+            throw new Error(error.error || 'Failed to delete journal entry');
+          }
 
           // Trigger WeekView to refresh (handles state update properly)
           setWeekViewRefreshTrigger(prev => prev + 1);

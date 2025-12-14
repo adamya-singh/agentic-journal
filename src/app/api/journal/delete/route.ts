@@ -11,7 +11,8 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-type DayJournal = Record<string, string>;
+type JournalEntry = string | { text?: string; [key: string]: unknown } | null;
+type DayJournal = Record<string, JournalEntry>;
 
 /**
  * Helper function to validate date format (ISO: YYYY-MM-DD)
@@ -89,21 +90,25 @@ export async function POST(request: NextRequest) {
 
     // Read current journal
     const journal = readJournalFile(date);
-    const deletedEntry = journal[hour] || '';
+    const deletedEntry = journal[hour];
 
-    // Check if entry was already empty
-    if (!deletedEntry || deletedEntry.trim() === '') {
+    // Check if entry was already empty (handle both string and object entries)
+    const isEmpty = !deletedEntry || 
+      (typeof deletedEntry === 'string' && deletedEntry.trim() === '') ||
+      (typeof deletedEntry === 'object' && !deletedEntry.text);
+    
+    if (isEmpty) {
       return NextResponse.json({
         success: true,
         date,
         hour,
         message: `Entry at ${hour} on ${date} was already empty.`,
-        deletedEntry: '',
+        deletedEntry: null,
       });
     }
 
-    // Clear the entry
-    journal[hour] = '';
+    // Clear the entry (use null to properly clear object entries)
+    journal[hour] = null;
 
     // Write updated journal
     writeJournalFile(date, journal);
