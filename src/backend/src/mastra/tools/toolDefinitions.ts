@@ -3,6 +3,7 @@ import {
   createMastraToolForStateSetter,
   createRequestAdditionalContextTool,
 } from '@cedar-os/backend';
+import { createTool } from '@mastra/core/tools';
 import { streamJSONEvent } from '../../utils/streamUtils';
 import { z } from 'zod';
 
@@ -186,20 +187,76 @@ export const changeTextTool = createMastraToolForStateSetter(
   },
 );
 
-// ==================== TASK STATE SETTER TOOLS ====================
+// ==================== TASK TOOLS ====================
 
-// General task tools
-export const addTaskTool = createMastraToolForStateSetter(
-  'taskLists',
-  'addTask',
-  AddTaskSchema,
-  {
-    description: 'Add a new task to a general task list (have-to-do or want-to-do). Tasks are added to the end (lowest priority) by default. Use position parameter to insert at a specific index (0 = highest priority).',
-    toolId: 'addTask',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
+/**
+ * Unified addTask tool that:
+ * 1. Calls API directly to add task (gets real ID)
+ * 2. Returns full task data including taskId to the agent
+ * 3. Frontend stream processor auto-syncs React state when it sees this tool's result
+ */
+export const addTaskTool = createTool({
+  id: 'addTask',
+  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default.',
+  inputSchema: AddTaskSchema,
+  outputSchema: z.object({
+    success: z.boolean(),
+    taskId: z.string().optional(),
+    task: z.object({
+      id: z.string(),
+      text: z.string(),
+      listType: z.enum(['have-to-do', 'want-to-do']),
+      position: z.number().optional(),
+      dueDate: z.string().optional(),
+    }).optional(),
+    message: z.string(),
+  }),
+  execute: async ({ context }) => {
+    const { text, listType, position, dueDate } = context as {
+      text: string;
+      listType: 'have-to-do' | 'want-to-do';
+      position?: number;
+      dueDate?: string;
+    };
+    
+    try {
+      // Call the API directly to add the task
+      const response = await fetch('http://localhost:3000/api/tasks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ task: text, listType, position, dueDate }),
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.taskId) {
+        // Return full task data - frontend stream processor will sync React state
+        return {
+          success: true,
+          taskId: result.taskId,
+          task: {
+            id: result.taskId,
+            text: text.trim(),
+            listType,
+            position,
+            dueDate,
+          },
+          message: `Task "${text}" added to ${listType} with ID: ${result.taskId}`,
+        };
+      }
+      
+      return { 
+        success: false, 
+        message: result.error || 'Failed to add task' 
+      };
+    } catch (error) {
+      return { 
+        success: false, 
+        message: `Error adding task: ${error instanceof Error ? error.message : String(error)}` 
+      };
+    }
   },
-);
+});
 
 export const removeTaskTool = createMastraToolForStateSetter(
   'taskLists',
@@ -379,7 +436,6 @@ export const TOOL_REGISTRY = {
 };
 
 // Export all tools as an array for easy registration
-// Only include the main journal tools, not the deprecated plan tools
 export const ALL_TOOLS = [
   changeTextTool, 
   addNewTextLineTool,

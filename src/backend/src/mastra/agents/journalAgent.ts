@@ -61,17 +61,14 @@ Task priority uses a queue structure where the FIRST task in the list is HIGHEST
 
 To READ tasks: Check the taskLists in your additional context - no need to call a tool.
 
-To MODIFY tasks, use these state setter tools:
-- addTask: Add a NEW task to a general list (optionally with position for priority and dueDate). If dueDate matches today, it's automatically added to today's list.
+To MODIFY tasks, use these tools:
+- addTask: Add a NEW task to a general list. Returns the taskId which can be used with addTaskToToday. Optionally specify position (0 = highest priority) and dueDate.
 - removeTask: Remove a completed or cancelled task from a general list
 - updateTask: Modify a task's text or due date
 - reorderTask: Change task priority by moving to a new position
-- addTaskToToday: Add an EXISTING task to today's list BY ITS ID. Only use when user explicitly asks to schedule an existing task for today. Do NOT call this after addTask.
+- addTaskToToday: Add an EXISTING task to today's list BY ITS ID. Use after addTask to add a new task to today.
 - removeTaskFromToday: Remove a task from today's list by its ID
 - completeTask: Mark a task as completed. Use when user reports having done a task.
-
-IMPORTANT: When adding NEW tasks, ONLY use addTask. Do NOT automatically call addTaskToToday after addTask.
-The addTaskToToday tool is ONLY for when a user explicitly wants to schedule an existing task for today.
 
 These tools update the UI immediately and automatically persist changes to storage.
 </task_system>
@@ -84,16 +81,19 @@ When a user asks to PLAN or SCHEDULE a task for a specific time, follow this wor
    - Call addTaskToToday with { taskId, listType } to add it to today's task list
    - Call appendToJournal or updateJournalEntry with { date, hour, taskId, listType, isPlan: true } to add it to the journal
 
-2. For a NEW task (not yet in any list):
-   - First call addTask to create the task in the appropriate general list (set dueDate to today's date)
-   - The task will automatically be added to today's list when dueDate matches today
-   - Then call appendToJournal or updateJournalEntry with { date, hour, taskId, listType, isPlan: true }
-   - Note: You'll need to find the new task's ID from the context after addTask completes
+2. For a NEW task that should also be added to today's list:
+   - Call addTask({ text, listType }) - this returns the taskId immediately
+   - Call addTaskToToday({ taskId: <returned-taskId>, listType }) to add it to today's list
+   - Optionally call appendToJournal with { date, hour, taskId, listType, isPlan: true } to schedule it at a specific time
 
 CRITICAL: When planning tasks, ALWAYS use taskId + listType instead of text in journal tools. This creates a proper link between the journal entry and the task, allowing:
 - The UI to show the task's completion status
 - Proper tracking between the task list and the journal
 - Users to see that the planned item is connected to their task
+
+Example for adding a NEW task "do laundry" to have-to-do for today:
+1. addTask({ text: "do laundry", listType: "have-to-do" }) - returns { success: true, taskId: "abc-123..." }
+2. addTaskToToday({ taskId: "abc-123...", listType: "have-to-do" })
 
 Example for planning an existing task "try polymarket" from want-to-do at 8pm:
 1. Find taskId from context: "d0e1f2a3-b4c5-..."
@@ -179,6 +179,6 @@ When responding:
   // model: vertex('gemini-2.5-flash'),
   model: anthropic('claude-3-5-haiku-20241022'),
   tools: Object.fromEntries(ALL_TOOLS.map((tool) => [tool.id, tool])),
-  memory,
+  // memory,
 });
 

@@ -1,0 +1,2 @@
+{"location":"toolDefinitions.ts:refreshTaskListsTool","message":"refreshTaskListsTool called","data":{"context":{"listType":"have-to-do"}},"timestamp":1766595053826,"sessionId":"debug-session","hypothesisId":"H3"}
+{"location":"toolDefinitions.ts:refreshTaskListsTool","message":"refreshTaskListsTool result","data":{"result":{},"taskCount":{}},"timestamp":1766595053828,"sessionId":"debug-session","hypothesisId":"H3"}

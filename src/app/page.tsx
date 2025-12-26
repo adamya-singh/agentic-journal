@@ -86,6 +86,84 @@ export default function HomePage() {
   // Get setShowChat to ensure chat is visible on load
   const setShowChat = useCedarStore((state) => state.setShowChat);
 
+  // Get messages from Cedar store to watch for addTask tool results
+  const messages = useCedarStore((state) => state.messages);
+
+  // Track processed tool call IDs to avoid duplicate processing
+  const processedToolCallIds = React.useRef<Set<string>>(new Set());
+
+  // Stream processor: Watch for addTask tool results and auto-sync React state
+  React.useEffect(() => {
+    if (!messages || messages.length === 0) return;
+
+    // Find any new addTask tool results that we haven't processed yet
+    for (const message of messages) {
+      // Check if this is a tool-result message for addTask
+      if (
+        message.type === 'tool-result' &&
+        message.payload?.toolName === 'addTask' &&
+        message.payload?.result?.success &&
+        message.payload?.result?.task &&
+        message.payload?.toolCallId
+      ) {
+        const toolCallId = message.payload.toolCallId;
+        
+        // Skip if we've already processed this tool call
+        if (processedToolCallIds.current.has(toolCallId)) {
+          continue;
+        }
+
+        // Mark as processed
+        processedToolCallIds.current.add(toolCallId);
+
+        const task = message.payload.result.task as {
+          id: string;
+          text: string;
+          listType: 'have-to-do' | 'want-to-do';
+          position?: number;
+          dueDate?: string;
+        };
+
+        // Update React state with the new task
+        setTaskListsData((currentData) => {
+          if (!currentData) return currentData;
+
+          const key = task.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
+          
+          // Check if task already exists (by ID)
+          if (currentData.generalTasks[key].some((t) => t.id === task.id)) {
+            return currentData; // Already exists, no update needed
+          }
+
+          const newTask: Task = {
+            id: task.id,
+            text: task.text,
+            ...(task.dueDate && { dueDate: task.dueDate }),
+          };
+
+          const currentTasks = [...currentData.generalTasks[key]];
+
+          // Insert at position or append to end
+          if (typeof task.position === 'number' && task.position >= 0 && task.position <= currentTasks.length) {
+            currentTasks.splice(task.position, 0, newTask);
+          } else {
+            currentTasks.push(newTask);
+          }
+
+          console.log(`[Stream Processor] Auto-synced addTask result: "${task.text}" to ${task.listType}`);
+
+          return {
+            ...currentData,
+            generalTasks: {
+              ...currentData.generalTasks,
+              [key]: currentTasks,
+            },
+          };
+        });
+      }
+    }
+  }, [messages]);
+
   // System message to pre-fill in chat input when page loads
   const systemMessage = `[System] The user has opened the journal page. Current date: ${currentDate}, Current time: ${currentTime}. Read today's journal using the readJournal tool and ask the user terse, efficient questions to help fill in the journal entries for the day. If any entries already exist for today, don't try to fill in any gaps before the latest entry.`;
 
@@ -354,64 +432,8 @@ export default function HomePage() {
     setValue: setTaskListsData,
     stateSetters: {
       // ==================== GENERAL TASK SETTERS ====================
-      addTask: {
-        name: 'addTask',
-        description: 'Add a new task to a general task list (have-to-do or want-to-do). Tasks are added to the end (lowest priority) by default.',
-        argsSchema: z.object({
-          text: z.string().min(1).describe('The task text/description'),
-          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
-          position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
-          dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
-        }),
-        execute: async (
-          currentData: TaskListsData | null,
-          setValue: (newValue: TaskListsData | null) => void,
-          args: { text: string; listType: ListType; position?: number; dueDate?: string }
-        ) => {
-          if (!currentData) return;
-
-          // Generate a temporary ID for optimistic update (real ID comes from server)
-          const newTask: Task = { 
-            id: generateTempId(),
-            text: args.text.trim(),
-            ...(args.dueDate && { dueDate: args.dueDate }),
-          };
-
-          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const currentTasks = [...currentData.generalTasks[key]];
-          
-          // Insert at position or append to end
-          if (typeof args.position === 'number' && args.position >= 0 && args.position <= currentTasks.length) {
-            currentTasks.splice(args.position, 0, newTask);
-          } else {
-            currentTasks.push(newTask);
-          }
-
-          // Optimistically update state
-          setValue({
-            ...currentData,
-            generalTasks: {
-              ...currentData.generalTasks,
-              [key]: currentTasks,
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/tasks/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              task: args.text,
-              listType: args.listType,
-              position: args.position,
-              dueDate: args.dueDate,
-            }),
-          });
-
-          // Trigger TaskLists to refresh (will get the real ID from server)
-          setTaskRefreshTrigger(prev => prev + 1);
-        },
-      },
+      // Note: addTask is now a custom backend tool that calls API directly and returns taskId.
+      // The frontend auto-syncs React state via a stream processor when it sees addTask tool results.
       removeTask: {
         name: 'removeTask',
         description: 'Remove a task from a general task list by its text.',
