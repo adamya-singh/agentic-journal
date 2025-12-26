@@ -3,16 +3,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
+import { Task, ListType } from '@/lib/types';
 
-// Exported for cedar state
-export interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-  completed?: boolean;
-}
-
-export type ListType = 'have-to-do' | 'want-to-do';
+// Re-export for backward compatibility
+export type { Task, ListType };
 
 // Data structure for cedar context
 export interface TaskListsData {

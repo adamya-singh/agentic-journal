@@ -1,32 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-
-type ListType = 'have-to-do' | 'want-to-do';
-
-interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-}
-
-interface TasksData {
-  _comment: string;
-  tasks: Task[];
-}
-
-interface TaskJournalRangeEntry {
-  start: string;
-  end: string;
-  taskId: string;
-  listType: ListType;
-  isPlan: boolean;
-}
-
-interface StagedTaskEntry {
-  taskId: string;
-  listType: ListType;
-  isPlan: boolean;
-}
+import { Task, TasksData, ListType, TaskJournalRangeEntry, StagedTaskEntry } from '@/lib/types';
 
 interface DayJournal {
   [hour: string]: string | { taskId: string; listType: ListType; isPlan?: boolean } | { text: string; isPlan?: boolean };

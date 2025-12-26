@@ -3,23 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { handleDueDateSetup } from '../due-date-utils';
-
-type ListType = 'have-to-do' | 'want-to-do';
+import { Task, TasksData, ListType } from '@/lib/types';
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-}
-
-interface TasksData {
-  _comment: string;
-  tasks: Task[];
 }
 
 /**

@@ -2,23 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDailyJournalExists, addTaskToStaged } from '../../due-date-utils';
-
-type ListType = 'have-to-do' | 'want-to-do';
+import { Task, TasksData, ListType } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
-}
-
-interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-}
-
-interface TasksData {
-  _comment: string;
-  tasks: Task[];
 }
 
 /**

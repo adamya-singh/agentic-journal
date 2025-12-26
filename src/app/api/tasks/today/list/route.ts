@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDailyJournalExists } from '../../due-date-utils';
-
-type ListType = 'have-to-do' | 'want-to-do';
+import { Task, TasksData, ListType, StagedTaskEntry, TaskJournalEntry, TaskJournalRangeEntry } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
@@ -13,17 +12,6 @@ function getDailyTasksFilePath(date: string, listType: ListType): string {
 // Get the path for the general task list
 function getGeneralTasksFilePath(listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-}
-
-interface TasksData {
-  _comment: string;
-  tasks: Task[];
 }
 
 
@@ -92,26 +80,6 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
   }
   
   return dailyData;
-}
-
-interface StagedTaskEntry {
-  taskId: string;
-  listType: ListType;
-  isPlan: boolean;
-}
-
-interface TaskJournalEntry {
-  taskId: string;
-  listType: ListType;
-  isPlan?: boolean;
-}
-
-interface TaskJournalRangeEntry {
-  start: string;
-  end: string;
-  taskId: string;
-  listType: ListType;
-  isPlan?: boolean;
 }
 
 interface DayJournal {

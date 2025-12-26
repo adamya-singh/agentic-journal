@@ -1,53 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-
-type ListType = 'have-to-do' | 'want-to-do';
+import { Task, TasksData, ListType, TaskJournalEntry, JournalRangeEntry, StagedTaskEntry, JournalEntry } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
 }
 
-interface Task {
-  id: string;
-  text: string;
-  dueDate?: string;
-}
-
-interface TasksData {
-  _comment: string;
-  tasks: Task[];
-}
-
-// Journal types
-interface TaskJournalEntry {
-  taskId: string;
-  listType: ListType;
-  isPlan?: boolean;
-}
-
-interface JournalRangeEntry {
-  start: string;
-  end: string;
-  taskId?: string;
-  listType?: ListType;
-  text?: string;
-  isPlan?: boolean;
-}
-
-interface StagedEntry {
-  taskId: string;
-  listType: ListType;
-  isPlan?: boolean;
-}
-
-type JournalEntry = string | TaskJournalEntry | { text: string; isPlan?: boolean };
-
 interface DayJournal {
   [hour: string]: JournalEntry;
   ranges?: JournalRangeEntry[];
-  staged?: StagedEntry[];
+  staged?: StagedTaskEntry[];
 }
 
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];

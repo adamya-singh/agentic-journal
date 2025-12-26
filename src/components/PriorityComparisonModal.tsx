@@ -1,14 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { Task, ListType } from '@/lib/types';
 
 type ModalPhase = 'entering-task' | 'loading' | 'comparing' | 'inserting' | 'complete' | 'error';
-type ListType = 'have-to-do' | 'want-to-do';
-
-interface Task {
-  text: string;
-  dueDate?: string;
-}
 
 interface PriorityComparisonModalProps {
   isOpen: boolean;
