@@ -525,7 +525,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: taskToDelete.task.text,
+          taskId: taskToDelete.task.id,
           listType: taskToDelete.listType,
         }),
       });

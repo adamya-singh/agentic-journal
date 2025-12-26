@@ -37,16 +37,16 @@ function writeTasks(data: TasksData, listType: ListType): void {
 
 /**
  * POST /api/tasks/remove
- * Removes a task from the list by its text
+ * Removes a task from the list by its ID
  * 
- * Body: { text: string, listType?: 'have-to-do' | 'want-to-do' }
- * - text: The exact text of the task to remove
+ * Body: { taskId: string, listType?: 'have-to-do' | 'want-to-do' }
+ * - taskId: The ID of the task to remove
  * - listType: Which task list to remove from (defaults to 'have-to-do')
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { text, listType = 'have-to-do' } = body;
+    const { taskId, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -56,17 +56,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!text || typeof text !== 'string') {
+    if (!taskId || typeof taskId !== 'string') {
       return NextResponse.json(
-        { success: false, error: 'Text parameter is required and must be a string' },
+        { success: false, error: 'taskId parameter is required and must be a string' },
         { status: 400 }
       );
     }
 
-    const trimmedText = text.trim();
-    if (trimmedText.length === 0) {
+    if (taskId.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: 'Text cannot be empty' },
+        { success: false, error: 'taskId cannot be empty' },
         { status: 400 }
       );
     }
@@ -76,8 +75,8 @@ export async function POST(request: NextRequest) {
 
     // Find and remove the task
     const initialLength = data.tasks.length;
-    const removedTask = data.tasks.find(task => task.text === trimmedText);
-    data.tasks = data.tasks.filter(task => task.text !== trimmedText);
+    const removedTask = data.tasks.find(task => task.id === taskId);
+    data.tasks = data.tasks.filter(task => task.id !== taskId);
 
     if (data.tasks.length === initialLength) {
       return NextResponse.json({

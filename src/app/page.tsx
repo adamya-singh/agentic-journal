@@ -436,20 +436,20 @@ export default function HomePage() {
       // The frontend auto-syncs React state via a stream processor when it sees addTask tool results.
       removeTask: {
         name: 'removeTask',
-        description: 'Remove a task from a general task list by its text.',
+        description: 'Remove a task from a general task list by its ID.',
         argsSchema: z.object({
-          text: z.string().min(1).describe('The exact text of the task to remove'),
+          taskId: z.string().min(1).describe('The ID of the task to remove'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { text: string; listType: ListType }
+          args: { taskId: string; listType: ListType }
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const filteredTasks = currentData.generalTasks[key].filter(t => t.text !== args.text.trim());
+          const filteredTasks = currentData.generalTasks[key].filter(t => t.id !== args.taskId);
 
           // Optimistically update state
           setValue({
@@ -465,7 +465,7 @@ export default function HomePage() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              text: args.text,
+              taskId: args.taskId,
               listType: args.listType,
             }),
           });

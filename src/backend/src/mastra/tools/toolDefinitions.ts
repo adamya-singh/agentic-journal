@@ -44,7 +44,7 @@ export const AddTaskSchema = z.object({
 
 // Schema for removeTask state setter
 export const RemoveTaskSchema = z.object({
-  text: z.string().min(1).describe('The exact text of the task to remove'),
+  taskId: z.string().min(1).describe('The ID of the task to remove'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
 });
 
