@@ -58,7 +58,7 @@ function readGeneralTasks(listType: ListType): TasksData {
 }
 
 /**
- * Auto-add tasks from general list that are due on the given date
+ * Auto-add tasks from general list that are due on the given date OR are daily tasks
  * Returns the updated daily tasks data
  */
 function autoAddDueTasks(date: string, listType: ListType): TasksData {
@@ -67,14 +67,15 @@ function autoAddDueTasks(date: string, listType: ListType): TasksData {
   
   const existingTaskIds = new Set(dailyData.tasks.map(t => t.id));
   
-  // Find tasks due on this date that aren't already in today's list (by ID)
-  // Date is already in ISO format (YYYY-MM-DD), same as dueDate
+  // Find tasks that should be auto-added:
+  // 1. Tasks due on this date that aren't already in today's list
+  // 2. Daily tasks (isDaily === true) that aren't already in today's list
   const tasksToAdd = generalData.tasks.filter(
-    task => task.dueDate === date && !existingTaskIds.has(task.id)
+    task => !existingTaskIds.has(task.id) && (task.dueDate === date || task.isDaily === true)
   );
   
   if (tasksToAdd.length > 0) {
-    // Add due tasks to the beginning of the list (they're urgent)
+    // Add due/daily tasks to the beginning of the list (they're urgent)
     dailyData.tasks = [...tasksToAdd, ...dailyData.tasks];
     writeDailyTasks(dailyData, date, listType);
   }

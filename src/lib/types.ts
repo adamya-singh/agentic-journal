@@ -9,6 +9,7 @@ export interface Task {
   text: string;
   dueDate?: string;
   completed?: boolean;
+  isDaily?: boolean;
 }
 
 export interface TasksData {

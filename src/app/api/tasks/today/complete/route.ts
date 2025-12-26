@@ -121,23 +121,25 @@ export async function POST(request: NextRequest) {
     const wasCompleted = task.completed === true;
 
     if (wasCompleted) {
-      // UNCOMPLETE: Remove completed flag and add back to general list
+      // UNCOMPLETE: Remove completed flag and add back to general list (if not daily)
       delete dailyData.tasks[taskIndex].completed;
       
-      // Add task back to general list (at the beginning since it was previously prioritized)
-      const generalData = readGeneralTasks(listType);
-      const alreadyInGeneral = generalData.tasks.some((t) => t.id === taskId);
-      
-      if (!alreadyInGeneral) {
-        const taskToAdd: Task = { 
-          id: task.id,
-          text: task.text 
-        };
-        if (task.dueDate) {
-          taskToAdd.dueDate = task.dueDate;
+      // Daily tasks stay in general list, so only add back non-daily tasks
+      if (!task.isDaily) {
+        const generalData = readGeneralTasks(listType);
+        const alreadyInGeneral = generalData.tasks.some((t) => t.id === taskId);
+        
+        if (!alreadyInGeneral) {
+          const taskToAdd: Task = { 
+            id: task.id,
+            text: task.text 
+          };
+          if (task.dueDate) {
+            taskToAdd.dueDate = task.dueDate;
+          }
+          generalData.tasks.unshift(taskToAdd);
+          writeGeneralTasks(generalData, listType);
         }
-        generalData.tasks.unshift(taskToAdd);
-        writeGeneralTasks(generalData, listType);
       }
 
       // Write updated daily tasks
@@ -146,16 +148,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         completed: false,
-        message: 'Task marked as incomplete and added back to general list',
+        message: task.isDaily 
+          ? 'Daily task marked as incomplete' 
+          : 'Task marked as incomplete and added back to general list',
       });
     } else {
-      // COMPLETE: Mark as completed and remove from general list
+      // COMPLETE: Mark as completed
       dailyData.tasks[taskIndex].completed = true;
 
-      // Remove from general list by ID
-      const generalData = readGeneralTasks(listType);
-      generalData.tasks = generalData.tasks.filter((t) => t.id !== taskId);
-      writeGeneralTasks(generalData, listType);
+      // Remove from general list by ID, but NOT if it's a daily task
+      if (!task.isDaily) {
+        const generalData = readGeneralTasks(listType);
+        generalData.tasks = generalData.tasks.filter((t) => t.id !== taskId);
+        writeGeneralTasks(generalData, listType);
+      }
 
       // Write updated daily tasks
       writeDailyTasks(dailyData, date, listType);
@@ -163,7 +169,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         completed: true,
-        message: 'Task marked as completed and removed from general list',
+        message: task.isDaily 
+          ? 'Daily task marked as completed (stays in general list for tomorrow)' 
+          : 'Task marked as completed and removed from general list',
       });
     }
   } catch (error) {

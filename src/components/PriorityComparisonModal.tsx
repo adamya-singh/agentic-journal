@@ -16,6 +16,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
   const [phase, setPhase] = useState<ModalPhase>('entering-task');
   const [taskInput, setTaskInput] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [isDaily, setIsDaily] = useState(false);
   const [existingTasks, setExistingTasks] = useState<Task[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   
@@ -31,6 +32,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setPhase('entering-task');
       setTaskInput('');
       setDueDate('');
+      setIsDaily(false);
       setExistingTasks([]);
       setErrorMessage('');
       setLow(0);
@@ -41,13 +43,16 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
   }, [isOpen]);
 
   // Fetch existing tasks when entering comparison phase
+  // Daily tasks only compare against other daily tasks, regular tasks only against regular tasks
   const startComparison = useCallback(async () => {
     if (!taskInput.trim()) return;
     
     setPhase('loading');
     
     try {
-      const response = await fetch(`/api/tasks/list?listType=${listType}`);
+      // Filter by isDaily to only compare against tasks of the same type
+      const isDailyParam = isDaily ? 'true' : 'false';
+      const response = await fetch(`/api/tasks/list?listType=${listType}&isDaily=${isDailyParam}`);
       const data = await response.json();
       
       if (!data.success) {
@@ -60,7 +65,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setExistingTasks(tasks);
       
       if (tasks.length === 0) {
-        // No existing tasks, insert at position 0
+        // No existing tasks of this type, insert at position 0
         await insertTask(0);
       } else {
         // Start binary search
@@ -74,7 +79,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, listType]);
+  }, [taskInput, listType, isDaily]);
 
   // Insert task at the determined position
   const insertTask = useCallback(async (position: number) => {
@@ -89,6 +94,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
           position, 
           listType,
           dueDate: dueDate || undefined,
+          isDaily: isDaily || undefined,
         }),
       });
       
@@ -108,7 +114,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, onTaskAdded, onClose, listType, dueDate]);
+  }, [taskInput, onTaskAdded, onClose, listType, dueDate, isDaily]);
 
   // Handle user's comparison choice
   const handleComparisonChoice = useCallback((newTaskIsMoreImportant: boolean) => {
@@ -165,7 +171,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
               autoFocus
             />
             
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="block text-sm font-medium text-gray-600 mb-2">
                 Due date (optional)
               </label>
@@ -175,6 +181,28 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
                 onChange={(e) => setDueDate(e.target.value)}
                 className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
               />
+            </div>
+            
+            <div className="mb-6">
+              <label className="flex items-center gap-3 cursor-pointer group">
+                <input
+                  type="checkbox"
+                  checked={isDaily}
+                  onChange={(e) => setIsDaily(e.target.checked)}
+                  className="w-5 h-5 rounded border-2 border-gray-300 text-amber-500 focus:ring-amber-500 focus:ring-2 cursor-pointer"
+                />
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-gray-500 group-hover:text-amber-500 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  <span className="text-sm font-medium text-gray-600 group-hover:text-gray-800 transition-colors">
+                    Daily recurring task
+                  </span>
+                </div>
+              </label>
+              <p className="mt-1 ml-8 text-xs text-gray-400">
+                Automatically shows up every day
+              </p>
             </div>
             
             <div className="flex justify-end gap-3">
@@ -236,7 +264,14 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
                     NEW
                   </span>
                   <div className="flex flex-col">
-                    <span className="text-gray-800 font-medium text-lg">{taskInput}</span>
+                    <span className="text-gray-800 font-medium text-lg">
+                      {taskInput}
+                      {isDaily && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+                          Daily
+                        </span>
+                      )}
+                    </span>
                     {dueDate && (
                       <span className="text-amber-600 text-sm">Due: {dueDate}</span>
                     )}

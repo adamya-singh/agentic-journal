@@ -29,11 +29,13 @@ function readTasks(listType: ListType): TasksData {
  * 
  * Query params:
  * - listType: 'have-to-do' | 'want-to-do' (defaults to 'have-to-do')
+ * - isDaily: 'true' | 'false' (optional) - filter by daily/regular tasks
  */
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const listType = (searchParams.get('listType') || 'have-to-do') as ListType;
+    const isDailyParam = searchParams.get('isDaily');
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -44,10 +46,18 @@ export async function GET(request: NextRequest) {
     }
 
     const data = readTasks(listType);
+    
+    // Filter by isDaily if specified
+    let tasks = data.tasks;
+    if (isDailyParam === 'true') {
+      tasks = tasks.filter(task => task.isDaily === true);
+    } else if (isDailyParam === 'false') {
+      tasks = tasks.filter(task => !task.isDaily);
+    }
 
     return NextResponse.json({
       success: true,
-      tasks: data.tasks,
+      tasks,
     });
   } catch (error) {
     console.error('Error reading tasks:', error);

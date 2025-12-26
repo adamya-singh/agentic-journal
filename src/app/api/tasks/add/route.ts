@@ -41,16 +41,17 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/add
  * Adds a new task to the list at the specified position (or appends to end if no position given)
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string }
+ * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, isDaily?: boolean }
  * - task: The task text to add
  * - position: Optional index where to insert the task (0 = highest priority)
  * - listType: Which task list to add to (defaults to 'have-to-do')
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
+ * - isDaily: Optional flag to mark task as recurring daily
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate } = body;
+    const { task, position, listType = 'have-to-do', dueDate, isDaily } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -82,6 +83,9 @@ export async function POST(request: NextRequest) {
     };
     if (dueDate && typeof dueDate === 'string') {
       newTask.dueDate = dueDate;
+    }
+    if (isDaily === true) {
+      newTask.isDaily = true;
     }
 
     // Read current tasks

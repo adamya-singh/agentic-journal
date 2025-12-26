@@ -53,16 +53,22 @@ Plans are displayed alongside journal entries in the week view (in teal color).
 
 <task_system>
 Tasks are managed through Cedar state and are visible in your context as "taskLists". The state contains:
-- generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - persistent task backlogs with tasks that have id, text, and optional dueDate
+- generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - persistent task backlogs with tasks that have id, text, optional dueDate, and optional isDaily flag
 - todayTasks: Date-specific tasks for the current day (references to tasks from general lists)
 - currentDate: The current date in ISO format (YYYY-MM-DD)
 
 Task priority uses a queue structure where the FIRST task in the list is HIGHEST priority.
 
+DAILY TASKS (isDaily: true):
+- Daily tasks automatically appear in every today list when accessed
+- When a daily task is completed, it stays in the general list (unlike regular tasks which are removed)
+- Use isDaily: true when creating recurring tasks the user wants to do every day (e.g., "exercise", "meditate", "review goals")
+- Daily tasks will show up fresh (uncompleted) each new day
+
 To READ tasks: Check the taskLists in your additional context - no need to call a tool.
 
 To MODIFY tasks, use these tools:
-- addTask: Add a NEW task to a general list. Returns the taskId which can be used with addTaskToToday. Optionally specify position (0 = highest priority) and dueDate.
+- addTask: Add a NEW task to a general list. Returns the taskId which can be used with addTaskToToday. Optionally specify position (0 = highest priority), dueDate, and isDaily (for recurring tasks).
 - removeTask: Remove a completed or cancelled task from a general list
 - updateTask: Modify a task's text or due date
 - reorderTask: Change task priority by moving to a new position

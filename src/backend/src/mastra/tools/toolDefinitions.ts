@@ -40,6 +40,7 @@ export const AddTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
   position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
+  isDaily: z.boolean().optional().describe('If true, task recurs daily and auto-adds to each day\'s today list'),
 });
 
 // Schema for removeTask state setter
@@ -197,7 +198,7 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default.',
+  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) auto-add to each day\'s today list and persist after completion.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),
@@ -208,15 +209,17 @@ export const addTaskTool = createTool({
       listType: z.enum(['have-to-do', 'want-to-do']),
       position: z.number().optional(),
       dueDate: z.string().optional(),
+      isDaily: z.boolean().optional(),
     }).optional(),
     message: z.string(),
   }),
   execute: async ({ context }) => {
-    const { text, listType, position, dueDate } = context as {
+    const { text, listType, position, dueDate, isDaily } = context as {
       text: string;
       listType: 'have-to-do' | 'want-to-do';
       position?: number;
       dueDate?: string;
+      isDaily?: boolean;
     };
     
     try {
@@ -224,7 +227,7 @@ export const addTaskTool = createTool({
       const response = await fetch('http://localhost:3000/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: text, listType, position, dueDate }),
+        body: JSON.stringify({ task: text, listType, position, dueDate, isDaily }),
       });
       
       const result = await response.json();
@@ -240,8 +243,9 @@ export const addTaskTool = createTool({
             listType,
             position,
             dueDate,
+            isDaily,
           },
-          message: `Task "${text}" added to ${listType} with ID: ${result.taskId}`,
+          message: `Task "${text}" added to ${listType} with ID: ${result.taskId}${isDaily ? ' (daily recurring)' : ''}`,
         };
       }
       

@@ -53,7 +53,9 @@ function TaskList({
   onAddClick,
   onDelete
 }: TaskListProps) {
-  const orderedTasks = tasks;
+  // Separate daily tasks from regular tasks
+  const dailyTasks = tasks.filter(task => task.isDaily === true);
+  const regularTasks = tasks.filter(task => !task.isDaily);
 
   const headerContent = (
     <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 flex items-center justify-between`}>
@@ -68,6 +70,54 @@ function TaskList({
       )}
     </div>
   );
+
+  const renderTaskItem = (task: Task, index: number) => {
+    const isInToday = clickedTasks?.has(task.id);
+    return (
+      <li 
+        key={task.id} 
+        className={`text-sm text-gray-700 flex items-center justify-between group ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
+      >
+        <span 
+          className="flex-1"
+          onClick={() => onTaskClick?.(task)}
+        >
+          <span className="text-gray-400 mr-2">{index + 1}.</span>
+          <span>{task.text}</span>
+          {task.isDaily && (
+            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700" title="Daily recurring task">
+              <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              </svg>
+              Daily
+            </span>
+          )}
+          {task.dueDate && (
+            <span className="ml-2 text-xs text-gray-400">
+              (due: {task.dueDate})
+            </span>
+          )}
+          {isInToday && (
+            <span className="ml-2 text-xs text-green-600">✓ in today</span>
+          )}
+        </span>
+        {onDelete && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(task);
+            }}
+            className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete task"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </button>
+        )}
+      </li>
+    );
+  };
 
   if (loading) {
     return (
@@ -91,51 +141,25 @@ function TaskList({
     );
   }
 
+  const hasTasks = dailyTasks.length > 0 || regularTasks.length > 0;
+
   return (
     <div className="flex-1 rounded-lg border border-gray-200 bg-white overflow-hidden">
       {headerContent}
       <div className="p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
-        {orderedTasks.length > 0 ? (
-          <ol className="space-y-2 list-decimal list-inside">
-            {orderedTasks.map((task) => {
-              const isInToday = clickedTasks?.has(task.id);
-              return (
-                <li 
-                  key={task.id} 
-                  className={`text-sm text-gray-700 flex items-center justify-between group ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
-                >
-                  <span 
-                    className="flex-1"
-                    onClick={() => onTaskClick?.(task)}
-                  >
-                    <span>{task.text}</span>
-                    {task.dueDate && (
-                      <span className="ml-2 text-xs text-gray-400">
-                        (due: {task.dueDate})
-                      </span>
-                    )}
-                    {isInToday && (
-                      <span className="ml-2 text-xs text-green-600">✓ in today</span>
-                    )}
-                  </span>
-                  {onDelete && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(task);
-                      }}
-                      className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
-                      title="Delete task"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
+        {hasTasks ? (
+          <div className="space-y-2">
+            {/* Daily Tasks */}
+            {dailyTasks.map((task, index) => renderTaskItem(task, index))}
+            
+            {/* Separator if both sections have tasks */}
+            {dailyTasks.length > 0 && regularTasks.length > 0 && (
+              <div className="border-t border-gray-200 my-3" />
+            )}
+            
+            {/* Regular Tasks */}
+            {regularTasks.map((task, index) => renderTaskItem(task, index))}
+          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
             No tasks
@@ -220,6 +244,14 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                     </button>
                   )}
                   <span className={task.completed ? 'line-through' : ''}>{task.text}</span>
+                  {task.isDaily && (
+                    <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 text-purple-400' : 'bg-purple-100 text-purple-700'}`} title="Daily recurring task">
+                      <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Daily
+                    </span>
+                  )}
                   {task.dueDate && (
                     <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300' : 'text-gray-400'}`}>
                       (due: {task.dueDate})
@@ -240,16 +272,17 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                 {onRemove && !task.completed && (
                   (() => {
                     const isDueToday = task.dueDate === currentDate;
+                    const isAutoAdded = isDueToday || task.isDaily;
                     return (
                       <button
-                        onClick={isDueToday ? undefined : () => onRemove(task)}
-                        disabled={isDueToday}
+                        onClick={isAutoAdded ? undefined : () => onRemove(task)}
+                        disabled={isAutoAdded}
                         className={`ml-2 p-1 rounded transition-colors ${
-                          isDueToday
+                          isAutoAdded
                             ? 'text-gray-300 cursor-not-allowed opacity-30'
                             : 'text-red-400 hover:text-red-600 hover:bg-red-50 opacity-60 hover:opacity-100'
                         }`}
-                        title={isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
+                        title={task.isDaily ? 'Daily task will be auto-added back' : isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
                       >
                         <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                           <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
