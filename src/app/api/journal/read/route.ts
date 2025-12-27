@@ -40,6 +40,7 @@ type ResolvedDayJournalWithRanges = {
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
+  indicators?: number; // 0-4 indicators per day
 };
 
 /**
@@ -283,6 +284,12 @@ function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDa
       .filter((s): s is ResolvedStagedEntry => s !== null);
   } else {
     resolved.staged = [];
+  }
+
+  // Preserve indicators field
+  const journalRecord = journal as Record<string, unknown>;
+  if (typeof journalRecord.indicators === 'number' && journalRecord.indicators > 0) {
+    resolved.indicators = journalRecord.indicators;
   }
   
   return resolved;

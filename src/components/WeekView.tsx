@@ -9,6 +9,7 @@ export type ResolvedDayJournalWithRanges = {
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
+  indicators?: number; // 0-4 indicators per day
 };
 
 // Week data type - exported for cedar state (now uses resolved entries)
@@ -178,6 +179,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [weekData, setWeekData] = useState<WeekData>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [indicators, setIndicators] = useState<Record<string, number>>({});
 
   // Fetch week data function
   const fetchWeekData = useCallback(async () => {
@@ -198,6 +200,15 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       
       if (journalData.success) {
         setWeekData(journalData.journals);
+        // Extract indicators from journal data
+        const newIndicators: Record<string, number> = {};
+        for (const date of dates) {
+          const journal = journalData.journals[date];
+          if (journal?.indicators && typeof journal.indicators === 'number') {
+            newIndicators[date] = journal.indicators;
+          }
+        }
+        setIndicators(newIndicators);
       } else {
         setError(journalData.error || 'Failed to fetch journals');
       }
@@ -207,6 +218,44 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       setLoading(false);
     }
   }, [weekDates]);
+
+  // Add or remove an indicator for a specific date
+  const updateIndicator = useCallback(async (date: string, action: 'add' | 'remove') => {
+    const currentCount = indicators[date] ?? 0;
+    const newCount = action === 'add' 
+      ? Math.min(currentCount + 1, 4) 
+      : Math.max(currentCount - 1, 0);
+    
+    // Optimistic update
+    setIndicators(prev => ({
+      ...prev,
+      [date]: newCount,
+    }));
+    
+    try {
+      const response = await fetch('/api/journal/indicator', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, action }),
+      });
+      
+      const result = await response.json();
+      
+      if (!result.success) {
+        // Revert on failure
+        setIndicators(prev => ({
+          ...prev,
+          [date]: currentCount,
+        }));
+      }
+    } catch {
+      // Revert on error
+      setIndicators(prev => ({
+        ...prev,
+        [date]: currentCount,
+      }));
+    }
+  }, [indicators]);
 
   // Initial fetch on mount
   useEffect(() => {
@@ -304,7 +353,44 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                 }`}
               >
                 <div className="font-semibold">{dayInfo.dayName}</div>
-                <div className="text-sm opacity-80">{dayInfo.displayDate}</div>
+                <div className="flex items-center justify-center gap-1">
+                  <span className="text-sm opacity-80">{dayInfo.displayDate}</span>
+                  <div className="flex items-center gap-0.5 ml-1">
+                    {/* Render existing indicators */}
+                    {Array.from({ length: indicators[dayInfo.date] || 0 }).map((_, idx) => (
+                      <button
+                        key={`indicator-${dayInfo.date}-${idx}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateIndicator(dayInfo.date, 'remove');
+                        }}
+                        className="w-2 h-2 transition-all duration-150 hover:opacity-70"
+                        style={{ 
+                          backgroundColor: '#091e9f',
+                          border: '1px solid black',
+                        }}
+                        title="Remove indicator"
+                        aria-label="Remove indicator"
+                      />
+                    ))}
+                    {/* Add button (only show if less than 4 indicators) */}
+                    {(indicators[dayInfo.date] || 0) < 4 && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          updateIndicator(dayInfo.date, 'add');
+                        }}
+                        className="w-2 h-2 transition-all duration-150 opacity-20 hover:opacity-60"
+                        style={{ 
+                          backgroundColor: '#091e9f',
+                          border: '1px solid black',
+                        }}
+                        title="Add indicator"
+                        aria-label="Add indicator"
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Journal and plan entries */}
