@@ -92,8 +92,33 @@ export async function POST(request: NextRequest) {
     const data = readTasks(listType);
 
     // Insert at specified position or append to end
-    if (typeof position === 'number' && position >= 0 && position <= data.tasks.length) {
-      data.tasks.splice(position, 0, newTask);
+    // Position is relative to task type (daily tasks vs regular tasks)
+    if (typeof position === 'number' && position >= 0) {
+      // Find indices of tasks matching the type we're adding
+      const matchingIndices: number[] = [];
+      data.tasks.forEach((t, idx) => {
+        const taskIsDaily = t.isDaily === true;
+        const newTaskIsDaily = isDaily === true;
+        if (taskIsDaily === newTaskIsDaily) {
+          matchingIndices.push(idx);
+        }
+      });
+
+      // Calculate actual insertion index
+      let actualPosition: number;
+      if (matchingIndices.length === 0) {
+        // No tasks of this type exist yet
+        // Daily tasks go at the beginning, regular tasks go at the end
+        actualPosition = isDaily === true ? 0 : data.tasks.length;
+      } else if (position >= matchingIndices.length) {
+        // Insert after all tasks of this type
+        actualPosition = matchingIndices[matchingIndices.length - 1] + 1;
+      } else {
+        // Insert at the position of the nth task of this type
+        actualPosition = matchingIndices[position];
+      }
+
+      data.tasks.splice(actualPosition, 0, newTask);
     } else {
       // Default: push to end
       data.tasks.push(newTask);
