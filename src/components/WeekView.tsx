@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, JournalRangeEntry, ListType } from '@/lib/types';
+import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, JournalRangeEntry, ListType, Task } from '@/lib/types';
+import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
+import { AddToPlanModal } from './AddToPlanModal';
 
 // Resolved journal data with ranges and staged - entries resolved to display format
 export type ResolvedDayJournalWithRanges = {
@@ -34,13 +36,8 @@ export interface TypedEntry {
   startHour?: string; // For sorting range entries by their start time
 }
 
-// Staged entry for unscheduled tasks
-export interface StagedEntry {
-  text: string;
-  taskId: string;
-  listType: ListType;
-  completed?: boolean;
-}
+// Re-export StagedEntry from popover component for backward compatibility
+export type { StagedEntry } from './UnscheduledTasksPopover';
 
 export interface DayInfo {
   date: string; // ISO format (YYYY-MM-DD)
@@ -96,6 +93,17 @@ function getCurrentWeekDates(): DayInfo[] {
 
 // Hour order for sorting
 const HOUR_ORDER = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+
+/**
+ * Get current hour in API format (e.g., "3pm", "10am")
+ */
+function getCurrentHour(): string {
+  const now = new Date();
+  const hours = now.getHours();
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  const hours12 = hours % 12 || 12;
+  return `${hours12}${ampm}`;
+}
 
 /**
  * Get entries from a unified journal source, differentiating by isPlan flag
@@ -180,6 +188,25 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, number>>({});
+  
+  // Track which days have their unscheduled popover expanded (default: only today)
+  const [expandedPopovers, setExpandedPopovers] = useState<Record<string, boolean>>({});
+  
+  // Schedule modal state for unscheduled tasks
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleTask, setScheduleTask] = useState<{ task: Task; date: string } | null>(null);
+
+  // Toggle popover expansion for a specific date
+  const togglePopover = useCallback((date: string) => {
+    // Calculate if this date is today for default value
+    const today = new Date();
+    const todayDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const isToday = date === todayDate;
+    setExpandedPopovers(prev => ({
+      ...prev,
+      [date]: !(prev[date] ?? isToday), // Default to expanded only for today
+    }));
+  }, []);
 
   // Fetch week data function
   const fetchWeekData = useCallback(async () => {
@@ -257,6 +284,87 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     }
   }, [indicators]);
 
+  // Handler for completing a task from the popover
+  const handleCompleteTask = useCallback(async (entry: StagedEntry, date: string) => {
+    try {
+      // Log completion to journal at current hour
+      await fetch('/api/journal/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date,
+          hour: getCurrentHour(),
+          taskId: entry.taskId,
+          listType: entry.listType,
+          isPlan: true,
+        }),
+      });
+
+      // Mark task as complete
+      await fetch('/api/tasks/today/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: entry.taskId,
+          listType: entry.listType,
+          date,
+        }),
+      });
+      
+      // Refresh data
+      fetchWeekData();
+    } catch (error) {
+      console.error('Failed to complete task:', error);
+    }
+  }, [fetchWeekData]);
+
+  // Handler for "Starting now" - logs to journal that task is starting
+  const handleStartTask = useCallback(async (entry: StagedEntry, date: string) => {
+    try {
+      // First ensure task is in today's list
+      await fetch('/api/tasks/today/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: entry.taskId,
+          taskText: entry.text,
+          listType: entry.listType,
+          date,
+        }),
+      });
+
+      // Then log to journal
+      await fetch('/api/journal/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date,
+          hour: getCurrentHour(),
+          taskId: entry.taskId,
+          listType: entry.listType,
+          isPlan: true,
+        }),
+      });
+
+      // Refresh data
+      fetchWeekData();
+    } catch (error) {
+      console.error('Failed to start task:', error);
+    }
+  }, [fetchWeekData]);
+
+  // Handler for opening schedule modal
+  const handleScheduleTask = useCallback((entry: StagedEntry, date: string) => {
+    // Convert StagedEntry to Task format for the modal
+    const task: Task = {
+      id: entry.taskId,
+      text: entry.text,
+      completed: entry.completed,
+    };
+    setScheduleTask({ task, date });
+    setShowScheduleModal(true);
+  }, []);
+
   // Initial fetch on mount
   useEffect(() => {
     fetchWeekData();
@@ -331,12 +439,12 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         </div>
       </div>
       <div className="grid gap-3" style={{ gridTemplateColumns }}>
-        {weekDates.map((dayInfo) => {
+        {weekDates.map((dayInfo, dayIndex) => {
           const entries = getEntriesFromJournal(weekData[dayInfo.date]);
           const stagedEntries = getStagedFromJournal(weekData[dayInfo.date]);
           const isToday = dayInfo.date === todayDate;
-          
-          const hasContent = entries.length > 0 || stagedEntries.length > 0;
+          // Days on the right side of the week (Thu-Sun, index 3-6) should have popover on left
+          const popoverPosition = dayIndex >= 3 ? 'left' : 'right';
 
           return (
             <div
@@ -393,43 +501,28 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                       />
                     )}
                   </div>
+                  {/* Unscheduled tasks popover badge */}
+                  {stagedEntries.length > 0 && (
+                    <div className="ml-2">
+                      <UnscheduledTasksPopover
+                        entries={stagedEntries}
+                        isExpanded={expandedPopovers[dayInfo.date] ?? isToday}
+                        onToggle={() => togglePopover(dayInfo.date)}
+                        isToday={isToday}
+                        positionHint={popoverPosition}
+                        onComplete={(entry) => handleCompleteTask(entry, dayInfo.date)}
+                        onStartTask={(entry) => handleStartTask(entry, dayInfo.date)}
+                        onSchedule={(entry) => handleScheduleTask(entry, dayInfo.date)}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Journal and plan entries */}
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
-                {hasContent ? (
+                {entries.length > 0 ? (
                   <div className="space-y-2">
-                    {/* Staged/Unscheduled tasks section */}
-                    {stagedEntries.length > 0 && (
-                      <div className="mb-3">
-                        <div className="text-xs font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wide mb-1">
-                          Unscheduled
-                        </div>
-                        <div className="space-y-1 pl-1 border-l-2 border-amber-300 dark:border-amber-600">
-                          {stagedEntries.map((staged, index) => {
-                            const isCompleted = staged.completed;
-                            return (
-                              <div key={`staged-${staged.taskId}-${index}`} className="text-sm pl-2">
-                                <span className={`${
-                                  isCompleted 
-                                    ? 'text-green-600 dark:text-green-400 line-through' 
-                                    : 'text-amber-700 dark:text-amber-300'
-                                }`}>
-                                  {staged.text}
-                                </span>
-                                <span className={`ml-1 text-xs italic ${
-                                  isCompleted ? 'text-green-500 dark:text-green-400' : 'text-amber-500 dark:text-amber-400'
-                                }`}>
-                                  {isCompleted ? '(done)' : '(due)'}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                    
                     {/* Scheduled entries */}
                     {entries.map(({ hour, text, type, taskId, completed }, index) => {
                       const isTask = type === 'plan' && taskId;
@@ -478,6 +571,21 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           );
         })}
       </div>
+
+      {/* Schedule task modal */}
+      <AddToPlanModal
+        isOpen={showScheduleModal}
+        onClose={() => {
+          setShowScheduleModal(false);
+          setScheduleTask(null);
+          fetchWeekData(); // Refresh after modal closes
+        }}
+        task={scheduleTask?.task ?? null}
+        listType={scheduleTask?.task ? 
+          (weekData[scheduleTask.date]?.staged?.find(s => s.taskId === scheduleTask.task.id)?.listType ?? 'have-to-do') 
+          : 'have-to-do'}
+        date={scheduleTask?.date ?? ''}
+      />
     </div>
   );
 }
