@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 import { CedarCopilot, ProviderConfig } from 'cedar-os';
 import { messageRenderers } from '@/cedar/messageRenderers';
+import { ThemeProvider } from '@/components/ThemeProvider';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -25,16 +26,18 @@ export default function RootLayout({
   };
 
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
-        <CedarCopilot
-          userId={'Test User'}
-          threadId={'Test Thread'}
-          llmProvider={llmProvider}
-          messageRenderers={messageRenderers}
-        >
-          {children}
-        </CedarCopilot>
+        <ThemeProvider>
+          <CedarCopilot
+            userId={'Test User'}
+            threadId={'Test Thread'}
+            llmProvider={llmProvider}
+            messageRenderers={messageRenderers}
+          >
+            {children}
+          </CedarCopilot>
+        </ThemeProvider>
       </body>
     </html>
   );

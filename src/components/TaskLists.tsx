@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
+import { Play, CheckCircle, Clock } from 'lucide-react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { Task, ListType } from '@/lib/types';
@@ -40,6 +41,17 @@ interface TaskListProps {
   onDelete?: (task: Task) => void;
 }
 
+/**
+ * Get current hour in API format (e.g., "3pm", "10am")
+ */
+function getCurrentHour(): string {
+  const now = new Date();
+  const hours = now.getHours();
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  const hours12 = hours % 12 || 12;
+  return `${hours12}${ampm}`;
+}
+
 function TaskList({ 
   title, 
   tasks, 
@@ -51,14 +63,14 @@ function TaskList({
   onTaskClick,
   clickedTasks,
   onAddClick,
-  onDelete
+  onDelete,
 }: TaskListProps) {
   // Separate daily tasks from regular tasks
   const dailyTasks = tasks.filter(task => task.isDaily === true);
   const regularTasks = tasks.filter(task => !task.isDaily);
 
   const headerContent = (
-    <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 flex items-center justify-between`}>
+    <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700 flex items-center justify-between`}>
       <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
       {onAddClick && (
         <button
@@ -71,21 +83,21 @@ function TaskList({
     </div>
   );
 
-  const renderTaskItem = (task: Task, index: number) => {
+  const renderTaskItem = (task: Task, index: number, isLast: boolean) => {
     const isInToday = clickedTasks?.has(task.id);
     return (
       <li 
         key={task.id} 
-        className={`text-sm text-gray-700 flex items-center justify-between group ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 rounded px-2 py-1 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 text-green-700' : ''}`}
+        className={`text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''}`}
       >
         <span 
           className="flex-1"
           onClick={() => onTaskClick?.(task)}
         >
-          <span className="text-gray-400 mr-2">{index + 1}.</span>
+          <span className="text-gray-400 dark:text-gray-500 mr-2">{index + 1}.</span>
           <span>{task.text}</span>
           {task.isDaily && (
-            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700" title="Daily recurring task">
+            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300" title="Daily recurring task">
               <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
@@ -93,21 +105,23 @@ function TaskList({
             </span>
           )}
           {task.dueDate && (
-            <span className="ml-2 text-xs text-gray-400">
+            <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
               (due: {task.dueDate})
             </span>
           )}
           {isInToday && (
-            <span className="ml-2 text-xs text-green-600">✓ in today</span>
+            <span className="ml-2 text-xs text-green-600 dark:text-green-400">✓ in today</span>
           )}
         </span>
+        
+        {/* Delete button */}
         {onDelete && (
           <button
             onClick={(e) => {
               e.stopPropagation();
               onDelete(task);
             }}
-            className="ml-2 p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors opacity-0 group-hover:opacity-100"
+            className="ml-2 p-1 text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors opacity-0 group-hover:opacity-100"
             title="Delete task"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
@@ -121,11 +135,11 @@ function TaskList({
 
   if (loading) {
     return (
-      <div className="flex-1 rounded-lg border border-gray-200 bg-white overflow-hidden">
+      <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
         {headerContent}
         <div className="p-4 space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />
+            <div key={i} className="h-8 bg-gray-100 dark:bg-gray-700 rounded animate-pulse" />
           ))}
         </div>
       </div>
@@ -134,34 +148,35 @@ function TaskList({
 
   if (error) {
     return (
-      <div className="flex-1 rounded-lg border border-gray-200 bg-white overflow-hidden">
+      <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
         {headerContent}
-        <div className="p-4 text-center text-red-500 text-sm">{error}</div>
+        <div className="p-4 text-center text-red-500 dark:text-red-400 text-sm">{error}</div>
       </div>
     );
   }
 
   const hasTasks = dailyTasks.length > 0 || regularTasks.length > 0;
+  const allTasks = [...dailyTasks, ...regularTasks];
 
   return (
-    <div className="flex-1 rounded-lg border border-gray-200 bg-white overflow-hidden">
+    <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
       {headerContent}
       <div className="p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
         {hasTasks ? (
-          <div className="space-y-2">
+          <ul className="space-y-0">
             {/* Daily Tasks */}
-            {dailyTasks.map((task, index) => renderTaskItem(task, index))}
+            {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0))}
             
             {/* Separator if both sections have tasks */}
             {dailyTasks.length > 0 && regularTasks.length > 0 && (
-              <div className="border-t border-gray-200 my-3" />
+              <li className="border-t-2 border-gray-300 dark:border-gray-600 my-3" />
             )}
             
             {/* Regular Tasks */}
-            {regularTasks.map((task, index) => renderTaskItem(task, index))}
-          </div>
+            {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1))}
+          </ul>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">
             No tasks
           </div>
         )}
@@ -180,21 +195,22 @@ interface TodayTaskListProps {
   onRemove?: (task: Task) => void;
   onComplete?: (task: Task) => void;
   onAddToPlan?: (task: Task) => void;
+  onStartTask?: (task: Task) => void;
   currentDate?: string;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, currentDate }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
     return (
-      <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 bg-white overflow-hidden">
-        <div className={`px-4 py-3 ${bgColor} border-b border-gray-200`}>
+      <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden">
+        <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700`}>
           <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
         </div>
         <div className="p-4 space-y-2">
           {Array.from({ length: 2 }).map((_, i) => (
-            <div key={i} className="h-8 bg-gray-100 rounded animate-pulse" />
+            <div key={i} className="h-8 bg-gray-100 dark:bg-gray-700 rounded animate-pulse" />
           ))}
         </div>
       </div>
@@ -203,99 +219,111 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
 
   if (error) {
     return (
-      <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 bg-white overflow-hidden">
-        <div className={`px-4 py-3 ${bgColor} border-b border-gray-200`}>
+      <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden">
+        <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700`}>
           <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
         </div>
-        <div className="p-4 text-center text-red-500 text-sm">{error}</div>
+        <div className="p-4 text-center text-red-500 dark:text-red-400 text-sm">{error}</div>
       </div>
     );
   }
 
   return (
-    <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 bg-white overflow-hidden">
-      <div className={`px-4 py-3 ${bgColor} border-b border-gray-200`}>
+    <div className="flex-1 rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 overflow-hidden">
+      <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700`}>
         <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
       </div>
       <div className="p-4 min-h-[80px] max-h-[200px] overflow-y-auto">
         {orderedTasks.length > 0 ? (
-          <ol className="space-y-2 list-decimal list-inside">
-            {orderedTasks.map((task) => (
-              <li 
-                key={task.id} 
-                className={`text-sm flex items-center justify-between group ${
-                  task.completed ? 'text-gray-400' : 'text-gray-700'
-                }`}
-              >
-                <span className="flex items-center flex-1">
-                  {onComplete && (
-                    <button
-                      onClick={() => onComplete(task)}
-                      className={`mr-2 p-1 rounded transition-colors ${
-                        task.completed 
-                          ? 'text-green-500 hover:text-green-700 hover:bg-green-50' 
-                          : 'text-gray-300 hover:text-green-500 hover:bg-green-50'
-                      }`}
-                      title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                  )}
-                  <span className={task.completed ? 'line-through' : ''}>{task.text}</span>
-                  {task.isDaily && (
-                    <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 text-purple-400' : 'bg-purple-100 text-purple-700'}`} title="Daily recurring task">
-                      <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
-                      Daily
-                    </span>
-                  )}
-                  {task.dueDate && (
-                    <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300' : 'text-gray-400'}`}>
-                      (due: {task.dueDate})
-                    </span>
-                  )}
-                </span>
-                {onAddToPlan && (
-                  <button
-                    onClick={() => onAddToPlan(task)}
-                    className="ml-2 p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors opacity-60 hover:opacity-100"
-                    title="Add to daily plan"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clipRule="evenodd" />
-                    </svg>
-                  </button>
-                )}
-                {onRemove && !task.completed && (
-                  (() => {
-                    const isDueToday = task.dueDate === currentDate;
-                    const isAutoAdded = isDueToday || task.isDaily;
-                    return (
+          <ol className="space-y-0">
+            {orderedTasks.map((task, index) => {
+              const isLast = index === orderedTasks.length - 1;
+              return (
+                <li 
+                  key={task.id} 
+                  className={`text-sm flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${
+                    task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
+                  }`}
+                >
+                  <span className="flex items-center flex-1">
+                    {/* Always visible complete button */}
+                    {onComplete && (
                       <button
-                        onClick={isAutoAdded ? undefined : () => onRemove(task)}
-                        disabled={isAutoAdded}
-                        className={`ml-2 p-1 rounded transition-colors ${
-                          isAutoAdded
-                            ? 'text-gray-300 cursor-not-allowed opacity-30'
-                            : 'text-red-400 hover:text-red-600 hover:bg-red-50 opacity-60 hover:opacity-100'
+                        onClick={() => onComplete(task)}
+                        className={`mr-2 p-1.5 rounded transition-colors ${
+                          task.completed 
+                            ? 'text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/30' 
+                            : 'text-gray-300 dark:text-gray-600 hover:text-green-500 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
                         }`}
-                        title={task.isDaily ? 'Daily task will be auto-added back' : isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
+                        title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
                       >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                        </svg>
+                        <CheckCircle className="h-5 w-5" />
                       </button>
-                    );
-                  })()
-                )}
-              </li>
-            ))}
+                    )}
+                    <span className={task.completed ? 'line-through' : ''}>{task.text}</span>
+                    {task.isDaily && (
+                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
+                        <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        Daily
+                      </span>
+                    )}
+                    {task.dueDate && (
+                      <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400 dark:text-gray-500'}`}>
+                        (due: {task.dueDate})
+                      </span>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {/* Starting now button - only show if task is not completed */}
+                    {onStartTask && !task.completed && (
+                      <button
+                        onClick={() => onStartTask(task)}
+                        className="p-1.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
+                        title="Starting now - log to journal"
+                      >
+                        <Play className="h-4 w-4" />
+                      </button>
+                    )}
+                    {onAddToPlan && (
+                      <button
+                        onClick={() => onAddToPlan(task)}
+                        className="p-1.5 text-indigo-400 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded transition-colors"
+                        title="Schedule for specific time"
+                      >
+                        <Clock className="h-4 w-4" />
+                      </button>
+                    )}
+                    {onRemove && !task.completed && (
+                      (() => {
+                        const isDueToday = task.dueDate === currentDate;
+                        const isAutoAdded = isDueToday || task.isDaily;
+                        return (
+                          <button
+                            onClick={isAutoAdded ? undefined : () => onRemove(task)}
+                            disabled={isAutoAdded}
+                            className={`p-1 rounded transition-colors ${
+                              isAutoAdded
+                                ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-30'
+                                : 'text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-60 hover:opacity-100'
+                            }`}
+                            title={task.isDaily ? 'Daily task will be auto-added back' : isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                          </button>
+                        );
+                      })()
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-400 text-sm italic">
+          <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">
             Click tasks above to add to today
           </div>
         )}
@@ -512,9 +540,23 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
-  // Handler to toggle task completion status
+  // Handler to toggle task completion status (also logs to journal)
   const handleCompleteTask = async (task: Task, listType: ListType) => {
     try {
+      // Log completion to journal at current hour
+      await fetch('/api/journal/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: currentDate,
+          hour: getCurrentHour(),
+          taskId: task.id,
+          listType,
+          isPlan: true,
+        }),
+      });
+
+      // Mark task as complete
       const response = await fetch('/api/tasks/today/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -533,6 +575,41 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       }
     } catch (error) {
       console.error('Failed to toggle task completion:', error);
+    }
+  };
+
+  // Handler for "Starting now" - logs to journal that task is starting
+  const handleStartTask = async (task: Task, listType: ListType) => {
+    try {
+      // First ensure task is in today's list
+      await fetch('/api/tasks/today/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task.id,
+          taskText: task.text,
+          listType,
+          date: currentDate,
+          dueDate: task.dueDate,
+        }),
+      });
+
+      // Then log to journal
+      await fetch('/api/journal/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: currentDate,
+          hour: getCurrentHour(),
+          taskId: task.id,
+          listType,
+          isPlan: true,
+        }),
+      });
+
+      fetchTodayTasks();
+    } catch (error) {
+      console.error('Failed to start task:', error);
     }
   };
 
@@ -579,21 +656,22 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
-      <h2 className="text-2xl font-semibold text-gray-700 mb-4 text-center">Tasks</h2>
+      <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
       
       {/* Today's Task Lists */}
-      <h3 className="text-lg font-medium text-gray-600 mb-3 text-center">Today ({currentDate})</h3>
+      <h3 className="text-lg font-medium text-gray-600 dark:text-gray-300 mb-3 text-center">Today ({currentDate})</h3>
       <div className="flex gap-4 mb-4">
         <TodayTaskList
           title="Have to Do Today"
           tasks={haveToDoToday}
           loading={loadingHaveToday}
           error={errorHaveToday}
-          accentColor="text-amber-700"
-          bgColor="bg-amber-100"
+          accentColor="text-amber-700 dark:text-amber-400"
+          bgColor="bg-amber-100 dark:bg-amber-900/30"
           onRemove={(task) => handleRemoveFromToday(task, 'have-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
+          onStartTask={(task) => handleStartTask(task, 'have-to-do')}
           currentDate={currentDate}
         />
         <TodayTaskList
@@ -601,11 +679,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           tasks={wantToDoToday}
           loading={loadingWantToday}
           error={errorWantToday}
-          accentColor="text-teal-700"
-          bgColor="bg-teal-100"
+          accentColor="text-teal-700 dark:text-teal-400"
+          bgColor="bg-teal-100 dark:bg-teal-900/30"
           onRemove={(task) => handleRemoveFromToday(task, 'want-to-do')}
           onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
+          onStartTask={(task) => handleStartTask(task, 'want-to-do')}
           currentDate={currentDate}
         />
       </div>
@@ -617,9 +696,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           tasks={haveToDo}
           loading={loadingHave}
           error={errorHave}
-          accentColor="text-amber-600"
-          bgColor="bg-amber-50"
-          buttonColor="bg-amber-500 hover:bg-amber-600"
+          accentColor="text-amber-600 dark:text-amber-400"
+          bgColor="bg-amber-50 dark:bg-amber-900/20"
+          buttonColor="bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
           onTaskClick={(task) => handleAddToToday(task, 'have-to-do')}
           clickedTasks={todayHaveTasks}
           onAddClick={() => {
@@ -633,9 +712,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           tasks={wantToDo}
           loading={loadingWant}
           error={errorWant}
-          accentColor="text-teal-600"
-          bgColor="bg-teal-50"
-          buttonColor="bg-teal-500 hover:bg-teal-600"
+          accentColor="text-teal-600 dark:text-teal-400"
+          bgColor="bg-teal-50 dark:bg-teal-900/20"
+          buttonColor="bg-teal-500 hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-500"
           onTaskClick={(task) => handleAddToToday(task, 'want-to-do')}
           clickedTasks={todayWantTasks}
           onAddClick={() => {
@@ -666,18 +745,18 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       {/* Delete Confirmation Modal */}
       {showDeleteConfirm && taskToDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
-            <h3 className="text-lg font-semibold text-gray-800 mb-2">Delete Task?</h3>
-            <p className="text-sm text-gray-600 mb-4">
+          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Delete Task?</h3>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
               Are you sure you want to permanently delete this task?
             </p>
-            <div className="bg-gray-50 rounded p-3 mb-4">
-              <p className="text-sm text-gray-700 font-medium">{taskToDelete.task.text}</p>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
+              <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">{taskToDelete.task.text}</p>
               {taskToDelete.task.dueDate && (
-                <p className="text-xs text-gray-500 mt-1">Due: {taskToDelete.task.dueDate}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Due: {taskToDelete.task.dueDate}</p>
               )}
             </div>
-            <p className="text-xs text-red-500 mb-4">
+            <p className="text-xs text-red-500 dark:text-red-400 mb-4">
               This action cannot be undone.
             </p>
             <div className="flex gap-3 justify-end">
@@ -686,13 +765,13 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
                   setShowDeleteConfirm(false);
                   setTaskToDelete(null);
                 }}
-                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md transition-colors"
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
               >
                 Cancel
               </button>
               <button
                 onClick={() => handleDeleteTask()}
-                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-md transition-colors"
+                className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-500 rounded-md transition-colors"
               >
                 Delete
               </button>

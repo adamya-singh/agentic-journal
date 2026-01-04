@@ -243,10 +243,10 @@ User uses both sidepanel and caption modes with no pattern - just preference at 
 
 ## Summary: Implementation Roadmap
 
-### Phase 1: Quick Wins
-1. Dark mode
-2. Subtle task dividers
-3. Quick-complete buttons on tasks
+### Phase 1: Quick Wins ✅ COMPLETE
+1. ~~Dark mode~~ ✅
+2. ~~Subtle task dividers~~ ✅
+3. ~~Quick-complete buttons on tasks~~ ✅
 
 ### Phase 2: Visual Polish
 4. Dynamic priority tier borders

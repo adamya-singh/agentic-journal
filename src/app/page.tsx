@@ -823,7 +823,7 @@ export default function HomePage() {
   });
 
   const renderContent = () => (
-    <div className="relative min-h-screen w-full">
+    <div className="relative min-h-screen w-full bg-white dark:bg-gray-900">
       <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
 
       {/* Week View */}
@@ -838,7 +838,7 @@ export default function HomePage() {
       <div className="flex flex-col items-center justify-center p-8 space-y-8">
         {/* Journal creation section */}
         <div className="flex flex-col items-center gap-3">
-          <div className="text-sm text-gray-500">
+          <div className="text-sm text-gray-500 dark:text-gray-400">
             Today: {currentDate}
           </div>
           <div className="flex gap-3">
@@ -847,14 +847,14 @@ export default function HomePage() {
               disabled={journalStatus === 'loading'}
               className={`px-6 py-2 rounded-lg font-medium transition-colors ${
                 journalStatus === 'loading'
-                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
                   : journalStatus === 'success'
-                    ? 'bg-green-500 text-white hover:bg-green-600'
+                    ? 'bg-green-500 dark:bg-green-600 text-white hover:bg-green-600 dark:hover:bg-green-500'
                     : journalStatus === 'exists'
-                      ? 'bg-blue-500 text-white hover:bg-blue-600'
+                      ? 'bg-blue-500 dark:bg-blue-600 text-white hover:bg-blue-600 dark:hover:bg-blue-500'
                       : journalStatus === 'error'
-                        ? 'bg-red-500 text-white hover:bg-red-600'
-                        : 'bg-indigo-500 text-white hover:bg-indigo-600'
+                        ? 'bg-red-500 dark:bg-red-600 text-white hover:bg-red-600 dark:hover:bg-red-500'
+                        : 'bg-indigo-500 dark:bg-indigo-600 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500'
               }`}
             >
               {journalStatus === 'loading'
@@ -869,7 +869,7 @@ export default function HomePage() {
             </button>
           </div>
           {journalMessage && (
-            <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+            <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
               {journalMessage}
             </p>
           )}
@@ -877,18 +877,18 @@ export default function HomePage() {
 
         {/* Big text that Cedar can change */}
         <div className="text-center">
-          <h1 className="text-6xl font-bold text-gray-800 mb-4">{mainText}</h1>
-          <p className="text-lg text-gray-600 mb-8">
+          <h1 className="text-6xl font-bold text-gray-800 dark:text-gray-100 mb-4">{mainText}</h1>
+          <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
             This text can be changed by Cedar using state setters
           </p>
         </div>
 
         {/* Instructions for adding new text */}
         <div className="text-center">
-          <h2 className="text-2xl font-semibold text-gray-700 mb-2">
+          <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-2">
             tell cedar to add new lines of text to the screen
           </h2>
-          <p className="text-md text-gray-500 mb-6">
+          <p className="text-md text-gray-500 dark:text-gray-400 mb-6">
             Cedar can add new text using frontend tools with different styles
           </p>
         </div>
@@ -896,21 +896,21 @@ export default function HomePage() {
         {/* Display dynamically added text lines */}
         {textLines.length > 0 && (
           <div className="w-full max-w-2xl">
-            <h3 className="text-xl font-medium text-gray-700 mb-4 text-center">Added by Cedar:</h3>
+            <h3 className="text-xl font-medium text-gray-700 dark:text-gray-200 mb-4 text-center">Added by Cedar:</h3>
             <div className="space-y-2">
               {textLines.map((line, index) => (
                 <div
                   key={index}
-                  className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-center"
+                  className="p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg text-center"
                 >
                   {line.startsWith('**') && line.endsWith('**') ? (
-                    <strong className="text-blue-800">{line.slice(2, -2)}</strong>
+                    <strong className="text-blue-800 dark:text-blue-200">{line.slice(2, -2)}</strong>
                   ) : line.startsWith('*') && line.endsWith('*') ? (
-                    <em className="text-blue-700">{line.slice(1, -1)}</em>
+                    <em className="text-blue-700 dark:text-blue-300">{line.slice(1, -1)}</em>
                   ) : line.startsWith('🌟') ? (
-                    <span className="text-yellow-600 font-semibold">{line}</span>
+                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">{line}</span>
                   ) : (
-                    <span className="text-blue-800">{line}</span>
+                    <span className="text-blue-800 dark:text-blue-200">{line}</span>
                   )}
                 </div>
               ))}

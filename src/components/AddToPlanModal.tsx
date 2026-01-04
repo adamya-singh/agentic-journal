@@ -120,32 +120,32 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl transform transition-all">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-2xl transform transition-all">
         
         {/* Phase: Selecting Time */}
         {phase === 'selecting' && (
           <>
-            <h2 className="text-2xl font-bold text-gray-800 mb-2">
+            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
               Add to Daily Plan
             </h2>
-            <p className="text-gray-500 mb-4">Schedule this task for today</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Schedule this task for today</p>
             
             {/* Task Preview */}
-            <div className="bg-gray-50 rounded-xl p-4 mb-6 border border-gray-200">
-              <p className="text-gray-700 font-medium">{task.text}</p>
+            <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-4 mb-6 border border-gray-200 dark:border-gray-600">
+              <p className="text-gray-700 dark:text-gray-200 font-medium">{task.text}</p>
               {task.dueDate && (
-                <p className="text-sm text-gray-500 mt-1">Due: {task.dueDate}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Due: {task.dueDate}</p>
               )}
             </div>
 
             {/* Time Mode Toggle */}
-            <div className="flex bg-gray-100 rounded-xl p-1 mb-6">
+            <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1 mb-6">
               <button
                 onClick={() => setTimeMode('single')}
                 className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
                   timeMode === 'single'
-                    ? 'bg-white text-gray-800 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                 }`}
               >
                 Single Hour
@@ -154,8 +154,8 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
                 onClick={() => setTimeMode('range')}
                 className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
                   timeMode === 'range'
-                    ? 'bg-white text-gray-800 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
+                    ? 'bg-white dark:bg-gray-600 text-gray-800 dark:text-gray-100 shadow-sm'
+                    : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
                 }`}
               >
                 Time Range
@@ -165,13 +165,13 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
             {/* Time Selection */}
             {timeMode === 'single' ? (
               <div className="mb-6">
-                <label className="block text-sm font-medium text-gray-600 mb-2">
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
                   Select Time
                 </label>
                 <select
                   value={selectedHour}
                   onChange={(e) => setSelectedHour(e.target.value)}
-                  className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                  className="w-full px-4 py-3 text-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 >
                   {VALID_HOURS.map((hour) => (
                     <option key={hour} value={hour}>
@@ -183,13 +183,13 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
             ) : (
               <div className="mb-6 space-y-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-2">
+                  <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
                     Start Time
                   </label>
                   <select
                     value={startHour}
                     onChange={(e) => setStartHour(e.target.value)}
-                    className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                    className="w-full px-4 py-3 text-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     {VALID_HOURS.map((hour) => (
                       <option key={hour} value={hour}>
@@ -199,13 +199,13 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-600 mb-2">
+                  <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
                     End Time
                   </label>
                   <select
                     value={endHour}
                     onChange={(e) => setEndHour(e.target.value)}
-                    className="w-full px-4 py-3 text-lg border-2 border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all bg-white"
+                    className="w-full px-4 py-3 text-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                   >
                     {VALID_HOURS.map((hour) => (
                       <option key={hour} value={hour}>
@@ -215,7 +215,7 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
                   </select>
                 </div>
                 {!isValidRange() && (
-                  <p className="text-red-500 text-sm">End time must be after start time</p>
+                  <p className="text-red-500 dark:text-red-400 text-sm">End time must be after start time</p>
                 )}
               </div>
             )}
@@ -224,7 +224,7 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
             <div className="flex justify-end gap-3">
               <button
                 onClick={onClose}
-                className="px-5 py-2.5 rounded-xl font-medium text-gray-600 hover:bg-gray-100 transition-colors"
+                className="px-5 py-2.5 rounded-xl font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
               >
                 Cancel
               </button>
@@ -233,8 +233,8 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
                 disabled={timeMode === 'range' && !isValidRange()}
                 className={`px-5 py-2.5 rounded-xl font-semibold transition-all ${
                   timeMode === 'single' || isValidRange()
-                    ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg shadow-blue-500/25'
-                    : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                    ? 'bg-blue-500 dark:bg-blue-600 text-white hover:bg-blue-600 dark:hover:bg-blue-500 shadow-lg shadow-blue-500/25'
+                    : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                 }`}
               >
                 Add to Plan
@@ -247,20 +247,20 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
         {phase === 'submitting' && (
           <div className="text-center py-8">
             <div className="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-gray-600 text-lg">Adding to plan...</p>
+            <p className="text-gray-600 dark:text-gray-300 text-lg">Adding to plan...</p>
           </div>
         )}
 
         {/* Phase: Complete */}
         {phase === 'complete' && (
           <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 mb-4">
-              <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
+              <svg className="w-8 h-8 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <p className="text-gray-800 text-xl font-semibold">Added to plan!</p>
-            <p className="text-gray-500 mt-1">
+            <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Added to plan!</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-1">
               {timeMode === 'single' ? selectedHour : `${startHour} - ${endHour}`}
             </p>
           </div>
@@ -269,16 +269,16 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
         {/* Phase: Error */}
         {phase === 'error' && (
           <div className="text-center py-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 mb-4">
-              <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 mb-4">
+              <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </div>
-            <p className="text-gray-800 text-xl font-semibold">Something went wrong</p>
-            <p className="text-gray-500 mt-1">{errorMessage}</p>
+            <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Something went wrong</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-1">{errorMessage}</p>
             <button
               onClick={() => setPhase('selecting')}
-              className="mt-4 px-5 py-2.5 rounded-xl font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+              className="mt-4 px-5 py-2.5 rounded-xl font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
             >
               Try Again
             </button>
@@ -288,4 +288,3 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
     </div>
   );
 }
-
