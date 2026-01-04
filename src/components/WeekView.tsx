@@ -299,6 +299,15 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     );
   }
 
+  // Calculate today's date once for comparison and grid template
+  const today = new Date();
+  const todayDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  
+  // Create dynamic grid template: today's column gets 1.5fr, others get 1fr
+  const gridTemplateColumns = weekDates
+    .map(dayInfo => dayInfo.date === todayDate ? '1.5fr' : '1fr')
+    .join(' ');
+
   return (
     <div className="w-full max-w-7xl mx-auto p-4">
       <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">This Week</h2>
@@ -321,17 +330,11 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           <span className="text-gray-600 dark:text-gray-400">Journal</span>
         </div>
       </div>
-      <div className="grid grid-cols-7 gap-3">
+      <div className="grid gap-3" style={{ gridTemplateColumns }}>
         {weekDates.map((dayInfo) => {
           const entries = getEntriesFromJournal(weekData[dayInfo.date]);
           const stagedEntries = getStagedFromJournal(weekData[dayInfo.date]);
-          const isToday = dayInfo.date === weekDates.find(d => {
-            const today = new Date();
-            const year = today.getFullYear();
-            const month = String(today.getMonth() + 1).padStart(2, '0');
-            const day = String(today.getDate()).padStart(2, '0');
-            return d.date === `${year}-${month}-${day}`;
-          })?.date;
+          const isToday = dayInfo.date === todayDate;
           
           const hasContent = entries.length > 0 || stagedEntries.length > 0;
 

@@ -52,6 +52,18 @@ function getCurrentHour(): string {
   return `${hours12}${ampm}`;
 }
 
+/**
+ * Get priority tier color based on task position in the list.
+ * Top 1/3 = Red (high priority), Middle 1/3 = Amber (medium), Bottom 1/3 = Green (low)
+ */
+function getPriorityTierColor(index: number, totalCount: number): string {
+  if (totalCount === 0) return 'transparent';
+  const position = index / totalCount;
+  if (position < 1/3) return '#EF4444';      // Red - high priority
+  if (position < 2/3) return '#F59E0B';      // Amber - medium priority
+  return '#10B981';                           // Green - low priority
+}
+
 function TaskList({ 
   title, 
   tasks, 
@@ -83,12 +95,14 @@ function TaskList({
     </div>
   );
 
-  const renderTaskItem = (task: Task, index: number, isLast: boolean) => {
+  const renderTaskItem = (task: Task, index: number, isLast: boolean, totalCount: number) => {
     const isInToday = clickedTasks?.has(task.id);
+    const priorityColor = getPriorityTierColor(index, totalCount);
     return (
       <li 
         key={task.id} 
         className={`text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''}`}
+        style={{ borderLeft: `4px solid ${priorityColor}`, paddingLeft: '8px', marginLeft: '-4px' }}
       >
         <span 
           className="flex-1"
@@ -165,7 +179,7 @@ function TaskList({
         {hasTasks ? (
           <ul className="space-y-0">
             {/* Daily Tasks */}
-            {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0))}
+            {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0, allTasks.length))}
             
             {/* Separator if both sections have tasks */}
             {dailyTasks.length > 0 && regularTasks.length > 0 && (
@@ -173,7 +187,7 @@ function TaskList({
             )}
             
             {/* Regular Tasks */}
-            {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1))}
+            {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1, allTasks.length))}
           </ul>
         ) : (
           <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">

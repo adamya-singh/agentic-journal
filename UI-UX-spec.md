@@ -248,9 +248,9 @@ User uses both sidepanel and caption modes with no pattern - just preference at 
 2. ~~Subtle task dividers~~ ✅
 3. ~~Quick-complete buttons on tasks~~ ✅
 
-### Phase 2: Visual Polish
-4. Dynamic priority tier borders
-5. Today column expansion
+### Phase 2: Visual Polish ✅ COMPLETE
+4. ~~Dynamic priority tier borders~~ ✅
+5. ~~Today column expansion~~ ✅
 
 ### Phase 3: Agent Intelligence
 6. Agent morning suggestions
