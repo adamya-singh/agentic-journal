@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDailyJournalExists } from '../../due-date-utils';
-import { Task, TasksData, ListType, StagedTaskEntry, TaskJournalEntry, TaskJournalRangeEntry } from '@/lib/types';
+import { Task, TasksData, ListType, StagedTaskEntry, TaskJournalEntry, TaskJournalRangeEntry, JournalHourSlot, isJournalEntryArray, isTaskJournalEntry } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
@@ -93,23 +93,25 @@ const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
 
 /**
- * Check if a journal entry is a task reference (has taskId)
- */
-function isTaskEntry(entry: unknown): entry is TaskJournalEntry {
-  return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry;
-}
-
-/**
  * Collect all task IDs that are scheduled to specific time slots (hours or ranges)
  */
 function getScheduledTaskIds(journal: DayJournal): Set<string> {
   const scheduledIds = new Set<string>();
   
-  // Check hour slots
+  // Check hour slots (supports both single entries and arrays)
   for (const hour of VALID_HOURS) {
-    const entry = journal[hour];
-    if (isTaskEntry(entry)) {
-      scheduledIds.add(entry.taskId);
+    const slot = journal[hour] as JournalHourSlot;
+    
+    if (isJournalEntryArray(slot)) {
+      // Multiple entries for this hour
+      for (const entry of slot) {
+        if (isTaskJournalEntry(entry)) {
+          scheduledIds.add(entry.taskId);
+        }
+      }
+    } else if (isTaskJournalEntry(slot)) {
+      // Single task entry
+      scheduledIds.add(slot.taskId);
     }
   }
   

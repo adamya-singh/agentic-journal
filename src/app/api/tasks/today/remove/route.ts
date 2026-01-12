@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Task, TasksData, ListType, TaskJournalEntry, JournalRangeEntry, StagedTaskEntry, JournalEntry } from '@/lib/types';
+import { Task, TasksData, ListType, TaskJournalEntry, JournalRangeEntry, StagedTaskEntry, JournalEntry, JournalHourSlot, isJournalEntryArray, isTaskJournalEntry } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
   return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
 }
 
-interface DayJournal {
-  [hour: string]: JournalEntry;
+// Local interface that matches journal file structure
+interface DayJournalFile {
+  [key: string]: JournalHourSlot | JournalRangeEntry[] | StagedTaskEntry[] | undefined;
   ranges?: JournalRangeEntry[];
   staged?: StagedTaskEntry[];
 }
@@ -24,7 +25,7 @@ function getJournalFilePath(date: string): string {
 /**
  * Helper function to read journal from file
  */
-function readJournal(date: string): DayJournal | null {
+function readJournal(date: string): DayJournalFile | null {
   const journalFile = getJournalFilePath(date);
   if (!fs.existsSync(journalFile)) {
     return null;
@@ -36,7 +37,7 @@ function readJournal(date: string): DayJournal | null {
 /**
  * Helper function to write journal to file
  */
-function writeJournal(date: string, journal: DayJournal): void {
+function writeJournal(date: string, journal: DayJournalFile): void {
   const journalFile = getJournalFilePath(date);
   fs.writeFileSync(journalFile, JSON.stringify(journal, null, 2), 'utf-8');
 }
@@ -50,10 +51,24 @@ function removeTaskFromJournal(date: string, taskId: string): boolean {
   
   let modified = false;
   
-  // Clear hour slots referencing this task
+  // Clear hour slots referencing this task (supports both single entries and arrays)
   for (const hour of HOURS) {
-    const entry = journal[hour];
-    if (entry && typeof entry === 'object' && 'taskId' in entry && entry.taskId === taskId) {
+    const slot = journal[hour] as JournalHourSlot;
+    
+    if (isJournalEntryArray(slot)) {
+      // Filter out entries with this taskId from the array
+      const filtered = slot.filter(entry => !isTaskJournalEntry(entry) || entry.taskId !== taskId);
+      if (filtered.length !== slot.length) {
+        modified = true;
+        if (filtered.length === 0) {
+          journal[hour] = '';
+        } else if (filtered.length === 1) {
+          journal[hour] = filtered[0];
+        } else {
+          journal[hour] = filtered;
+        }
+      }
+    } else if (slot && isTaskJournalEntry(slot) && slot.taskId === taskId) {
       journal[hour] = '';
       modified = true;
     }
@@ -62,7 +77,7 @@ function removeTaskFromJournal(date: string, taskId: string): boolean {
   // Filter out range entries referencing this task
   if (journal.ranges) {
     const before = journal.ranges.length;
-    journal.ranges = journal.ranges.filter(r => r.taskId !== taskId);
+    journal.ranges = journal.ranges.filter(r => !('taskId' in r) || r.taskId !== taskId);
     if (journal.ranges.length !== before) modified = true;
   }
   

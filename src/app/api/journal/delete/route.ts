@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  DayJournal,
+  JournalHourSlot,
+  JournalEntry,
+  isTaskJournalEntry,
+  isJournalEntryArray,
+} from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -10,9 +17,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-type JournalEntry = string | { text?: string; [key: string]: unknown } | null;
-type DayJournal = Record<string, JournalEntry>;
 
 /**
  * Helper function to validate date format (ISO: YYYY-MM-DD)
@@ -55,14 +59,28 @@ function writeJournalFile(date: string, journal: DayJournal): void {
 
 /**
  * POST /api/journal/delete
- * Deletes/clears a specific hour's journal entry
+ * Deletes/clears a specific hour's journal entry or a specific task within an hour
  * 
- * Body: { date: string, hour: string }
+ * Body: { date: string, hour: string, taskId?: string }
+ * 
+ * - Without taskId: Clears the entire hour slot
+ * - With taskId: Removes only the task with that ID from the hour slot
+ *   (useful when multiple tasks are logged for the same hour)
  */
+/**
+ * Helper to check if a slot is empty
+ */
+function isSlotEmpty(slot: JournalHourSlot | null | undefined): boolean {
+  if (!slot) return true;
+  if (typeof slot === 'string' && slot.trim() === '') return true;
+  if (Array.isArray(slot) && slot.length === 0) return true;
+  return false;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour } = body;
+    const { date, hour, taskId } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -90,14 +108,10 @@ export async function POST(request: NextRequest) {
 
     // Read current journal
     const journal = readJournalFile(date);
-    const deletedEntry = journal[hour];
+    const currentSlot = journal[hour];
 
-    // Check if entry was already empty (handle both string and object entries)
-    const isEmpty = !deletedEntry || 
-      (typeof deletedEntry === 'string' && deletedEntry.trim() === '') ||
-      (typeof deletedEntry === 'object' && !deletedEntry.text);
-    
-    if (isEmpty) {
+    // Check if entry was already empty
+    if (isSlotEmpty(currentSlot)) {
       return NextResponse.json({
         success: true,
         date,
@@ -107,8 +121,62 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Clear the entry (use null to properly clear object entries)
-    journal[hour] = null;
+    // Handle taskId-specific deletion
+    if (taskId && typeof taskId === 'string') {
+      let deletedEntry: JournalEntry | null = null;
+      let updatedSlot: JournalHourSlot;
+
+      if (isJournalEntryArray(currentSlot)) {
+        // Array of entries - find and remove the task
+        const taskIndex = currentSlot.findIndex(
+          e => isTaskJournalEntry(e) && e.taskId === taskId
+        );
+        
+        if (taskIndex === -1) {
+          return NextResponse.json({
+            success: false,
+            error: `Task ${taskId} not found at ${hour} on ${date}`,
+          }, { status: 404 });
+        }
+
+        deletedEntry = currentSlot[taskIndex];
+        const newArray = [...currentSlot.slice(0, taskIndex), ...currentSlot.slice(taskIndex + 1)];
+        
+        if (newArray.length === 0) {
+          updatedSlot = '';
+        } else if (newArray.length === 1) {
+          updatedSlot = newArray[0];
+        } else {
+          updatedSlot = newArray;
+        }
+      } else if (isTaskJournalEntry(currentSlot) && currentSlot.taskId === taskId) {
+        // Single task entry that matches - remove it
+        deletedEntry = currentSlot;
+        updatedSlot = '';
+      } else {
+        return NextResponse.json({
+          success: false,
+          error: `Task ${taskId} not found at ${hour} on ${date}`,
+        }, { status: 404 });
+      }
+
+      journal[hour] = updatedSlot;
+      writeJournalFile(date, journal);
+
+      return NextResponse.json({
+        success: true,
+        date,
+        hour,
+        taskId,
+        message: `Successfully deleted task ${taskId} at ${hour} on ${date}`,
+        deletedEntry,
+        remainingEntries: journal[hour],
+      });
+    }
+
+    // No taskId - clear the entire hour slot (original behavior)
+    const deletedEntry = currentSlot;
+    journal[hour] = '';
 
     // Write updated journal
     writeJournalFile(date, journal);

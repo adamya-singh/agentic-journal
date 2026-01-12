@@ -5,9 +5,12 @@ import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, J
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
 
+// Resolved hour slot can be single entry, array of entries, or null
+type ResolvedHourSlot = ResolvedJournalEntry | ResolvedJournalEntry[] | null;
+
 // Resolved journal data with ranges and staged - entries resolved to display format
 export type ResolvedDayJournalWithRanges = {
-  [hour: string]: ResolvedJournalEntry | null;
+  [hour: string]: ResolvedHourSlot;
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
@@ -106,6 +109,24 @@ function getCurrentHour(): string {
 }
 
 /**
+ * Helper to process a single resolved entry into a TypedEntry
+ */
+function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedEntry | null {
+  if (!entry || typeof entry !== 'object' || !('text' in entry) || !entry.text || entry.text.trim() === '') {
+    return null;
+  }
+  return {
+    hour,
+    text: entry.text,
+    type: entry.isPlan ? 'plan' : 'journal',
+    taskId: entry.taskId,
+    listType: entry.listType,
+    completed: entry.completed,
+    startHour: hour,
+  };
+}
+
+/**
  * Get entries from a unified journal source, differentiating by isPlan flag
  */
 function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): TypedEntry[] {
@@ -115,20 +136,26 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
     return entries;
   }
   
-  // Process hourly entries
+  // Process hourly entries (supports both single entries and arrays)
   for (const hour of HOUR_ORDER) {
-    const entry = journal[hour] as ResolvedJournalEntry | null | undefined;
+    const slot = journal[hour];
     
-    if (entry && typeof entry === 'object' && 'text' in entry && entry.text && entry.text.trim() !== '') {
-      entries.push({
-        hour,
-        text: entry.text,
-        type: entry.isPlan ? 'plan' : 'journal',
-        taskId: entry.taskId,
-        listType: entry.listType,
-        completed: entry.completed,
-        startHour: hour,
-      });
+    if (!slot) continue;
+    
+    if (Array.isArray(slot)) {
+      // Multiple entries for this hour
+      for (const entry of slot) {
+        const typedEntry = processResolvedEntry(hour, entry);
+        if (typedEntry) {
+          entries.push(typedEntry);
+        }
+      }
+    } else {
+      // Single entry
+      const typedEntry = processResolvedEntry(hour, slot as ResolvedJournalEntry);
+      if (typedEntry) {
+        entries.push(typedEntry);
+      }
     }
   }
   

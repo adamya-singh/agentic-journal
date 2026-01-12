@@ -5,8 +5,10 @@ import {
   DayJournal,
   JournalEntry,
   JournalRangeEntry,
+  JournalHourSlot,
   isTaskJournalEntry,
   isTextJournalEntry,
+  isJournalEntryArray,
 } from '@/lib/types';
 
 // Path to the journal directory
@@ -87,8 +89,10 @@ function getEntryText(entry: JournalEntry): string {
  * Body (text entry): { date: string, hour: string, text: string, isPlan?: boolean }
  * Body (task reference): { date: string, hour: string, taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean }
  * 
- * For text entries: appends to existing content with newline separation.
- * For task references: replaces the entry with a task reference (cannot append to existing task entries).
+ * For text entries: appends to existing text content with newline separation.
+ * For task references: adds the task to the hour slot. If an entry already exists,
+ *   converts to an array and appends (supports multiple tasks per hour).
+ *   Skips if the same taskId already exists in that hour.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -132,40 +136,98 @@ export async function POST(request: NextRequest) {
 
     // Read current journal
     const journal = readJournalFile(date);
-    const currentEntry = journal[hour];
+    const currentSlot = journal[hour];
 
-    let newEntry: JournalEntry;
+    let updatedSlot: JournalHourSlot;
 
     if (hasTaskRef) {
-      // Task reference entry - replaces existing entry
-      newEntry = { taskId, listType, ...(isPlan !== undefined ? { isPlan } : {}) };
+      // Task reference entry - append to array instead of replacing
+      const newTaskEntry: JournalEntry = { taskId, listType, ...(isPlan !== undefined ? { isPlan } : {}) };
+      
+      // Helper to check if a task entry with the same taskId already exists
+      const taskAlreadyExists = (entries: JournalEntry[]): boolean => {
+        return entries.some(e => isTaskJournalEntry(e) && e.taskId === taskId);
+      };
+      
+      if (!currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')) {
+        // Empty slot - just set the new entry (not as array for efficiency)
+        updatedSlot = newTaskEntry;
+      } else if (isJournalEntryArray(currentSlot)) {
+        // Already an array - check for duplicate and push if not present
+        if (taskAlreadyExists(currentSlot)) {
+          return NextResponse.json({
+            success: true,
+            date,
+            hour,
+            message: `Task already exists at ${hour} on ${date}`,
+            updatedEntry: currentSlot,
+            skipped: true,
+          });
+        }
+        updatedSlot = [...currentSlot, newTaskEntry];
+      } else {
+        // Single entry exists - convert to array and append
+        // Check if the existing entry is the same task
+        if (isTaskJournalEntry(currentSlot) && currentSlot.taskId === taskId) {
+          return NextResponse.json({
+            success: true,
+            date,
+            hour,
+            message: `Task already exists at ${hour} on ${date}`,
+            updatedEntry: currentSlot,
+            skipped: true,
+          });
+        }
+        updatedSlot = [currentSlot, newTaskEntry];
+      }
     } else {
       // Text entry - can append to existing text entries
-      // Check if current entry is a task reference - cannot append text to task entries
-      if (currentEntry && isTaskJournalEntry(currentEntry)) {
-        return NextResponse.json(
-          { success: false, error: 'Cannot append text to a task reference entry. Use the update endpoint to replace it.' },
-          { status: 400 }
-        );
-      }
-
-      // Get the current text content and isPlan status
-      const currentText = currentEntry ? getEntryText(currentEntry) : '';
-      // Preserve existing isPlan status if appending, otherwise use provided value
-      const currentIsPlan = currentEntry && isTextJournalEntry(currentEntry) ? currentEntry.isPlan : undefined;
-      const finalIsPlan = isPlan ?? currentIsPlan;
-
-      if (currentText && currentText.trim() !== '') {
-        // Append with newline separation
-        newEntry = { text: currentText + '\n' + text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
+      // For text entries, we handle arrays differently - append to the last text entry or create new
+      
+      // Get existing entries as array for easier processing
+      const existingEntries: JournalEntry[] = !currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')
+        ? []
+        : isJournalEntryArray(currentSlot)
+          ? currentSlot
+          : [currentSlot];
+      
+      // Find the last text entry to append to
+      const lastTextEntryIndex = existingEntries.length - 1;
+      const lastEntry = existingEntries[lastTextEntryIndex];
+      
+      // Check if we can append to an existing text entry
+      if (existingEntries.length === 0) {
+        // No entries - create new text entry
+        updatedSlot = { text: text.trim(), ...(isPlan !== undefined ? { isPlan } : {}) };
+      } else if (lastEntry && isTaskJournalEntry(lastEntry)) {
+        // Last entry is a task - add text as new entry in the array
+        const newTextEntry: JournalEntry = { text: text.trim(), ...(isPlan !== undefined ? { isPlan } : {}) };
+        if (existingEntries.length === 1) {
+          updatedSlot = [lastEntry, newTextEntry];
+        } else {
+          updatedSlot = [...existingEntries, newTextEntry];
+        }
       } else {
-        // Start fresh
-        newEntry = { text: text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
+        // Last entry is text - append to it
+        const currentText = lastEntry ? getEntryText(lastEntry) : '';
+        const currentIsPlan = lastEntry && isTextJournalEntry(lastEntry) ? lastEntry.isPlan : undefined;
+        const finalIsPlan = isPlan ?? currentIsPlan;
+        
+        const appendedTextEntry: JournalEntry = currentText && currentText.trim() !== ''
+          ? { text: currentText + '\n' + text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) }
+          : { text: text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
+        
+        if (existingEntries.length === 1) {
+          updatedSlot = appendedTextEntry;
+        } else {
+          // Replace last entry in array with appended version
+          updatedSlot = [...existingEntries.slice(0, -1), appendedTextEntry];
+        }
       }
     }
 
     // Update the entry
-    journal[hour] = newEntry;
+    journal[hour] = updatedSlot;
 
     // Write updated journal
     writeJournalFile(date, journal);

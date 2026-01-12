@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DayJournal, JournalEntry, JournalRangeEntry } from '@/lib/types';
+import { DayJournal, JournalEntry, JournalRangeEntry, JournalHourSlot, isJournalEntryArray } from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -66,13 +66,17 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
  * Updates/replaces a specific hour's journal entry OR adds/updates a range entry
  * 
  * For hourly update:
- * Body: { date: string, hour: string, entry: JournalEntry, isPlan?: boolean }
+ * Body: { date: string, hour: string, entry: JournalEntry, isPlan?: boolean, entryIndex?: number }
  * 
  * entry can be:
  * - { taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean } - task reference
  * - { text: string, isPlan?: boolean } - free-form text
  * - string - legacy plain text (for backward compatibility)
- * - '' or null - clears the entry
+ * - '' or null - clears the entry (or removes entry at entryIndex if provided)
+ * 
+ * entryIndex: Optional. If the hour slot contains an array of entries:
+ *   - Specifying entryIndex updates only that specific entry in the array
+ *   - Without entryIndex, replaces the entire hour slot
  * 
  * For range update:
  * Body: { date: string, range: { start: string, end: string, text?: string, taskId?: string, listType?: string, isPlan?: boolean } }
@@ -86,7 +90,7 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, entry, text, taskId, listType, range, removeRange, isPlan } = body;
+    const { date, hour, entry, text, taskId, listType, range, removeRange, isPlan, entryIndex } = body;
 
     // Validate date
     if (!date || !isValidDateFormat(date)) {
@@ -240,10 +244,63 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const previousEntry = journal[hour] || '';
+    const currentSlot = journal[hour];
+    let previousEntry: JournalHourSlot = currentSlot || '';
+    let updatedSlot: JournalHourSlot;
+
+    // Handle entryIndex for array operations
+    if (typeof entryIndex === 'number' && entryIndex >= 0) {
+      if (!isJournalEntryArray(currentSlot)) {
+        // Current slot is not an array
+        if (entryIndex === 0 && currentSlot) {
+          // Updating the single entry at index 0
+          previousEntry = currentSlot;
+          // If entryToSave is empty, remove this entry (clear the slot)
+          if (entryToSave === '' || entryToSave === null) {
+            updatedSlot = '';
+          } else {
+            updatedSlot = entryToSave;
+          }
+        } else {
+          return NextResponse.json(
+            { success: false, error: `Invalid entryIndex ${entryIndex}. Hour slot has only 1 entry (or is empty).` },
+            { status: 400 }
+          );
+        }
+      } else {
+        // Current slot is an array
+        if (entryIndex >= currentSlot.length) {
+          return NextResponse.json(
+            { success: false, error: `Invalid entryIndex ${entryIndex}. Hour slot has ${currentSlot.length} entries.` },
+            { status: 400 }
+          );
+        }
+        previousEntry = currentSlot[entryIndex];
+        
+        // If entryToSave is empty, remove this entry from the array
+        if (entryToSave === '' || entryToSave === null) {
+          const newArray = [...currentSlot.slice(0, entryIndex), ...currentSlot.slice(entryIndex + 1)];
+          if (newArray.length === 0) {
+            updatedSlot = '';
+          } else if (newArray.length === 1) {
+            updatedSlot = newArray[0];
+          } else {
+            updatedSlot = newArray;
+          }
+        } else {
+          // Update the entry at index
+          const newArray = [...currentSlot];
+          newArray[entryIndex] = entryToSave;
+          updatedSlot = newArray;
+        }
+      }
+    } else {
+      // No entryIndex - replace entire slot (original behavior)
+      updatedSlot = entryToSave;
+    }
 
     // Update the entry
-    journal[hour] = entryToSave;
+    journal[hour] = updatedSlot;
 
     // Write updated journal
     writeJournalFile(date, journal);
@@ -255,6 +312,7 @@ export async function POST(request: NextRequest) {
       message: `Successfully updated journal at ${hour} on ${date}`,
       previousEntry,
       newEntry: journal[hour],
+      ...(typeof entryIndex === 'number' ? { entryIndex } : {}),
     });
   } catch (error) {
     console.error('Error updating journal:', error);

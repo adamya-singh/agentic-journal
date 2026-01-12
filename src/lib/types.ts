@@ -47,9 +47,16 @@ export interface TextJournalEntry {
 export type JournalEntry = TaskJournalEntry | TextJournalEntry | string;
 
 /**
- * A day's journal mapping hours to entries
+ * A day's journal hour slot can be:
+ * - A single JournalEntry (backward compatible)
+ * - An array of JournalEntry (for multiple tasks per hour)
  */
-export type DayJournal = Record<string, JournalEntry>;
+export type JournalHourSlot = JournalEntry | JournalEntry[];
+
+/**
+ * A day's journal mapping hours to entries (single or multiple per hour)
+ */
+export type DayJournal = Record<string, JournalHourSlot>;
 
 // ============ Resolved Journal Entry (for display) ============
 
@@ -186,6 +193,13 @@ export function isTextJournalRangeEntry(entry: JournalRangeEntry): entry is Text
 
 export function isStagedTaskEntry(entry: StagedTaskEntry): entry is StagedTaskEntry {
   return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry && !('start' in entry);
+}
+
+/**
+ * Check if an hour slot contains multiple entries (is an array)
+ */
+export function isJournalEntryArray(slot: JournalHourSlot | null | undefined): slot is JournalEntry[] {
+  return Array.isArray(slot);
 }
 
 // ============ Deprecated Type Guards (aliases for backward compatibility) ============

@@ -5,6 +5,7 @@ import {
   DayJournal,
   JournalEntry,
   JournalRangeEntry,
+  JournalHourSlot,
   ResolvedJournalEntry,
   ResolvedJournalRangeEntry,
   ResolvedStagedEntry,
@@ -15,6 +16,7 @@ import {
   isTaskJournalEntry,
   isTextJournalEntry,
   isTaskJournalRangeEntry,
+  isJournalEntryArray,
 } from '@/lib/types';
 
 // Path to the journal directory (relative to project root)
@@ -34,9 +36,12 @@ type DayJournalWithRanges = DayJournal & {
   staged?: StagedTaskEntry[];
 };
 
+// Resolved hour slot can be single entry, array of entries, or null
+type ResolvedHourSlot = ResolvedJournalEntry | ResolvedJournalEntry[] | null;
+
 // Resolved journal with ranges and staged
 type ResolvedDayJournalWithRanges = {
-  [hour: string]: ResolvedJournalEntry | null;
+  [hour: string]: ResolvedHourSlot;
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
@@ -256,18 +261,42 @@ function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStage
 }
 
 /**
+ * Resolve a single entry or an array of entries for an hour slot
+ */
+function resolveHourSlot(hour: string, slot: JournalHourSlot | undefined, date: string): ResolvedHourSlot {
+  if (!slot) {
+    return null;
+  }
+  
+  if (isJournalEntryArray(slot)) {
+    // Handle array of entries
+    const resolved = slot
+      .map(entry => resolveEntry(hour, entry, date))
+      .filter((e): e is ResolvedJournalEntry => e !== null);
+    
+    if (resolved.length === 0) {
+      return null;
+    }
+    if (resolved.length === 1) {
+      // Return single entry if only one (for backward compatibility)
+      return resolved[0];
+    }
+    return resolved;
+  }
+  
+  // Single entry
+  return resolveEntry(hour, slot as JournalEntry, date);
+}
+
+/**
  * Resolve all entries in a journal
  */
 function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDayJournalWithRanges {
   const resolved: ResolvedDayJournalWithRanges = {};
   
   for (const hour of HOURS) {
-    const entry = journal[hour];
-    if (entry) {
-      resolved[hour] = resolveEntry(hour, entry as JournalEntry, date);
-    } else {
-      resolved[hour] = null;
-    }
+    const slot = journal[hour];
+    resolved[hour] = resolveHourSlot(hour, slot, date);
   }
 
   // Resolve range entries

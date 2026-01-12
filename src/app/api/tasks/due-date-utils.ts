@@ -1,10 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Task, TasksData, ListType, TaskJournalRangeEntry, StagedTaskEntry } from '@/lib/types';
+import { Task, TasksData, ListType, JournalRangeEntry, StagedTaskEntry, JournalHourSlot } from '@/lib/types';
 
-interface DayJournal {
-  [hour: string]: string | { taskId: string; listType: ListType; isPlan?: boolean } | { text: string; isPlan?: boolean };
-  ranges?: TaskJournalRangeEntry[];
+// Local DayJournal type that matches the file structure
+interface DayJournalFile {
+  [key: string]: JournalHourSlot | JournalRangeEntry[] | StagedTaskEntry[] | undefined;
+  ranges?: JournalRangeEntry[];
   staged?: StagedTaskEntry[];
 }
 
@@ -15,7 +16,7 @@ const DAILY_LISTS_DIR = path.join(process.cwd(), 'src/backend/data/tasks/daily-l
 /**
  * Get the empty journal template
  */
-function getEmptyJournalTemplate(): DayJournal {
+function getEmptyJournalTemplate(): DayJournalFile {
   return {
     '7am': '',
     '8am': '',
@@ -118,7 +119,7 @@ export function addTaskToStaged(
   }
   
   const content = fs.readFileSync(journalFilePath, 'utf-8');
-  const journal: DayJournal = JSON.parse(content);
+  const journal: DayJournalFile = JSON.parse(content);
   
   // Ensure staged array exists
   if (!journal.staged) {
