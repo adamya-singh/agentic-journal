@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DayJournal, JournalEntry, JournalRangeEntry, JournalHourSlot, isJournalEntryArray } from '@/lib/types';
+import { DayJournal, JournalEntry, JournalRangeEntry, JournalHourSlot, isJournalEntryArray, StagedTaskEntry } from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -12,9 +12,10 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
-// Journal with ranges support
+// Journal with ranges and staged support
 type DayJournalWithRanges = DayJournal & {
   ranges?: JournalRangeEntry[];
+  staged?: StagedTaskEntry[];
 };
 
 /**
@@ -179,27 +180,24 @@ export async function POST(request: NextRequest) {
       if (existingIdx >= 0) {
         const previousRange = journal.ranges![existingIdx];
         journal.ranges![existingIdx] = newRange;
-        writeJournalFile(date, journal);
-
-        return NextResponse.json({
-          success: true,
-          date,
-          message: `Updated range ${start}-${end} on ${date}`,
-          previousRange,
-          newRange,
-        });
       } else {
         journal.ranges = journal.ranges || [];
         journal.ranges.push(newRange);
-        writeJournalFile(date, journal);
-
-        return NextResponse.json({
-          success: true,
-          date,
-          message: `Added range ${start}-${end} on ${date}`,
-          newRange,
-        });
       }
+
+      // If this range has a taskId, remove it from staged (task is now scheduled)
+      if (rangeTaskId && journal.staged && Array.isArray(journal.staged)) {
+        journal.staged = journal.staged.filter(s => s.taskId !== rangeTaskId);
+      }
+
+      writeJournalFile(date, journal);
+
+      return NextResponse.json({
+        success: true,
+        date,
+        message: existingIdx >= 0 ? `Updated range ${start}-${end} on ${date}` : `Added range ${start}-${end} on ${date}`,
+        newRange,
+      });
     }
 
     // Handle hourly update (original behavior)
@@ -301,6 +299,12 @@ export async function POST(request: NextRequest) {
 
     // Update the entry
     journal[hour] = updatedSlot;
+
+    // If this is a task entry, remove it from staged (task is now scheduled)
+    const taskIdToRemove = taskId || (entry && typeof entry === 'object' && entry !== null && 'taskId' in entry ? (entry as { taskId: string }).taskId : null);
+    if (taskIdToRemove && journal.staged && Array.isArray(journal.staged)) {
+      journal.staged = journal.staged.filter(s => s.taskId !== taskIdToRemove);
+    }
 
     // Write updated journal
     writeJournalFile(date, journal);

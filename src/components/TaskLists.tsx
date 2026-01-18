@@ -52,6 +52,36 @@ function getCurrentHour(): string {
   return `${hours12}${ampm}`;
 }
 
+// Valid hours for checking scheduled tasks
+const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+
+/**
+ * Check if a task is already scheduled in the journal (in any hour slot or range)
+ */
+function checkIfTaskScheduled(journal: Record<string, unknown> | null | undefined, taskId: string): boolean {
+  if (!journal) return false;
+  
+  // Check hourly slots
+  for (const hour of VALID_HOURS) {
+    const slot = journal[hour];
+    if (!slot) continue;
+    
+    if (Array.isArray(slot)) {
+      if (slot.some(e => e?.taskId === taskId)) return true;
+    } else if (typeof slot === 'object' && slot !== null && 'taskId' in slot && (slot as { taskId: string }).taskId === taskId) {
+      return true;
+    }
+  }
+  
+  // Check ranges
+  const ranges = journal.ranges;
+  if (ranges && Array.isArray(ranges)) {
+    if (ranges.some((r: { taskId?: string }) => r.taskId === taskId)) return true;
+  }
+  
+  return false;
+}
+
 /**
  * Get priority tier color based on task position in the list.
  * Top 1/3 = Red (high priority), Middle 1/3 = Amber (medium), Bottom 1/3 = Green (low)
@@ -557,20 +587,35 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Handler to toggle task completion status (also logs to journal)
   const handleCompleteTask = async (task: Task, listType: ListType) => {
     try {
-      // Log completion to journal at current hour
-      await fetch('/api/journal/append', {
+      // Check if task is already scheduled in the journal
+      const journalRes = await fetch('/api/journal/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date: currentDate,
-          hour: getCurrentHour(),
-          taskId: task.id,
-          listType,
-          isPlan: true,
-        }),
+        body: JSON.stringify({ dates: [currentDate], resolve: false }),
       });
+      const journalData = await journalRes.json();
+      const journal = journalData.journals?.[currentDate];
+      
+      // Check if taskId exists in any hour slot or range
+      const isAlreadyScheduled = checkIfTaskScheduled(journal, task.id);
+      
+      // Only append to journal if NOT already scheduled
+      // (If already scheduled, we just mark it complete without creating a duplicate)
+      if (!isAlreadyScheduled) {
+        await fetch('/api/journal/append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date: currentDate,
+            hour: getCurrentHour(),
+            taskId: task.id,
+            listType,
+            isPlan: true,
+          }),
+        });
+      }
 
-      // Mark task as complete
+      // Mark task as complete (always)
       const response = await fetch('/api/tasks/today/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

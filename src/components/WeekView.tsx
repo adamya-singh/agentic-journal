@@ -109,6 +109,32 @@ function getCurrentHour(): string {
 }
 
 /**
+ * Check if a task is already scheduled in the journal (in any hour slot or range)
+ */
+function checkIfTaskScheduled(journal: ResolvedDayJournalWithRanges | null | undefined, taskId: string): boolean {
+  if (!journal) return false;
+  
+  // Check hourly slots
+  for (const hour of HOUR_ORDER) {
+    const slot = journal[hour];
+    if (!slot) continue;
+    
+    if (Array.isArray(slot)) {
+      if (slot.some(e => e?.taskId === taskId)) return true;
+    } else if (slot?.taskId === taskId) {
+      return true;
+    }
+  }
+  
+  // Check ranges
+  if (journal.ranges && Array.isArray(journal.ranges)) {
+    if (journal.ranges.some(r => r.taskId === taskId)) return true;
+  }
+  
+  return false;
+}
+
+/**
  * Helper to process a single resolved entry into a TypedEntry
  */
 function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedEntry | null {
@@ -314,20 +340,27 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Handler for completing a task from the popover
   const handleCompleteTask = useCallback(async (entry: StagedEntry, date: string) => {
     try {
-      // Log completion to journal at current hour
-      await fetch('/api/journal/append', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date,
-          hour: getCurrentHour(),
-          taskId: entry.taskId,
-          listType: entry.listType,
-          isPlan: true,
-        }),
-      });
+      // Check if task is already scheduled (use weekData from state)
+      const journal = weekData[date];
+      const isAlreadyScheduled = checkIfTaskScheduled(journal, entry.taskId);
+      
+      // Only append to journal if NOT already scheduled
+      // (If already scheduled, we just mark it complete without creating a duplicate)
+      if (!isAlreadyScheduled) {
+        await fetch('/api/journal/append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date,
+            hour: getCurrentHour(),
+            taskId: entry.taskId,
+            listType: entry.listType,
+            isPlan: true,
+          }),
+        });
+      }
 
-      // Mark task as complete
+      // Mark task as complete (always)
       await fetch('/api/tasks/today/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -343,7 +376,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     } catch (error) {
       console.error('Failed to complete task:', error);
     }
-  }, [fetchWeekData]);
+  }, [fetchWeekData, weekData]);
 
   // Handler for "Starting now" - logs to journal that task is starting
   const handleStartTask = useCallback(async (entry: StagedEntry, date: string) => {
