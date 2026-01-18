@@ -60,9 +60,10 @@ interface WeekViewProps {
 }
 
 /**
- * Get the Monday-Sunday dates for the current week
+ * Get the Monday-Sunday dates for a week relative to the current week
+ * @param offset - Number of weeks to offset (0 = current week, -1 = last week, 1 = next week)
  */
-function getCurrentWeekDates(): DayInfo[] {
+function getWeekDates(offset: number = 0): DayInfo[] {
   const now = new Date();
   const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
   
@@ -71,7 +72,7 @@ function getCurrentWeekDates(): DayInfo[] {
   // Otherwise, go back (dayOfWeek - 1) days
   const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
   const monday = new Date(now);
-  monday.setDate(now.getDate() - daysToMonday);
+  monday.setDate(now.getDate() - daysToMonday + (offset * 7)); // Add offset weeks
   
   const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
   const weekDates: DayInfo[] = [];
@@ -236,11 +237,18 @@ function getStagedFromJournal(journal: ResolvedDayJournalWithRanges | null): Sta
 }
 
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
-  const [weekDates] = useState<DayInfo[]>(getCurrentWeekDates);
+  // Week offset: 0 = current week, -1 = last week, 1 = next week
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [weekDates, setWeekDates] = useState<DayInfo[]>(() => getWeekDates(0));
   const [weekData, setWeekData] = useState<WeekData>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, number>>({});
+  
+  // Update weekDates when offset changes
+  useEffect(() => {
+    setWeekDates(getWeekDates(weekOffset));
+  }, [weekOffset]);
   
   // Track which days have their unscheduled popover expanded (default: only today)
   const [expandedPopovers, setExpandedPopovers] = useState<Record<string, boolean>>({});
@@ -445,10 +453,46 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     }
   }, [weekData, weekDates, loading, onDataChange]);
 
+  // Generate dynamic title based on offset (for loading/error states)
+  const getWeekTitleStatic = () => {
+    if (weekOffset === 0) return 'This Week';
+    if (weekOffset === -1) return 'Last Week';
+    if (weekOffset === 1) return 'Next Week';
+    return `Week of ${weekDates[0]?.displayDate ?? ''}`;
+  };
+
   if (loading) {
     return (
       <div className="w-full max-w-7xl mx-auto p-4">
-        <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">This Week</h2>
+        <div className="flex items-center justify-center gap-4 mb-4">
+          <button
+            onClick={() => setWeekOffset(prev => prev - 1)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label="Previous week"
+          >
+            <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200">{getWeekTitleStatic()}</h2>
+          <button
+            onClick={() => setWeekOffset(prev => prev + 1)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label="Next week"
+          >
+            <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          {weekOffset !== 0 && (
+            <button
+              onClick={() => setWeekOffset(0)}
+              className="ml-2 px-3 py-1 text-sm rounded-lg bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors"
+            >
+              Today
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-7 gap-3">
           {Array.from({ length: 7 }).map((_, i) => (
             <div key={i} className="h-64 bg-gray-100 dark:bg-gray-700 rounded-lg animate-pulse" />
@@ -461,7 +505,35 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   if (error) {
     return (
       <div className="w-full max-w-7xl mx-auto p-4">
-        <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">This Week</h2>
+        <div className="flex items-center justify-center gap-4 mb-4">
+          <button
+            onClick={() => setWeekOffset(prev => prev - 1)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label="Previous week"
+          >
+            <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200">{getWeekTitleStatic()}</h2>
+          <button
+            onClick={() => setWeekOffset(prev => prev + 1)}
+            className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            aria-label="Next week"
+          >
+            <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          {weekOffset !== 0 && (
+            <button
+              onClick={() => setWeekOffset(0)}
+              className="ml-2 px-3 py-1 text-sm rounded-lg bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors"
+            >
+              Today
+            </button>
+          )}
+        </div>
         <div className="text-center text-red-500 dark:text-red-400">{error}</div>
       </div>
     );
@@ -476,9 +548,52 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     .map(dayInfo => dayInfo.date === todayDate ? '1.5fr' : '1fr')
     .join(' ');
 
+  // Generate dynamic title based on offset
+  const getWeekTitle = () => {
+    if (weekOffset === 0) return 'This Week';
+    if (weekOffset === -1) return 'Last Week';
+    if (weekOffset === 1) return 'Next Week';
+    return `Week of ${weekDates[0]?.displayDate ?? ''}`;
+  };
+
   return (
     <div className="w-full max-w-7xl mx-auto p-4">
-      <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">This Week</h2>
+      {/* Week navigation header */}
+      <div className="flex items-center justify-center gap-4 mb-4">
+        <button
+          onClick={() => setWeekOffset(prev => prev - 1)}
+          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          aria-label="Previous week"
+        >
+          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+        
+        <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200">
+          {getWeekTitle()}
+        </h2>
+        
+        <button
+          onClick={() => setWeekOffset(prev => prev + 1)}
+          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          aria-label="Next week"
+        >
+          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+        
+        {/* Today button - only shown when not on current week */}
+        {weekOffset !== 0 && (
+          <button
+            onClick={() => setWeekOffset(0)}
+            className="ml-2 px-3 py-1 text-sm rounded-lg bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors"
+          >
+            Today
+          </button>
+        )}
+      </div>
       {/* Legend */}
       <div className="flex justify-center gap-6 mb-4 text-sm">
         <div className="flex items-center gap-2">
