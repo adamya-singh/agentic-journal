@@ -4,6 +4,7 @@ import './globals.css';
 import { CedarCopilot, ProviderConfig } from 'cedar-os';
 import { messageRenderers } from '@/cedar/messageRenderers';
 import { ThemeProvider } from '@/components/ThemeProvider';
+import { RefreshProvider } from '@/lib/RefreshContext';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -29,14 +30,16 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider>
-          <CedarCopilot
-            userId={'Test User'}
-            threadId={'Test Thread'}
-            llmProvider={llmProvider}
-            messageRenderers={messageRenderers}
-          >
-            {children}
-          </CedarCopilot>
+          <RefreshProvider>
+            <CedarCopilot
+              userId={'Test User'}
+              threadId={'Test Thread'}
+              llmProvider={llmProvider}
+              messageRenderers={messageRenderers}
+            >
+              {children}
+            </CedarCopilot>
+          </RefreshProvider>
         </ThemeProvider>
       </body>
     </html>

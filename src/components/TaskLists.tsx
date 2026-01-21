@@ -6,6 +6,7 @@ import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
 import { Task, ListType } from '@/lib/types';
+import { useRefresh } from '@/lib/RefreshContext';
 
 // Re-export for backward compatibility
 export type { Task, ListType };
@@ -408,6 +409,7 @@ function getCurrentDateISO(): string {
 
 export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [currentDate] = useState(getCurrentDateISO());
+  const { taskRefreshCounter, refreshJournal } = useRefresh();
   
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -559,6 +561,14 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   }, [refreshTrigger, fetchGeneralTasks, fetchTodayTasks]);
 
+  // Re-fetch when taskRefreshCounter changes (triggered by RefreshContext)
+  useEffect(() => {
+    if (taskRefreshCounter > 0) {
+      fetchGeneralTasks();
+      fetchTodayTasks();
+    }
+  }, [taskRefreshCounter, fetchGeneralTasks, fetchTodayTasks]);
+
   // Handler to add task to today's list
   const handleAddToToday = async (task: Task, listType: ListType) => {
     try {
@@ -654,6 +664,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         // Refresh both today's tasks and general tasks (since completion affects both)
         fetchTodayTasks();
         fetchGeneralTasks();
+        // Notify WeekView to refresh (journal was modified)
+        refreshJournal();
       }
     } catch (error) {
       console.error('Failed to toggle task completion:', error);
@@ -690,6 +702,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       });
 
       fetchTodayTasks();
+      // Notify WeekView to refresh (journal was modified)
+      refreshJournal();
     } catch (error) {
       console.error('Failed to start task:', error);
     }
@@ -827,6 +841,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       <AddToPlanModal
         isOpen={showPlanModal}
         onClose={() => setShowPlanModal(false)}
+        onSuccess={() => refreshJournal()}
         task={planTask}
         listType={planListType}
         date={currentDate}

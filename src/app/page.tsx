@@ -16,6 +16,7 @@ import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaption
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
 import { DebuggerPanel } from '@/cedar/components/debugger';
+import { useRefresh } from '@/lib/RefreshContext';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
 
@@ -73,11 +74,8 @@ export default function HomePage() {
   // Cedar state for task lists data (general and today lists)
   const [taskListsData, setTaskListsData] = React.useState<TaskListsData | null>(null);
 
-  // Refresh trigger for TaskLists component - increment to trigger re-fetch
-  const [taskRefreshTrigger, setTaskRefreshTrigger] = React.useState(0);
-
-  // Refresh trigger for WeekView component - increment to trigger re-fetch
-  const [weekViewRefreshTrigger, setWeekViewRefreshTrigger] = React.useState(0);
+  // Get refresh functions from context
+  const { refreshTasks, refreshJournal, refreshAll } = useRefresh();
 
   // State for journal creation button
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
@@ -242,8 +240,8 @@ export default function HomePage() {
             body: JSON.stringify({ date: args.date }),
           });
 
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context
+          refreshJournal();
         },
       },
       appendToJournal: {
@@ -278,8 +276,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger WeekView to refresh (handles resolved entry creation)
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context (handles resolved entry creation)
+          refreshJournal();
         },
       },
       updateJournalEntry: {
@@ -314,8 +312,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context
+          refreshJournal();
         },
       },
       deleteJournalEntry: {
@@ -348,8 +346,8 @@ export default function HomePage() {
             throw new Error(error.error || 'Failed to delete journal entry');
           }
 
-          // Trigger WeekView to refresh (handles state update properly)
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context (handles state update properly)
+          refreshJournal();
         },
       },
       // ==================== JOURNAL RANGE SETTERS ====================
@@ -388,8 +386,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context
+          refreshJournal();
         },
       },
       removeJournalRange: {
@@ -417,8 +415,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger WeekView to refresh
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger WeekView to refresh via context
+          refreshJournal();
         },
       },
     },
@@ -470,8 +468,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
+          // Trigger TaskLists to refresh via context
+          refreshTasks();
         },
       },
       updateTask: {
@@ -528,8 +526,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
+          // Trigger TaskLists to refresh via context
+          refreshTasks();
         },
       },
       reorderTask: {
@@ -577,8 +575,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
+          // Trigger TaskLists to refresh via context
+          refreshTasks();
         },
       },
       // ==================== DAILY TASK SETTERS ====================
@@ -639,8 +637,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
+          // Trigger TaskLists to refresh via context
+          refreshTasks();
         },
       },
       removeTaskFromToday: {
@@ -680,8 +678,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
+          // Trigger TaskLists to refresh via context
+          refreshTasks();
         },
       },
       completeTask: {
@@ -731,9 +729,8 @@ export default function HomePage() {
             }),
           });
 
-          // Trigger TaskLists and WeekView to refresh
-          setTaskRefreshTrigger(prev => prev + 1);
-          setWeekViewRefreshTrigger(prev => prev + 1);
+          // Trigger both TaskLists and WeekView to refresh via context
+          refreshAll();
         },
       },
     },
@@ -828,11 +825,11 @@ export default function HomePage() {
 
       {/* Week View */}
       <div className="pt-16 pb-4">
-        <WeekView onDataChange={setWeekViewData} refreshTrigger={weekViewRefreshTrigger} />
+        <WeekView onDataChange={setWeekViewData} />
       </div>
 
       {/* Task Lists */}
-      <TaskLists onDataChange={setTaskListsData} refreshTrigger={taskRefreshTrigger} />
+      <TaskLists onDataChange={setTaskListsData} />
 
       {/* Main interactive content area */}
       <div className="flex flex-col items-center justify-center p-8 space-y-8">

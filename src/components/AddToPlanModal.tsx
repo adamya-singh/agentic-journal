@@ -17,12 +17,13 @@ type TimeMode = 'single' | 'range';
 interface AddToPlanModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSuccess?: () => void; // Called when scheduling succeeds (before modal closes)
   task: Task | null;
   listType: ListType;
   date: string; // ISO format (YYYY-MM-DD)
 }
 
-export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToPlanModalProps) {
+export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, date }: AddToPlanModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('selecting');
   const [timeMode, setTimeMode] = useState<TimeMode>('single');
   const [selectedHour, setSelectedHour] = useState('9am');
@@ -107,6 +108,8 @@ export function AddToPlanModal({ isOpen, onClose, task, listType, date }: AddToP
       }
 
       setPhase('complete');
+      // Notify parent of success (triggers refresh)
+      onSuccess?.();
       setTimeout(() => {
         onClose();
       }, 800);

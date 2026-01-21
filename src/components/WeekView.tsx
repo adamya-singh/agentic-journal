@@ -4,6 +4,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, JournalRangeEntry, ListType, Task } from '@/lib/types';
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
+import { useRefresh } from '@/lib/RefreshContext';
 
 // Resolved hour slot can be single entry, array of entries, or null
 type ResolvedHourSlot = ResolvedJournalEntry | ResolvedJournalEntry[] | null;
@@ -237,6 +238,8 @@ function getStagedFromJournal(journal: ResolvedDayJournalWithRanges | null): Sta
 }
 
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
+  const { journalRefreshCounter, refreshTasks } = useRefresh();
+  
   // Week offset: 0 = current week, -1 = last week, 1 = next week
   const [weekOffset, setWeekOffset] = useState(0);
   const [weekDates, setWeekDates] = useState<DayInfo[]>(() => getWeekDates(0));
@@ -381,10 +384,12 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       
       // Refresh data
       fetchWeekData();
+      // Notify TaskLists to refresh (task was modified)
+      refreshTasks();
     } catch (error) {
       console.error('Failed to complete task:', error);
     }
-  }, [fetchWeekData, weekData]);
+  }, [fetchWeekData, weekData, refreshTasks]);
 
   // Handler for "Starting now" - logs to journal that task is starting
   const handleStartTask = useCallback(async (entry: StagedEntry, date: string) => {
@@ -416,10 +421,12 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
 
       // Refresh data
       fetchWeekData();
+      // Notify TaskLists to refresh (task was modified)
+      refreshTasks();
     } catch (error) {
       console.error('Failed to start task:', error);
     }
-  }, [fetchWeekData]);
+  }, [fetchWeekData, refreshTasks]);
 
   // Handler for opening schedule modal
   const handleScheduleTask = useCallback((entry: StagedEntry, date: string) => {
@@ -444,6 +451,13 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       fetchWeekData();
     }
   }, [refreshTrigger, fetchWeekData]);
+
+  // Re-fetch when journalRefreshCounter changes (triggered by RefreshContext)
+  useEffect(() => {
+    if (journalRefreshCounter > 0) {
+      fetchWeekData();
+    }
+  }, [journalRefreshCounter, fetchWeekData]);
 
   // Notify parent when data changes
   useEffect(() => {
@@ -754,6 +768,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           setShowScheduleModal(false);
           setScheduleTask(null);
           fetchWeekData(); // Refresh after modal closes
+        }}
+        onSuccess={() => {
+          // Notify TaskLists that journal was modified
+          refreshTasks();
         }}
         task={scheduleTask?.task ?? null}
         listType={scheduleTask?.task ? 
