@@ -38,18 +38,22 @@ function writeTasks(data: TasksData, listType: ListType): void {
 
 /**
  * POST /api/tasks/update
- * Updates a task's text and/or dueDate
+ * Updates a task's text, dueDate, and/or isDaily flag
  * 
- * Body: { oldText: string, newText?: string, dueDate?: string, listType?: 'have-to-do' | 'want-to-do' }
- * - oldText: The current text of the task to update
+ * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, isDaily?: boolean, listType?: 'have-to-do' | 'want-to-do' }
+ * - taskId: The unique ID of the task to update (preferred)
+ * - oldText: Legacy text-based lookup (fallback if taskId not provided)
  * - newText: The new text for the task (optional)
  * - dueDate: The new due date in ISO format, or empty string to remove (optional)
+ * - isDaily: Whether the task is daily recurring (optional)
  * - listType: Which task list to update in (defaults to 'have-to-do')
+ * 
+ * At least one of taskId or oldText must be provided.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { oldText, newText, dueDate, listType = 'have-to-do' } = body;
+    const { taskId, oldText, newText, dueDate, isDaily, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -59,17 +63,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!oldText || typeof oldText !== 'string') {
-      return NextResponse.json(
-        { success: false, error: 'oldText parameter is required and must be a string' },
-        { status: 400 }
-      );
-    }
+    // Validate that at least one identifier is provided
+    const hasTaskId = taskId && typeof taskId === 'string' && taskId.trim().length > 0;
+    const hasOldText = oldText && typeof oldText === 'string' && oldText.trim().length > 0;
 
-    const trimmedOldText = oldText.trim();
-    if (trimmedOldText.length === 0) {
+    if (!hasTaskId && !hasOldText) {
       return NextResponse.json(
-        { success: false, error: 'oldText cannot be empty' },
+        { success: false, error: 'Either taskId or oldText parameter is required' },
         { status: 400 }
       );
     }
@@ -77,12 +77,21 @@ export async function POST(request: NextRequest) {
     // Read current tasks
     const data = readTasks(listType);
 
-    // Find the task
-    const taskIndex = data.tasks.findIndex(task => task.text === trimmedOldText);
+    // Find the task - prioritize taskId lookup, fall back to oldText
+    let taskIndex = -1;
+    if (hasTaskId) {
+      taskIndex = data.tasks.findIndex(task => task.id === taskId.trim());
+    }
+    if (taskIndex === -1 && hasOldText) {
+      const trimmedOldText = oldText.trim();
+      taskIndex = data.tasks.findIndex(task => task.text === trimmedOldText);
+    }
+
     if (taskIndex === -1) {
+      const identifier = hasTaskId ? `ID: "${taskId}"` : `text: "${oldText}"`;
       return NextResponse.json({
         success: false,
-        error: `Task not found: "${trimmedOldText}"`,
+        error: `Task not found with ${identifier}`,
       });
     }
 
@@ -102,6 +111,15 @@ export async function POST(request: NextRequest) {
         delete data.tasks[taskIndex].dueDate;
       } else if (typeof dueDate === 'string') {
         data.tasks[taskIndex].dueDate = dueDate;
+      }
+    }
+
+    // Update or remove isDaily flag
+    if (isDaily !== undefined) {
+      if (isDaily === true) {
+        data.tasks[taskIndex].isDaily = true;
+      } else {
+        delete data.tasks[taskIndex].isDaily;
       }
     }
 

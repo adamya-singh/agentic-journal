@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { Play, CheckCircle, Clock } from 'lucide-react';
+import { Play, CheckCircle, Clock, Pencil } from 'lucide-react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
+import { EditTaskModal } from './EditTaskModal';
 import { Task, ListType } from '@/lib/types';
 
 // Re-export for backward compatibility
@@ -39,6 +40,7 @@ interface TaskListProps {
   clickedTasks?: Set<string>;
   onAddClick?: () => void;
   onDelete?: (task: Task) => void;
+  onEdit?: (task: Task) => void;
 }
 
 /**
@@ -106,6 +108,7 @@ function TaskList({
   clickedTasks,
   onAddClick,
   onDelete,
+  onEdit,
 }: TaskListProps) {
   // Separate daily tasks from regular tasks
   const dailyTasks = tasks.filter(task => task.isDaily === true);
@@ -158,21 +161,37 @@ function TaskList({
           )}
         </span>
         
-        {/* Delete button */}
-        {onDelete && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete(task);
-            }}
-            className="ml-2 p-1 text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors opacity-0 group-hover:opacity-100"
-            title="Delete task"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-            </svg>
-          </button>
-        )}
+        <div className="flex items-center">
+          {/* Edit button */}
+          {onEdit && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit(task);
+              }}
+              className="p-1 text-blue-400 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Edit task"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          )}
+          
+          {/* Delete button */}
+          {onDelete && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(task);
+              }}
+              className="ml-1 p-1 text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Delete task"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+        </div>
       </li>
     );
   };
@@ -402,6 +421,10 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Delete confirmation modal state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [taskToDelete, setTaskToDelete] = useState<{ task: Task; listType: ListType } | null>(null);
+  
+  // Edit task modal state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [taskToEdit, setTaskToEdit] = useState<{ task: Task; listType: ListType } | null>(null);
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -685,6 +708,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     setShowDeleteConfirm(true);
   };
 
+  // Handler to open edit task modal
+  const handleEditTask = (task: Task, listType: ListType) => {
+    setTaskToEdit({ task, listType });
+    setShowEditModal(true);
+  };
+
   // Handler to actually delete the task after confirmation
   const handleDeleteTask = async () => {
     if (!taskToDelete) return;
@@ -765,6 +794,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             setShowTaskModal(true);
           }}
           onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
+          onEdit={(task) => handleEditTask(task, 'have-to-do')}
         />
         <TaskList
           title="Want to Do"
@@ -781,6 +811,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             setShowTaskModal(true);
           }}
           onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
+          onEdit={(task) => handleEditTask(task, 'want-to-do')}
         />
       </div>
 
@@ -838,6 +869,21 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           </div>
         </div>
       )}
+
+      {/* Edit Task Modal */}
+      <EditTaskModal
+        isOpen={showEditModal}
+        onClose={() => {
+          setShowEditModal(false);
+          setTaskToEdit(null);
+        }}
+        onTaskUpdated={() => {
+          fetchGeneralTasks();
+          fetchTodayTasks();
+        }}
+        task={taskToEdit?.task ?? null}
+        listType={taskToEdit?.listType ?? 'have-to-do'}
+      />
     </div>
   );
 }
