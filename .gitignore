@@ -45,3 +45,6 @@ src/backend/storage.db
 
 #journal data
 src/backend/data
+
+# Google Cloud service account keys
+*-*.json

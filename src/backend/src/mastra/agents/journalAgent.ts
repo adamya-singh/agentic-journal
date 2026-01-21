@@ -1,7 +1,7 @@
 //import { openai } from '@ai-sdk/openai';
 // import { google } from '@ai-sdk/google';
-// import { vertex } from '@ai-sdk/google-vertex';
-import { anthropic } from '@ai-sdk/anthropic';
+import { vertex } from '@ai-sdk/google-vertex';
+// import { anthropic } from '@ai-sdk/anthropic';
 import { Agent } from '@mastra/core/agent';
 import { ALL_TOOLS, TOOL_REGISTRY } from '../tools/toolDefinitions';
 import { generateCategorizedToolDescriptions } from '@cedar-os/backend';
@@ -182,8 +182,8 @@ When responding:
   `,
   //model: openai('gpt-4o-mini'),
   // model: google('gemini-2.5-flash'),
-  // model: vertex('gemini-2.5-flash'),
-  model: anthropic('claude-3-5-haiku-20241022'),
+  model: vertex('gemini-2.5-flash'),
+  // model: anthropic('claude-3-5-haiku-20241022'),
   tools: Object.fromEntries(ALL_TOOLS.map((tool) => [tool.id, tool])),
   // memory,
 });
