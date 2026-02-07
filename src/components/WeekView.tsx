@@ -33,6 +33,7 @@ export interface TypedEntry {
   hour: string;       // For single-hour entries, this is the hour. For ranges, this is "start-end" format
   text: string;
   type: 'journal' | 'plan';  // 'plan' when isPlan is true, 'journal' otherwise
+  entryKind: 'task' | 'text'; // Task/text identity from resolved journal data
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
@@ -147,6 +148,7 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
     hour,
     text: entry.text,
     type: entry.isPlan ? 'plan' : 'journal',
+    entryKind: entry.type,
     taskId: entry.taskId,
     listType: entry.listType,
     completed: entry.completed,
@@ -195,6 +197,7 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
           hour: `${range.start}-${range.end}`,
           text: range.text,
           type: range.isPlan ? 'plan' : 'journal',
+          entryKind: range.type,
           taskId: range.taskId,
           listType: range.listType,
           completed: range.completed,
@@ -713,9 +716,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                 {entries.length > 0 ? (
                   <div className="space-y-2">
                     {/* Scheduled entries */}
-                    {entries.map(({ hour, text, type, taskId, completed }, index) => {
-                      const isTask = type === 'plan' && taskId;
-                      const isCompleted = isTask && completed;
+                    {entries.map(({ hour, text, type, entryKind, taskId, completed }, index) => {
+                      const isTask = entryKind === 'task' && Boolean(taskId);
+                      const isCompleted = isTask && completed === true;
+                      const suffixLabel = isCompleted
+                        ? '(done)'
+                        : type === 'plan'
+                          ? (isTask ? '(task)' : '(plan)')
+                          : null;
                       
                       return (
                         <div key={`${hour}-${type}-${index}`} className="text-sm">
@@ -739,11 +747,11 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           }`}>
                             {text}
                           </span>
-                          {type === 'plan' && (
+                          {suffixLabel && (
                             <span className={`ml-1 text-xs italic ${
                               isCompleted ? 'text-green-500 dark:text-green-400' : 'text-teal-500 dark:text-teal-400'
                             }`}>
-                              {isCompleted ? '(done)' : isTask ? '(task)' : '(plan)'}
+                              {suffixLabel}
                             </span>
                           )}
                         </div>
