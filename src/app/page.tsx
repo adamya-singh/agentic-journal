@@ -81,9 +81,6 @@ export default function HomePage() {
   const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
   const [journalMessage, setJournalMessage] = React.useState<string>('');
 
-  // Get setShowChat to ensure chat is visible on load
-  const setShowChat = useCedarStore((state) => state.setShowChat);
-
   // Get messages from Cedar store to watch for addTask tool results
   const messages = useCedarStore((state) => state.messages);
 
@@ -164,11 +161,6 @@ export default function HomePage() {
 
   // System message to pre-fill in chat input when page loads
   const systemMessage = `[System] The user has opened the journal page. Current date: ${currentDate}, Current time: ${currentTime}. Read today's journal using the readJournal tool and ask the user terse, efficient questions to help fill in the journal entries for the day. If any entries already exist for today, don't try to fill in any gaps before the latest entry.`;
-
-  // Ensure chat panel is visible on load
-  React.useEffect(() => {
-    setShowChat(true);
-  }, [setShowChat]);
 
   // Register the main text as Cedar state with a state setter
   useRegisterState({
@@ -941,5 +933,4 @@ export default function HomePage() {
 
   return renderContent();
 }
-
 
