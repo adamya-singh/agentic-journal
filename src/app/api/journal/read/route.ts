@@ -28,7 +28,6 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 // Valid hours of the day
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
-type HourOfDay = typeof HOURS[number];
 
 // Journal with ranges and staged support
 type DayJournalWithRanges = DayJournal & {
@@ -149,10 +148,10 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
         hour,
         text: task.text,
         type: 'task',
+        entryMode: entry.entryMode,
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
-        isPlan: entry.isPlan,
       };
     }
     // Task not found - return placeholder
@@ -160,10 +159,10 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       hour,
       text: '[Task not found]',
       type: 'task',
+      entryMode: entry.entryMode,
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
-      isPlan: entry.isPlan,
     };
   }
 
@@ -176,7 +175,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       hour,
       text: entry.text,
       type: 'text',
-      isPlan: entry.isPlan,
+      entryMode: entry.entryMode,
     };
   }
 
@@ -189,6 +188,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       hour,
       text: entry,
       type: 'text',
+      entryMode: 'logged',
     };
   }
 
@@ -207,10 +207,10 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
         end: entry.end,
         text: task.text,
         type: 'task',
+        entryMode: entry.entryMode,
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
-        isPlan: entry.isPlan,
       };
     }
     // Task not found - return placeholder
@@ -219,10 +219,10 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
       end: entry.end,
       text: '[Task not found]',
       type: 'task',
+      entryMode: entry.entryMode,
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
-      isPlan: entry.isPlan,
     };
   }
 
@@ -232,7 +232,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
     end: entry.end,
     text: entry.text,
     type: 'text',
-    isPlan: entry.isPlan,
+    entryMode: entry.entryMode,
   };
 }
 
@@ -247,7 +247,6 @@ function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStage
       taskId: entry.taskId,
       listType: entry.listType,
       completed: task.completed,
-      isPlan: entry.isPlan,
     };
   }
   // Task not found - return placeholder
@@ -256,7 +255,6 @@ function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStage
     taskId: entry.taskId,
     listType: entry.listType,
     completed: false,
-    isPlan: entry.isPlan,
   };
 }
 

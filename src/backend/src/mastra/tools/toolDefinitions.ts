@@ -97,7 +97,7 @@ export const AppendToJournalSchema = z.object({
   text: z.string().optional().describe('The text to append (use this for free-form entries, OR use taskId+listType for task references)'),
   taskId: z.string().optional().describe('The ID of an existing task to reference (use with listType instead of text for task planning)'),
   listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to (required when using taskId)'),
-  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
+  entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
 }).refine(
   data => {
     const hasText = data.text !== undefined && data.text.length > 0;
@@ -105,26 +105,6 @@ export const AppendToJournalSchema = z.object({
     return hasText !== hasTaskRef; // XOR: exactly one must be true
   },
   { message: 'Provide either text OR (taskId + listType), not both or neither' }
-);
-
-// Schema for updateJournalEntry state setter
-// Supports either text-based entries OR task-referenced entries (taskId + listType)
-export const UpdateJournalEntrySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  hour: z.enum(VALID_HOURS).describe('The hour to update'),
-  text: z.string().optional().describe('The new text (use this for free-form entries, OR use taskId+listType for task references)'),
-  taskId: z.string().optional().describe('The ID of an existing task to reference (use with listType instead of text for task planning)'),
-  listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to (required when using taskId)'),
-  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
-}).refine(
-  data => {
-    const hasText = data.text !== undefined;
-    const hasTaskRef = data.taskId !== undefined && data.listType !== undefined;
-    // Allow clearing (neither) or exactly one
-    if (!hasText && !hasTaskRef) return true; // clearing entry
-    return hasText !== hasTaskRef; // XOR: exactly one must be true
-  },
-  { message: 'Provide either text OR (taskId + listType), not both' }
 );
 
 // Schema for deleteJournalEntry state setter
@@ -142,7 +122,7 @@ export const AddJournalRangeSchema = z.object({
   text: z.string().optional().describe('The text describing the activity (use this for free-form entries, OR use taskId+listType for task references)'),
   taskId: z.string().optional().describe('The ID of an existing task to reference (use with listType instead of text for task planning)'),
   listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to (required when using taskId)'),
-  isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false/undefined, it is an actual entry'),
+  entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
 }).refine(
   data => {
     const hasText = data.text !== undefined && data.text.length > 0;
@@ -354,20 +334,8 @@ export const appendToJournalTool = createMastraToolForStateSetter(
   'appendToJournal',
   AppendToJournalSchema,
   {
-    description: 'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task (preferred for planning tasks). Set isPlan: true for planned entries.',
+    description: 'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task. Always pass entryMode: "planned" or "logged".',
     toolId: 'appendToJournal',
-    streamEventFn: streamJSONEvent,
-    errorSchema: ErrorResponseSchema,
-  },
-);
-
-export const updateJournalEntryTool = createMastraToolForStateSetter(
-  'weekJournals',
-  'updateJournalEntry',
-  UpdateJournalEntrySchema,
-  {
-    description: 'Update/replace a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task (preferred for planning tasks). This overwrites existing content. Set isPlan: true for planned entries.',
-    toolId: 'updateJournalEntry',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
@@ -390,7 +358,7 @@ export const addJournalRangeTool = createMastraToolForStateSetter(
   'addJournalRange',
   AddJournalRangeSchema,
   {
-    description: 'Add a journal entry spanning multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task (preferred for planning tasks). Creates an entry like "12pm-2pm: activity". Set isPlan: true for planned entries.',
+    description: 'Add a journal entry spanning multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task. Creates an entry like "12pm-2pm: activity". Always pass entryMode: "planned" or "logged".',
     toolId: 'addJournalRange',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -423,7 +391,6 @@ export const TOOL_REGISTRY = {
   journalManagement: {
     createDayJournalTool,
     appendToJournalTool,
-    updateJournalEntryTool,
     deleteJournalEntryTool,
     addJournalRangeTool,
     removeJournalRangeTool,
@@ -445,7 +412,6 @@ export const ALL_TOOLS = [
   addNewTextLineTool,
   createDayJournalTool,
   appendToJournalTool,
-  updateJournalEntryTool,
   deleteJournalEntryTool,
   addJournalRangeTool,
   removeJournalRangeTool,

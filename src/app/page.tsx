@@ -10,7 +10,7 @@ import {
 } from 'cedar-os';
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
-import { WeekView, WeekViewData, DayJournal, DayPlan } from '@/components/WeekView';
+import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
@@ -202,14 +202,14 @@ export default function HomePage() {
     setValue: setCurrentTime,
   });
 
-  // Valid hours for journal/plan entries
+  // Valid hours for journal entries
   const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
   type HourOfDay = typeof VALID_HOURS[number];
 
-  // Register week view data as Cedar state with setters for journal and plan management
+  // Register week view data as Cedar state with setters for journal management
   useRegisterState({
     key: 'weekJournals',
-    description: 'Journal and plan entries for the current week (Monday-Sunday). Contains date info, journal entries, and plan entries with hour-by-hour text.',
+    description: 'Journal entries for the current week (Monday-Sunday), including planned and logged entry modes by hour.',
     value: weekViewData,
     setValue: setWeekViewData,
     stateSetters: {
@@ -245,12 +245,12 @@ export default function HomePage() {
           text: z.string().optional().describe('The text to append (use this OR taskId+listType)'),
           taskId: z.string().optional().describe('The ID of an existing task to reference'),
           listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
-          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
+          entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
+          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; entryMode: 'planned' | 'logged' }
         ) => {
           if (!currentData) return;
 
@@ -264,47 +264,11 @@ export default function HomePage() {
               ...(args.text ? { text: args.text } : {}),
               ...(args.taskId ? { taskId: args.taskId } : {}),
               ...(args.listType ? { listType: args.listType } : {}),
-              ...(args.isPlan !== undefined ? { isPlan: args.isPlan } : {}),
+              entryMode: args.entryMode,
             }),
           });
 
           // Trigger WeekView to refresh via context (handles resolved entry creation)
-          refreshJournal();
-        },
-      },
-      updateJournalEntry: {
-        name: 'updateJournalEntry',
-        description: 'Update/replace the content of a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
-        argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-          hour: z.enum(VALID_HOURS).describe('The hour to update'),
-          text: z.string().optional().describe('The new text to replace the entry (use this OR taskId+listType)'),
-          taskId: z.string().optional().describe('The ID of an existing task to reference'),
-          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
-          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
-        }),
-        execute: async (
-          currentData: WeekViewData | null,
-          setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
-        ) => {
-          if (!currentData) return;
-
-          // Persist to JSON via API
-          await fetch('/api/journal/update', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              date: args.date,
-              hour: args.hour,
-              ...(args.text !== undefined ? { text: args.text } : {}),
-              ...(args.taskId ? { taskId: args.taskId } : {}),
-              ...(args.listType ? { listType: args.listType } : {}),
-              ...(args.isPlan !== undefined ? { isPlan: args.isPlan } : {}),
-            }),
-          });
-
-          // Trigger WeekView to refresh via context
           refreshJournal();
         },
       },
@@ -353,12 +317,12 @@ export default function HomePage() {
           text: z.string().optional().describe('The text describing the activity (use this OR taskId+listType)'),
           taskId: z.string().optional().describe('The ID of an existing task to reference'),
           listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
-          isPlan: z.boolean().optional().describe('If true, this is a planned entry; if false, it is an actual entry'),
+          entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay; text?: string; taskId?: string; listType?: ListType; isPlan?: boolean }
+          args: { date: string; start: HourOfDay; end: HourOfDay; text?: string; taskId?: string; listType?: ListType; entryMode: 'planned' | 'logged' }
         ) => {
           if (!currentData) return;
 
@@ -367,7 +331,7 @@ export default function HomePage() {
           if (args.text) rangePayload.text = args.text;
           if (args.taskId) rangePayload.taskId = args.taskId;
           if (args.listType) rangePayload.listType = args.listType;
-          if (args.isPlan !== undefined) rangePayload.isPlan = args.isPlan;
+          rangePayload.entryMode = args.entryMode;
 
           await fetch('/api/journal/update', {
             method: 'POST',
@@ -933,4 +897,3 @@ export default function HomePage() {
 
   return renderContent();
 }
-

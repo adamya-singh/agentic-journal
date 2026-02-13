@@ -643,7 +643,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             hour: getCurrentHour(),
             taskId: task.id,
             listType,
-            isPlan: true,
+            entryMode: 'logged',
           }),
         });
       }
@@ -697,7 +697,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           hour: getCurrentHour(),
           taskId: task.id,
           listType,
-          isPlan: true,
+          entryMode: 'logged',
         }),
       });
 

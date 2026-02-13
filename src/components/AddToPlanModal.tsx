@@ -73,33 +73,36 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
         throw new Error(createData.error || 'Failed to create journal');
       }
 
-      // Now update the journal with the task as a plan entry (isPlan: true)
-      let updateBody;
+      // Add planned entry (single hour uses append-by-default; ranges use /update range API)
+      let endpoint: '/api/journal/append' | '/api/journal/update';
+      let requestBody;
       if (timeMode === 'single') {
-        updateBody = {
+        endpoint = '/api/journal/append';
+        requestBody = {
           date,
           hour: selectedHour,
           taskId: task.id,
           listType,
-          isPlan: true,
+          entryMode: 'planned',
         };
       } else {
-        updateBody = {
+        endpoint = '/api/journal/update';
+        requestBody = {
           date,
           range: {
             start: startHour,
             end: endHour,
             taskId: task.id,
             listType,
-            isPlan: true,
+            entryMode: 'planned',
           },
         };
       }
 
-      const updateResponse = await fetch('/api/journal/update', {
+      const updateResponse = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updateBody),
+        body: JSON.stringify(requestBody),
       });
 
       const updateData = await updateResponse.json();

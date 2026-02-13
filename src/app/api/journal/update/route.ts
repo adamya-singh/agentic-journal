@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { DayJournal, JournalEntry, JournalRangeEntry, JournalHourSlot, isJournalEntryArray, StagedTaskEntry } from '@/lib/types';
+import {
+  DayJournal,
+  EntryMode,
+  JournalRangeEntry,
+  StagedTaskEntry,
+} from '@/lib/types';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -18,45 +23,37 @@ type DayJournalWithRanges = DayJournal & {
   staged?: StagedTaskEntry[];
 };
 
-/**
- * Helper function to validate date format (ISO: YYYY-MM-DD)
- */
 function isValidDateFormat(date: string): boolean {
   return DATE_REGEX.test(date);
 }
 
-/**
- * Helper function to get the path to a specific day's journal file
- */
+function isValidEntryMode(entryMode: unknown): entryMode is EntryMode {
+  return entryMode === 'planned' || entryMode === 'logged';
+}
+
+function isValidListType(listType: unknown): listType is 'have-to-do' | 'want-to-do' {
+  return listType === 'have-to-do' || listType === 'want-to-do';
+}
+
 function getJournalFilePath(date: string): string {
   return path.join(JOURNAL_DIR, `${date}.json`);
 }
 
-/**
- * Helper function to check if a journal file exists for a given date
- */
 function journalFileExists(date: string): boolean {
   const filePath = getJournalFilePath(date);
   return fs.existsSync(filePath);
 }
 
-/**
- * Helper function to read a journal file
- */
 function readJournalFile(date: string): DayJournalWithRanges {
   const filePath = getJournalFilePath(date);
   const content = fs.readFileSync(filePath, 'utf-8');
   const journal = JSON.parse(content) as DayJournalWithRanges;
-  // Ensure ranges array exists for backward compatibility
   if (!journal.ranges) {
     journal.ranges = [];
   }
   return journal;
 }
 
-/**
- * Helper function to write a journal file
- */
 function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
   const filePath = getJournalFilePath(date);
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
@@ -64,36 +61,28 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
 
 /**
  * POST /api/journal/update
- * Updates/replaces a specific hour's journal entry OR adds/updates a range entry
- * 
- * For hourly update:
- * Body: { date: string, hour: string, entry: JournalEntry, isPlan?: boolean, entryIndex?: number }
- * 
- * entry can be:
- * - { taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean } - task reference
- * - { text: string, isPlan?: boolean } - free-form text
- * - string - legacy plain text (for backward compatibility)
- * - '' or null - clears the entry (or removes entry at entryIndex if provided)
- * 
- * entryIndex: Optional. If the hour slot contains an array of entries:
- *   - Specifying entryIndex updates only that specific entry in the array
- *   - Without entryIndex, replaces the entire hour slot
- * 
- * For range update:
- * Body: { date: string, range: { start: string, end: string, text?: string, taskId?: string, listType?: string, isPlan?: boolean } }
- * 
- * For range removal:
- * Body: { date: string, removeRange: { start: string, end: string } }
- * 
- * Legacy format also supported:
- * Body: { date: string, hour: string, text: string, isPlan?: boolean }
+ * Adds/removes journal range entries.
+ *
+ * Hourly update payloads are intentionally rejected.
+ *
+ * Range add payload:
+ * { date, range: { start, end, entryMode, text? | taskId+listType } }
+ *
+ * Range remove payload:
+ * { date, removeRange: { start, end } }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, entry, text, taskId, listType, range, removeRange, isPlan, entryIndex } = body;
+    const { date, hour, entry, text, taskId, listType, range, removeRange, entryMode, entryIndex } = body;
 
-    // Validate date
+    if ('isPlan' in body) {
+      return NextResponse.json(
+        { success: false, error: 'isPlan is no longer supported. Use entryMode: "planned" | "logged".' },
+        { status: 400 }
+      );
+    }
+
     if (!date || !isValidDateFormat(date)) {
       return NextResponse.json(
         { success: false, error: 'Invalid date format. Please use ISO format (YYYY-MM-DD, e.g., 2025-11-25)' },
@@ -101,7 +90,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if journal exists
     if (!journalFileExists(date)) {
       return NextResponse.json(
         { success: false, error: `No journal exists for date ${date}. Create one first.` },
@@ -109,10 +97,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Read current journal
+    if (
+      hour !== undefined ||
+      entry !== undefined ||
+      text !== undefined ||
+      taskId !== undefined ||
+      listType !== undefined ||
+      entryMode !== undefined ||
+      entryIndex !== undefined
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Hourly overwrite/update is disabled. Use /api/journal/append to add entries. To replace, call /api/journal/delete first, then /api/journal/append.',
+        },
+        { status: 409 }
+      );
+    }
+
     const journal = readJournalFile(date);
 
-    // Handle range removal
     if (removeRange) {
       const { start, end } = removeRange;
       if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
@@ -123,9 +127,7 @@ export async function POST(request: NextRequest) {
       }
 
       const initialLength = journal.ranges?.length || 0;
-      journal.ranges = (journal.ranges || []).filter(
-        r => !(r.start === start && r.end === end)
-      );
+      journal.ranges = (journal.ranges || []).filter((r) => !(r.start === start && r.end === end));
 
       writeJournalFile(date, journal);
 
@@ -137,10 +139,30 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Handle range update/add
     if (range) {
-      const { start, end, text: rangeText, taskId: rangeTaskId, listType: rangeListType, isPlan: rangeIsPlan } = range;
-      
+      if ('isPlan' in range) {
+        return NextResponse.json(
+          { success: false, error: 'range.isPlan is no longer supported. Use range.entryMode.' },
+          { status: 400 }
+        );
+      }
+
+      const {
+        start,
+        end,
+        text: rangeText,
+        taskId: rangeTaskId,
+        listType: rangeListType,
+        entryMode: rangeEntryMode,
+      } = range as {
+        start: string;
+        end: string;
+        text?: string;
+        taskId?: string;
+        listType?: string;
+        entryMode?: EntryMode;
+      };
+
       if (!start || !end || !VALID_HOURS.includes(start) || !VALID_HOURS.includes(end)) {
         return NextResponse.json(
           { success: false, error: 'Invalid range. start and end must be valid hours.' },
@@ -148,7 +170,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Validate start comes before end
       const startIdx = VALID_HOURS.indexOf(start);
       const endIdx = VALID_HOURS.indexOf(end);
       if (startIdx >= endIdx) {
@@ -158,13 +179,24 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Determine the range entry to save
+      if (!isValidEntryMode(rangeEntryMode)) {
+        return NextResponse.json(
+          { success: false, error: 'range.entryMode is required and must be "planned" or "logged"' },
+          { status: 400 }
+        );
+      }
+
       let newRange: JournalRangeEntry;
-      const isPlanFlag = rangeIsPlan ?? isPlan;
       if (rangeTaskId && rangeListType) {
-        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType, ...(isPlanFlag ? { isPlan: isPlanFlag } : {}) };
+        if (!isValidListType(rangeListType)) {
+          return NextResponse.json(
+            { success: false, error: 'Invalid range.listType. Must be "have-to-do" or "want-to-do".' },
+            { status: 400 }
+          );
+        }
+        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType, entryMode: rangeEntryMode };
       } else if (rangeText !== undefined) {
-        newRange = { start, end, text: rangeText, ...(isPlanFlag ? { isPlan: isPlanFlag } : {}) };
+        newRange = { start, end, text: rangeText, entryMode: rangeEntryMode };
       } else {
         return NextResponse.json(
           { success: false, error: 'Range must have either text or taskId+listType' },
@@ -172,22 +204,22 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Check if range already exists and update it, or add new
-      const existingIdx = (journal.ranges || []).findIndex(
-        r => r.start === start && r.end === end
-      );
-
-      if (existingIdx >= 0) {
-        const previousRange = journal.ranges![existingIdx];
-        journal.ranges![existingIdx] = newRange;
-      } else {
-        journal.ranges = journal.ranges || [];
-        journal.ranges.push(newRange);
+      const duplicateRangeExists = (journal.ranges || []).some((r) => r.start === start && r.end === end);
+      if (duplicateRangeExists) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Range ${start}-${end} already exists. Remove it first with removeRange, then add the replacement.`,
+          },
+          { status: 409 }
+        );
       }
 
-      // If this range has a taskId, remove it from staged (task is now scheduled)
+      journal.ranges = journal.ranges || [];
+      journal.ranges.push(newRange);
+
       if (rangeTaskId && journal.staged && Array.isArray(journal.staged)) {
-        journal.staged = journal.staged.filter(s => s.taskId !== rangeTaskId);
+        journal.staged = journal.staged.filter((stagedEntry) => stagedEntry.taskId !== rangeTaskId);
       }
 
       writeJournalFile(date, journal);
@@ -195,129 +227,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         date,
-        message: existingIdx >= 0 ? `Updated range ${start}-${end} on ${date}` : `Added range ${start}-${end} on ${date}`,
+        message: `Added range ${start}-${end} on ${date}`,
         newRange,
       });
     }
 
-    // Handle hourly update (original behavior)
-    if (!hour || !VALID_HOURS.includes(hour)) {
-      return NextResponse.json(
-        { success: false, error: `Invalid hour. Must be one of: ${VALID_HOURS.join(', ')}` },
-        { status: 400 }
-      );
-    }
-
-    // Determine the entry to save
-    let entryToSave: JournalEntry;
-
-    if (entry !== undefined) {
-      // New format: entry is provided directly
-      // If isPlan is provided at top level, merge it into the entry
-      if (isPlan !== undefined && typeof entry === 'object' && entry !== null) {
-        entryToSave = { ...entry, isPlan };
-      } else {
-        entryToSave = entry;
-      }
-    } else if (taskId !== undefined && listType !== undefined) {
-      // Task reference format
-      entryToSave = { taskId, listType, ...(isPlan ? { isPlan } : {}) };
-    } else if (text !== undefined) {
-      // Legacy format: plain text
-      if (text === '' || text === null) {
-        entryToSave = '';
-      } else if (typeof text === 'string') {
-        // Wrap in TextJournalEntry for new format
-        entryToSave = { text, ...(isPlan ? { isPlan } : {}) };
-      } else {
-        return NextResponse.json(
-          { success: false, error: 'Invalid text parameter' },
-          { status: 400 }
-        );
-      }
-    } else {
-      return NextResponse.json(
-        { success: false, error: 'Entry, text, or taskId+listType parameter is required' },
-        { status: 400 }
-      );
-    }
-
-    const currentSlot = journal[hour];
-    let previousEntry: JournalHourSlot = currentSlot || '';
-    let updatedSlot: JournalHourSlot;
-
-    // Handle entryIndex for array operations
-    if (typeof entryIndex === 'number' && entryIndex >= 0) {
-      if (!isJournalEntryArray(currentSlot)) {
-        // Current slot is not an array
-        if (entryIndex === 0 && currentSlot) {
-          // Updating the single entry at index 0
-          previousEntry = currentSlot;
-          // If entryToSave is empty, remove this entry (clear the slot)
-          if (entryToSave === '' || entryToSave === null) {
-            updatedSlot = '';
-          } else {
-            updatedSlot = entryToSave;
-          }
-        } else {
-          return NextResponse.json(
-            { success: false, error: `Invalid entryIndex ${entryIndex}. Hour slot has only 1 entry (or is empty).` },
-            { status: 400 }
-          );
-        }
-      } else {
-        // Current slot is an array
-        if (entryIndex >= currentSlot.length) {
-          return NextResponse.json(
-            { success: false, error: `Invalid entryIndex ${entryIndex}. Hour slot has ${currentSlot.length} entries.` },
-            { status: 400 }
-          );
-        }
-        previousEntry = currentSlot[entryIndex];
-        
-        // If entryToSave is empty, remove this entry from the array
-        if (entryToSave === '' || entryToSave === null) {
-          const newArray = [...currentSlot.slice(0, entryIndex), ...currentSlot.slice(entryIndex + 1)];
-          if (newArray.length === 0) {
-            updatedSlot = '';
-          } else if (newArray.length === 1) {
-            updatedSlot = newArray[0];
-          } else {
-            updatedSlot = newArray;
-          }
-        } else {
-          // Update the entry at index
-          const newArray = [...currentSlot];
-          newArray[entryIndex] = entryToSave;
-          updatedSlot = newArray;
-        }
-      }
-    } else {
-      // No entryIndex - replace entire slot (original behavior)
-      updatedSlot = entryToSave;
-    }
-
-    // Update the entry
-    journal[hour] = updatedSlot;
-
-    // If this is a task entry, remove it from staged (task is now scheduled)
-    const taskIdToRemove = taskId || (entry && typeof entry === 'object' && entry !== null && 'taskId' in entry ? (entry as { taskId: string }).taskId : null);
-    if (taskIdToRemove && journal.staged && Array.isArray(journal.staged)) {
-      journal.staged = journal.staged.filter(s => s.taskId !== taskIdToRemove);
-    }
-
-    // Write updated journal
-    writeJournalFile(date, journal);
-
-    return NextResponse.json({
-      success: true,
-      date,
-      hour,
-      message: `Successfully updated journal at ${hour} on ${date}`,
-      previousEntry,
-      newEntry: journal[hour],
-      ...(typeof entryIndex === 'number' ? { entryIndex } : {}),
-    });
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Invalid payload. Use { date, range: {...} } to add a range or { date, removeRange: {...} } to remove one.',
+      },
+      { status: 400 }
+    );
   } catch (error) {
     console.error('Error updating journal:', error);
     return NextResponse.json(

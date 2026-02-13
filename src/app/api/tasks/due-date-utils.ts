@@ -104,7 +104,7 @@ export function ensureTodayListExists(
 }
 
 /**
- * Add a task to the staged area in the daily journal with isPlan: true
+ * Add a task to the staged area in the daily journal.
  * Staged tasks are due on this day but not yet scheduled to a specific time
  */
 export function addTaskToStaged(
@@ -132,11 +132,10 @@ export function addTaskToStaged(
   );
   
   if (!taskAlreadyExists) {
-    // Add task to staged area with isPlan: true
+    // Add task to staged area
     journal.staged.push({
       taskId,
       listType,
-      isPlan: true,
     });
     fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
   }

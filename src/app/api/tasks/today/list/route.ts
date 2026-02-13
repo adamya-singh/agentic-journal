@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDailyJournalExists } from '../../due-date-utils';
-import { Task, TasksData, ListType, StagedTaskEntry, TaskJournalEntry, TaskJournalRangeEntry, JournalHourSlot, isJournalEntryArray, isTaskJournalEntry } from '@/lib/types';
+import { TasksData, ListType, StagedTaskEntry, TaskJournalRangeEntry, JournalHourSlot, isJournalEntryArray, isTaskJournalEntry } from '@/lib/types';
 
 // Get the path for a date-specific task list
 function getDailyTasksFilePath(date: string, listType: ListType): string {
@@ -167,7 +167,6 @@ function syncTodayTasksToJournalStaged(date: string, listType: ListType, dailyDa
     journal.staged.push({
       taskId: task.id,
       listType,
-      isPlan: true,
     });
   }
   
@@ -227,4 +226,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

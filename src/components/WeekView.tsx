@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, JournalRangeEntry, ListType, Task } from '@/lib/types';
+import { EntryMode, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task } from '@/lib/types';
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
 import { useRefresh } from '@/lib/RefreshContext';
@@ -18,21 +18,14 @@ export type ResolvedDayJournalWithRanges = {
   indicators?: number; // 0-4 indicators per day
 };
 
-// Week data type - exported for cedar state (now uses resolved entries)
+// Week data type - exported for cedar state (uses resolved entries)
 export type WeekData = Record<string, ResolvedDayJournalWithRanges | null>;
-
-// Legacy exports for backward compatibility
-export type DayJournalWithRanges = ResolvedDayJournalWithRanges;
-export type DayJournal = ResolvedDayJournalWithRanges;
-export type WeekPlanData = WeekData; // Deprecated: plans are now part of journals with isPlan flag
-export type DayPlan = ResolvedDayJournalWithRanges; // Deprecated: use DayJournal
-export type ResolvedDayPlanWithRanges = ResolvedDayJournalWithRanges; // Deprecated
 
 // Entry with type indicator for rendering
 export interface TypedEntry {
   hour: string;       // For single-hour entries, this is the hour. For ranges, this is "start-end" format
   text: string;
-  type: 'journal' | 'plan';  // 'plan' when isPlan is true, 'journal' otherwise
+  entryMode: EntryMode;
   entryKind: 'task' | 'text'; // Task/text identity from resolved journal data
   taskId?: string;
   listType?: ListType;
@@ -53,7 +46,6 @@ export interface DayInfo {
 export interface WeekViewData {
   weekDates: DayInfo[];
   weekData: WeekData;
-  weekPlanData: WeekData; // Kept for backward compatibility, same as weekData
 }
 
 interface WeekViewProps {
@@ -147,7 +139,7 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
   return {
     hour,
     text: entry.text,
-    type: entry.isPlan ? 'plan' : 'journal',
+    entryMode: entry.entryMode,
     entryKind: entry.type,
     taskId: entry.taskId,
     listType: entry.listType,
@@ -157,7 +149,7 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
 }
 
 /**
- * Get entries from a unified journal source, differentiating by isPlan flag
+ * Get entries from a unified journal source.
  */
 function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): TypedEntry[] {
   const entries: TypedEntry[] = [];
@@ -196,7 +188,7 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
         entries.push({
           hour: `${range.start}-${range.end}`,
           text: range.text,
-          type: range.isPlan ? 'plan' : 'journal',
+          entryMode: range.entryMode,
           entryKind: range.type,
           taskId: range.taskId,
           listType: range.listType,
@@ -208,14 +200,14 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
     }
   }
   
-  // Sort all entries by start hour, then by type (plans before journals at same hour)
+  // Sort all entries by start hour, then by entry mode (planned before logged at same hour)
   entries.sort((a, b) => {
     const aIdx = HOUR_ORDER.indexOf(a.startHour || a.hour);
     const bIdx = HOUR_ORDER.indexOf(b.startHour || b.hour);
     if (aIdx !== bIdx) return aIdx - bIdx;
-    // If same start hour, show plans before journals
-    if (a.type === 'plan' && b.type === 'journal') return -1;
-    if (a.type === 'journal' && b.type === 'plan') return 1;
+    // If same start hour, show planned before logged
+    if (a.entryMode === 'planned' && b.entryMode === 'logged') return -1;
+    if (a.entryMode === 'logged' && b.entryMode === 'planned') return 1;
     return 0;
   });
   
@@ -283,7 +275,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       
       const dates = weekDates.map(d => d.date);
       
-      // Fetch only journals - plans are now part of journals with isPlan flag
+      // Fetch journals with resolved entry metadata (including entryMode)
       const journalResponse = await fetch('/api/journal/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -369,7 +361,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
             hour: getCurrentHour(),
             taskId: entry.taskId,
             listType: entry.listType,
-            isPlan: true,
+            entryMode: 'logged',
           }),
         });
       }
@@ -418,7 +410,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           hour: getCurrentHour(),
           taskId: entry.taskId,
           listType: entry.listType,
-          isPlan: true,
+          entryMode: 'logged',
         }),
       });
 
@@ -465,8 +457,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Notify parent when data changes
   useEffect(() => {
     if (onDataChange && !loading) {
-      // For backward compatibility, weekPlanData is same as weekData
-      onDataChange({ weekDates, weekData, weekPlanData: weekData });
+      onDataChange({ weekDates, weekData });
     }
   }, [weekData, weekDates, loading, onDataChange]);
 
@@ -627,7 +618,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         </div>
         <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-gray-500"></span>
-          <span className="text-gray-600 dark:text-gray-400">Journal</span>
+          <span className="text-gray-600 dark:text-gray-400">Logged</span>
         </div>
       </div>
       <div className="grid gap-3" style={{ gridTemplateColumns }}>
@@ -716,21 +707,21 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                 {entries.length > 0 ? (
                   <div className="space-y-2">
                     {/* Scheduled entries */}
-                    {entries.map(({ hour, text, type, entryKind, taskId, completed }, index) => {
+                    {entries.map(({ hour, text, entryMode, entryKind, taskId, completed }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
                       const isCompleted = isTask && completed === true;
                       const suffixLabel = isCompleted
                         ? '(done)'
-                        : type === 'plan'
+                        : entryMode === 'planned'
                           ? (isTask ? '(task)' : '(plan)')
                           : null;
                       
                       return (
-                        <div key={`${hour}-${type}-${index}`} className="text-sm">
+                        <div key={`${hour}-${entryMode}-${index}`} className="text-sm">
                           <span className={`font-medium ${
                             isCompleted
                               ? 'text-green-600 dark:text-green-400'
-                              : type === 'plan' 
+                              : entryMode === 'planned' 
                                 ? 'text-teal-600 dark:text-teal-400' 
                                 : isToday 
                                   ? 'text-indigo-600 dark:text-indigo-400' 
@@ -741,7 +732,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           <span className={`${
                             isCompleted 
                               ? 'text-green-600 dark:text-green-400 line-through' 
-                              : type === 'plan' 
+                              : entryMode === 'planned' 
                                 ? 'text-teal-700 dark:text-teal-300' 
                                 : 'text-gray-700 dark:text-gray-300'
                           }`}>

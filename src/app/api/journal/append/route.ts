@@ -3,12 +3,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   DayJournal,
+  EntryMode,
   JournalEntry,
-  JournalRangeEntry,
   JournalHourSlot,
+  JournalRangeEntry,
+  isJournalEntryArray,
   isTaskJournalEntry,
   isTextJournalEntry,
-  isJournalEntryArray,
 } from '@/lib/types';
 
 // Path to the journal directory
@@ -25,53 +26,38 @@ type DayJournalWithRanges = DayJournal & {
   ranges?: JournalRangeEntry[];
 };
 
-/**
- * Helper function to validate date format (ISO: YYYY-MM-DD)
- */
 function isValidDateFormat(date: string): boolean {
   return DATE_REGEX.test(date);
 }
 
-/**
- * Helper function to get the path to a specific day's journal file
- */
+function isValidEntryMode(entryMode: unknown): entryMode is EntryMode {
+  return entryMode === 'planned' || entryMode === 'logged';
+}
+
 function getJournalFilePath(date: string): string {
   return path.join(JOURNAL_DIR, `${date}.json`);
 }
 
-/**
- * Helper function to check if a journal file exists for a given date
- */
 function journalFileExists(date: string): boolean {
   const filePath = getJournalFilePath(date);
   return fs.existsSync(filePath);
 }
 
-/**
- * Helper function to read a journal file
- */
 function readJournalFile(date: string): DayJournalWithRanges {
   const filePath = getJournalFilePath(date);
   const content = fs.readFileSync(filePath, 'utf-8');
   const journal = JSON.parse(content) as DayJournalWithRanges;
-  // Ensure ranges array exists for backward compatibility
   if (!journal.ranges) {
     journal.ranges = [];
   }
   return journal;
 }
 
-/**
- * Helper function to write a journal file
- */
 function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
   const filePath = getJournalFilePath(date);
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
 }
 
-/**
- * Get the text content from a journal entry
- */
 function getEntryText(entry: JournalEntry): string {
   if (typeof entry === 'string') {
     return entry;
@@ -84,22 +70,26 @@ function getEntryText(entry: JournalEntry): string {
 
 /**
  * POST /api/journal/append
- * Appends to a specific hour's journal entry
- * 
- * Body (text entry): { date: string, hour: string, text: string, isPlan?: boolean }
- * Body (task reference): { date: string, hour: string, taskId: string, listType: 'have-to-do' | 'want-to-do', isPlan?: boolean }
- * 
- * For text entries: appends to existing text content with newline separation.
- * For task references: adds the task to the hour slot. If an entry already exists,
- *   converts to an array and appends (supports multiple tasks per hour).
- *   Skips if the same taskId already exists in that hour.
+ * Appends to a specific hour's journal entry.
+ *
+ * Body (text entry):
+ * { date: string, hour: string, text: string, entryMode: 'planned' | 'logged' }
+ *
+ * Body (task reference):
+ * { date: string, hour: string, taskId: string, listType: 'have-to-do' | 'want-to-do', entryMode: 'planned' | 'logged' }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { date, hour, text, taskId, listType, isPlan } = body;
+    const { date, hour, text, taskId, listType, entryMode } = body;
 
-    // Validate date
+    if ('isPlan' in body) {
+      return NextResponse.json(
+        { success: false, error: 'isPlan is no longer supported. Use entryMode: "planned" | "logged".' },
+        { status: 400 }
+      );
+    }
+
     if (!date || !isValidDateFormat(date)) {
       return NextResponse.json(
         { success: false, error: 'Invalid date format. Please use ISO format (YYYY-MM-DD, e.g., 2025-11-25)' },
@@ -107,7 +97,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate hour
     if (!hour || !VALID_HOURS.includes(hour)) {
       return NextResponse.json(
         { success: false, error: `Invalid hour. Must be one of: ${VALID_HOURS.join(', ')}` },
@@ -115,7 +104,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate: must have text OR (taskId + listType)
+    if (!isValidEntryMode(entryMode)) {
+      return NextResponse.json(
+        { success: false, error: 'entryMode is required and must be "planned" or "logged"' },
+        { status: 400 }
+      );
+    }
+
     const hasText = text && typeof text === 'string' && text.trim().length > 0;
     const hasTaskRef = taskId && listType && (listType === 'have-to-do' || listType === 'want-to-do');
 
@@ -126,7 +121,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if journal exists
     if (!journalFileExists(date)) {
       return NextResponse.json(
         { success: false, error: `No journal exists for date ${date}. Create one first.` },
@@ -134,26 +128,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Read current journal
     const journal = readJournalFile(date);
     const currentSlot = journal[hour];
 
     let updatedSlot: JournalHourSlot;
 
     if (hasTaskRef) {
-      // Task reference entry - append to array instead of replacing
-      const newTaskEntry: JournalEntry = { taskId, listType, ...(isPlan !== undefined ? { isPlan } : {}) };
-      
-      // Helper to check if a task entry with the same taskId already exists
+      const newTaskEntry: JournalEntry = { taskId, listType, entryMode };
+
       const taskAlreadyExists = (entries: JournalEntry[]): boolean => {
-        return entries.some(e => isTaskJournalEntry(e) && e.taskId === taskId);
+        return entries.some((entry) => isTaskJournalEntry(entry) && entry.taskId === taskId);
       };
-      
+
       if (!currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')) {
-        // Empty slot - just set the new entry (not as array for efficiency)
         updatedSlot = newTaskEntry;
       } else if (isJournalEntryArray(currentSlot)) {
-        // Already an array - check for duplicate and push if not present
         if (taskAlreadyExists(currentSlot)) {
           return NextResponse.json({
             success: true,
@@ -166,8 +155,6 @@ export async function POST(request: NextRequest) {
         }
         updatedSlot = [...currentSlot, newTaskEntry];
       } else {
-        // Single entry exists - convert to array and append
-        // Check if the existing entry is the same task
         if (isTaskJournalEntry(currentSlot) && currentSlot.taskId === taskId) {
           return NextResponse.json({
             success: true,
@@ -181,55 +168,39 @@ export async function POST(request: NextRequest) {
         updatedSlot = [currentSlot, newTaskEntry];
       }
     } else {
-      // Text entry - can append to existing text entries
-      // For text entries, we handle arrays differently - append to the last text entry or create new
-      
-      // Get existing entries as array for easier processing
       const existingEntries: JournalEntry[] = !currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')
         ? []
         : isJournalEntryArray(currentSlot)
           ? currentSlot
           : [currentSlot];
-      
-      // Find the last text entry to append to
+
       const lastTextEntryIndex = existingEntries.length - 1;
       const lastEntry = existingEntries[lastTextEntryIndex];
-      
-      // Check if we can append to an existing text entry
+
       if (existingEntries.length === 0) {
-        // No entries - create new text entry
-        updatedSlot = { text: text.trim(), ...(isPlan !== undefined ? { isPlan } : {}) };
+        updatedSlot = { text: text.trim(), entryMode };
       } else if (lastEntry && isTaskJournalEntry(lastEntry)) {
-        // Last entry is a task - add text as new entry in the array
-        const newTextEntry: JournalEntry = { text: text.trim(), ...(isPlan !== undefined ? { isPlan } : {}) };
+        const newTextEntry: JournalEntry = { text: text.trim(), entryMode };
         if (existingEntries.length === 1) {
           updatedSlot = [lastEntry, newTextEntry];
         } else {
           updatedSlot = [...existingEntries, newTextEntry];
         }
       } else {
-        // Last entry is text - append to it
         const currentText = lastEntry ? getEntryText(lastEntry) : '';
-        const currentIsPlan = lastEntry && isTextJournalEntry(lastEntry) ? lastEntry.isPlan : undefined;
-        const finalIsPlan = isPlan ?? currentIsPlan;
-        
         const appendedTextEntry: JournalEntry = currentText && currentText.trim() !== ''
-          ? { text: currentText + '\n' + text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) }
-          : { text: text.trim(), ...(finalIsPlan !== undefined ? { isPlan: finalIsPlan } : {}) };
-        
+          ? { text: currentText + '\n' + text.trim(), entryMode }
+          : { text: text.trim(), entryMode };
+
         if (existingEntries.length === 1) {
           updatedSlot = appendedTextEntry;
         } else {
-          // Replace last entry in array with appended version
           updatedSlot = [...existingEntries.slice(0, -1), appendedTextEntry];
         }
       }
     }
 
-    // Update the entry
     journal[hour] = updatedSlot;
-
-    // Write updated journal
     writeJournalFile(date, journal);
 
     return NextResponse.json({

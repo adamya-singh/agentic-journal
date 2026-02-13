@@ -20,22 +20,26 @@ export interface TasksData {
 // ============ Journal Entry Types ============
 
 /**
- * A journal entry that references a task by ID
- * @param isPlan - If true, this is a planned entry; if false/undefined, it's an actual entry
+ * planned = intention/schedule
+ * logged = what actually happened
+ */
+export type EntryMode = 'planned' | 'logged';
+
+/**
+ * A journal entry that references a task by ID.
  */
 export interface TaskJournalEntry {
   taskId: string;
   listType: ListType;
-  isPlan?: boolean;
+  entryMode: EntryMode;
 }
 
 /**
- * A journal entry with free-form text (not linked to a task)
- * @param isPlan - If true, this is a planned entry; if false/undefined, it's an actual entry
+ * A journal entry with free-form text (not linked to a task).
  */
 export interface TextJournalEntry {
   text: string;
-  isPlan?: boolean;
+  entryMode: EntryMode;
 }
 
 /**
@@ -61,60 +65,58 @@ export type DayJournal = Record<string, JournalHourSlot>;
 // ============ Resolved Journal Entry (for display) ============
 
 /**
- * A resolved journal entry with all display information
+ * A resolved journal entry with all display information.
  */
 export interface ResolvedJournalEntry {
   hour: string;
   text: string;
   type: 'task' | 'text';
+  entryMode: EntryMode;
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
-  isPlan?: boolean;
 }
 
 // ============ Range Entry Types ============
 
 /**
- * A text-based journal range entry spanning multiple hours
- * @param isPlan - If true, this is a planned entry; if false/undefined, it's an actual entry
+ * A text-based journal range entry spanning multiple hours.
  */
 export interface TextJournalRangeEntry {
-  start: string;  // e.g., "12pm"
-  end: string;    // e.g., "2pm"
+  start: string; // e.g., "12pm"
+  end: string; // e.g., "2pm"
   text: string;
-  isPlan?: boolean;
+  entryMode: EntryMode;
 }
 
 /**
- * A task-based journal range entry spanning multiple hours
- * @param isPlan - If true, this is a planned entry; if false/undefined, it's an actual entry
+ * A task-based journal range entry spanning multiple hours.
  */
 export interface TaskJournalRangeEntry {
   start: string;
   end: string;
   taskId: string;
   listType: ListType;
-  isPlan?: boolean;
+  entryMode: EntryMode;
 }
 
 /**
- * A journal range entry can be text-based or task-based
+ * A journal range entry can be text-based or task-based.
  */
 export type JournalRangeEntry = TextJournalRangeEntry | TaskJournalRangeEntry;
 
 /**
- * A resolved journal range entry with all display information
+ * A resolved journal range entry with all display information.
  */
 export interface ResolvedJournalRangeEntry {
   start: string;
   end: string;
   text: string;
   type: 'task' | 'text';
+  entryMode: EntryMode;
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
-  isPlan?: boolean;
 }
 
 // ============ Staged Entry Types ============
@@ -126,48 +128,17 @@ export interface ResolvedJournalRangeEntry {
 export interface StagedTaskEntry {
   taskId: string;
   listType: ListType;
-  isPlan?: boolean;
 }
 
 /**
- * A resolved staged entry with all display information
+ * A resolved staged entry with all display information.
  */
 export interface ResolvedStagedEntry {
   text: string;
   taskId: string;
   listType: ListType;
   completed?: boolean;
-  isPlan?: boolean;
 }
-
-// ============ Deprecated Plan Types (aliases for backward compatibility) ============
-
-/** @deprecated Use TaskJournalEntry instead */
-export type TaskPlanEntry = TaskJournalEntry;
-
-/** @deprecated Use TextJournalEntry instead */
-export type TextPlanEntry = TextJournalEntry;
-
-/** @deprecated Use JournalEntry instead */
-export type PlanEntry = JournalEntry;
-
-/** @deprecated Use DayJournal instead */
-export type DayPlan = DayJournal;
-
-/** @deprecated Use ResolvedJournalEntry instead */
-export type ResolvedPlanEntry = ResolvedJournalEntry;
-
-/** @deprecated Use TextJournalRangeEntry instead */
-export type TextPlanRangeEntry = TextJournalRangeEntry;
-
-/** @deprecated Use TaskJournalRangeEntry instead */
-export type TaskPlanRangeEntry = TaskJournalRangeEntry;
-
-/** @deprecated Use JournalRangeEntry instead */
-export type PlanRangeEntry = JournalRangeEntry;
-
-/** @deprecated Use ResolvedJournalRangeEntry instead */
-export type ResolvedRangeEntry = ResolvedJournalRangeEntry;
 
 // ============ Type Guards ============
 
@@ -196,25 +167,8 @@ export function isStagedTaskEntry(entry: StagedTaskEntry): entry is StagedTaskEn
 }
 
 /**
- * Check if an hour slot contains multiple entries (is an array)
+ * Check if an hour slot contains multiple entries (is an array).
  */
 export function isJournalEntryArray(slot: JournalHourSlot | null | undefined): slot is JournalEntry[] {
   return Array.isArray(slot);
 }
-
-// ============ Deprecated Type Guards (aliases for backward compatibility) ============
-
-/** @deprecated Use isTaskJournalEntry instead */
-export const isTaskPlanEntry = isTaskJournalEntry;
-
-/** @deprecated Use isTextJournalEntry instead */
-export const isTextPlanEntry = isTextJournalEntry;
-
-/** @deprecated Use isLegacyJournalStringEntry instead */
-export const isLegacyStringEntry = isLegacyJournalStringEntry;
-
-/** @deprecated Use isTaskJournalRangeEntry instead */
-export const isTaskPlanRangeEntry = isTaskJournalRangeEntry;
-
-/** @deprecated Use isTextJournalRangeEntry instead */
-export const isTextPlanRangeEntry = isTextJournalRangeEntry;
