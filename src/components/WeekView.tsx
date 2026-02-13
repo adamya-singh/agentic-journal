@@ -91,6 +91,56 @@ function getWeekDates(offset: number = 0): DayInfo[] {
 
 // Hour order for sorting
 const HOUR_ORDER = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
+const CARRY_BACK_HOURS = ['12am', '1am', '2am'];
+const PRIMARY_HOURS = HOUR_ORDER.filter(hour => !CARRY_BACK_HOURS.includes(hour));
+
+function addDaysISO(date: string, days: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  d.setDate(d.getDate() + days);
+  const nextYear = d.getFullYear();
+  const nextMonth = String(d.getMonth() + 1).padStart(2, '0');
+  const nextDay = String(d.getDate()).padStart(2, '0');
+  return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
+/**
+ * Compose a display journal for a day:
+ * - Keep 7am-11pm, 3am-6am from the current day
+ * - Pull 12am-2am from the next day so late-night appears at bottom of prior day
+ */
+function composeDisplayJournal(
+  currentDayJournal: ResolvedDayJournalWithRanges | null | undefined,
+  nextDayJournal: ResolvedDayJournalWithRanges | null | undefined
+): ResolvedDayJournalWithRanges | null {
+  if (!currentDayJournal && !nextDayJournal) {
+    return null;
+  }
+
+  const composed: ResolvedDayJournalWithRanges = {};
+
+  for (const hour of PRIMARY_HOURS) {
+    composed[hour] = currentDayJournal?.[hour] ?? null;
+  }
+  for (const hour of CARRY_BACK_HOURS) {
+    composed[hour] = nextDayJournal?.[hour] ?? null;
+  }
+
+  const currentRanges = currentDayJournal?.ranges ?? [];
+  const nextRanges = nextDayJournal?.ranges ?? [];
+  composed.ranges = [
+    ...currentRanges.filter(range => !CARRY_BACK_HOURS.includes(range.start)),
+    ...nextRanges.filter(range => CARRY_BACK_HOURS.includes(range.start)),
+  ];
+
+  composed.staged = currentDayJournal?.staged ?? [];
+
+  if (typeof currentDayJournal?.indicators === 'number' && currentDayJournal.indicators > 0) {
+    composed.indicators = currentDayJournal.indicators;
+  }
+
+  return composed;
+}
 
 /**
  * Get current hour in API format (e.g., "3pm", "10am")
@@ -273,13 +323,17 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       setLoading(true);
       setError(null);
       
-      const dates = weekDates.map(d => d.date);
+      const visibleDates = weekDates.map(d => d.date);
+      const spilloverDate = visibleDates.length > 0
+        ? addDaysISO(visibleDates[visibleDates.length - 1], 1)
+        : null;
+      const datesToFetch = spilloverDate ? [...visibleDates, spilloverDate] : visibleDates;
       
       // Fetch journals with resolved entry metadata (including entryMode)
       const journalResponse = await fetch('/api/journal/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates, resolve: true }),
+        body: JSON.stringify({ dates: datesToFetch, resolve: true }),
       });
       
       const journalData = await journalResponse.json();
@@ -288,7 +342,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         setWeekData(journalData.journals);
         // Extract indicators from journal data
         const newIndicators: Record<string, number> = {};
-        for (const date of dates) {
+        for (const date of visibleDates) {
           const journal = journalData.journals[date];
           if (journal?.indicators && typeof journal.indicators === 'number') {
             newIndicators[date] = journal.indicators;
@@ -623,8 +677,11 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       </div>
       <div className="grid gap-3" style={{ gridTemplateColumns }}>
         {weekDates.map((dayInfo, dayIndex) => {
-          const entries = getEntriesFromJournal(weekData[dayInfo.date]);
-          const stagedEntries = getStagedFromJournal(weekData[dayInfo.date]);
+          const currentDayJournal = weekData[dayInfo.date];
+          const nextDayJournal = weekData[addDaysISO(dayInfo.date, 1)];
+          const displayJournal = composeDisplayJournal(currentDayJournal, nextDayJournal);
+          const entries = getEntriesFromJournal(displayJournal);
+          const stagedEntries = getStagedFromJournal(currentDayJournal);
           const isToday = dayInfo.date === todayDate;
           // Days on the right side of the week (Thu-Sun, index 3-6) should have popover on left
           const popoverPosition = dayIndex >= 3 ? 'left' : 'right';
