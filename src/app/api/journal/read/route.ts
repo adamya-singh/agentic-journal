@@ -18,7 +18,9 @@ import {
   isJournalEntryArray,
 } from '@/lib/types';
 import {
+  ensureCompletedIndexForTask,
   findLegacyDailyTaskById,
+  getCompletedTaskFromIndex,
   readCompletedTaskSnapshots,
   readGeneralTasks,
   taskFromCompletionSnapshot,
@@ -81,6 +83,18 @@ function findTaskById(taskId: string, listType: ListType, date: string): Task | 
   const generalTask = readGeneralTasks(listType).tasks.find((task) => task.id === taskId);
   if (generalTask) {
     return generalTask;
+  }
+
+  // Global completion index handles cross-date references after one-off tasks are removed from general lists.
+  const indexedTask = getCompletedTaskFromIndex(taskId);
+  if (indexedTask) {
+    return indexedTask;
+  }
+
+  // Lazy historical backfill from daily-lists if index is stale/missing.
+  const rebuiltIndexedTask = ensureCompletedIndexForTask(taskId);
+  if (rebuiltIndexedTask) {
+    return rebuiltIndexedTask;
   }
 
   // Last fallback for historical compatibility with legacy daily-list schema.

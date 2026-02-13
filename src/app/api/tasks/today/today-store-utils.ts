@@ -12,6 +12,10 @@ export interface TaskCompletionSnapshot {
   listType: ListType;
 }
 
+export interface IndexedTaskCompletionSnapshot extends TaskCompletionSnapshot {
+  sourceDate: string;
+}
+
 interface CompletedDailyTasksData {
   _comment: string;
   schemaVersion: number;
@@ -29,14 +33,144 @@ interface LegacyDailyTasksData {
   tasks?: Task[];
 }
 
+interface CompletedTaskIndexData {
+  _comment: string;
+  schemaVersion: number;
+  tasks: Record<string, IndexedTaskCompletionSnapshot>;
+  updatedAt: string;
+}
+
 const TASKS_DIR = path.join(process.cwd(), 'src/backend/data/tasks');
 const DAILY_LISTS_DIR = path.join(TASKS_DIR, 'daily-lists');
 const TODAY_OVERRIDES_DIR = path.join(TASKS_DIR, 'today-overrides');
+const COMPLETED_INDEX_PATH = path.join(TASKS_DIR, 'completed-index.json');
+
+const DEFAULT_COMPLETED_INDEX: CompletedTaskIndexData = {
+  _comment: 'Global index for completed task snapshots by taskId',
+  schemaVersion: 1,
+  tasks: {},
+  updatedAt: new Date(0).toISOString(),
+};
 
 function ensureDirExists(filePath: string): void {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function snapshotTimestamp(snapshot: { completedAt?: string; sourceDate?: string }): number {
+  const completedAt = typeof snapshot.completedAt === 'string' ? Date.parse(snapshot.completedAt) : NaN;
+  if (!Number.isNaN(completedAt)) {
+    return completedAt;
+  }
+
+  const sourceDate = typeof snapshot.sourceDate === 'string' ? Date.parse(`${snapshot.sourceDate}T00:00:00.000Z`) : NaN;
+  if (!Number.isNaN(sourceDate)) {
+    return sourceDate;
+  }
+
+  return 0;
+}
+
+function isNewerSnapshot(candidate: IndexedTaskCompletionSnapshot, current: IndexedTaskCompletionSnapshot): boolean {
+  const candidateTs = snapshotTimestamp(candidate);
+  const currentTs = snapshotTimestamp(current);
+
+  if (candidateTs !== currentTs) {
+    return candidateTs > currentTs;
+  }
+
+  return candidate.sourceDate > current.sourceDate;
+}
+
+function toCompletionSnapshot(value: unknown, listType: ListType, fallbackCompletedAt: string): TaskCompletionSnapshot | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const id = typeof value.id === 'string' ? value.id : null;
+  const text = typeof value.text === 'string' ? value.text : null;
+  if (!id || !text) {
+    return null;
+  }
+
+  const snapshot: TaskCompletionSnapshot = {
+    id,
+    text,
+    completed: true,
+    completedAt: typeof value.completedAt === 'string' ? value.completedAt : fallbackCompletedAt,
+    listType,
+  };
+
+  if (typeof value.dueDate === 'string' && value.dueDate.length > 0) {
+    snapshot.dueDate = value.dueDate;
+  }
+
+  if (value.isDaily === true) {
+    snapshot.isDaily = true;
+  }
+
+  return snapshot;
+}
+
+function toIndexedSnapshot(snapshot: TaskCompletionSnapshot, sourceDate: string): IndexedTaskCompletionSnapshot {
+  return {
+    ...snapshot,
+    sourceDate,
+  };
+}
+
+function toIndexData(value: unknown): CompletedTaskIndexData {
+  if (!isRecord(value)) {
+    return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
+  }
+
+  const tasksRecord = isRecord(value.tasks) ? value.tasks : {};
+  const tasks: Record<string, IndexedTaskCompletionSnapshot> = {};
+
+  for (const [taskId, rawSnapshot] of Object.entries(tasksRecord)) {
+    if (!isRecord(rawSnapshot)) {
+      continue;
+    }
+
+    const listType = rawSnapshot.listType === 'want-to-do' ? 'want-to-do' : 'have-to-do';
+    const sourceDate = typeof rawSnapshot.sourceDate === 'string' ? rawSnapshot.sourceDate : '';
+    const completion = toCompletionSnapshot(rawSnapshot, listType, '1970-01-01T00:00:00.000Z');
+
+    if (!completion || sourceDate.length === 0) {
+      continue;
+    }
+
+    tasks[taskId] = {
+      ...completion,
+      sourceDate,
+    };
+  }
+
+  return {
+    _comment: typeof value._comment === 'string' ? value._comment : DEFAULT_COMPLETED_INDEX._comment,
+    schemaVersion: typeof value.schemaVersion === 'number' ? value.schemaVersion : DEFAULT_COMPLETED_INDEX.schemaVersion,
+    tasks,
+    updatedAt: typeof value.updatedAt === 'string' ? value.updatedAt : new Date().toISOString(),
+  };
+}
+
+function readRawDailyFile(date: string, listType: ListType): unknown {
+  const filePath = getDailyTasksFilePath(date, listType);
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+
+  try {
+    const content = fs.readFileSync(filePath, 'utf-8');
+    return JSON.parse(content) as unknown;
+  } catch {
+    return null;
   }
 }
 
@@ -71,54 +205,6 @@ export function writeGeneralTasks(data: TasksData, listType: ListType): void {
   fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function toCompletionSnapshot(value: unknown, listType: ListType, fallbackCompletedAt: string): TaskCompletionSnapshot | null {
-  if (!isRecord(value)) {
-    return null;
-  }
-
-  const id = typeof value.id === 'string' ? value.id : null;
-  const text = typeof value.text === 'string' ? value.text : null;
-  if (!id || !text) {
-    return null;
-  }
-
-  const snapshot: TaskCompletionSnapshot = {
-    id,
-    text,
-    completed: true,
-    completedAt: typeof value.completedAt === 'string' ? value.completedAt : fallbackCompletedAt,
-    listType,
-  };
-
-  if (typeof value.dueDate === 'string' && value.dueDate.length > 0) {
-    snapshot.dueDate = value.dueDate;
-  }
-
-  if (value.isDaily === true) {
-    snapshot.isDaily = true;
-  }
-
-  return snapshot;
-}
-
-function readRawDailyFile(date: string, listType: ListType): unknown {
-  const filePath = getDailyTasksFilePath(date, listType);
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    return JSON.parse(content) as unknown;
-  } catch {
-    return null;
-  }
-}
-
 export function readLegacyDailyTasks(date: string, listType: ListType): Task[] {
   const parsed = readRawDailyFile(date, listType);
   if (!isRecord(parsed) || !Array.isArray((parsed as LegacyDailyTasksData).tasks)) {
@@ -142,14 +228,12 @@ export function readCompletedTaskSnapshots(date: string, listType: ListType): Ta
 
   const fallbackCompletedAt = `${date}T00:00:00.000Z`;
 
-  // New schema
   if (Array.isArray(parsed.completedTasks)) {
     return parsed.completedTasks
       .map((entry) => toCompletionSnapshot(entry, listType, fallbackCompletedAt))
       .filter((entry): entry is TaskCompletionSnapshot => entry !== null);
   }
 
-  // Legacy schema: derive completion snapshots only from completed tasks
   if (Array.isArray((parsed as LegacyDailyTasksData).tasks)) {
     const legacyTasks = (parsed as LegacyDailyTasksData).tasks ?? [];
     return legacyTasks
@@ -212,6 +296,164 @@ export function removeCompletedTaskSnapshot(
 
 export function getCompletedTaskIdSet(date: string, listType: ListType): Set<string> {
   return new Set(readCompletedTaskSnapshots(date, listType).map((task) => task.id));
+}
+
+export function readCompletedTaskIndex(): CompletedTaskIndexData {
+  if (!fs.existsSync(COMPLETED_INDEX_PATH)) {
+    return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
+  }
+
+  try {
+    const raw = JSON.parse(fs.readFileSync(COMPLETED_INDEX_PATH, 'utf-8')) as unknown;
+    return toIndexData(raw);
+  } catch {
+    return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
+  }
+}
+
+export function writeCompletedTaskIndex(index: CompletedTaskIndexData): void {
+  ensureDirExists(COMPLETED_INDEX_PATH);
+  const payload: CompletedTaskIndexData = {
+    _comment: DEFAULT_COMPLETED_INDEX._comment,
+    schemaVersion: 1,
+    tasks: index.tasks,
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(COMPLETED_INDEX_PATH, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
+}
+
+export function upsertCompletedTaskIndexSnapshot(taskId: string, snapshot: TaskCompletionSnapshot, sourceDate: string): void {
+  const index = readCompletedTaskIndex();
+  const candidate = toIndexedSnapshot(snapshot, sourceDate);
+  const existing = index.tasks[taskId];
+
+  if (!existing || isNewerSnapshot(candidate, existing)) {
+    index.tasks[taskId] = candidate;
+    writeCompletedTaskIndex(index);
+  }
+}
+
+export function removeCompletedTaskIndexSnapshot(taskId: string): void {
+  const index = readCompletedTaskIndex();
+  if (!(taskId in index.tasks)) {
+    return;
+  }
+
+  delete index.tasks[taskId];
+  writeCompletedTaskIndex(index);
+}
+
+function parseDailyListFilename(fileName: string): { date: string; listType: ListType } | null {
+  const match = fileName.match(/^(\d{4}-\d{2}-\d{2})-(have-to-do|want-to-do)\.json$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    date: match[1],
+    listType: match[2] as ListType,
+  };
+}
+
+function findLatestCompletedSnapshotForTaskFromDailyLists(taskId: string): IndexedTaskCompletionSnapshot | null {
+  if (!fs.existsSync(DAILY_LISTS_DIR)) {
+    return null;
+  }
+
+  const files = fs.readdirSync(DAILY_LISTS_DIR).sort();
+  let best: IndexedTaskCompletionSnapshot | null = null;
+
+  for (const fileName of files) {
+    const parsed = parseDailyListFilename(fileName);
+    if (!parsed) {
+      continue;
+    }
+
+    const snapshots = readCompletedTaskSnapshots(parsed.date, parsed.listType);
+    const match = snapshots.find((snapshot) => snapshot.id === taskId);
+    if (!match) {
+      continue;
+    }
+
+    const candidate = toIndexedSnapshot(match, parsed.date);
+    if (!best || isNewerSnapshot(candidate, best)) {
+      best = candidate;
+    }
+  }
+
+  return best;
+}
+
+export function rebuildCompletedTaskIndexFromDailyLists(): CompletedTaskIndexData {
+  const index: CompletedTaskIndexData = {
+    ...DEFAULT_COMPLETED_INDEX,
+    tasks: {},
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (!fs.existsSync(DAILY_LISTS_DIR)) {
+    writeCompletedTaskIndex(index);
+    return index;
+  }
+
+  const files = fs.readdirSync(DAILY_LISTS_DIR).sort();
+
+  for (const fileName of files) {
+    const parsed = parseDailyListFilename(fileName);
+    if (!parsed) {
+      continue;
+    }
+
+    const snapshots = readCompletedTaskSnapshots(parsed.date, parsed.listType);
+    for (const snapshot of snapshots) {
+      const candidate = toIndexedSnapshot(snapshot, parsed.date);
+      const existing = index.tasks[snapshot.id];
+      if (!existing || isNewerSnapshot(candidate, existing)) {
+        index.tasks[snapshot.id] = candidate;
+      }
+    }
+  }
+
+  writeCompletedTaskIndex(index);
+  return index;
+}
+
+export function refreshCompletedTaskIndexForTask(taskId: string): Task | null {
+  const latest = findLatestCompletedSnapshotForTaskFromDailyLists(taskId);
+
+  if (latest) {
+    const index = readCompletedTaskIndex();
+    index.tasks[taskId] = latest;
+    writeCompletedTaskIndex(index);
+    return taskFromCompletionSnapshot(latest);
+  }
+
+  removeCompletedTaskIndexSnapshot(taskId);
+  return null;
+}
+
+export function getCompletedTaskFromIndex(taskId: string): Task | null {
+  const index = readCompletedTaskIndex();
+  const snapshot = index.tasks[taskId];
+  if (!snapshot) {
+    return null;
+  }
+  return taskFromCompletionSnapshot(snapshot);
+}
+
+export function ensureCompletedIndexForTask(taskId: string): Task | null {
+  const fromIndex = getCompletedTaskFromIndex(taskId);
+  if (fromIndex) {
+    return fromIndex;
+  }
+
+  const rebuilt = rebuildCompletedTaskIndexFromDailyLists();
+  const snapshot = rebuilt.tasks[taskId];
+  if (!snapshot) {
+    return null;
+  }
+
+  return taskFromCompletionSnapshot(snapshot);
 }
 
 export interface TodayOverridesData {

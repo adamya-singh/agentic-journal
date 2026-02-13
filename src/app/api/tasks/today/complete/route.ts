@@ -3,10 +3,13 @@ import { ListType, Task } from '@/lib/types';
 import { computeTodayTasks } from '../today-compute-utils';
 import {
   findLegacyDailyTaskById,
+  refreshCompletedTaskIndexForTask,
+  removeCompletedTaskIndexSnapshot,
   readCompletedTaskSnapshots,
   readGeneralTasks,
   readTodayOverrides,
   removeCompletedTaskSnapshot,
+  upsertCompletedTaskIndexSnapshot,
   upsertCompletedTaskSnapshot,
   writeGeneralTasks,
   TaskCompletionSnapshot,
@@ -101,6 +104,8 @@ export async function POST(request: NextRequest) {
 
       const snapshotToRestore = removedSnapshot ?? existingSnapshot;
       const wasDaily = snapshotToRestore.isDaily === true;
+      removeCompletedTaskIndexSnapshot(taskId);
+      refreshCompletedTaskIndexForTask(taskId);
 
       if (!wasDaily) {
         const alreadyInGeneral = generalData.tasks.some((task) => task.id === taskId);
@@ -141,7 +146,9 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    upsertCompletedTaskSnapshot(date, typedListType, buildCompletionSnapshot(taskToComplete, typedListType));
+    const completionSnapshot = buildCompletionSnapshot(taskToComplete, typedListType);
+    upsertCompletedTaskSnapshot(date, typedListType, completionSnapshot);
+    upsertCompletedTaskIndexSnapshot(taskId, completionSnapshot, date);
 
     if (!taskToComplete.isDaily) {
       const initialLength = generalData.tasks.length;
