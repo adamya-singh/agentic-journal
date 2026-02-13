@@ -538,7 +538,7 @@ export default function HomePage() {
       // ==================== DAILY TASK SETTERS ====================
       addTaskToToday: {
         name: 'addTaskToToday',
-        description: 'Add an EXISTING task from a general list to today\'s task list by its ID. Only use when user explicitly asks to schedule an existing task for today.',
+        description: 'Add a manual inclusion override so an EXISTING task from a general list appears in today\'s computed task list.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of an existing task from the general list'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -599,7 +599,7 @@ export default function HomePage() {
       },
       removeTaskFromToday: {
         name: 'removeTaskFromToday',
-        description: 'Remove a task from today\'s task list by its ID.',
+        description: 'Add a manual exclusion override so a task is hidden from today\'s computed task list by ID.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to remove from today\'s list'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
@@ -640,7 +640,7 @@ export default function HomePage() {
       },
       completeTask: {
         name: 'completeTask',
-        description: 'Mark a task as completed. This removes it from the general task list and marks it done in today\'s list.',
+        description: 'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general task list.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),

@@ -40,7 +40,7 @@ export const AddTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
   position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
-  isDaily: z.boolean().optional().describe('If true, task recurs daily and auto-adds to each day\'s today list'),
+  isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s computed today list'),
 });
 
 // Schema for removeTask state setter
@@ -178,7 +178,7 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) auto-add to each day\'s today list and persist after completion.',
+  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) appear in each day\'s computed today list and persist after completion.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),
@@ -284,7 +284,7 @@ export const addTaskToTodayTool = createMastraToolForStateSetter(
   'addTaskToToday',
   AddTaskToTodaySchema,
   {
-    description: 'Add an EXISTING task from a general list to today\'s task list by its ID. Use this ONLY when the user explicitly asks to schedule an existing task for today. Do NOT call this automatically after addTask.',
+    description: 'Add a manual inclusion override so an EXISTING task appears in today\'s computed task list. Use this ONLY when the user explicitly asks to include an existing task today.',
     toolId: 'addTaskToToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -296,7 +296,7 @@ export const removeTaskFromTodayTool = createMastraToolForStateSetter(
   'removeTaskFromToday',
   RemoveTaskFromTodaySchema,
   {
-    description: 'Remove a task from today\'s task list by its ID.',
+    description: 'Add a manual exclusion override so a task is hidden from today\'s computed task list by ID.',
     toolId: 'removeTaskFromToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -308,7 +308,7 @@ export const completeTaskTool = createMastraToolForStateSetter(
   'completeTask',
   CompleteTaskSchema,
   {
-    description: 'Mark a task as completed. This removes it from the general task list and marks it done in today\'s list.',
+    description: 'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general list.',
     toolId: 'completeTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,

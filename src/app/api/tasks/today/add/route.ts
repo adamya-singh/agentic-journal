@@ -1,58 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
 import { ensureDailyJournalExists, addTaskToStaged } from '../../due-date-utils';
-import { Task, TasksData, ListType } from '@/lib/types';
-
-// Get the path for a date-specific task list
-function getDailyTasksFilePath(date: string, listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
-}
-
-/**
- * Helper function to read daily tasks from file
- */
-function readDailyTasks(date: string, listType: ListType): TasksData {
-  const tasksFile = getDailyTasksFilePath(date, listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
-  }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
-}
-
-/**
- * Helper function to write daily tasks to file
- */
-function writeDailyTasks(data: TasksData, date: string, listType: ListType): void {
-  const tasksFile = getDailyTasksFilePath(date, listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
+import { ListType } from '@/lib/types';
+import { includeTaskInTodayOverrides } from '../today-store-utils';
 
 /**
  * POST /api/tasks/today/add
- * Adds a task to the daily list if not already present
- * 
- * Body: { taskId: string, taskText: string, listType: 'have-to-do' | 'want-to-do', date: string, dueDate?: string }
- * - taskId: The unique ID of the task
- * - taskText: The task text
- * - listType: Which task list to add to
- * - date: The date in ISO format (YYYY-MM-DD)
- * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
+ * Adds a manual inclusion override so an existing task appears in the computed today list.
+ *
+ * Body: { taskId: string, taskText: string, listType: 'have-to-do' | 'want-to-do', date: string }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, taskText, listType, date, dueDate } = body;
+    const { taskId, taskText, listType, date } = body;
 
-    // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
       return NextResponse.json(
         { success: false, error: 'Invalid listType. Must be "have-to-do" or "want-to-do"' },
@@ -60,7 +21,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate taskId
     if (!taskId || typeof taskId !== 'string') {
       return NextResponse.json(
         { success: false, error: 'taskId parameter is required and must be a string' },
@@ -68,15 +28,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate taskText
-    if (!taskText || typeof taskText !== 'string') {
+    if (!taskText || typeof taskText !== 'string' || taskText.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: 'taskText parameter is required and must be a string' },
+        { success: false, error: 'taskText parameter is required and must be a non-empty string' },
         { status: 400 }
       );
     }
 
-    // Validate date
     if (!date || typeof date !== 'string') {
       return NextResponse.json(
         { success: false, error: 'date parameter is required and must be a string in ISO format (YYYY-MM-DD)' },
@@ -84,58 +42,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const trimmedTaskText = taskText.trim();
-    if (trimmedTaskText.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'taskText cannot be empty' },
-        { status: 400 }
-      );
-    }
+    const { changed } = includeTaskInTodayOverrides(date, listType as ListType, taskId);
 
-    // Read current daily tasks
-    const data = readDailyTasks(date, listType);
-
-    // Check if task already exists in today's list by ID
-    const alreadyExists = data.tasks.some((task) => task.id === taskId);
-    if (alreadyExists) {
-      return NextResponse.json({
-        success: true,
-        alreadyExists: true,
-        message: 'Task already in today\'s list',
-      });
-    }
-
-    // Build task object with the same ID from general list
-    const newTask: Task = { 
-      id: taskId,
-      text: trimmedTaskText 
-    };
-    if (dueDate && typeof dueDate === 'string') {
-      newTask.dueDate = dueDate;
-    }
-
-    // Add to daily tasks
-    data.tasks.push(newTask);
-
-    // Write updated tasks
-    writeDailyTasks(data, date, listType);
-
-    // Ensure journal exists and add task to staged area
+    // Keep journal staged behavior compatible with existing UI.
     ensureDailyJournalExists(date);
-    addTaskToStaged(date, taskId, listType);
+    addTaskToStaged(date, taskId, listType as ListType);
 
     return NextResponse.json({
       success: true,
-      alreadyExists: false,
-      message: 'Task added to today\'s list',
-      taskCount: data.tasks.length,
+      alreadyExists: !changed,
+      message: changed ? 'Task added to today\'s list' : 'Task already in today\'s list',
     });
   } catch (error) {
-    console.error('Error adding task to daily list:', error);
+    console.error('Error adding task to computed today list:', error);
     return NextResponse.json(
       { success: false, error: 'Internal server error' },
       { status: 500 }
     );
   }
 }
-

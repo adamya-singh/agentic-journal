@@ -12,16 +12,20 @@ import {
   StagedTaskEntry,
   ListType,
   Task,
-  TasksData,
   isTaskJournalEntry,
   isTextJournalEntry,
   isTaskJournalRangeEntry,
   isJournalEntryArray,
 } from '@/lib/types';
+import {
+  findLegacyDailyTaskById,
+  readCompletedTaskSnapshots,
+  readGeneralTasks,
+  taskFromCompletionSnapshot,
+} from '../../tasks/today/today-store-utils';
 
 // Path to the journal directory (relative to project root)
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
-const TASKS_DIR = path.join(process.cwd(), 'src/backend/data/tasks');
 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,51 +66,27 @@ function getJournalFilePath(date: string): string {
 }
 
 /**
- * Get the path for a date-specific task list
- */
-function getDailyTasksFilePath(date: string, listType: ListType): string {
-  return path.join(TASKS_DIR, `daily-lists/${date}-${listType}.json`);
-}
-
-/**
- * Get the path for the general task list
- */
-function getGeneralTasksFilePath(listType: ListType): string {
-  return path.join(TASKS_DIR, `${listType}.json`);
-}
-
-/**
- * Read tasks from a file
- */
-function readTasksFile(filePath: string): Task[] {
-  if (!fs.existsSync(filePath)) {
-    return [];
-  }
-  try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const data = JSON.parse(content) as TasksData;
-    return data.tasks || [];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Find a task by ID across daily and general lists
+ * Find a task by ID across completion history, general tasks, and legacy daily files.
  */
 function findTaskById(taskId: string, listType: ListType, date: string): Task | null {
-  // First check the daily list for this date
-  const dailyTasks = readTasksFile(getDailyTasksFilePath(date, listType));
-  const dailyTask = dailyTasks.find(t => t.id === taskId);
-  if (dailyTask) {
-    return dailyTask;
+  // First prefer date-scoped completion snapshots (historical truth for completed tasks).
+  const completionSnapshot = readCompletedTaskSnapshots(date, listType).find(
+    (snapshot) => snapshot.id === taskId
+  );
+  if (completionSnapshot) {
+    return taskFromCompletionSnapshot(completionSnapshot);
   }
 
-  // Fall back to general list
-  const generalTasks = readTasksFile(getGeneralTasksFilePath(listType));
-  const generalTask = generalTasks.find(t => t.id === taskId);
+  // Fall back to general list (source of truth for non-completed task details).
+  const generalTask = readGeneralTasks(listType).tasks.find((task) => task.id === taskId);
   if (generalTask) {
     return generalTask;
+  }
+
+  // Last fallback for historical compatibility with legacy daily-list schema.
+  const legacyTask = findLegacyDailyTaskById(date, listType, taskId);
+  if (legacyTask) {
+    return legacyTask;
   }
 
   return null;

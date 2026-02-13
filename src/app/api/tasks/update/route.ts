@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeTasks(data, listType);
 
-    // If task has a due date set (not removed), auto-create plan/today list and add to 8am slot
+    // If task has a due date set (not removed), ensure due-date journal + staged task are initialized
     const updatedTask = data.tasks[taskIndex];
     if (updatedTask.dueDate) {
       handleDueDateSetup(updatedTask.dueDate, listType, updatedTask);
@@ -146,4 +146,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

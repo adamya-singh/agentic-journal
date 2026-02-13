@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Task, TasksData, ListType, JournalRangeEntry, StagedTaskEntry, JournalHourSlot } from '@/lib/types';
+import { Task, ListType, JournalRangeEntry, StagedTaskEntry, JournalHourSlot } from '@/lib/types';
 
 // Local DayJournal type that matches the file structure
 interface DayJournalFile {
@@ -11,7 +11,6 @@ interface DayJournalFile {
 
 // Paths
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
-const DAILY_LISTS_DIR = path.join(process.cwd(), 'src/backend/data/tasks/daily-lists');
 
 /**
  * Get the empty journal template
@@ -66,44 +65,6 @@ export function ensureDailyJournalExists(dateIso: string): void {
 }
 
 /**
- * Ensure the today list exists and contains the task
- * Creates the list file if it doesn't exist, adds the task if not already present
- */
-export function ensureTodayListExists(
-  dateIso: string,
-  listType: ListType,
-  task: Task
-): void {
-  const listFilePath = path.join(DAILY_LISTS_DIR, `${dateIso}-${listType}.json`);
-  
-  // Ensure directory exists
-  if (!fs.existsSync(DAILY_LISTS_DIR)) {
-    fs.mkdirSync(DAILY_LISTS_DIR, { recursive: true });
-  }
-  
-  let data: TasksData;
-  
-  if (fs.existsSync(listFilePath)) {
-    const content = fs.readFileSync(listFilePath, 'utf-8');
-    data = JSON.parse(content);
-  } else {
-    data = {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
-  }
-  
-  // Check if task already exists by ID
-  const taskExists = data.tasks.some((t) => t.id === task.id);
-  
-  if (!taskExists) {
-    // Add task to the beginning (due tasks are urgent)
-    data.tasks.unshift(task);
-    fs.writeFileSync(listFilePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-  }
-}
-
-/**
  * Add a task to the staged area in the daily journal.
  * Staged tasks are due on this day but not yet scheduled to a specific time
  */
@@ -142,7 +103,8 @@ export function addTaskToStaged(
 }
 
 /**
- * Handle due date setup: creates journal, today list, and adds task to staged area
+ * Handle due date setup: creates journal and adds task to staged area.
+ * Today's visible task list is now computed dynamically at read time.
  * Call this when a task is created or updated with a due date
  * @param dateIso - Date in ISO format (YYYY-MM-DD)
  */
@@ -152,6 +114,5 @@ export function handleDueDateSetup(
   task: Task
 ): void {
   ensureDailyJournalExists(dateIso);
-  ensureTodayListExists(dateIso, listType, task);
   addTaskToStaged(dateIso, task.id, listType);
 }

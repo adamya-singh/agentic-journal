@@ -1,79 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
-import { Task, TasksData, ListType } from '@/lib/types';
+import { ListType, Task } from '@/lib/types';
+import { computeTodayTasks } from '../today-compute-utils';
+import {
+  findLegacyDailyTaskById,
+  readCompletedTaskSnapshots,
+  readGeneralTasks,
+  readTodayOverrides,
+  removeCompletedTaskSnapshot,
+  upsertCompletedTaskSnapshot,
+  writeGeneralTasks,
+  TaskCompletionSnapshot,
+} from '../today-store-utils';
 
-// Get the path for a date-specific task list
-function getDailyTasksFilePath(date: string, listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/daily-lists/${date}-${listType}.json`);
-}
+function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletionSnapshot {
+  const snapshot: TaskCompletionSnapshot = {
+    id: task.id,
+    text: task.text,
+    completed: true,
+    completedAt: new Date().toISOString(),
+    listType,
+  };
 
-// Get the path for the general task list
-function getGeneralTasksFilePath(listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-/**
- * Helper function to read daily tasks from file
- */
-function readDailyTasks(date: string, listType: ListType): TasksData {
-  const tasksFile = getDailyTasksFilePath(date, listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
+  if (task.dueDate) {
+    snapshot.dueDate = task.dueDate;
   }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
+
+  if (task.isDaily) {
+    snapshot.isDaily = true;
+  }
+
+  return snapshot;
 }
 
-/**
- * Helper function to write daily tasks to file
- */
-function writeDailyTasks(data: TasksData, date: string, listType: ListType): void {
-  const tasksFile = getDailyTasksFilePath(date, listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
+function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
+  const task: Task = {
+    id: snapshot.id,
+    text: snapshot.text,
+  };
 
-/**
- * Helper function to read general tasks from file
- */
-function readGeneralTasks(listType: ListType): TasksData {
-  const tasksFile = getGeneralTasksFilePath(listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
+  if (snapshot.dueDate) {
+    task.dueDate = snapshot.dueDate;
   }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
-}
 
-/**
- * Helper function to write general tasks to file
- */
-function writeGeneralTasks(data: TasksData, listType: ListType): void {
-  const tasksFile = getGeneralTasksFilePath(listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+  if (snapshot.isDaily) {
+    task.isDaily = true;
   }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+
+  return task;
 }
 
 /**
  * POST /api/tasks/today/complete
- * Toggles the completion status of a task in the daily list
- * 
- * - If not completed: marks as completed and removes from general list
- * - If already completed: removes completed flag and adds back to general list
- * 
+ * Toggles completion status for a task in a computed today list.
+ *
+ * - Complete: write completion snapshot for this date, remove from general list (non-daily only)
+ * - Uncomplete: remove completion snapshot for this date, re-add to general list (non-daily only)
+ *
  * Body: { taskId: string, listType: 'have-to-do' | 'want-to-do', date: string }
  */
 export async function POST(request: NextRequest) {
@@ -81,7 +63,6 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { taskId, listType, date } = body;
 
-    // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
       return NextResponse.json(
         { success: false, error: 'Invalid listType. Must be "have-to-do" or "want-to-do"' },
@@ -89,7 +70,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate taskId
     if (!taskId || typeof taskId !== 'string') {
       return NextResponse.json(
         { success: false, error: 'taskId parameter is required and must be a string' },
@@ -97,7 +77,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate date
     if (!date || typeof date !== 'string') {
       return NextResponse.json(
         { success: false, error: 'date parameter is required and must be a string in ISO format (YYYY-MM-DD)' },
@@ -105,75 +84,80 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Read current daily tasks
-    const dailyData = readDailyTasks(date, listType);
+    const typedListType = listType as ListType;
+    const generalData = readGeneralTasks(typedListType);
+    const completedSnapshots = readCompletedTaskSnapshots(date, typedListType);
+    const existingSnapshot = completedSnapshots.find((snapshot) => snapshot.id === taskId) ?? null;
 
-    // Find the task in today's list by ID
-    const taskIndex = dailyData.tasks.findIndex((task) => task.id === taskId);
-    if (taskIndex === -1) {
+    if (existingSnapshot) {
+      // UNCOMPLETE
+      const { removed, removedSnapshot } = removeCompletedTaskSnapshot(date, typedListType, taskId);
+      if (!removed) {
+        return NextResponse.json({
+          success: false,
+          error: 'Task completion record not found for this day',
+        });
+      }
+
+      const snapshotToRestore = removedSnapshot ?? existingSnapshot;
+      const wasDaily = snapshotToRestore.isDaily === true;
+
+      if (!wasDaily) {
+        const alreadyInGeneral = generalData.tasks.some((task) => task.id === taskId);
+        if (!alreadyInGeneral) {
+          generalData.tasks.unshift(toRestoredTask(snapshotToRestore));
+          writeGeneralTasks(generalData, typedListType);
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        completed: false,
+        message: wasDaily
+          ? 'Daily task marked as incomplete'
+          : 'Task marked as incomplete and added back to general list',
+      });
+    }
+
+    // COMPLETE
+    const overrides = readTodayOverrides(date, typedListType);
+    const computedTodayTasks = computeTodayTasks({
+      date,
+      generalTasks: generalData.tasks,
+      overrides,
+      completedSnapshots,
+    });
+
+    const taskFromToday = computedTodayTasks.find((task) => task.id === taskId) ?? null;
+    const taskFromGeneral = generalData.tasks.find((task) => task.id === taskId) ?? null;
+    const taskFromLegacyDaily = findLegacyDailyTaskById(date, typedListType, taskId);
+
+    const taskToComplete = taskFromToday ?? taskFromGeneral ?? taskFromLegacyDaily;
+
+    if (!taskToComplete) {
       return NextResponse.json({
         success: false,
         error: 'Task not found in today\'s list',
       });
     }
 
-    const task = dailyData.tasks[taskIndex];
-    const wasCompleted = task.completed === true;
+    upsertCompletedTaskSnapshot(date, typedListType, buildCompletionSnapshot(taskToComplete, typedListType));
 
-    if (wasCompleted) {
-      // UNCOMPLETE: Remove completed flag and add back to general list (if not daily)
-      delete dailyData.tasks[taskIndex].completed;
-      
-      // Daily tasks stay in general list, so only add back non-daily tasks
-      if (!task.isDaily) {
-        const generalData = readGeneralTasks(listType);
-        const alreadyInGeneral = generalData.tasks.some((t) => t.id === taskId);
-        
-        if (!alreadyInGeneral) {
-          const taskToAdd: Task = { 
-            id: task.id,
-            text: task.text 
-          };
-          if (task.dueDate) {
-            taskToAdd.dueDate = task.dueDate;
-          }
-          generalData.tasks.unshift(taskToAdd);
-          writeGeneralTasks(generalData, listType);
-        }
+    if (!taskToComplete.isDaily) {
+      const initialLength = generalData.tasks.length;
+      generalData.tasks = generalData.tasks.filter((task) => task.id !== taskId);
+      if (generalData.tasks.length !== initialLength) {
+        writeGeneralTasks(generalData, typedListType);
       }
-
-      // Write updated daily tasks
-      writeDailyTasks(dailyData, date, listType);
-
-      return NextResponse.json({
-        success: true,
-        completed: false,
-        message: task.isDaily 
-          ? 'Daily task marked as incomplete' 
-          : 'Task marked as incomplete and added back to general list',
-      });
-    } else {
-      // COMPLETE: Mark as completed
-      dailyData.tasks[taskIndex].completed = true;
-
-      // Remove from general list by ID, but NOT if it's a daily task
-      if (!task.isDaily) {
-        const generalData = readGeneralTasks(listType);
-        generalData.tasks = generalData.tasks.filter((t) => t.id !== taskId);
-        writeGeneralTasks(generalData, listType);
-      }
-
-      // Write updated daily tasks
-      writeDailyTasks(dailyData, date, listType);
-
-      return NextResponse.json({
-        success: true,
-        completed: true,
-        message: task.isDaily 
-          ? 'Daily task marked as completed (stays in general list for tomorrow)' 
-          : 'Task marked as completed and removed from general list',
-      });
     }
+
+    return NextResponse.json({
+      success: true,
+      completed: true,
+      message: taskToComplete.isDaily
+        ? 'Daily task marked as completed (stays in general list for tomorrow)'
+        : 'Task marked as completed and removed from general list',
+    });
   } catch (error) {
     console.error('Error toggling task completion:', error);
     return NextResponse.json(
@@ -182,4 +166,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

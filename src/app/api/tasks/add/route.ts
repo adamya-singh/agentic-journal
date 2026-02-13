@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeTasks(data, listType);
 
-    // If task has a due date, auto-create plan/today list and add to 8am slot
+    // If task has a due date, ensure due-date journal + staged task are initialized
     if (newTask.dueDate) {
       handleDueDateSetup(newTask.dueDate, listType, newTask);
     }
@@ -147,4 +147,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
