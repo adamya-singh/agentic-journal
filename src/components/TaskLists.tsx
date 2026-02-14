@@ -42,7 +42,11 @@ interface TaskListProps {
   onAddClick?: () => void;
   onDelete?: (task: Task) => void;
   onEdit?: (task: Task) => void;
+  sortMode?: DueSortMode;
+  onToggleSort?: () => void;
 }
+
+type DueSortMode = 'off' | 'asc' | 'desc';
 
 /**
  * Get current hour in API format (e.g., "3pm", "10am")
@@ -97,6 +101,52 @@ function getPriorityTierColor(index: number, totalCount: number): string {
   return '#10B981';                           // Green - low priority
 }
 
+function isIsoDate(value: string | undefined): value is string {
+  if (!value) return false;
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function getDueSortLabel(mode: DueSortMode): string {
+  if (mode === 'asc') return 'Due: ↑';
+  if (mode === 'desc') return 'Due: ↓';
+  return 'Due: Off';
+}
+
+function cycleDueSortMode(mode: DueSortMode): DueSortMode {
+  if (mode === 'off') return 'asc';
+  if (mode === 'asc') return 'desc';
+  return 'off';
+}
+
+/**
+ * Sorts only dated tasks by due date while preserving undated task positions.
+ * Sorting is view-only and does not mutate persisted priority order.
+ */
+function getDisplayedTasks(tasks: Task[], mode: DueSortMode): Task[] {
+  if (mode === 'off') return tasks;
+
+  const dated = tasks
+    .map((task, index) => ({ task, index }))
+    .filter((entry) => isIsoDate(entry.task.dueDate))
+    .sort((a, b) => {
+      const aDate = a.task.dueDate as string;
+      const bDate = b.task.dueDate as string;
+      const dateCmp = mode === 'asc' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
+      if (dateCmp !== 0) return dateCmp;
+      return a.index - b.index;
+    });
+
+  if (dated.length <= 1) return tasks;
+
+  let datedCursor = 0;
+  return tasks.map((task) => {
+    if (!isIsoDate(task.dueDate)) return task;
+    const nextDated = dated[datedCursor];
+    datedCursor += 1;
+    return nextDated.task;
+  });
+}
+
 function TaskList({ 
   title, 
   tasks, 
@@ -110,6 +160,8 @@ function TaskList({
   onAddClick,
   onDelete,
   onEdit,
+  sortMode = 'off',
+  onToggleSort,
 }: TaskListProps) {
   // Separate daily tasks from regular tasks
   const dailyTasks = tasks.filter(task => task.isDaily === true);
@@ -118,14 +170,26 @@ function TaskList({
   const headerContent = (
     <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700 flex items-center justify-between`}>
       <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
-      {onAddClick && (
-        <button
-          onClick={onAddClick}
-          className={`px-3 py-1 rounded-md text-sm font-medium text-white ${buttonColor} transition-colors`}
-        >
-          +
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {onToggleSort && (
+          <button
+            onClick={onToggleSort}
+            className="px-2.5 py-1 rounded-md text-xs font-medium border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            title="Cycle due-date sort: Off, earliest first, latest first"
+            aria-label={`Cycle due-date sort. Current mode: ${sortMode}`}
+          >
+            {getDueSortLabel(sortMode)}
+          </button>
+        )}
+        {onAddClick && (
+          <button
+            onClick={onAddClick}
+            className={`px-3 py-1 rounded-md text-sm font-medium text-white ${buttonColor} transition-colors`}
+          >
+            +
+          </button>
+        )}
+      </div>
     </div>
   );
 
@@ -431,6 +495,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
   const [wantToDo, setWantToDo] = useState<Task[]>([]);
+  const [haveSortMode, setHaveSortMode] = useState<DueSortMode>('off');
+  const [wantSortMode, setWantSortMode] = useState<DueSortMode>('off');
   const [loadingHave, setLoadingHave] = useState(true);
   const [loadingWant, setLoadingWant] = useState(true);
   const [errorHave, setErrorHave] = useState<string | null>(null);
@@ -756,6 +822,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
+  const displayedHaveToDo = getDisplayedTasks(haveToDo, haveSortMode);
+  const displayedWantToDo = getDisplayedTasks(wantToDo, wantSortMode);
+
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
       <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
@@ -795,7 +864,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       <div className="flex gap-4">
         <TaskList
           title="Have to Do"
-          tasks={haveToDo}
+          tasks={displayedHaveToDo}
           loading={loadingHave}
           error={errorHave}
           accentColor="text-amber-600 dark:text-amber-400"
@@ -809,10 +878,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           }}
           onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
           onEdit={(task) => handleEditTask(task, 'have-to-do')}
+          sortMode={haveSortMode}
+          onToggleSort={() => setHaveSortMode((prev) => cycleDueSortMode(prev))}
         />
         <TaskList
           title="Want to Do"
-          tasks={wantToDo}
+          tasks={displayedWantToDo}
           loading={loadingWant}
           error={errorWant}
           accentColor="text-teal-600 dark:text-teal-400"
@@ -826,6 +897,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           }}
           onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
           onEdit={(task) => handleEditTask(task, 'want-to-do')}
+          sortMode={wantSortMode}
+          onToggleSort={() => setWantSortMode((prev) => cycleDueSortMode(prev))}
         />
       </div>
 
