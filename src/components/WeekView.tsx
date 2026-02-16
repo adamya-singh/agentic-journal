@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { EntryMode, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task } from '@/lib/types';
+import { EntryMode, PlanStatus, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task } from '@/lib/types';
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
 import { useRefresh } from '@/lib/RefreshContext';
@@ -29,6 +29,7 @@ export interface TypedEntry {
   entryKind: 'task' | 'text'; // Task/text identity from resolved journal data
   taskId?: string;
   listType?: ListType;
+  planStatus?: PlanStatus;
   completed?: boolean;
   isRange?: boolean;  // True if this is a range entry
   startHour?: string; // For sorting range entries by their start time
@@ -91,10 +92,12 @@ function getWeekDates(offset: number = 0): DayInfo[] {
   return weekDates;
 }
 
-// Hour order for sorting
+// Canonical hour order used for general day traversal and API hour shape
 const HOUR_ORDER = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
 const CARRY_BACK_HOURS = ['12am', '1am', '2am'];
-const PRIMARY_HOURS = HOUR_ORDER.filter(hour => !CARRY_BACK_HOURS.includes(hour));
+// Week view display order shows early morning (3am-6am) before daytime hours.
+const DISPLAY_HOUR_ORDER = ['3am', '4am', '5am', '6am', '7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am'];
+const DISPLAY_PRIMARY_HOURS = DISPLAY_HOUR_ORDER.filter(hour => !CARRY_BACK_HOURS.includes(hour));
 
 function addDaysISO(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number);
@@ -108,7 +111,7 @@ function addDaysISO(date: string, days: number): string {
 
 /**
  * Compose a display journal for a day:
- * - Keep 7am-11pm, 3am-6am from the current day
+ * - Keep 3am-11pm from the current day
  * - Pull 12am-2am from the next day so late-night appears at bottom of prior day
  */
 function composeDisplayJournal(
@@ -121,7 +124,7 @@ function composeDisplayJournal(
 
   const composed: ResolvedDayJournalWithRanges = {};
 
-  for (const hour of PRIMARY_HOURS) {
+  for (const hour of DISPLAY_PRIMARY_HOURS) {
     composed[hour] = currentDayJournal?.[hour] ?? null;
   }
   for (const hour of CARRY_BACK_HOURS) {
@@ -156,9 +159,9 @@ function getCurrentHour(): string {
 }
 
 /**
- * Check if a task is already scheduled in the journal (in any hour slot or range)
+ * Check whether a task already has a logged actual in the journal.
  */
-function checkIfTaskScheduled(journal: ResolvedDayJournalWithRanges | null | undefined, taskId: string): boolean {
+function checkIfTaskLogged(journal: ResolvedDayJournalWithRanges | null | undefined, taskId: string): boolean {
   if (!journal) return false;
   
   // Check hourly slots
@@ -167,15 +170,15 @@ function checkIfTaskScheduled(journal: ResolvedDayJournalWithRanges | null | und
     if (!slot) continue;
     
     if (Array.isArray(slot)) {
-      if (slot.some(e => e?.taskId === taskId)) return true;
-    } else if (slot?.taskId === taskId) {
+      if (slot.some((e) => e?.taskId === taskId && e?.entryMode === 'logged')) return true;
+    } else if (slot?.taskId === taskId && slot.entryMode === 'logged') {
       return true;
     }
   }
   
   // Check ranges
   if (journal.ranges && Array.isArray(journal.ranges)) {
-    if (journal.ranges.some(r => r.taskId === taskId)) return true;
+    if (journal.ranges.some((r) => r.taskId === taskId && r.entryMode === 'logged')) return true;
   }
   
   return false;
@@ -195,6 +198,7 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
     entryKind: entry.type,
     taskId: entry.taskId,
     listType: entry.listType,
+    planStatus: entry.planStatus,
     completed: entry.completed,
     startHour: hour,
   };
@@ -211,7 +215,7 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
   }
   
   // Process hourly entries (supports both single entries and arrays)
-  for (const hour of HOUR_ORDER) {
+  for (const hour of DISPLAY_HOUR_ORDER) {
     const slot = journal[hour];
     
     if (!slot) continue;
@@ -244,6 +248,7 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
           entryKind: range.type,
           taskId: range.taskId,
           listType: range.listType,
+          planStatus: range.planStatus,
           completed: range.completed,
           isRange: true,
           startHour: range.start,
@@ -254,8 +259,8 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
   
   // Sort all entries by start hour, then by entry mode (planned before logged at same hour)
   entries.sort((a, b) => {
-    const aIdx = HOUR_ORDER.indexOf(a.startHour || a.hour);
-    const bIdx = HOUR_ORDER.indexOf(b.startHour || b.hour);
+    const aIdx = DISPLAY_HOUR_ORDER.indexOf(a.startHour || a.hour);
+    const bIdx = DISPLAY_HOUR_ORDER.indexOf(b.startHour || b.hour);
     if (aIdx !== bIdx) return aIdx - bIdx;
     // If same start hour, show planned before logged
     if (a.entryMode === 'planned' && b.entryMode === 'logged') return -1;
@@ -407,13 +412,12 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Handler for completing a task from the popover
   const handleCompleteTask = useCallback(async (entry: StagedEntry, date: string) => {
     try {
-      // Check if task is already scheduled (use weekData from state)
+      // Check if task already has a logged entry (use weekData from state)
       const journal = weekData[date];
-      const isAlreadyScheduled = checkIfTaskScheduled(journal, entry.taskId);
+      const isAlreadyLogged = checkIfTaskLogged(journal, entry.taskId);
       
-      // Only append to journal if NOT already scheduled
-      // (If already scheduled, we just mark it complete without creating a duplicate)
-      if (!isAlreadyScheduled) {
+      // Only append if there is no logged actual yet for this task/day.
+      if (!isAlreadyLogged) {
         await fetch('/api/journal/append', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -696,6 +700,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           const activeLabel = activeMode === 'planned' ? 'Plans' : 'Logs';
           const nextLabel = nextMode === 'planned' ? 'Plans' : 'Logs';
           const activeCount = activeMode === 'planned' ? plannedEntries.length : loggedEntries.length;
+          const activePlanCount = plannedEntries.filter((entry) => (entry.planStatus ?? 'active') === 'active').length;
+          const missedPlanCount = plannedEntries.filter((entry) => entry.planStatus === 'missed').length;
+          const replannedPlanCount = plannedEntries.filter((entry) => entry.planStatus === 'rescheduled').length;
+          const completedPlanCount = plannedEntries.filter((entry) => entry.planStatus === 'completed').length;
           const stagedEntries = getStagedFromJournal(currentDayJournal);
           const isToday = dayInfo.date === todayDate;
           // Days on the right side of the week (Thu-Sun, index 3-6) should have popover on left
@@ -743,6 +751,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                       <path fillRule="evenodd" d="M3 10a1 1 0 011-1h9.586L11.293 6.707a1 1 0 111.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L13.586 11H4a1 1 0 01-1-1z" clipRule="evenodd" />
                     </svg>
                   </button>
+                  {activeMode === 'planned' && plannedEntries.length > 0 && (
+                    <div className="ml-1 flex items-center gap-1 text-[10px]">
+                      {activePlanCount > 0 && <span className="rounded bg-teal-100 px-1.5 py-0.5 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300">A {activePlanCount}</span>}
+                      {missedPlanCount > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">M {missedPlanCount}</span>}
+                      {replannedPlanCount > 0 && <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-700 dark:bg-slate-700 dark:text-slate-200">R {replannedPlanCount}</span>}
+                      {completedPlanCount > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-700 dark:bg-green-900/40 dark:text-green-300">C {completedPlanCount}</span>}
+                    </div>
+                  )}
                   <div className="flex items-center gap-0.5 ml-1">
                     {/* Render existing indicators */}
                     {Array.from({ length: indicators[dayInfo.date] || 0 }).map((_, idx) => (
@@ -804,11 +820,17 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     className="space-y-2 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none"
                   >
                     {/* Scheduled entries */}
-                    {visibleEntries.map(({ hour, text, entryMode, entryKind, taskId, completed }, index) => {
+                    {visibleEntries.map(({ hour, text, entryMode, entryKind, taskId, planStatus, completed }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
-                      const isCompleted = isTask && completed === true;
+                      const isCompleted = isTask && (completed === true || planStatus === 'completed');
+                      const isMissedPlan = entryMode === 'planned' && planStatus === 'missed';
+                      const isRescheduledPlan = entryMode === 'planned' && planStatus === 'rescheduled';
                       const suffixLabel = isCompleted
                         ? '(done)'
+                        : isMissedPlan
+                          ? '(missed)'
+                          : isRescheduledPlan
+                            ? '(replanned)'
                         : activeMode === 'planned' && isTask
                           ? '(task)'
                           : null;
@@ -818,6 +840,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           <span className={`font-medium ${
                             isCompleted
                               ? 'text-green-600 dark:text-green-400'
+                              : isMissedPlan
+                                ? 'text-amber-600 dark:text-amber-400'
+                                : isRescheduledPlan
+                                  ? 'text-slate-500 dark:text-slate-400'
                               : entryMode === 'planned' 
                                 ? 'text-teal-600 dark:text-teal-400' 
                                 : isToday 
@@ -829,6 +855,10 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           <span className={`${
                             isCompleted 
                               ? 'text-green-600 dark:text-green-400 line-through' 
+                              : isMissedPlan
+                                ? 'text-amber-700 dark:text-amber-300'
+                                : isRescheduledPlan
+                                  ? 'text-slate-600 dark:text-slate-300'
                               : entryMode === 'planned' 
                                 ? 'text-teal-700 dark:text-teal-300' 
                                 : 'text-gray-700 dark:text-gray-300'
@@ -837,7 +867,13 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           </span>
                           {suffixLabel && (
                             <span className={`ml-1 text-xs italic ${
-                              isCompleted ? 'text-green-500 dark:text-green-400' : 'text-teal-500 dark:text-teal-400'
+                              isCompleted
+                                ? 'text-green-500 dark:text-green-400'
+                                : isMissedPlan
+                                  ? 'text-amber-500 dark:text-amber-400'
+                                  : isRescheduledPlan
+                                    ? 'text-slate-500 dark:text-slate-400'
+                                    : 'text-teal-500 dark:text-teal-400'
                             }`}>
                               {suffixLabel}
                             </span>
