@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-  DayJournal,
   JournalEntry,
   JournalRangeEntry,
   JournalHourSlot,
@@ -17,6 +16,7 @@ import {
   isTaskJournalRangeEntry,
   isJournalEntryArray,
 } from '@/lib/types';
+import { DayJournalWithRanges, markMissedPlansForDate } from '../plan-lifecycle-utils';
 import {
   ensureCompletedIndexForTask,
   findLegacyDailyTaskById,
@@ -36,8 +36,7 @@ const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 
 // Journal with ranges and staged support
-type DayJournalWithRanges = DayJournal & {
-  ranges?: JournalRangeEntry[];
+type DayJournalWithRangesAndStaged = DayJournalWithRanges & {
   staged?: StagedTaskEntry[];
 };
 
@@ -109,14 +108,14 @@ function findTaskById(taskId: string, listType: ListType, date: string): Task | 
 /**
  * Helper function to read a journal file if it exists
  */
-function readJournalFile(date: string): DayJournalWithRanges | null {
+function readJournalFile(date: string): DayJournalWithRangesAndStaged | null {
   const filePath = getJournalFilePath(date);
   if (!fs.existsSync(filePath)) {
     return null;
   }
   try {
     const data = fs.readFileSync(filePath, 'utf-8');
-    const journal = JSON.parse(data) as DayJournalWithRanges;
+    const journal = JSON.parse(data) as DayJournalWithRangesAndStaged;
     // Ensure ranges and staged arrays exist for backward compatibility
     if (!journal.ranges) {
       journal.ranges = [];
@@ -130,12 +129,18 @@ function readJournalFile(date: string): DayJournalWithRanges | null {
   }
 }
 
+function writeJournalFile(date: string, journal: DayJournalWithRangesAndStaged): void {
+  const filePath = getJournalFilePath(date);
+  fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
+}
+
 /**
  * Resolve a journal entry to displayable format
  */
 function resolveEntry(hour: string, entry: JournalEntry, date: string): ResolvedJournalEntry | null {
   // Handle task reference entries
   if (isTaskJournalEntry(entry)) {
+    const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
     const task = findTaskById(entry.taskId, entry.listType, date);
     if (task) {
       return {
@@ -143,6 +148,11 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
         text: task.text,
         type: 'task',
         entryMode: entry.entryMode,
+        planId: entry.planId,
+        planStatus: resolvedPlanStatus,
+        replannedToPlanId: entry.replannedToPlanId,
+        replannedFromPlanId: entry.replannedFromPlanId,
+        missedAt: entry.missedAt,
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
@@ -154,6 +164,11 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       text: '[Task not found]',
       type: 'task',
       entryMode: entry.entryMode,
+      planId: entry.planId,
+      planStatus: resolvedPlanStatus,
+      replannedToPlanId: entry.replannedToPlanId,
+      replannedFromPlanId: entry.replannedFromPlanId,
+      missedAt: entry.missedAt,
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
@@ -194,6 +209,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
  */
 function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJournalRangeEntry {
   if (isTaskJournalRangeEntry(entry)) {
+    const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
     const task = findTaskById(entry.taskId, entry.listType, date);
     if (task) {
       return {
@@ -202,6 +218,11 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
         text: task.text,
         type: 'task',
         entryMode: entry.entryMode,
+        planId: entry.planId,
+        planStatus: resolvedPlanStatus,
+        replannedToPlanId: entry.replannedToPlanId,
+        replannedFromPlanId: entry.replannedFromPlanId,
+        missedAt: entry.missedAt,
         taskId: entry.taskId,
         listType: entry.listType,
         completed: task.completed,
@@ -214,6 +235,11 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
       text: '[Task not found]',
       type: 'task',
       entryMode: entry.entryMode,
+      planId: entry.planId,
+      planStatus: resolvedPlanStatus,
+      replannedToPlanId: entry.replannedToPlanId,
+      replannedFromPlanId: entry.replannedFromPlanId,
+      missedAt: entry.missedAt,
       taskId: entry.taskId,
       listType: entry.listType,
       completed: false,
@@ -283,7 +309,7 @@ function resolveHourSlot(hour: string, slot: JournalHourSlot | undefined, date: 
 /**
  * Resolve all entries in a journal
  */
-function resolveJournal(journal: DayJournalWithRanges, date: string): ResolvedDayJournalWithRanges {
+function resolveJournal(journal: DayJournalWithRangesAndStaged, date: string): ResolvedDayJournalWithRanges {
   const resolved: ResolvedDayJournalWithRanges = {};
   
   for (const hour of HOURS) {
@@ -352,6 +378,9 @@ export async function POST(request: NextRequest) {
       for (const date of dates) {
         const journal = readJournalFile(date);
         if (journal) {
+          if (markMissedPlansForDate(journal, date, new Date())) {
+            writeJournalFile(date, journal);
+          }
           resolvedJournals[date] = resolveJournal(journal, date);
         } else {
           resolvedJournals[date] = null;
@@ -365,9 +394,13 @@ export async function POST(request: NextRequest) {
       });
     } else {
       // Return raw journals
-      const journals: Record<string, DayJournalWithRanges | null> = {};
+      const journals: Record<string, DayJournalWithRangesAndStaged | null> = {};
       for (const date of dates) {
-        journals[date] = readJournalFile(date);
+        const journal = readJournalFile(date);
+        if (journal && markMissedPlansForDate(journal, date, new Date())) {
+          writeJournalFile(date, journal);
+        }
+        journals[date] = journal;
       }
 
       return NextResponse.json({

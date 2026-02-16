@@ -60,13 +60,13 @@ function getCurrentHour(): string {
   return `${hours12}${ampm}`;
 }
 
-// Valid hours for checking scheduled tasks
+// Valid hours for checking task logs
 const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
 
 /**
- * Check if a task is already scheduled in the journal (in any hour slot or range)
+ * Check whether a task already has a logged actual in the journal.
  */
-function checkIfTaskScheduled(journal: Record<string, unknown> | null | undefined, taskId: string): boolean {
+function checkIfTaskLogged(journal: Record<string, unknown> | null | undefined, taskId: string): boolean {
   if (!journal) return false;
   
   // Check hourly slots
@@ -75,8 +75,21 @@ function checkIfTaskScheduled(journal: Record<string, unknown> | null | undefine
     if (!slot) continue;
     
     if (Array.isArray(slot)) {
-      if (slot.some(e => e?.taskId === taskId)) return true;
-    } else if (typeof slot === 'object' && slot !== null && 'taskId' in slot && (slot as { taskId: string }).taskId === taskId) {
+      if (
+        slot.some(
+          (e) => e?.taskId === taskId && (e?.entryMode === 'logged' || e?.entryMode === undefined)
+        )
+      ) return true;
+    } else if (
+      typeof slot === 'object' &&
+      slot !== null &&
+      'taskId' in slot &&
+      (slot as { taskId: string }).taskId === taskId &&
+      (
+        !('entryMode' in slot) ||
+        (slot as { entryMode?: string }).entryMode === 'logged'
+      )
+    ) {
       return true;
     }
   }
@@ -84,7 +97,12 @@ function checkIfTaskScheduled(journal: Record<string, unknown> | null | undefine
   // Check ranges
   const ranges = journal.ranges;
   if (ranges && Array.isArray(ranges)) {
-    if (ranges.some((r: { taskId?: string }) => r.taskId === taskId)) return true;
+    if (
+      ranges.some(
+        (r: { taskId?: string; entryMode?: string }) =>
+          r.taskId === taskId && (r.entryMode === 'logged' || r.entryMode === undefined)
+      )
+    ) return true;
   }
   
   return false;
@@ -689,7 +707,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Handler to toggle task completion status (also logs to journal)
   const handleCompleteTask = async (task: Task, listType: ListType) => {
     try {
-      // Check if task is already scheduled in the journal
+      // Check if task already has a logged entry in the journal
       const journalRes = await fetch('/api/journal/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -698,12 +716,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const journalData = await journalRes.json();
       const journal = journalData.journals?.[currentDate];
       
-      // Check if taskId exists in any hour slot or range
-      const isAlreadyScheduled = checkIfTaskScheduled(journal, task.id);
+      // Check if taskId has already been logged for this day
+      const isAlreadyLogged = checkIfTaskLogged(journal, task.id);
       
-      // Only append to journal if NOT already scheduled
-      // (If already scheduled, we just mark it complete without creating a duplicate)
-      if (!isAlreadyScheduled) {
+      // Only append to journal if no logged actual exists yet for this task/day.
+      if (!isAlreadyLogged) {
         await fetch('/api/journal/append', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },

@@ -2,11 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-  DayJournal,
   EntryMode,
   JournalRangeEntry,
   StagedTaskEntry,
 } from '@/lib/types';
+import {
+  DayJournalWithRanges,
+  linkLoggedEntryToEarliestActivePlan,
+  markMissedPlansForDate,
+  normalizePlannedTaskEntry,
+} from '../plan-lifecycle-utils';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -18,8 +23,7 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 // Journal with ranges and staged support
-type DayJournalWithRanges = DayJournal & {
-  ranges?: JournalRangeEntry[];
+type DayJournalWithRangesAndStaged = DayJournalWithRanges & {
   staged?: StagedTaskEntry[];
 };
 
@@ -44,17 +48,17 @@ function journalFileExists(date: string): boolean {
   return fs.existsSync(filePath);
 }
 
-function readJournalFile(date: string): DayJournalWithRanges {
+function readJournalFile(date: string): DayJournalWithRangesAndStaged {
   const filePath = getJournalFilePath(date);
   const content = fs.readFileSync(filePath, 'utf-8');
-  const journal = JSON.parse(content) as DayJournalWithRanges;
+  const journal = JSON.parse(content) as DayJournalWithRangesAndStaged;
   if (!journal.ranges) {
     journal.ranges = [];
   }
   return journal;
 }
 
-function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
+function writeJournalFile(date: string, journal: DayJournalWithRangesAndStaged): void {
   const filePath = getJournalFilePath(date);
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
 }
@@ -116,6 +120,8 @@ export async function POST(request: NextRequest) {
     }
 
     const journal = readJournalFile(date);
+    const now = new Date();
+    markMissedPlansForDate(journal, date, now);
 
     if (removeRange) {
       const { start, end } = removeRange;
@@ -194,7 +200,10 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        newRange = { start, end, taskId: rangeTaskId, listType: rangeListType, entryMode: rangeEntryMode };
+        const taskRange = { start, end, taskId: rangeTaskId, listType: rangeListType, entryMode: rangeEntryMode };
+        newRange = rangeEntryMode === 'planned'
+          ? normalizePlannedTaskEntry(taskRange, now.toISOString())
+          : taskRange;
       } else if (rangeText !== undefined) {
         newRange = { start, end, text: rangeText, entryMode: rangeEntryMode };
       } else {
@@ -217,6 +226,16 @@ export async function POST(request: NextRequest) {
 
       journal.ranges = journal.ranges || [];
       journal.ranges.push(newRange);
+
+      if (rangeTaskId && rangeEntryMode === 'logged') {
+        linkLoggedEntryToEarliestActivePlan(
+          journal,
+          date,
+          rangeTaskId,
+          { date, range: { start, end } },
+          now.toISOString()
+        );
+      }
 
       if (rangeTaskId && journal.staged && Array.isArray(journal.staged)) {
         journal.staged = journal.staged.filter((stagedEntry) => stagedEntry.taskId !== rangeTaskId);

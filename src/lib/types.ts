@@ -24,6 +24,16 @@ export interface TasksData {
  * logged = what actually happened
  */
 export type EntryMode = 'planned' | 'logged';
+export type PlanStatus = 'active' | 'missed' | 'rescheduled' | 'completed' | 'canceled';
+
+export interface PlanLogRef {
+  date: string;
+  hour?: string;
+  range?: {
+    start: string;
+    end: string;
+  };
+}
 
 /**
  * A journal entry that references a task by ID.
@@ -32,6 +42,14 @@ export interface TaskJournalEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  planCreatedAt?: string;
+  planUpdatedAt?: string;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  completedByLogRef?: PlanLogRef;
+  missedAt?: string;
 }
 
 /**
@@ -72,6 +90,11 @@ export interface ResolvedJournalEntry {
   text: string;
   type: 'task' | 'text';
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  missedAt?: string;
   taskId?: string;
   listType?: ListType;
   completed?: boolean;
@@ -98,6 +121,14 @@ export interface TaskJournalRangeEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  planCreatedAt?: string;
+  planUpdatedAt?: string;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  completedByLogRef?: PlanLogRef;
+  missedAt?: string;
 }
 
 /**
@@ -114,6 +145,11 @@ export interface ResolvedJournalRangeEntry {
   text: string;
   type: 'task' | 'text';
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  missedAt?: string;
   taskId?: string;
   listType?: ListType;
   completed?: boolean;

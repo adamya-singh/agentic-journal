@@ -1,0 +1,369 @@
+import {
+  DayJournal,
+  JournalEntry,
+  JournalRangeEntry,
+  PlanLogRef,
+  PlanStatus,
+  TaskJournalEntry,
+  TaskJournalRangeEntry,
+  isJournalEntryArray,
+  isTaskJournalEntry,
+  isTaskJournalRangeEntry,
+} from '@/lib/types';
+
+const VALID_HOURS = [
+  '7am', '8am', '9am', '10am', '11am', '12pm',
+  '1pm', '2pm', '3pm', '4pm', '5pm', '6pm',
+  '7pm', '8pm', '9pm', '10pm', '11pm', '12am',
+  '1am', '2am', '3am', '4am', '5am', '6am',
+] as const;
+
+export type DayJournalWithRanges = DayJournal & {
+  ranges?: JournalRangeEntry[];
+};
+
+type HourRef = {
+  kind: 'hour';
+  hour: string;
+  hourIndex: number;
+  entry: TaskJournalEntry;
+};
+
+type RangeRef = {
+  kind: 'range';
+  rangeIndex: number;
+  startIndex: number;
+  entry: TaskJournalRangeEntry;
+};
+
+type TaskRef = HourRef | RangeRef;
+
+function getPlanStatus(entry: { entryMode: string; planStatus?: PlanStatus }): PlanStatus | null {
+  if (entry.entryMode !== 'planned') {
+    return null;
+  }
+  return entry.planStatus ?? 'active';
+}
+
+function isActivePlannedTask(entry: TaskJournalEntry | TaskJournalRangeEntry): boolean {
+  return getPlanStatus(entry) === 'active';
+}
+
+function hourTo24(hour: string): number {
+  const match = hour.match(/^(\d+)(am|pm)$/);
+  if (!match) return -1;
+  const raw = Number.parseInt(match[1], 10);
+  const ampm = match[2];
+  if (raw < 1 || raw > 12) return -1;
+  if (ampm === 'am') {
+    return raw % 12;
+  }
+  return raw % 12 + 12;
+}
+
+function toDateAtHour(dateIso: string, hour: string): Date {
+  const [year, month, day] = dateIso.split('-').map((value) => Number.parseInt(value, 10));
+  const hours24 = hourTo24(hour);
+  return new Date(year, month - 1, day, Math.max(0, hours24), 0, 0, 0);
+}
+
+function getHourIndex(hour: string): number {
+  return VALID_HOURS.indexOf(hour as (typeof VALID_HOURS)[number]);
+}
+
+function ensurePlannedTaskDefaults<T extends TaskJournalEntry | TaskJournalRangeEntry>(
+  entry: T,
+  nowIso: string = new Date().toISOString()
+): T {
+  if (entry.entryMode !== 'planned') {
+    return entry;
+  }
+
+  const withPlanId = entry.planId ?? crypto.randomUUID();
+  return {
+    ...entry,
+    planId: withPlanId,
+    planStatus: entry.planStatus ?? 'active',
+    planCreatedAt: entry.planCreatedAt ?? nowIso,
+    planUpdatedAt: nowIso,
+  };
+}
+
+function getAllTaskRefs(journal: DayJournalWithRanges): TaskRef[] {
+  const refs: TaskRef[] = [];
+
+  for (const hour of VALID_HOURS) {
+    const hourIndex = getHourIndex(hour);
+    const slot = journal[hour];
+    if (!slot) continue;
+
+    const entries = isJournalEntryArray(slot) ? slot : [slot];
+    for (const entry of entries) {
+      if (isTaskJournalEntry(entry)) {
+        refs.push({ kind: 'hour', hour, hourIndex, entry });
+      }
+    }
+  }
+
+  const ranges = journal.ranges ?? [];
+  for (let rangeIndex = 0; rangeIndex < ranges.length; rangeIndex += 1) {
+    const range = ranges[rangeIndex];
+    if (!isTaskJournalRangeEntry(range)) {
+      continue;
+    }
+    refs.push({
+      kind: 'range',
+      rangeIndex,
+      startIndex: getHourIndex(range.start),
+      entry: range,
+    });
+  }
+
+  return refs;
+}
+
+function hasAnyLoggedTaskForDate(journal: DayJournalWithRanges, taskId: string): boolean {
+  for (const ref of getAllTaskRefs(journal)) {
+    if (ref.entry.taskId === taskId && ref.entry.entryMode === 'logged') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function computeDeadline(dateIso: string, ref: TaskRef): Date | null {
+  if (ref.kind === 'hour') {
+    const base = toDateAtHour(dateIso, ref.hour);
+    base.setHours(base.getHours() + 1); // grace window
+    return base;
+  }
+
+  const end = ref.entry.end;
+  if (!end) {
+    return null;
+  }
+  const base = toDateAtHour(dateIso, end);
+  base.setHours(base.getHours() + 1); // grace window
+  return base;
+}
+
+function updateHourEntry(
+  journal: DayJournalWithRanges,
+  hour: string,
+  predicate: (entry: TaskJournalEntry) => boolean,
+  updater: (entry: TaskJournalEntry) => TaskJournalEntry
+): boolean {
+  const slot = journal[hour];
+  if (!slot) return false;
+
+  let changed = false;
+  if (isJournalEntryArray(slot)) {
+    const nextEntries: JournalEntry[] = slot.map((entry) => {
+      if (!isTaskJournalEntry(entry) || !predicate(entry)) {
+        return entry;
+      }
+      changed = true;
+      return updater(entry);
+    });
+    if (changed) {
+      journal[hour] = nextEntries.length === 1 ? nextEntries[0] : nextEntries;
+    }
+    return changed;
+  }
+
+  if (isTaskJournalEntry(slot) && predicate(slot)) {
+    journal[hour] = updater(slot);
+    return true;
+  }
+
+  return false;
+}
+
+export function normalizePlannedTaskEntry<T extends TaskJournalEntry | TaskJournalRangeEntry>(
+  entry: T,
+  nowIso: string = new Date().toISOString()
+): T {
+  return ensurePlannedTaskDefaults(entry, nowIso);
+}
+
+export function markMissedPlansForDate(
+  journal: DayJournalWithRanges,
+  dateIso: string,
+  now: Date = new Date()
+): boolean {
+  let changed = false;
+  const nowIso = now.toISOString();
+  const refs = getAllTaskRefs(journal);
+
+  for (const ref of refs) {
+    const entry = ref.entry;
+    if (!isActivePlannedTask(entry)) {
+      continue;
+    }
+    if (hasAnyLoggedTaskForDate(journal, entry.taskId)) {
+      continue;
+    }
+
+    const deadline = computeDeadline(dateIso, ref);
+    if (!deadline || now <= deadline) {
+      continue;
+    }
+
+    if (ref.kind === 'hour') {
+      const next = normalizePlannedTaskEntry(ref.entry, nowIso);
+      next.planStatus = 'missed';
+      next.missedAt = nowIso;
+      next.planUpdatedAt = nowIso;
+      changed = updateHourEntry(
+        journal,
+        ref.hour,
+        (candidate) => candidate.taskId === entry.taskId && candidate.planId === entry.planId,
+        () => next
+      ) || changed;
+    } else {
+      const next = normalizePlannedTaskEntry(ref.entry, nowIso);
+      next.planStatus = 'missed';
+      next.missedAt = nowIso;
+      next.planUpdatedAt = nowIso;
+      const ranges = journal.ranges ?? [];
+      const current = ranges[ref.rangeIndex];
+      if (current && isTaskJournalRangeEntry(current)) {
+        ranges[ref.rangeIndex] = next;
+        journal.ranges = ranges;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
+export function linkLoggedEntryToEarliestActivePlan(
+  journal: DayJournalWithRanges,
+  dateIso: string,
+  taskId: string,
+  logRef: PlanLogRef,
+  nowIso: string = new Date().toISOString()
+): boolean {
+  const activeRefs = getAllTaskRefs(journal)
+    .filter((ref) => ref.entry.taskId === taskId && isActivePlannedTask(ref.entry));
+
+  if (activeRefs.length === 0) {
+    return false;
+  }
+
+  activeRefs.sort((a, b) => {
+    const aStart = a.kind === 'hour' ? a.hourIndex : a.startIndex;
+    const bStart = b.kind === 'hour' ? b.hourIndex : b.startIndex;
+    if (aStart !== bStart) return aStart - bStart;
+    const aCreated = a.entry.planCreatedAt ? Date.parse(a.entry.planCreatedAt) : 0;
+    const bCreated = b.entry.planCreatedAt ? Date.parse(b.entry.planCreatedAt) : 0;
+    return aCreated - bCreated;
+  });
+
+  const target = activeRefs[0];
+  if (target.kind === 'hour') {
+    const next = normalizePlannedTaskEntry(target.entry, nowIso);
+    next.planStatus = 'completed';
+    next.completedByLogRef = { ...logRef, date: dateIso };
+    next.planUpdatedAt = nowIso;
+    return updateHourEntry(
+      journal,
+      target.hour,
+      (entry) => entry.taskId === target.entry.taskId && (entry.planId ?? '') === (target.entry.planId ?? ''),
+      () => next
+    );
+  }
+
+  const ranges = journal.ranges ?? [];
+  const current = ranges[target.rangeIndex];
+  if (!current || !isTaskJournalRangeEntry(current)) {
+    return false;
+  }
+  const next = normalizePlannedTaskEntry(target.entry, nowIso);
+  next.planStatus = 'completed';
+  next.completedByLogRef = { ...logRef, date: dateIso };
+  next.planUpdatedAt = nowIso;
+  ranges[target.rangeIndex] = next;
+  journal.ranges = ranges;
+  return true;
+}
+
+function appendTaskEntryToHour(journal: DayJournalWithRanges, hour: string, entry: TaskJournalEntry): void {
+  const slot = journal[hour];
+  if (!slot || (typeof slot === 'string' && slot.trim() === '')) {
+    journal[hour] = entry;
+    return;
+  }
+
+  if (isJournalEntryArray(slot)) {
+    journal[hour] = [...slot, entry];
+    return;
+  }
+
+  journal[hour] = [slot, entry];
+}
+
+export function replanTaskEntryInJournal(
+  journal: DayJournalWithRanges,
+  fromPlanId: string,
+  to: { hour: string } | { start: string; end: string },
+  nowIso: string = new Date().toISOString()
+): { oldPlanId: string; newPlanId: string } | null {
+  const refs = getAllTaskRefs(journal).filter((ref) => ref.entry.entryMode === 'planned');
+  const match = refs.find((ref) => ref.entry.planId === fromPlanId);
+  if (!match) {
+    return null;
+  }
+
+  const newPlanId = crypto.randomUUID();
+
+  const nextPlannedBase = {
+    taskId: match.entry.taskId,
+    listType: match.entry.listType,
+    entryMode: 'planned' as const,
+    planId: newPlanId,
+    planStatus: 'active' as const,
+    planCreatedAt: nowIso,
+    planUpdatedAt: nowIso,
+    replannedFromPlanId: fromPlanId,
+  };
+
+  if (match.kind === 'hour') {
+    const current = normalizePlannedTaskEntry(match.entry, nowIso);
+    current.planStatus = 'rescheduled';
+    current.replannedToPlanId = newPlanId;
+    current.planUpdatedAt = nowIso;
+    updateHourEntry(
+      journal,
+      match.hour,
+      (entry) => entry.planId === fromPlanId,
+      () => current
+    );
+  } else {
+    const current = normalizePlannedTaskEntry(match.entry, nowIso);
+    current.planStatus = 'rescheduled';
+    current.replannedToPlanId = newPlanId;
+    current.planUpdatedAt = nowIso;
+    const ranges = journal.ranges ?? [];
+    const existing = ranges[match.rangeIndex];
+    if (existing && isTaskJournalRangeEntry(existing)) {
+      ranges[match.rangeIndex] = current;
+      journal.ranges = ranges;
+    }
+  }
+
+  if ('hour' in to) {
+    appendTaskEntryToHour(journal, to.hour, nextPlannedBase);
+  } else {
+    const ranges = journal.ranges ?? [];
+    ranges.push({
+      ...nextPlannedBase,
+      start: to.start,
+      end: to.end,
+    });
+    journal.ranges = ranges;
+  }
+
+  return { oldPlanId: fromPlanId, newPlanId };
+}

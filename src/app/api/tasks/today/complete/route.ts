@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
+import * as fs from 'fs';
+import * as path from 'path';
 import { ListType, Task } from '@/lib/types';
 import { computeTodayTasks } from '../today-compute-utils';
+import { DayJournalWithRanges, markMissedPlansForDate } from '../../../journal/plan-lifecycle-utils';
 import {
   findLegacyDailyTaskById,
   refreshCompletedTaskIndexForTask,
@@ -14,6 +17,25 @@ import {
   writeGeneralTasks,
   TaskCompletionSnapshot,
 } from '../today-store-utils';
+
+const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
+
+function markMissedPlansIfJournalExists(date: string): void {
+  const journalFilePath = path.join(JOURNAL_DIR, `${date}.json`);
+  if (!fs.existsSync(journalFilePath)) {
+    return;
+  }
+  try {
+    const content = fs.readFileSync(journalFilePath, 'utf-8');
+    const journal = JSON.parse(content) as DayJournalWithRanges;
+    const changed = markMissedPlansForDate(journal, date, new Date());
+    if (changed) {
+      fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+    }
+  } catch {
+    // Non-critical best-effort sync.
+  }
+}
 
 function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletionSnapshot {
   const snapshot: TaskCompletionSnapshot = {
@@ -88,6 +110,7 @@ export async function POST(request: NextRequest) {
     }
 
     const typedListType = listType as ListType;
+    markMissedPlansIfJournalExists(date);
     const generalData = readGeneralTasks(typedListType);
     const completedSnapshots = readCompletedTaskSnapshots(date, typedListType);
     const existingSnapshot = completedSnapshots.find((snapshot) => snapshot.id === taskId) ?? null;

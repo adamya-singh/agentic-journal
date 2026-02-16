@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-  DayJournal,
   EntryMode,
   JournalEntry,
   JournalHourSlot,
-  JournalRangeEntry,
   isJournalEntryArray,
   isTaskJournalEntry,
   isTextJournalEntry,
 } from '@/lib/types';
+import {
+  DayJournalWithRanges,
+  linkLoggedEntryToEarliestActivePlan,
+  markMissedPlansForDate,
+  normalizePlannedTaskEntry,
+} from '../plan-lifecycle-utils';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -20,11 +24,6 @@ const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', 
 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-
-// Journal with ranges support
-type DayJournalWithRanges = DayJournal & {
-  ranges?: JournalRangeEntry[];
-};
 
 function isValidDateFormat(date: string): boolean {
   return DATE_REGEX.test(date);
@@ -129,38 +128,50 @@ export async function POST(request: NextRequest) {
     }
 
     const journal = readJournalFile(date);
+    const now = new Date();
+    markMissedPlansForDate(journal, date, now);
     const currentSlot = journal[hour];
 
     let updatedSlot: JournalHourSlot;
 
     if (hasTaskRef) {
-      const newTaskEntry: JournalEntry = { taskId, listType, entryMode };
+      const nowIso = now.toISOString();
+      const newTaskEntry: JournalEntry = entryMode === 'planned'
+        ? normalizePlannedTaskEntry({ taskId, listType, entryMode }, nowIso)
+        : { taskId, listType, entryMode };
 
-      const taskAlreadyExists = (entries: JournalEntry[]): boolean => {
-        return entries.some((entry) => isTaskJournalEntry(entry) && entry.taskId === taskId);
+      const taskAlreadyExists = (entries: JournalEntry[], mode: EntryMode): boolean => {
+        return entries.some(
+          (entry) => isTaskJournalEntry(entry) && entry.taskId === taskId && entry.entryMode === mode
+        );
       };
 
       if (!currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')) {
         updatedSlot = newTaskEntry;
       } else if (isJournalEntryArray(currentSlot)) {
-        if (taskAlreadyExists(currentSlot)) {
+        if (entryMode === 'logged' && taskAlreadyExists(currentSlot, 'logged')) {
           return NextResponse.json({
             success: true,
             date,
             hour,
-            message: `Task already exists at ${hour} on ${date}`,
+            message: `Logged task already exists at ${hour} on ${date}`,
             updatedEntry: currentSlot,
             skipped: true,
           });
         }
         updatedSlot = [...currentSlot, newTaskEntry];
       } else {
-        if (isTaskJournalEntry(currentSlot) && currentSlot.taskId === taskId) {
+        if (
+          entryMode === 'logged' &&
+          isTaskJournalEntry(currentSlot) &&
+          currentSlot.taskId === taskId &&
+          currentSlot.entryMode === 'logged'
+        ) {
           return NextResponse.json({
             success: true,
             date,
             hour,
-            message: `Task already exists at ${hour} on ${date}`,
+            message: `Logged task already exists at ${hour} on ${date}`,
             updatedEntry: currentSlot,
             skipped: true,
           });
@@ -201,6 +212,15 @@ export async function POST(request: NextRequest) {
     }
 
     journal[hour] = updatedSlot;
+    if (hasTaskRef && entryMode === 'logged') {
+      linkLoggedEntryToEarliestActivePlan(
+        journal,
+        date,
+        taskId,
+        { date, hour },
+        now.toISOString()
+      );
+    }
     writeJournalFile(date, journal);
 
     return NextResponse.json({
