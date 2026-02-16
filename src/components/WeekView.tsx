@@ -34,6 +34,8 @@ export interface TypedEntry {
   startHour?: string; // For sorting range entries by their start time
 }
 
+type DayViewMode = 'planned' | 'logged';
+
 // Re-export StagedEntry from popover component for backward compatibility
 export type { StagedEntry } from './UnscheduledTasksPopover';
 
@@ -282,6 +284,10 @@ function getStagedFromJournal(journal: ResolvedDayJournalWithRanges | null): Sta
     }));
 }
 
+function getDefaultDayViewMode(entries: TypedEntry[]): DayViewMode {
+  return entries.some((entry) => entry.entryMode === 'logged') ? 'logged' : 'planned';
+}
+
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const { journalRefreshCounter, refreshTasks } = useRefresh();
   
@@ -292,6 +298,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, number>>({});
+  const [dayViewMode, setDayViewMode] = useState<Record<string, DayViewMode>>({});
   
   // Update weekDates when offset changes
   useEffect(() => {
@@ -681,6 +688,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           const nextDayJournal = weekData[addDaysISO(dayInfo.date, 1)];
           const displayJournal = composeDisplayJournal(currentDayJournal, nextDayJournal);
           const entries = getEntriesFromJournal(displayJournal);
+          const plannedEntries = entries.filter((entry) => entry.entryMode === 'planned');
+          const loggedEntries = entries.filter((entry) => entry.entryMode === 'logged');
+          const activeMode = dayViewMode[dayInfo.date] ?? getDefaultDayViewMode(entries);
+          const visibleEntries = activeMode === 'planned' ? plannedEntries : loggedEntries;
+          const nextMode: DayViewMode = activeMode === 'planned' ? 'logged' : 'planned';
+          const activeLabel = activeMode === 'planned' ? 'Plans' : 'Logs';
+          const nextLabel = nextMode === 'planned' ? 'Plans' : 'Logs';
+          const activeCount = activeMode === 'planned' ? plannedEntries.length : loggedEntries.length;
           const stagedEntries = getStagedFromJournal(currentDayJournal);
           const isToday = dayInfo.date === todayDate;
           // Days on the right side of the week (Thu-Sun, index 3-6) should have popover on left
@@ -703,9 +718,31 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     : 'bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 border-gray-200 dark:border-gray-600'
                 }`}
               >
-                <div className="font-semibold">{dayInfo.dayName}</div>
-                <div className="flex items-center justify-center gap-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{dayInfo.dayName}</span>
                   <span className="text-sm opacity-80">{dayInfo.displayDate}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-center gap-1">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDayViewMode((prev) => ({ ...prev, [dayInfo.date]: nextMode }));
+                    }}
+                    aria-label={`Showing ${activeLabel.toLowerCase()} entries for ${dayInfo.dayName} ${dayInfo.displayDate}. Click to show ${nextLabel.toLowerCase()} entries.`}
+                    title={`Showing ${activeLabel}. Click to switch to ${nextLabel}.`}
+                    className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-1 ${
+                      isToday
+                        ? 'border-indigo-200/70 bg-white text-indigo-700 hover:bg-indigo-50'
+                        : 'border-gray-300 dark:border-gray-500 bg-white/90 dark:bg-gray-800/80 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700'
+                    }`}
+                  >
+                    <span>{activeLabel}</span>
+                    {activeCount > 0 && <span className="opacity-75">{activeCount}</span>}
+                    <svg className="h-3.5 w-3.5 opacity-60" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                      <path fillRule="evenodd" d="M3 10a1 1 0 011-1h9.586L11.293 6.707a1 1 0 111.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L13.586 11H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </button>
                   <div className="flex items-center gap-0.5 ml-1">
                     {/* Render existing indicators */}
                     {Array.from({ length: indicators[dayInfo.date] || 0 }).map((_, idx) => (
@@ -761,16 +798,19 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
 
               {/* Journal and plan entries */}
               <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
-                {entries.length > 0 ? (
-                  <div className="space-y-2">
+                {visibleEntries.length > 0 ? (
+                  <div
+                    key={`${dayInfo.date}-${activeMode}`}
+                    className="space-y-2 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none"
+                  >
                     {/* Scheduled entries */}
-                    {entries.map(({ hour, text, entryMode, entryKind, taskId, completed }, index) => {
+                    {visibleEntries.map(({ hour, text, entryMode, entryKind, taskId, completed }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
                       const isCompleted = isTask && completed === true;
                       const suffixLabel = isCompleted
                         ? '(done)'
-                        : entryMode === 'planned'
-                          ? (isTask ? '(task)' : '(plan)')
+                        : activeMode === 'planned' && isTask
+                          ? '(task)'
                           : null;
                       
                       return (
@@ -808,7 +848,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                   </div>
                 ) : (
                   <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">
-                    No entries
+                    {activeMode === 'planned' ? 'No planned entries' : 'No logged entries'}
                   </div>
                 )}
               </div>
@@ -835,6 +875,18 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           : 'have-to-do'}
         date={scheduleTask?.date ?? ''}
       />
+      <style jsx>{`
+        @keyframes weekviewFadeSlide {
+          from {
+            opacity: 0;
+            transform: translateY(2px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `}</style>
     </div>
   );
 }
