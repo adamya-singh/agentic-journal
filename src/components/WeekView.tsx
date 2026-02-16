@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { EntryMode, PlanStatus, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task } from '@/lib/types';
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
@@ -27,12 +27,14 @@ export interface TypedEntry {
   text: string;
   entryMode: EntryMode;
   entryKind: 'task' | 'text'; // Task/text identity from resolved journal data
+  planId?: string;
   taskId?: string;
   listType?: ListType;
   planStatus?: PlanStatus;
   completed?: boolean;
   isRange?: boolean;  // True if this is a range entry
   startHour?: string; // For sorting range entries by their start time
+  endHour?: string;
 }
 
 type DayViewMode = 'planned' | 'logged';
@@ -196,6 +198,7 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
     text: entry.text,
     entryMode: entry.entryMode,
     entryKind: entry.type,
+    planId: entry.planId,
     taskId: entry.taskId,
     listType: entry.listType,
     planStatus: entry.planStatus,
@@ -246,12 +249,14 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
           text: range.text,
           entryMode: range.entryMode,
           entryKind: range.type,
+          planId: range.planId,
           taskId: range.taskId,
           listType: range.listType,
           planStatus: range.planStatus,
           completed: range.completed,
           isRange: true,
           startHour: range.start,
+          endHour: range.end,
         });
       }
     }
@@ -316,6 +321,16 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Schedule modal state for unscheduled tasks
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleTask, setScheduleTask] = useState<{ task: Task; date: string } | null>(null);
+  const [textPlanModal, setTextPlanModal] = useState<{
+    date: string;
+    planId: string;
+    text: string;
+    source: { kind: 'hour'; hour: string } | { kind: 'range'; start: string; end: string };
+    x: number;
+    y: number;
+  } | null>(null);
+  const [completingTextPlan, setCompletingTextPlan] = useState(false);
+  const closeTextPlanModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Toggle popover expansion for a specific date
   const togglePopover = useCallback((date: string) => {
@@ -500,6 +515,74 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     setShowScheduleModal(true);
   }, []);
 
+  const clearTextPlanModalCloseTimer = useCallback(() => {
+    if (closeTextPlanModalTimerRef.current) {
+      clearTimeout(closeTextPlanModalTimerRef.current);
+      closeTextPlanModalTimerRef.current = null;
+    }
+  }, []);
+
+  const closeTextPlanModal = useCallback(() => {
+    clearTextPlanModalCloseTimer();
+    setTextPlanModal(null);
+  }, [clearTextPlanModalCloseTimer]);
+
+  const scheduleCloseTextPlanModal = useCallback((delayMs: number = 140) => {
+    clearTextPlanModalCloseTimer();
+    closeTextPlanModalTimerRef.current = setTimeout(() => {
+      setTextPlanModal(null);
+      closeTextPlanModalTimerRef.current = null;
+    }, delayMs);
+  }, [clearTextPlanModalCloseTimer]);
+
+  const openTextPlanModal = useCallback((
+    eventTarget: HTMLElement,
+    payload: {
+      date: string;
+      planId: string;
+      text: string;
+      source: { kind: 'hour'; hour: string } | { kind: 'range'; start: string; end: string };
+    }
+  ) => {
+    clearTextPlanModalCloseTimer();
+    const rect = eventTarget.getBoundingClientRect();
+    setTextPlanModal({
+      ...payload,
+      x: rect.left + rect.width / 2,
+      y: rect.top - 8,
+    });
+  }, [clearTextPlanModalCloseTimer]);
+
+  const handleCompleteTextPlan = useCallback(async () => {
+    if (!textPlanModal || completingTextPlan) {
+      return;
+    }
+
+    try {
+      setCompletingTextPlan(true);
+      const response = await fetch('/api/journal/complete-text-plan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: textPlanModal.date,
+          planId: textPlanModal.planId,
+          source: textPlanModal.source,
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) {
+        return;
+      }
+      closeTextPlanModal();
+      fetchWeekData();
+      refreshTasks();
+    } catch (error) {
+      console.error('Failed to complete text plan:', error);
+    } finally {
+      setCompletingTextPlan(false);
+    }
+  }, [textPlanModal, completingTextPlan, closeTextPlanModal, fetchWeekData, refreshTasks]);
+
   // Initial fetch on mount
   useEffect(() => {
     fetchWeekData();
@@ -518,6 +601,46 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       fetchWeekData();
     }
   }, [journalRefreshCounter, fetchWeekData]);
+
+  useEffect(() => {
+    return () => {
+      if (closeTextPlanModalTimerRef.current) {
+        clearTimeout(closeTextPlanModalTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!textPlanModal) {
+      return;
+    }
+
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (target.closest('[data-text-plan-modal="true"]') || target.closest('[data-text-plan-trigger="true"]')) {
+        return;
+      }
+      closeTextPlanModal();
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeTextPlanModal();
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [textPlanModal, closeTextPlanModal]);
 
   // Notify parent when data changes
   useEffect(() => {
@@ -820,11 +943,22 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     className="space-y-2 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none"
                   >
                     {/* Scheduled entries */}
-                    {visibleEntries.map(({ hour, text, entryMode, entryKind, taskId, planStatus, completed }, index) => {
+                    {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, planStatus, completed, isRange, startHour, endHour }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
-                      const isCompleted = isTask && (completed === true || planStatus === 'completed');
+                      const isCompleted = isTask
+                        ? (completed === true || planStatus === 'completed')
+                        : entryMode === 'planned' && planStatus === 'completed';
                       const isMissedPlan = entryMode === 'planned' && planStatus === 'missed';
                       const isRescheduledPlan = entryMode === 'planned' && planStatus === 'rescheduled';
+                      const isCompletableTextPlan =
+                        activeMode === 'planned' &&
+                        entryKind === 'text' &&
+                        entryMode === 'planned' &&
+                        Boolean(planId) &&
+                        (planStatus === 'active' || planStatus === 'missed' || planStatus === undefined);
+                      const textPlanSource = isRange && startHour && endHour
+                        ? { kind: 'range' as const, start: startHour, end: endHour }
+                        : { kind: 'hour' as const, hour };
                       const suffixLabel = isCompleted
                         ? '(done)'
                         : isMissedPlan
@@ -852,7 +986,49 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                           }`}>
                             {hour}:
                           </span>{' '}
-                          <span className={`${
+                          <span
+                            data-text-plan-trigger={isCompletableTextPlan ? 'true' : undefined}
+                            role={isCompletableTextPlan ? 'button' : undefined}
+                            tabIndex={isCompletableTextPlan ? 0 : undefined}
+                            onMouseEnter={isCompletableTextPlan && planId ? (event) => {
+                              openTextPlanModal(event.currentTarget, {
+                                date: dayInfo.date,
+                                planId,
+                                text,
+                                source: textPlanSource,
+                              });
+                            } : undefined}
+                            onMouseLeave={isCompletableTextPlan ? () => scheduleCloseTextPlanModal() : undefined}
+                            onFocus={isCompletableTextPlan && planId ? (event) => {
+                              openTextPlanModal(event.currentTarget, {
+                                date: dayInfo.date,
+                                planId,
+                                text,
+                                source: textPlanSource,
+                              });
+                            } : undefined}
+                            onBlur={isCompletableTextPlan ? () => scheduleCloseTextPlanModal() : undefined}
+                            onClick={isCompletableTextPlan && planId ? (event) => {
+                              event.stopPropagation();
+                              openTextPlanModal(event.currentTarget, {
+                                date: dayInfo.date,
+                                planId,
+                                text,
+                                source: textPlanSource,
+                              });
+                            } : undefined}
+                            onKeyDown={isCompletableTextPlan && planId ? (event) => {
+                              if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                openTextPlanModal(event.currentTarget, {
+                                  date: dayInfo.date,
+                                  planId,
+                                  text,
+                                  source: textPlanSource,
+                                });
+                              }
+                            } : undefined}
+                            className={`${
                             isCompleted 
                               ? 'text-green-600 dark:text-green-400 line-through' 
                               : isMissedPlan
@@ -862,7 +1038,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                               : entryMode === 'planned' 
                                 ? 'text-teal-700 dark:text-teal-300' 
                                 : 'text-gray-700 dark:text-gray-300'
-                          }`}>
+                          } ${isCompletableTextPlan ? 'cursor-pointer hover:underline underline-offset-2 focus:outline-none focus:ring-1 focus:ring-teal-400 rounded-sm' : ''}`}>
                             {text}
                           </span>
                           {suffixLabel && (
@@ -892,6 +1068,46 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           );
         })}
       </div>
+
+      {textPlanModal && (
+        <div
+          data-text-plan-modal="true"
+          className="fixed z-50 w-64 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 shadow-lg"
+          style={{
+            left: `${textPlanModal.x}px`,
+            top: `${textPlanModal.y}px`,
+            transform: 'translate(-50%, -100%)',
+          }}
+          onMouseEnter={clearTextPlanModalCloseTimer}
+          onMouseLeave={() => scheduleCloseTextPlanModal()}
+        >
+          <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
+            {textPlanModal.source.kind === 'hour'
+              ? `${textPlanModal.source.hour} plan`
+              : `${textPlanModal.source.start}-${textPlanModal.source.end} plan`}
+          </p>
+          <p className="mt-1 text-sm text-gray-700 dark:text-gray-200 line-clamp-2">
+            {textPlanModal.text}
+          </p>
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={closeTextPlanModal}
+              className="px-2 py-1 text-xs rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              Close
+            </button>
+            <button
+              type="button"
+              onClick={handleCompleteTextPlan}
+              disabled={completingTextPlan}
+              className="px-2.5 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {completingTextPlan ? 'Saving...' : 'Mark Complete'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Schedule task modal */}
       <AddToPlanModal

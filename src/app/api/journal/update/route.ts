@@ -10,6 +10,7 @@ import {
   DayJournalWithRanges,
   linkLoggedEntryToEarliestActivePlan,
   markMissedPlansForDate,
+  normalizePlannedEntry,
   normalizePlannedTaskEntry,
 } from '../plan-lifecycle-utils';
 
@@ -205,7 +206,10 @@ export async function POST(request: NextRequest) {
           ? normalizePlannedTaskEntry(taskRange, now.toISOString())
           : taskRange;
       } else if (rangeText !== undefined) {
-        newRange = { start, end, text: rangeText, entryMode: rangeEntryMode };
+        const textRange = { start, end, text: rangeText, entryMode: rangeEntryMode };
+        newRange = rangeEntryMode === 'planned'
+          ? normalizePlannedEntry(textRange, now.toISOString())
+          : textRange;
       } else {
         return NextResponse.json(
           { success: false, error: 'Range must have either text or taskId+listType' },

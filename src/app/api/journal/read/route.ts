@@ -180,11 +180,18 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
     if (!entry.text || entry.text.trim() === '') {
       return null;
     }
+    const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
     return {
       hour,
       text: entry.text,
       type: 'text',
       entryMode: entry.entryMode,
+      planId: entry.planId,
+      planStatus: resolvedPlanStatus,
+      replannedToPlanId: entry.replannedToPlanId,
+      replannedFromPlanId: entry.replannedFromPlanId,
+      missedAt: entry.missedAt,
+      completed: resolvedPlanStatus === 'completed',
     };
   }
 
@@ -247,12 +254,19 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
   }
 
   // Text range entry
+  const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
   return {
     start: entry.start,
     end: entry.end,
     text: entry.text,
     type: 'text',
     entryMode: entry.entryMode,
+    planId: entry.planId,
+    planStatus: resolvedPlanStatus,
+    replannedToPlanId: entry.replannedToPlanId,
+    replannedFromPlanId: entry.replannedFromPlanId,
+    missedAt: entry.missedAt,
+    completed: resolvedPlanStatus === 'completed',
   };
 }
 

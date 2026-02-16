@@ -13,6 +13,7 @@ import {
   DayJournalWithRanges,
   linkLoggedEntryToEarliestActivePlan,
   markMissedPlansForDate,
+  normalizePlannedEntry,
   normalizePlannedTaskEntry,
 } from '../plan-lifecycle-utils';
 
@@ -131,11 +132,11 @@ export async function POST(request: NextRequest) {
     const now = new Date();
     markMissedPlansForDate(journal, date, now);
     const currentSlot = journal[hour];
+    const nowIso = now.toISOString();
 
     let updatedSlot: JournalHourSlot;
 
     if (hasTaskRef) {
-      const nowIso = now.toISOString();
       const newTaskEntry: JournalEntry = entryMode === 'planned'
         ? normalizePlannedTaskEntry({ taskId, listType, entryMode }, nowIso)
         : { taskId, listType, entryMode };
@@ -189,9 +190,13 @@ export async function POST(request: NextRequest) {
       const lastEntry = existingEntries[lastTextEntryIndex];
 
       if (existingEntries.length === 0) {
-        updatedSlot = { text: text.trim(), entryMode };
+        updatedSlot = entryMode === 'planned'
+          ? normalizePlannedEntry({ text: text.trim(), entryMode }, nowIso)
+          : { text: text.trim(), entryMode };
       } else if (lastEntry && isTaskJournalEntry(lastEntry)) {
-        const newTextEntry: JournalEntry = { text: text.trim(), entryMode };
+        const newTextEntry: JournalEntry = entryMode === 'planned'
+          ? normalizePlannedEntry({ text: text.trim(), entryMode }, nowIso)
+          : { text: text.trim(), entryMode };
         if (existingEntries.length === 1) {
           updatedSlot = [lastEntry, newTextEntry];
         } else {
@@ -199,9 +204,22 @@ export async function POST(request: NextRequest) {
         }
       } else {
         const currentText = lastEntry ? getEntryText(lastEntry) : '';
-        const appendedTextEntry: JournalEntry = currentText && currentText.trim() !== ''
-          ? { text: currentText + '\n' + text.trim(), entryMode }
-          : { text: text.trim(), entryMode };
+        const nextText = currentText && currentText.trim() !== ''
+          ? currentText + '\n' + text.trim()
+          : text.trim();
+        const appendedTextEntry: JournalEntry = (() => {
+          if (entryMode !== 'planned') {
+            return { text: nextText, entryMode };
+          }
+          if (isTextJournalEntry(lastEntry) && lastEntry.entryMode === 'planned') {
+            return {
+              ...lastEntry,
+              text: nextText,
+              planUpdatedAt: nowIso,
+            };
+          }
+          return normalizePlannedEntry({ text: nextText, entryMode }, nowIso);
+        })();
 
         if (existingEntries.length === 1) {
           updatedSlot = appendedTextEntry;
@@ -216,11 +234,11 @@ export async function POST(request: NextRequest) {
       linkLoggedEntryToEarliestActivePlan(
         journal,
         date,
-        taskId,
-        { date, hour },
-        now.toISOString()
-      );
-    }
+          taskId,
+          { date, hour },
+          nowIso
+        );
+      }
     writeJournalFile(date, journal);
 
     return NextResponse.json({

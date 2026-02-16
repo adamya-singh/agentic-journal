@@ -58,6 +58,14 @@ export interface TaskJournalEntry {
 export interface TextJournalEntry {
   text: string;
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  planCreatedAt?: string;
+  planUpdatedAt?: string;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  completedByLogRef?: PlanLogRef;
+  missedAt?: string;
 }
 
 /**
@@ -110,6 +118,14 @@ export interface TextJournalRangeEntry {
   end: string; // e.g., "2pm"
   text: string;
   entryMode: EntryMode;
+  planId?: string;
+  planStatus?: PlanStatus;
+  planCreatedAt?: string;
+  planUpdatedAt?: string;
+  replannedToPlanId?: string;
+  replannedFromPlanId?: string;
+  completedByLogRef?: PlanLogRef;
+  missedAt?: string;
 }
 
 /**
