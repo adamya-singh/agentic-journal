@@ -9,7 +9,7 @@ const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 // Maximum number of indicators allowed per day
-const MAX_INDICATORS = 4;
+const MAX_INDICATORS = 10;
 
 // Default journal template
 const DEFAULT_JOURNAL = {
@@ -68,7 +68,7 @@ function writeJournalFile(date: string, journal: Record<string, unknown>): void 
  * 
  * - date: ISO format date (YYYY-MM-DD)
  * - action: 'add' to increment, 'remove' to decrement, 'set' to set a specific count
- * - count: (optional) When action is 'set', the exact count to set (0-4)
+ * - count: (optional) When action is 'set', the exact count to set (0-10)
  * 
  * If no journal exists for the date, one will be created.
  */
@@ -155,4 +155,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

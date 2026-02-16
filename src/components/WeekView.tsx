@@ -15,7 +15,7 @@ export type ResolvedDayJournalWithRanges = {
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
-  indicators?: number; // 0-4 indicators per day
+  indicators?: number; // 0-10 indicators per day
 };
 
 // Week data type - exported for cedar state (uses resolved entries)
@@ -370,7 +370,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const updateIndicator = useCallback(async (date: string, action: 'add' | 'remove') => {
     const currentCount = indicators[date] ?? 0;
     const newCount = action === 'add' 
-      ? Math.min(currentCount + 1, 4) 
+      ? Math.min(currentCount + 1, 10) 
       : Math.max(currentCount - 1, 0);
     
     // Optimistic update
@@ -761,8 +761,8 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                         aria-label="Remove indicator"
                       />
                     ))}
-                    {/* Add button (only show if less than 4 indicators) */}
-                    {(indicators[dayInfo.date] || 0) < 4 && (
+                    {/* Add button (only show if less than 10 indicators) */}
+                    {(indicators[dayInfo.date] || 0) < 10 && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

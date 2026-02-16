@@ -50,7 +50,7 @@ type ResolvedDayJournalWithRanges = {
 } & {
   ranges?: ResolvedJournalRangeEntry[];
   staged?: ResolvedStagedEntry[];
-  indicators?: number; // 0-4 indicators per day
+  indicators?: number; // 0-10 indicators per day
 };
 
 /**
