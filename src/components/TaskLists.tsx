@@ -5,6 +5,7 @@ import { Play, CheckCircle, Clock, Pencil } from 'lucide-react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
+import { TaskResortModal } from './TaskResortModal';
 import { Task, ListType } from '@/lib/types';
 import { useRefresh } from '@/lib/RefreshContext';
 
@@ -491,6 +492,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Edit task modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [taskToEdit, setTaskToEdit] = useState<{ task: Task; listType: ListType } | null>(null);
+  const [showResortModal, setShowResortModal] = useState(false);
+  const [taskToResort, setTaskToResort] = useState<{ task: Task; listType: ListType } | null>(null);
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -969,8 +972,26 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           fetchGeneralTasks();
           fetchTodayTasks();
         }}
+        onResortRequested={(updatedTask, resortListType) => {
+          setTaskToResort({ task: updatedTask, listType: resortListType });
+          setShowResortModal(true);
+        }}
         task={taskToEdit?.task ?? null}
         listType={taskToEdit?.listType ?? 'have-to-do'}
+      />
+
+      <TaskResortModal
+        isOpen={showResortModal}
+        onClose={() => {
+          setShowResortModal(false);
+          setTaskToResort(null);
+        }}
+        onTaskResorted={() => {
+          fetchGeneralTasks();
+          fetchTodayTasks();
+        }}
+        task={taskToResort?.task ?? null}
+        listType={taskToResort?.listType ?? 'have-to-do'}
       />
     </div>
   );
