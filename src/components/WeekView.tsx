@@ -38,6 +38,7 @@ export interface TypedEntry {
 }
 
 type DayViewMode = 'planned' | 'logged';
+type PlanActionType = 'in-progress' | 'complete';
 
 // Re-export StagedEntry from popover component for backward compatibility
 export type { StagedEntry } from './UnscheduledTasksPopover';
@@ -321,16 +322,19 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Schedule modal state for unscheduled tasks
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleTask, setScheduleTask] = useState<{ task: Task; date: string } | null>(null);
-  const [textPlanModal, setTextPlanModal] = useState<{
+  const [planActionModal, setPlanActionModal] = useState<{
     date: string;
     planId: string;
     text: string;
+    entryKind: 'task' | 'text';
+    taskId?: string;
+    listType?: ListType;
     source: { kind: 'hour'; hour: string } | { kind: 'range'; start: string; end: string };
     x: number;
     y: number;
   } | null>(null);
-  const [completingTextPlan, setCompletingTextPlan] = useState(false);
-  const closeTextPlanModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [planActionInFlight, setPlanActionInFlight] = useState<PlanActionType | null>(null);
+  const closePlanActionModalTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Toggle popover expansion for a specific date
   const togglePopover = useCallback((date: string) => {
@@ -515,73 +519,77 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     setShowScheduleModal(true);
   }, []);
 
-  const clearTextPlanModalCloseTimer = useCallback(() => {
-    if (closeTextPlanModalTimerRef.current) {
-      clearTimeout(closeTextPlanModalTimerRef.current);
-      closeTextPlanModalTimerRef.current = null;
+  const clearPlanActionModalCloseTimer = useCallback(() => {
+    if (closePlanActionModalTimerRef.current) {
+      clearTimeout(closePlanActionModalTimerRef.current);
+      closePlanActionModalTimerRef.current = null;
     }
   }, []);
 
-  const closeTextPlanModal = useCallback(() => {
-    clearTextPlanModalCloseTimer();
-    setTextPlanModal(null);
-  }, [clearTextPlanModalCloseTimer]);
+  const closePlanActionModal = useCallback(() => {
+    clearPlanActionModalCloseTimer();
+    setPlanActionModal(null);
+  }, [clearPlanActionModalCloseTimer]);
 
-  const scheduleCloseTextPlanModal = useCallback((delayMs: number = 140) => {
-    clearTextPlanModalCloseTimer();
-    closeTextPlanModalTimerRef.current = setTimeout(() => {
-      setTextPlanModal(null);
-      closeTextPlanModalTimerRef.current = null;
+  const scheduleClosePlanActionModal = useCallback((delayMs: number = 140) => {
+    clearPlanActionModalCloseTimer();
+    closePlanActionModalTimerRef.current = setTimeout(() => {
+      setPlanActionModal(null);
+      closePlanActionModalTimerRef.current = null;
     }, delayMs);
-  }, [clearTextPlanModalCloseTimer]);
+  }, [clearPlanActionModalCloseTimer]);
 
-  const openTextPlanModal = useCallback((
+  const openPlanActionModal = useCallback((
     eventTarget: HTMLElement,
     payload: {
       date: string;
       planId: string;
       text: string;
+      entryKind: 'task' | 'text';
+      taskId?: string;
+      listType?: ListType;
       source: { kind: 'hour'; hour: string } | { kind: 'range'; start: string; end: string };
     }
   ) => {
-    clearTextPlanModalCloseTimer();
+    clearPlanActionModalCloseTimer();
     const rect = eventTarget.getBoundingClientRect();
-    setTextPlanModal({
+    setPlanActionModal({
       ...payload,
       x: rect.left + rect.width / 2,
       y: rect.top - 8,
     });
-  }, [clearTextPlanModalCloseTimer]);
+  }, [clearPlanActionModalCloseTimer]);
 
-  const handleCompleteTextPlan = useCallback(async () => {
-    if (!textPlanModal || completingTextPlan) {
+  const handlePlanAction = useCallback(async (action: PlanActionType) => {
+    if (!planActionModal || planActionInFlight) {
       return;
     }
 
     try {
-      setCompletingTextPlan(true);
-      const response = await fetch('/api/journal/complete-text-plan', {
+      setPlanActionInFlight(action);
+      const response = await fetch('/api/journal/plan-action', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          date: textPlanModal.date,
-          planId: textPlanModal.planId,
-          source: textPlanModal.source,
+          date: planActionModal.date,
+          planId: planActionModal.planId,
+          source: planActionModal.source,
+          action,
         }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) {
         return;
       }
-      closeTextPlanModal();
+      closePlanActionModal();
       fetchWeekData();
       refreshTasks();
     } catch (error) {
-      console.error('Failed to complete text plan:', error);
+      console.error('Failed to apply plan action:', error);
     } finally {
-      setCompletingTextPlan(false);
+      setPlanActionInFlight(null);
     }
-  }, [textPlanModal, completingTextPlan, closeTextPlanModal, fetchWeekData, refreshTasks]);
+  }, [planActionModal, planActionInFlight, closePlanActionModal, fetchWeekData, refreshTasks]);
 
   // Initial fetch on mount
   useEffect(() => {
@@ -604,14 +612,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
 
   useEffect(() => {
     return () => {
-      if (closeTextPlanModalTimerRef.current) {
-        clearTimeout(closeTextPlanModalTimerRef.current);
+      if (closePlanActionModalTimerRef.current) {
+        clearTimeout(closePlanActionModalTimerRef.current);
       }
     };
   }, []);
 
   useEffect(() => {
-    if (!textPlanModal) {
+    if (!planActionModal) {
       return;
     }
 
@@ -620,15 +628,15 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       if (!(target instanceof Element)) {
         return;
       }
-      if (target.closest('[data-text-plan-modal="true"]') || target.closest('[data-text-plan-trigger="true"]')) {
+      if (target.closest('[data-plan-action-modal="true"]') || target.closest('[data-plan-action-trigger="true"]')) {
         return;
       }
-      closeTextPlanModal();
+      closePlanActionModal();
     };
 
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        closeTextPlanModal();
+        closePlanActionModal();
       }
     };
 
@@ -640,7 +648,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
       document.removeEventListener('touchstart', handleOutsideClick);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [textPlanModal, closeTextPlanModal]);
+  }, [planActionModal, closePlanActionModal]);
 
   // Notify parent when data changes
   useEffect(() => {
@@ -943,19 +951,17 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     className="space-y-2 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none"
                   >
                     {/* Scheduled entries */}
-                    {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, planStatus, completed, isRange, startHour, endHour }, index) => {
+                    {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, listType, planStatus, completed, isRange, startHour, endHour }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
                       const isCompleted = isTask
                         ? (completed === true || planStatus === 'completed')
                         : entryMode === 'planned' && planStatus === 'completed';
                       const isMissedPlan = entryMode === 'planned' && planStatus === 'missed';
                       const isRescheduledPlan = entryMode === 'planned' && planStatus === 'rescheduled';
-                      const isCompletableTextPlan =
+                      const isActionablePlanEntry =
                         activeMode === 'planned' &&
-                        entryKind === 'text' &&
                         entryMode === 'planned' &&
-                        Boolean(planId) &&
-                        (planStatus === 'active' || planStatus === 'missed' || planStatus === undefined);
+                        Boolean(planId);
                       const textPlanSource = isRange && startHour && endHour
                         ? { kind: 'range' as const, start: startHour, end: endHour }
                         : { kind: 'hour' as const, hour };
@@ -987,43 +993,55 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                             {hour}:
                           </span>{' '}
                           <span
-                            data-text-plan-trigger={isCompletableTextPlan ? 'true' : undefined}
-                            role={isCompletableTextPlan ? 'button' : undefined}
-                            tabIndex={isCompletableTextPlan ? 0 : undefined}
-                            onMouseEnter={isCompletableTextPlan && planId ? (event) => {
-                              openTextPlanModal(event.currentTarget, {
+                            data-plan-action-trigger={isActionablePlanEntry ? 'true' : undefined}
+                            role={isActionablePlanEntry ? 'button' : undefined}
+                            tabIndex={isActionablePlanEntry ? 0 : undefined}
+                            onMouseEnter={isActionablePlanEntry && planId ? (event) => {
+                              openPlanActionModal(event.currentTarget, {
                                 date: dayInfo.date,
                                 planId,
                                 text,
+                                entryKind,
+                                taskId,
+                                listType,
                                 source: textPlanSource,
                               });
                             } : undefined}
-                            onMouseLeave={isCompletableTextPlan ? () => scheduleCloseTextPlanModal() : undefined}
-                            onFocus={isCompletableTextPlan && planId ? (event) => {
-                              openTextPlanModal(event.currentTarget, {
+                            onMouseLeave={isActionablePlanEntry ? () => scheduleClosePlanActionModal() : undefined}
+                            onFocus={isActionablePlanEntry && planId ? (event) => {
+                              openPlanActionModal(event.currentTarget, {
                                 date: dayInfo.date,
                                 planId,
                                 text,
+                                entryKind,
+                                taskId,
+                                listType,
                                 source: textPlanSource,
                               });
                             } : undefined}
-                            onBlur={isCompletableTextPlan ? () => scheduleCloseTextPlanModal() : undefined}
-                            onClick={isCompletableTextPlan && planId ? (event) => {
+                            onBlur={isActionablePlanEntry ? () => scheduleClosePlanActionModal() : undefined}
+                            onClick={isActionablePlanEntry && planId ? (event) => {
                               event.stopPropagation();
-                              openTextPlanModal(event.currentTarget, {
+                              openPlanActionModal(event.currentTarget, {
                                 date: dayInfo.date,
                                 planId,
                                 text,
+                                entryKind,
+                                taskId,
+                                listType,
                                 source: textPlanSource,
                               });
                             } : undefined}
-                            onKeyDown={isCompletableTextPlan && planId ? (event) => {
+                            onKeyDown={isActionablePlanEntry && planId ? (event) => {
                               if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
-                                openTextPlanModal(event.currentTarget, {
+                                openPlanActionModal(event.currentTarget, {
                                   date: dayInfo.date,
                                   planId,
                                   text,
+                                  entryKind,
+                                  taskId,
+                                  listType,
                                   source: textPlanSource,
                                 });
                               }
@@ -1038,7 +1056,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                               : entryMode === 'planned' 
                                 ? 'text-teal-700 dark:text-teal-300' 
                                 : 'text-gray-700 dark:text-gray-300'
-                          } ${isCompletableTextPlan ? 'cursor-pointer hover:underline underline-offset-2 focus:outline-none focus:ring-1 focus:ring-teal-400 rounded-sm' : ''}`}>
+                          } ${isActionablePlanEntry ? 'cursor-pointer hover:underline underline-offset-2 focus:outline-none focus:ring-1 focus:ring-teal-400 rounded-sm' : ''}`}>
                             {text}
                           </span>
                           {suffixLabel && (
@@ -1069,41 +1087,49 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
         })}
       </div>
 
-      {textPlanModal && (
+      {planActionModal && (
         <div
-          data-text-plan-modal="true"
+          data-plan-action-modal="true"
           className="fixed z-50 w-64 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 shadow-lg"
           style={{
-            left: `${textPlanModal.x}px`,
-            top: `${textPlanModal.y}px`,
+            left: `${planActionModal.x}px`,
+            top: `${planActionModal.y}px`,
             transform: 'translate(-50%, -100%)',
           }}
-          onMouseEnter={clearTextPlanModalCloseTimer}
-          onMouseLeave={() => scheduleCloseTextPlanModal()}
+          onMouseEnter={clearPlanActionModalCloseTimer}
+          onMouseLeave={() => scheduleClosePlanActionModal()}
         >
           <p className="text-xs text-gray-500 dark:text-gray-400 truncate">
-            {textPlanModal.source.kind === 'hour'
-              ? `${textPlanModal.source.hour} plan`
-              : `${textPlanModal.source.start}-${textPlanModal.source.end} plan`}
+            {planActionModal.source.kind === 'hour'
+              ? `${planActionModal.source.hour} plan`
+              : `${planActionModal.source.start}-${planActionModal.source.end} plan`}
           </p>
           <p className="mt-1 text-sm text-gray-700 dark:text-gray-200 line-clamp-2">
-            {textPlanModal.text}
+            {planActionModal.text}
           </p>
           <div className="mt-3 flex items-center justify-end gap-2">
             <button
               type="button"
-              onClick={closeTextPlanModal}
+              onClick={closePlanActionModal}
               className="px-2 py-1 text-xs rounded text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
             >
               Close
             </button>
             <button
               type="button"
-              onClick={handleCompleteTextPlan}
-              disabled={completingTextPlan}
+              onClick={() => handlePlanAction('in-progress')}
+              disabled={planActionInFlight !== null}
+              className="px-2.5 py-1 text-xs rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+            >
+              {planActionInFlight === 'in-progress' ? 'Saving...' : 'In Progress'}
+            </button>
+            <button
+              type="button"
+              onClick={() => handlePlanAction('complete')}
+              disabled={planActionInFlight !== null}
               className="px-2.5 py-1 text-xs rounded bg-green-600 text-white hover:bg-green-700 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
             >
-              {completingTextPlan ? 'Saving...' : 'Mark Complete'}
+              {planActionInFlight === 'complete' ? 'Saving...' : 'Mark Complete'}
             </button>
           </div>
         </div>

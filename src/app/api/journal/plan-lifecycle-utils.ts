@@ -69,6 +69,24 @@ export type TextPlanSource =
   | { kind: 'hour'; hour: string }
   | { kind: 'range'; start: string; end: string };
 
+export type PlanAction = 'in-progress' | 'complete';
+
+export type PlanActionResult =
+  | {
+      status: 'applied';
+      loggedCreated: boolean;
+      entryType: 'task' | 'text';
+      planStatus: 'completed';
+      task?: {
+        taskId: string;
+        listType: TaskJournalEntry['listType'];
+      };
+    }
+  | {
+      status: 'not-found';
+      loggedCreated: false;
+    };
+
 export type CompleteTextPlanResult =
   | { status: 'completed'; loggedCreated: boolean }
   | { status: 'not-found' | 'already-completed' | 'not-completable'; loggedCreated: false };
@@ -559,6 +577,178 @@ export function completeTextPlanInJournal(
   }
 
   return { status: 'completed', loggedCreated };
+}
+
+export function applyPlanActionInJournal(
+  journal: DayJournalWithRanges,
+  dateIso: string,
+  planId: string,
+  source: TextPlanSource,
+  _action: PlanAction,
+  nowIso: string = new Date().toISOString()
+): PlanActionResult {
+  const target = getAllPlannedRefs(journal).find((ref) => {
+    if (ref.entry.planId !== planId) {
+      return false;
+    }
+
+    if (source.kind === 'hour') {
+      return ref.kind === 'hour' && ref.hour === source.hour;
+    }
+
+    return ref.kind === 'range' && ref.entry.start === source.start && ref.entry.end === source.end;
+  });
+
+  if (!target) {
+    return { status: 'not-found', loggedCreated: false };
+  }
+
+  const logRef: PlanLogRef = source.kind === 'hour'
+    ? { date: dateIso, hour: source.hour }
+    : { date: dateIso, range: { start: source.start, end: source.end } };
+
+  let loggedCreated = false;
+
+  if (target.entryType === 'text') {
+    const normalized = normalizePlannedEntry(target.entry, nowIso);
+
+    const nextPlanned: TextJournalEntry | TextJournalRangeEntry = target.kind === 'hour'
+      ? {
+          ...(normalized as TextJournalEntry),
+          planStatus: 'completed',
+          planUpdatedAt: nowIso,
+          completedByLogRef: logRef,
+        }
+      : {
+          ...(normalized as TextJournalRangeEntry),
+          planStatus: 'completed',
+          planUpdatedAt: nowIso,
+          completedByLogRef: logRef,
+        };
+
+    setPlanRefEntry(journal, target, nextPlanned);
+
+    if (target.kind === 'hour') {
+      const slot = journal[target.hour];
+      const entries = isJournalEntryArray(slot) ? slot : slot ? [slot] : [];
+      const exists = entries.some((entry) =>
+        isTextJournalEntry(entry) &&
+        entry.entryMode === 'logged' &&
+        entry.text === (normalized as TextJournalEntry).text &&
+        samePlanLogRef(entry.completedByLogRef, logRef)
+      );
+
+      if (!exists) {
+        appendEntryToHour(journal, target.hour, {
+          text: (normalized as TextJournalEntry).text,
+          entryMode: 'logged',
+          completedByLogRef: logRef,
+        });
+        loggedCreated = true;
+      }
+    } else {
+      const ranges = journal.ranges ?? [];
+      const exists = ranges.some((entry) =>
+        isTextJournalRangeEntry(entry) &&
+        entry.entryMode === 'logged' &&
+        entry.start === target.entry.start &&
+        entry.end === target.entry.end &&
+        entry.text === (normalized as TextJournalRangeEntry).text &&
+        samePlanLogRef(entry.completedByLogRef, logRef)
+      );
+
+      if (!exists) {
+        ranges.push({
+          start: target.entry.start,
+          end: target.entry.end,
+          text: (normalized as TextJournalRangeEntry).text,
+          entryMode: 'logged',
+          completedByLogRef: logRef,
+        });
+        journal.ranges = ranges;
+        loggedCreated = true;
+      }
+    }
+
+    return {
+      status: 'applied',
+      loggedCreated,
+      entryType: 'text',
+      planStatus: 'completed',
+    };
+  }
+
+  const normalizedTask = normalizePlannedTaskEntry(target.entry, nowIso);
+  const nextTaskPlanned: TaskJournalEntry | TaskJournalRangeEntry = target.kind === 'hour'
+    ? {
+        ...(normalizedTask as TaskJournalEntry),
+        planStatus: 'completed',
+        planUpdatedAt: nowIso,
+        completedByLogRef: logRef,
+      }
+    : {
+        ...(normalizedTask as TaskJournalRangeEntry),
+        planStatus: 'completed',
+        planUpdatedAt: nowIso,
+        completedByLogRef: logRef,
+      };
+
+  setPlanRefEntry(journal, target, nextTaskPlanned);
+
+  if (target.kind === 'hour') {
+    const slot = journal[target.hour];
+    const entries = isJournalEntryArray(slot) ? slot : slot ? [slot] : [];
+    const exists = entries.some((entry) =>
+      isTaskJournalEntry(entry) &&
+      entry.entryMode === 'logged' &&
+      entry.taskId === normalizedTask.taskId &&
+      samePlanLogRef(entry.completedByLogRef, logRef)
+    );
+
+    if (!exists) {
+      appendEntryToHour(journal, target.hour, {
+        taskId: normalizedTask.taskId,
+        listType: normalizedTask.listType,
+        entryMode: 'logged',
+        completedByLogRef: logRef,
+      });
+      loggedCreated = true;
+    }
+  } else {
+    const ranges = journal.ranges ?? [];
+    const exists = ranges.some((entry) =>
+      isTaskJournalRangeEntry(entry) &&
+      entry.entryMode === 'logged' &&
+      entry.start === target.entry.start &&
+      entry.end === target.entry.end &&
+      entry.taskId === normalizedTask.taskId &&
+      samePlanLogRef(entry.completedByLogRef, logRef)
+    );
+
+    if (!exists) {
+      ranges.push({
+        start: target.entry.start,
+        end: target.entry.end,
+        taskId: normalizedTask.taskId,
+        listType: normalizedTask.listType,
+        entryMode: 'logged',
+        completedByLogRef: logRef,
+      });
+      journal.ranges = ranges;
+      loggedCreated = true;
+    }
+  }
+
+  return {
+    status: 'applied',
+    loggedCreated,
+    entryType: 'task',
+    planStatus: 'completed',
+    task: {
+      taskId: normalizedTask.taskId,
+      listType: normalizedTask.listType,
+    },
+  };
 }
 
 function appendTaskEntryToHour(journal: DayJournalWithRanges, hour: string, entry: TaskJournalEntry): void {
