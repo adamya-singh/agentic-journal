@@ -25,6 +25,7 @@ import {
   readGeneralTasks,
   taskFromCompletionSnapshot,
 } from '../../tasks/today/today-store-utils';
+import { syncComputedTodayTasksToJournalStaged } from '../../tasks/today/staged-sync-utils';
 
 // Path to the journal directory (relative to project root)
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -390,6 +391,7 @@ export async function POST(request: NextRequest) {
       // Return resolved journals with task details
       const resolvedJournals: Record<string, ResolvedDayJournalWithRanges | null> = {};
       for (const date of dates) {
+        syncComputedTodayTasksToJournalStaged(date, undefined, { createJournalIfMissing: false });
         const journal = readJournalFile(date);
         if (journal) {
           if (markMissedPlansForDate(journal, date, new Date())) {
@@ -410,6 +412,7 @@ export async function POST(request: NextRequest) {
       // Return raw journals
       const journals: Record<string, DayJournalWithRangesAndStaged | null> = {};
       for (const date of dates) {
+        syncComputedTodayTasksToJournalStaged(date, undefined, { createJournalIfMissing: false });
         const journal = readJournalFile(date);
         if (journal && markMissedPlansForDate(journal, date, new Date())) {
           writeJournalFile(date, journal);

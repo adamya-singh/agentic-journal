@@ -117,7 +117,13 @@ function hourTo24(hour: string): number {
 function toDateAtHour(dateIso: string, hour: string): Date {
   const [year, month, day] = dateIso.split('-').map((value) => Number.parseInt(value, 10));
   const hours24 = hourTo24(hour);
-  return new Date(year, month - 1, day, Math.max(0, hours24), 0, 0, 0);
+  const base = new Date(year, month - 1, day, Math.max(0, hours24), 0, 0, 0);
+  const hourIndex = getHourIndex(hour);
+  const overnightStartIndex = getHourIndex('12am');
+  if (hourIndex >= 0 && overnightStartIndex >= 0 && hourIndex >= overnightStartIndex) {
+    base.setDate(base.getDate() + 1);
+  }
+  return base;
 }
 
 function getHourIndex(hour: string): number {
