@@ -16,6 +16,7 @@ import {
   isTaskJournalRangeEntry,
   isJournalEntryArray,
 } from '@/lib/types';
+import { formatTaskTextWithProjects } from '@/lib/projects';
 import { DayJournalWithRanges, markMissedPlansForDate } from '../plan-lifecycle-utils';
 import {
   ensureCompletedIndexForTask,
@@ -146,7 +147,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
     if (task) {
       return {
         hour,
-        text: task.text,
+        text: formatTaskTextWithProjects(task),
         type: 'task',
         entryMode: entry.entryMode,
         planId: entry.planId,
@@ -223,7 +224,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
       return {
         start: entry.start,
         end: entry.end,
-        text: task.text,
+        text: formatTaskTextWithProjects(task),
         type: 'task',
         entryMode: entry.entryMode,
         planId: entry.planId,
@@ -278,7 +279,7 @@ function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStage
   const task = findTaskById(entry.taskId, entry.listType, date);
   if (task) {
     return {
-      text: task.text,
+      text: formatTaskTextWithProjects(task),
       taskId: entry.taskId,
       listType: entry.listType,
       completed: task.completed,

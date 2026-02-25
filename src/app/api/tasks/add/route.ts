@@ -4,6 +4,7 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { handleDueDateSetup } from '../due-date-utils';
 import { Task, TasksData, ListType } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
@@ -41,17 +42,18 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/add
  * Adds a new task to the list at the specified position (or appends to end if no position given)
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, isDaily?: boolean }
+ * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, isDaily?: boolean, projects?: string[] }
  * - task: The task text to add
  * - position: Optional index where to insert the task (0 = highest priority)
  * - listType: Which task list to add to (defaults to 'have-to-do')
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
  * - isDaily: Optional flag to mark task as recurring daily
+ * - projects: Optional list of project slugs/labels (normalized to kebab-case slugs)
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate, isDaily } = body;
+    const { task, position, listType = 'have-to-do', dueDate, isDaily, projects } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -76,6 +78,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (projects !== undefined && !Array.isArray(projects)) {
+      return NextResponse.json(
+        { success: false, error: 'projects must be an array of strings when provided' },
+        { status: 400 }
+      );
+    }
+
     // Build task object with generated UUID
     const newTask: Task = { 
       id: randomUUID(),
@@ -86,6 +95,10 @@ export async function POST(request: NextRequest) {
     }
     if (isDaily === true) {
       newTask.isDaily = true;
+    }
+    const normalizedProjects = normalizeProjectList(projects);
+    if (normalizedProjects.length > 0) {
+      newTask.projects = normalizedProjects;
     }
 
     // Read current tasks
@@ -136,6 +149,7 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'Task added successfully',
       taskId: newTask.id,
+      task: newTask,
       taskCount: data.tasks.length,
       insertedAt: typeof position === 'number' ? position : data.tasks.length - 1,
     });

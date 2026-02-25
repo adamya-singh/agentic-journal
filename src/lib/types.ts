@@ -7,6 +7,7 @@ export type ListType = 'have-to-do' | 'want-to-do';
 export interface Task {
   id: string;
   text: string;
+  projects?: string[];
   dueDate?: string;
   completed?: boolean;
   isDaily?: boolean;

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Task, ListType } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 
 type ModalPhase = 'editing' | 'saving' | 'complete' | 'error';
 
@@ -12,15 +13,26 @@ interface EditTaskModalProps {
   onResortRequested: (updatedTask: Task, listType: ListType) => void;
   task: Task | null;
   listType: ListType;
+  existingProjectSuggestions?: string[];
 }
 
 type SaveMode = 'save' | 'resort';
 
-export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequested, task, listType }: EditTaskModalProps) {
+export function EditTaskModal({
+  isOpen,
+  onClose,
+  onTaskUpdated,
+  onResortRequested,
+  task,
+  listType,
+  existingProjectSuggestions = [],
+}: EditTaskModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('editing');
   const [taskText, setTaskText] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [isDaily, setIsDaily] = useState(false);
+  const [projects, setProjects] = useState<string[]>([]);
+  const [projectInput, setProjectInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
   // Reset and populate state when modal opens or task changes
@@ -30,9 +42,31 @@ export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequeste
       setTaskText(task.text || '');
       setDueDate(task.dueDate || '');
       setIsDaily(task.isDaily || false);
+      setProjects(normalizeProjectList(task.projects));
+      setProjectInput('');
       setErrorMessage('');
     }
   }, [isOpen, task]);
+
+  const handleAddProject = () => {
+    const normalized = normalizeProjectList([projectInput]);
+    if (normalized.length === 0) {
+      return;
+    }
+
+    const project = normalized[0];
+    setProjects((current) => {
+      if (current.includes(project)) {
+        return current;
+      }
+      return [...current, project].sort((a, b) => a.localeCompare(b));
+    });
+    setProjectInput('');
+  };
+
+  const handleRemoveProject = (project: string) => {
+    setProjects((current) => current.filter((value) => value !== project));
+  };
 
   const handleSave = async (mode: SaveMode = 'save') => {
     if (!task || !taskText.trim()) return;
@@ -48,6 +82,7 @@ export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequeste
           newText: taskText.trim(),
           dueDate: dueDate || '',
           isDaily: isDaily,
+          projects,
           listType,
         }),
       });
@@ -60,6 +95,7 @@ export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequeste
           text: taskText.trim(),
           ...(dueDate ? { dueDate } : {}),
           ...(isDaily ? { isDaily: true } : {}),
+          ...(projects.length > 0 ? { projects } : {}),
         };
 
         if (mode === 'resort') {
@@ -147,7 +183,7 @@ export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequeste
             </div>
             
             {/* Daily recurring checkbox */}
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="flex items-center gap-3 cursor-pointer group">
                 <input
                   type="checkbox"
@@ -167,6 +203,66 @@ export function EditTaskModal({ isOpen, onClose, onTaskUpdated, onResortRequeste
               <p className="mt-1 ml-8 text-xs text-gray-400 dark:text-gray-500">
                 Automatically shows up every day
               </p>
+            </div>
+
+            {/* Projects */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                Projects
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={projectInput}
+                  onChange={(e) => setProjectInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      handleAddProject();
+                    }
+                  }}
+                  placeholder="Add project"
+                  list="edit-task-project-suggestions"
+                  className={`flex-1 px-4 py-2.5 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-${accentColor}-500 focus:border-transparent transition-all placeholder-gray-400 dark:placeholder-gray-500`}
+                />
+                <button
+                  onClick={handleAddProject}
+                  type="button"
+                  className="px-4 py-2.5 rounded-xl font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+              {existingProjectSuggestions.length > 0 && (
+                <datalist id="edit-task-project-suggestions">
+                  {existingProjectSuggestions.map((project) => (
+                    <option key={project} value={project} />
+                  ))}
+                </datalist>
+              )}
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Press Enter or comma to add. Projects are stored as kebab-case.
+              </p>
+              {projects.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {projects.map((project) => (
+                    <span
+                      key={project}
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300"
+                    >
+                      ({project})
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveProject(project)}
+                        className="text-blue-500 dark:text-blue-300 hover:text-red-500 dark:hover:text-red-300"
+                        title="Remove project"
+                      >
+                        x
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             
             {/* Action buttons */}

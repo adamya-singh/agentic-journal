@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import type { Task, ListType } from './TaskLists';
+import { formatTaskTextWithProjects } from '@/lib/projects';
 
 // Valid hours matching the API
 const VALID_HOURS = [
@@ -138,7 +139,7 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
             
             {/* Task Preview */}
             <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-4 mb-6 border border-gray-200 dark:border-gray-600">
-              <p className="text-gray-700 dark:text-gray-200 font-medium">{task.text}</p>
+              <p className="text-gray-700 dark:text-gray-200 font-medium">{formatTaskTextWithProjects(task)}</p>
               {task.dueDate && (
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Due: {task.dueDate}</p>
               )}

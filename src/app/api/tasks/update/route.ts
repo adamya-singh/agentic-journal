@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { handleDueDateSetup } from '../due-date-utils';
-import { Task, TasksData, ListType } from '@/lib/types';
+import { TasksData, ListType } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
@@ -40,12 +41,13 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/update
  * Updates a task's text, dueDate, and/or isDaily flag
  * 
- * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, isDaily?: boolean, listType?: 'have-to-do' | 'want-to-do' }
+ * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, isDaily?: boolean, projects?: string[], listType?: 'have-to-do' | 'want-to-do' }
  * - taskId: The unique ID of the task to update (preferred)
  * - oldText: Legacy text-based lookup (fallback if taskId not provided)
  * - newText: The new text for the task (optional)
  * - dueDate: The new due date in ISO format, or empty string to remove (optional)
  * - isDaily: Whether the task is daily recurring (optional)
+ * - projects: Optional full replacement list of project slugs/labels (normalized to kebab-case slugs)
  * - listType: Which task list to update in (defaults to 'have-to-do')
  * 
  * At least one of taskId or oldText must be provided.
@@ -53,7 +55,7 @@ function writeTasks(data: TasksData, listType: ListType): void {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, oldText, newText, dueDate, isDaily, listType = 'have-to-do' } = body;
+    const { taskId, oldText, newText, dueDate, isDaily, projects, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -70,6 +72,13 @@ export async function POST(request: NextRequest) {
     if (!hasTaskId && !hasOldText) {
       return NextResponse.json(
         { success: false, error: 'Either taskId or oldText parameter is required' },
+        { status: 400 }
+      );
+    }
+
+    if (projects !== undefined && !Array.isArray(projects)) {
+      return NextResponse.json(
+        { success: false, error: 'projects must be an array of strings when provided' },
         { status: 400 }
       );
     }
@@ -120,6 +129,15 @@ export async function POST(request: NextRequest) {
         data.tasks[taskIndex].isDaily = true;
       } else {
         delete data.tasks[taskIndex].isDaily;
+      }
+    }
+
+    if (projects !== undefined) {
+      const normalizedProjects = normalizeProjectList(projects);
+      if (normalizedProjects.length > 0) {
+        data.tasks[taskIndex].projects = normalizedProjects;
+      } else {
+        delete data.tasks[taskIndex].projects;
       }
     }
 

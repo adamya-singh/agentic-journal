@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Task, ListType } from '@/lib/types';
+import { formatTaskTextWithProjects } from '@/lib/projects';
 
 type ModalPhase = 'loading' | 'comparing' | 'reordering' | 'complete' | 'error';
 
@@ -177,7 +178,7 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                   </span>
                   <div className="flex flex-col">
                     <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
-                      {task.text}
+                      {formatTaskTextWithProjects(task)}
                       {task.isDaily && (
                         <span className={`ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${accentClass === 'teal' ? 'bg-teal-100 dark:bg-teal-900/50 text-teal-700 dark:text-teal-300' : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'}`}>
                           Daily
@@ -203,7 +204,10 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                   </span>
                   <div className="flex flex-col">
                     <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
-                      {getCurrentComparisonTask()?.text}
+                      {(() => {
+                        const comparisonTask = getCurrentComparisonTask();
+                        return comparisonTask ? formatTaskTextWithProjects(comparisonTask) : '';
+                      })()}
                     </span>
                     {getCurrentComparisonTask()?.dueDate && (
                       <span className="text-gray-500 dark:text-gray-400 text-sm">Due: {getCurrentComparisonTask()?.dueDate}</span>

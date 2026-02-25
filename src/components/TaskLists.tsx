@@ -1,12 +1,14 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import { Play, CheckCircle, Clock, Pencil } from 'lucide-react';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskResortModal } from './TaskResortModal';
+import { TaskTextWithProjectBadges } from './TaskTextWithProjectBadges';
 import { Task, ListType } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 import { useRefresh } from '@/lib/RefreshContext';
 
 // Re-export for backward compatibility
@@ -226,7 +228,7 @@ function TaskList({
           onClick={() => onTaskClick?.(task)}
         >
           <span className="text-gray-400 dark:text-gray-500 mr-2">{index + 1}.</span>
-          <span>{task.text}</span>
+          <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
           {task.isDaily && (
             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300" title="Daily recurring task">
               <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -407,7 +409,11 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                         <CheckCircle className="h-5 w-5" />
                       </button>
                     )}
-                    <span className={task.completed ? 'line-through' : ''}>{task.text}</span>
+                    <TaskTextWithProjectBadges
+                      text={task.text}
+                      projects={task.projects}
+                      textClassName={task.completed ? 'line-through' : undefined}
+                    />
                     {task.isDaily && (
                       <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
                         <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -844,6 +850,10 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
 
   const displayedHaveToDo = getDisplayedTasks(haveToDo, haveSortMode);
   const displayedWantToDo = getDisplayedTasks(wantToDo, wantSortMode);
+  const projectSuggestions = useMemo(() => {
+    const values = [...haveToDo, ...wantToDo].flatMap((task) => normalizeProjectList(task.projects));
+    return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
+  }, [haveToDo, wantToDo]);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
@@ -928,6 +938,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         onClose={() => setShowTaskModal(false)}
         onTaskAdded={fetchGeneralTasks}
         listType={activeListType}
+        existingProjectSuggestions={projectSuggestions}
       />
 
       {/* Add to Plan Modal */}
@@ -949,7 +960,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
               Are you sure you want to permanently delete this task?
             </p>
             <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
-              <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">{taskToDelete.task.text}</p>
+              <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">
+                <TaskTextWithProjectBadges text={taskToDelete.task.text} projects={taskToDelete.task.projects} />
+              </p>
               {taskToDelete.task.dueDate && (
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Due: {taskToDelete.task.dueDate}</p>
               )}
@@ -995,6 +1008,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         }}
         task={taskToEdit?.task ?? null}
         listType={taskToEdit?.listType ?? 'have-to-do'}
+        existingProjectSuggestions={projectSuggestions}
       />
 
       <TaskResortModal

@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import Link from 'next/link';
 import { z } from 'zod';
 import {
   useRegisterState,
@@ -41,14 +42,6 @@ function getCurrentTime(): string {
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const hours12 = hours % 12 || 12;
   return `${hours12}:${minutes} ${ampm}`;
-}
-
-/**
- * Generate a temporary UUID for optimistic updates
- * The real ID will be generated server-side
- */
-function generateTempId(): string {
-  return 'temp-' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
 export default function HomePage() {
@@ -117,6 +110,8 @@ export default function HomePage() {
           listType: 'have-to-do' | 'want-to-do';
           position?: number;
           dueDate?: string;
+          isDaily?: boolean;
+          projects?: string[];
         };
 
         // Update React state with the new task
@@ -134,6 +129,8 @@ export default function HomePage() {
             id: task.id,
             text: task.text,
             ...(task.dueDate && { dueDate: task.dueDate }),
+            ...(task.isDaily ? { isDaily: true } : {}),
+            ...(task.projects && task.projects.length > 0 ? { projects: task.projects } : {}),
           };
 
           const currentTasks = [...currentData.generalTasks[key]];
@@ -430,17 +427,18 @@ export default function HomePage() {
       },
       updateTask: {
         name: 'updateTask',
-        description: 'Update an existing task\'s text or due date in a general task list.',
+        description: 'Update an existing task\'s text, due date, or projects in a general task list.',
         argsSchema: z.object({
           oldText: z.string().min(1).describe('The current text of the task to update'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
           newText: z.string().optional().describe('The new text for the task'),
           dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
+          projects: z.array(z.string()).optional().describe('Optional replacement list of projects for this task'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { oldText: string; listType: ListType; newText?: string; dueDate?: string }
+          args: { oldText: string; listType: ListType; newText?: string; dueDate?: string; projects?: string[] }
         ) => {
           if (!currentData) return;
 
@@ -454,6 +452,13 @@ export default function HomePage() {
                   delete updated.dueDate;
                 } else {
                   updated.dueDate = args.dueDate;
+                }
+              }
+              if (args.projects !== undefined) {
+                if (args.projects.length === 0) {
+                  delete updated.projects;
+                } else {
+                  updated.projects = args.projects;
                 }
               }
               return updated;
@@ -478,6 +483,7 @@ export default function HomePage() {
               oldText: args.oldText,
               newText: args.newText,
               dueDate: args.dueDate,
+              projects: args.projects,
               listType: args.listType,
             }),
           });
@@ -568,7 +574,9 @@ export default function HomePage() {
           const taskForToday: Task = { 
             id: sourceTask.id,
             text: sourceTask.text,
+            ...(sourceTask.projects && sourceTask.projects.length > 0 ? { projects: sourceTask.projects } : {}),
             ...(sourceTask.dueDate && { dueDate: sourceTask.dueDate }),
+            ...(sourceTask.isDaily ? { isDaily: true } : {}),
           };
 
           // Optimistically update state
@@ -744,7 +752,7 @@ export default function HomePage() {
         setJournalStatus('error');
         setJournalMessage(data.error || 'Failed to create journal');
       }
-    } catch (error) {
+    } catch {
       setJournalStatus('error');
       setJournalMessage('Failed to connect to server');
     }
@@ -778,6 +786,14 @@ export default function HomePage() {
   const renderContent = () => (
     <div className="relative min-h-screen w-full bg-white dark:bg-gray-900">
       <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
+      <div className="absolute top-4 right-4 z-10">
+        <Link
+          href="/projects"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Projects View
+        </Link>
+      </div>
 
       {/* Week View */}
       <div className="pt-16 pb-4">

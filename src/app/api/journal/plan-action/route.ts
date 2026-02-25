@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ListType, Task } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 import {
   applyPlanActionInJournal,
   DayJournalWithRanges,
@@ -104,6 +105,10 @@ function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletion
 
   if (task.dueDate) {
     snapshot.dueDate = task.dueDate;
+  }
+
+  if (task.projects && task.projects.length > 0) {
+    snapshot.projects = normalizeProjectList(task.projects);
   }
 
   if (task.isDaily) {

@@ -5,7 +5,6 @@ import { vertex } from '@ai-sdk/google-vertex';
 import { Agent } from '@mastra/core/agent';
 import { ALL_TOOLS, TOOL_REGISTRY } from '../tools/toolDefinitions';
 import { generateCategorizedToolDescriptions } from '@cedar-os/backend';
-import { memory } from '../memory';
 
 /**
  * Journal Agent for Cedar-OS + Mastra applications
@@ -51,7 +50,7 @@ Plans are displayed alongside journal entries in the week view (in teal color).
 
 <task_system>
 Tasks are managed through Cedar state and are visible in your context as "taskLists". The state contains:
-- generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - persistent task backlogs with tasks that have id, text, optional dueDate, and optional isDaily flag
+- generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - persistent task backlogs with tasks that have id, text, optional projects array, optional dueDate, and optional isDaily flag
 - todayTasks: Date-specific computed tasks for the current day (derived from generalTasks + due dates + daily tasks + manual today overrides + per-day completion history)
 - currentDate: The current date in ISO format (YYYY-MM-DD)
 
@@ -66,9 +65,9 @@ DAILY TASKS (isDaily: true):
 To READ tasks: Check the taskLists in your additional context - no need to call a tool.
 
 To MODIFY tasks, use these tools:
-- addTask: Add a NEW task to a general list. Returns the taskId which can be used with addTaskToToday. Optionally specify position (0 = highest priority), dueDate, and isDaily (for recurring tasks).
+- addTask: Add a NEW task to a general list. Returns the taskId which can be used with addTaskToToday. Optionally specify position (0 = highest priority), dueDate, isDaily (for recurring tasks), and projects.
 - removeTask: Remove a completed or cancelled task from a general list
-- updateTask: Modify a task's text or due date
+- updateTask: Modify a task's text, due date, or projects
 - reorderTask: Change task priority by moving to a new position
 - addTaskToToday: Add a manual inclusion override for an EXISTING task BY ITS ID so it appears in today's computed list.
 - removeTaskFromToday: Add a manual exclusion override for a task BY ITS ID so it is hidden from today's computed list.

@@ -1,10 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ListType, Task, TasksData } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 
 export interface TaskCompletionSnapshot {
   id: string;
   text: string;
+  projects?: string[];
   dueDate?: string;
   isDaily?: boolean;
   completed: true;
@@ -109,6 +111,15 @@ function toCompletionSnapshot(value: unknown, listType: ListType, fallbackComple
 
   if (typeof value.dueDate === 'string' && value.dueDate.length > 0) {
     snapshot.dueDate = value.dueDate;
+  }
+
+  if (Array.isArray(value.projects)) {
+    const projects = normalizeProjectList(
+      value.projects.filter((project): project is string => typeof project === 'string')
+    );
+    if (projects.length > 0) {
+      snapshot.projects = projects;
+    }
   }
 
   if (value.isDaily === true) {
@@ -558,6 +569,10 @@ export function taskFromCompletionSnapshot(snapshot: TaskCompletionSnapshot): Ta
     text: snapshot.text,
     completed: true,
   };
+
+  if (snapshot.projects && snapshot.projects.length > 0) {
+    task.projects = normalizeProjectList(snapshot.projects);
+  }
 
   if (snapshot.dueDate) {
     task.dueDate = snapshot.dueDate;

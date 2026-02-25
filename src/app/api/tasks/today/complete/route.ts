@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ListType, Task } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 import { computeTodayTasks } from '../today-compute-utils';
 import { DayJournalWithRanges, markMissedPlansForDate } from '../../../journal/plan-lifecycle-utils';
 import {
@@ -50,6 +51,10 @@ function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletion
     snapshot.dueDate = task.dueDate;
   }
 
+  if (task.projects && task.projects.length > 0) {
+    snapshot.projects = normalizeProjectList(task.projects);
+  }
+
   if (task.isDaily) {
     snapshot.isDaily = true;
   }
@@ -62,6 +67,10 @@ function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
     id: snapshot.id,
     text: snapshot.text,
   };
+
+  if (snapshot.projects && snapshot.projects.length > 0) {
+    task.projects = normalizeProjectList(snapshot.projects);
+  }
 
   if (snapshot.dueDate) {
     task.dueDate = snapshot.dueDate;

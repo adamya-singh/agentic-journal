@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Task, ListType } from '@/lib/types';
+import { formatTaskTextWithProjects, normalizeProjectList } from '@/lib/projects';
 
 type ModalPhase = 'entering-task' | 'loading' | 'comparing' | 'inserting' | 'complete' | 'error';
 
@@ -10,13 +11,29 @@ interface PriorityComparisonModalProps {
   onClose: () => void;
   onTaskAdded: () => void;
   listType?: ListType;
+  existingProjectSuggestions?: string[];
 }
 
-export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType = 'have-to-do' }: PriorityComparisonModalProps) {
+function parseProjectsFromInput(value: string): string[] {
+  const parts = value
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return normalizeProjectList(parts);
+}
+
+export function PriorityComparisonModal({
+  isOpen,
+  onClose,
+  onTaskAdded,
+  listType = 'have-to-do',
+  existingProjectSuggestions = [],
+}: PriorityComparisonModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('entering-task');
   const [taskInput, setTaskInput] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [isDaily, setIsDaily] = useState(false);
+  const [projectsInput, setProjectsInput] = useState('');
   const [existingTasks, setExistingTasks] = useState<Task[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   
@@ -33,6 +50,7 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setTaskInput('');
       setDueDate('');
       setIsDaily(false);
+      setProjectsInput('');
       setExistingTasks([]);
       setErrorMessage('');
       setLow(0);
@@ -41,6 +59,42 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
       setMaxComparisons(0);
     }
   }, [isOpen]);
+
+  // Insert task at the determined position
+  const insertTask = useCallback(async (position: number) => {
+    setPhase('inserting');
+    
+    try {
+      const response = await fetch('/api/tasks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          task: taskInput.trim(), 
+          position, 
+          listType,
+          dueDate: dueDate || undefined,
+          isDaily: isDaily || undefined,
+          projects: parseProjectsFromInput(projectsInput),
+        }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setPhase('complete');
+        setTimeout(() => {
+          onTaskAdded();
+          onClose();
+        }, 800);
+      } else {
+        setPhase('error');
+        setErrorMessage(data.error || 'Failed to add task');
+      }
+    } catch {
+      setPhase('error');
+      setErrorMessage('Failed to connect to server');
+    }
+  }, [taskInput, onTaskAdded, onClose, listType, dueDate, isDaily, projectsInput]);
 
   // Fetch existing tasks when entering comparison phase
   // Daily tasks only compare against other daily tasks, regular tasks only against regular tasks
@@ -75,46 +129,11 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
         setComparisonCount(0);
         setPhase('comparing');
       }
-    } catch (error) {
+    } catch {
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, listType, isDaily]);
-
-  // Insert task at the determined position
-  const insertTask = useCallback(async (position: number) => {
-    setPhase('inserting');
-    
-    try {
-      const response = await fetch('/api/tasks/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          task: taskInput.trim(), 
-          position, 
-          listType,
-          dueDate: dueDate || undefined,
-          isDaily: isDaily || undefined,
-        }),
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setPhase('complete');
-        setTimeout(() => {
-          onTaskAdded();
-          onClose();
-        }, 800);
-      } else {
-        setPhase('error');
-        setErrorMessage(data.error || 'Failed to add task');
-      }
-    } catch (error) {
-      setPhase('error');
-      setErrorMessage('Failed to connect to server');
-    }
-  }, [taskInput, onTaskAdded, onClose, listType, dueDate, isDaily]);
+  }, [taskInput, listType, isDaily, insertTask]);
 
   // Handle user's comparison choice
   const handleComparisonChoice = useCallback((newTaskIsMoreImportant: boolean) => {
@@ -204,6 +223,30 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
                 Automatically shows up every day
               </p>
             </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                Projects (optional)
+              </label>
+              <input
+                type="text"
+                value={projectsInput}
+                onChange={(e) => setProjectsInput(e.target.value)}
+                placeholder="agentic-journal, openclaw"
+                list="project-suggestions"
+                className="w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all placeholder-gray-400 dark:placeholder-gray-500"
+              />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Comma-separated. Will be normalized to kebab-case.
+              </p>
+              {existingProjectSuggestions.length > 0 && (
+                <datalist id="project-suggestions">
+                  {existingProjectSuggestions.map((project) => (
+                    <option key={project} value={project} />
+                  ))}
+                </datalist>
+              )}
+            </div>
             
             <div className="flex justify-end gap-3">
               <button
@@ -265,7 +308,10 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
                   </span>
                   <div className="flex flex-col">
                     <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
-                      {taskInput}
+                      {formatTaskTextWithProjects({
+                        text: taskInput,
+                        projects: parseProjectsFromInput(projectsInput),
+                      })}
                       {isDaily && (
                         <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
                           Daily
@@ -290,7 +336,12 @@ export function PriorityComparisonModal({ isOpen, onClose, onTaskAdded, listType
                     #{Math.floor((low + high) / 2) + 1}
                   </span>
                   <div className="flex flex-col">
-                    <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">{getCurrentComparisonTask()?.text}</span>
+                    <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
+                      {(() => {
+                        const comparisonTask = getCurrentComparisonTask();
+                        return comparisonTask ? formatTaskTextWithProjects(comparisonTask) : '';
+                      })()}
+                    </span>
                     {getCurrentComparisonTask()?.dueDate && (
                       <span className="text-gray-500 dark:text-gray-400 text-sm">Due: {getCurrentComparisonTask()?.dueDate}</span>
                     )}

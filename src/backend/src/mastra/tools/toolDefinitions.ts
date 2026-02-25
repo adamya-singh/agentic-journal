@@ -41,6 +41,7 @@ export const AddTaskSchema = z.object({
   position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
   isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s computed today list'),
+  projects: z.array(z.string()).optional().describe('Optional list of projects to tag the task with'),
 });
 
 // Schema for removeTask state setter
@@ -55,6 +56,7 @@ export const UpdateTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
   newText: z.string().optional().describe('The new text for the task'),
   dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
+  projects: z.array(z.string()).optional().describe('Optional replacement list of projects for the task'),
 });
 
 // Schema for reorderTask state setter
@@ -178,7 +180,7 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) appear in each day\'s computed today list and persist after completion.',
+  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) appear in each day\'s computed today list and persist after completion. You can optionally assign one or more projects.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),
@@ -190,16 +192,18 @@ export const addTaskTool = createTool({
       position: z.number().optional(),
       dueDate: z.string().optional(),
       isDaily: z.boolean().optional(),
+      projects: z.array(z.string()).optional(),
     }).optional(),
     message: z.string(),
   }),
   execute: async ({ context }) => {
-    const { text, listType, position, dueDate, isDaily } = context as {
+    const { text, listType, position, dueDate, isDaily, projects } = context as {
       text: string;
       listType: 'have-to-do' | 'want-to-do';
       position?: number;
       dueDate?: string;
       isDaily?: boolean;
+      projects?: string[];
     };
     
     try {
@@ -207,23 +211,33 @@ export const addTaskTool = createTool({
       const response = await fetch('http://localhost:3000/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: text, listType, position, dueDate, isDaily }),
+        body: JSON.stringify({ task: text, listType, position, dueDate, isDaily, projects }),
       });
       
       const result = await response.json();
       
       if (result.success && result.taskId) {
+        const createdTask = result.task as
+          | {
+              id?: string;
+              text?: string;
+              dueDate?: string;
+              isDaily?: boolean;
+              projects?: string[];
+            }
+          | undefined;
         // Return full task data - frontend stream processor will sync React state
         return {
           success: true,
           taskId: result.taskId,
           task: {
-            id: result.taskId,
-            text: text.trim(),
+            id: createdTask?.id ?? result.taskId,
+            text: createdTask?.text ?? text.trim(),
             listType,
             position,
-            dueDate,
-            isDaily,
+            dueDate: createdTask?.dueDate ?? dueDate,
+            isDaily: createdTask?.isDaily ?? isDaily,
+            projects: createdTask?.projects ?? projects,
           },
           message: `Task "${text}" added to ${listType} with ID: ${result.taskId}${isDaily ? ' (daily recurring)' : ''}`,
         };
@@ -259,7 +273,7 @@ export const updateTaskTool = createMastraToolForStateSetter(
   'updateTask',
   UpdateTaskSchema,
   {
-    description: 'Update an existing task\'s text or due date in a general task list.',
+    description: 'Update an existing task\'s text, due date, or projects in a general task list.',
     toolId: 'updateTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
