@@ -123,6 +123,41 @@ npm run dev:next
 npm run dev:mastra
 ```
 
+## Local Raspberry Pi Access (Tailscale First)
+
+If `agentic-journal` is running as a system service on your Raspberry Pi, use Tailscale as the primary access path from your MacBook instead of a Cloudflare SSH tunnel.
+
+### Default Access URL (from MacBook)
+
+```bash
+http://rpi5.taile85e97.ts.net:3000
+```
+
+Fallback equivalent:
+
+```bash
+http://100.95.230.73:3000
+```
+
+### Quick Verification on the Raspberry Pi
+
+```bash
+npm run status:local-access
+```
+
+This checks:
+- `tailscaled` service status
+- `agentic-journal` service status
+- Tailnet IPv4 and MagicDNS name
+
+### Optional Fallback: SSH Tunnel
+
+Keep your existing Cloudflare reverse SSH tunnel command as a backup if Tailscale is unavailable:
+
+```bash
+ssh -N -L 3000:127.0.0.1:3000 rpi5cloudflare
+```
+
 ## Learn More
 
 - [Cedar-OS Documentation](https://docs.cedarcopilot.com/)
