@@ -110,6 +110,8 @@ export default function HomePage() {
           listType: 'have-to-do' | 'want-to-do';
           position?: number;
           dueDate?: string;
+          dueTimeStart?: string;
+          dueTimeEnd?: string;
           isDaily?: boolean;
           projects?: string[];
         };
@@ -129,6 +131,8 @@ export default function HomePage() {
             id: task.id,
             text: task.text,
             ...(task.dueDate && { dueDate: task.dueDate }),
+            ...(task.dueTimeStart && { dueTimeStart: task.dueTimeStart }),
+            ...(task.dueTimeEnd && { dueTimeEnd: task.dueTimeEnd }),
             ...(task.isDaily ? { isDaily: true } : {}),
             ...(task.projects && task.projects.length > 0 ? { projects: task.projects } : {}),
           };
@@ -427,18 +431,28 @@ export default function HomePage() {
       },
       updateTask: {
         name: 'updateTask',
-        description: 'Update an existing task\'s text, due date, or projects in a general task list.',
+        description: 'Update an existing task\'s text, due date/time, or projects in a general task list.',
         argsSchema: z.object({
           oldText: z.string().min(1).describe('The current text of the task to update'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
           newText: z.string().optional().describe('The new text for the task'),
           dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
+          dueTimeStart: z.string().optional().describe('Optional due time start (HH:mm), or empty string to remove due time'),
+          dueTimeEnd: z.string().optional().describe('Optional due time end (HH:mm) for ranges, or empty string for single-time'),
           projects: z.array(z.string()).optional().describe('Optional replacement list of projects for this task'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { oldText: string; listType: ListType; newText?: string; dueDate?: string; projects?: string[] }
+          args: {
+            oldText: string;
+            listType: ListType;
+            newText?: string;
+            dueDate?: string;
+            dueTimeStart?: string;
+            dueTimeEnd?: string;
+            projects?: string[];
+          }
         ) => {
           if (!currentData) return;
 
@@ -450,8 +464,25 @@ export default function HomePage() {
               if (args.dueDate !== undefined) {
                 if (args.dueDate === '') {
                   delete updated.dueDate;
+                  delete updated.dueTimeStart;
+                  delete updated.dueTimeEnd;
                 } else {
                   updated.dueDate = args.dueDate;
+                }
+              }
+              if (args.dueTimeStart !== undefined || args.dueTimeEnd !== undefined) {
+                if (args.dueTimeStart === '') {
+                  delete updated.dueTimeStart;
+                  delete updated.dueTimeEnd;
+                } else {
+                  if (args.dueTimeStart) {
+                    updated.dueTimeStart = args.dueTimeStart;
+                  }
+                  if (args.dueTimeEnd === '') {
+                    delete updated.dueTimeEnd;
+                  } else if (args.dueTimeEnd) {
+                    updated.dueTimeEnd = args.dueTimeEnd;
+                  }
                 }
               }
               if (args.projects !== undefined) {
@@ -483,6 +514,8 @@ export default function HomePage() {
               oldText: args.oldText,
               newText: args.newText,
               dueDate: args.dueDate,
+              dueTimeStart: args.dueTimeStart,
+              dueTimeEnd: args.dueTimeEnd,
               projects: args.projects,
               listType: args.listType,
             }),
@@ -576,6 +609,8 @@ export default function HomePage() {
             text: sourceTask.text,
             ...(sourceTask.projects && sourceTask.projects.length > 0 ? { projects: sourceTask.projects } : {}),
             ...(sourceTask.dueDate && { dueDate: sourceTask.dueDate }),
+            ...(sourceTask.dueTimeStart && { dueTimeStart: sourceTask.dueTimeStart }),
+            ...(sourceTask.dueTimeEnd && { dueTimeEnd: sourceTask.dueTimeEnd }),
             ...(sourceTask.isDaily ? { isDaily: true } : {}),
           };
 

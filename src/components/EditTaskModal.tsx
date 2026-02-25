@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Task, ListType } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
+import { TaskNotesEditor } from './TaskNotesEditor';
 
 type ModalPhase = 'editing' | 'saving' | 'complete' | 'error';
 
@@ -30,8 +31,12 @@ export function EditTaskModal({
   const [phase, setPhase] = useState<ModalPhase>('editing');
   const [taskText, setTaskText] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [dueTimeStart, setDueTimeStart] = useState('');
+  const [dueTimeEnd, setDueTimeEnd] = useState('');
+  const [useDueTimeRange, setUseDueTimeRange] = useState(false);
   const [isDaily, setIsDaily] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
+  const [notesMarkdown, setNotesMarkdown] = useState('');
   const [projectInput, setProjectInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -41,8 +46,12 @@ export function EditTaskModal({
       setPhase('editing');
       setTaskText(task.text || '');
       setDueDate(task.dueDate || '');
+      setDueTimeStart(task.dueTimeStart || '');
+      setDueTimeEnd(task.dueTimeEnd || '');
+      setUseDueTimeRange(Boolean(task.dueTimeEnd));
       setIsDaily(task.isDaily || false);
       setProjects(normalizeProjectList(task.projects));
+      setNotesMarkdown(task.notesMarkdown || '');
       setProjectInput('');
       setErrorMessage('');
     }
@@ -81,8 +90,11 @@ export function EditTaskModal({
           taskId: task.id,
           newText: taskText.trim(),
           dueDate: dueDate || '',
+          dueTimeStart: dueDate ? dueTimeStart : '',
+          dueTimeEnd: dueDate && useDueTimeRange ? dueTimeEnd : '',
           isDaily: isDaily,
           projects,
+          notesMarkdown,
           listType,
         }),
       });
@@ -94,8 +106,11 @@ export function EditTaskModal({
           id: task.id,
           text: taskText.trim(),
           ...(dueDate ? { dueDate } : {}),
+          ...(dueDate && dueTimeStart ? { dueTimeStart } : {}),
+          ...(dueDate && useDueTimeRange && dueTimeEnd ? { dueTimeEnd } : {}),
           ...(isDaily ? { isDaily: true } : {}),
           ...(projects.length > 0 ? { projects } : {}),
+          ...(notesMarkdown.trim() ? { notesMarkdown: notesMarkdown.trim() } : {}),
         };
 
         if (mode === 'resort') {
@@ -122,6 +137,9 @@ export function EditTaskModal({
 
   const handleClearDueDate = () => {
     setDueDate('');
+    setDueTimeStart('');
+    setDueTimeEnd('');
+    setUseDueTimeRange(false);
   };
 
   if (!isOpen) return null;
@@ -180,6 +198,47 @@ export function EditTaskModal({
                   </button>
                 )}
               </div>
+            </div>
+
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300">
+                  Due time (optional)
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={useDueTimeRange}
+                    disabled={!dueDate}
+                    onChange={(e) => {
+                      setUseDueTimeRange(e.target.checked);
+                      if (!e.target.checked) {
+                        setDueTimeEnd('');
+                      }
+                    }}
+                  />
+                  Range
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="time"
+                  value={dueTimeStart}
+                  disabled={!dueDate}
+                  onChange={(e) => setDueTimeStart(e.target.value)}
+                  className={`w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-${accentColor}-500 focus:border-transparent transition-all disabled:opacity-50`}
+                />
+                <input
+                  type="time"
+                  value={dueTimeEnd}
+                  disabled={!dueDate || !useDueTimeRange}
+                  onChange={(e) => setDueTimeEnd(e.target.value)}
+                  className={`w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-${accentColor}-500 focus:border-transparent transition-all disabled:opacity-50`}
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Set a single time or enable range for start-end.
+              </p>
             </div>
             
             {/* Daily recurring checkbox */}
@@ -263,6 +322,20 @@ export function EditTaskModal({
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                Task notes (optional)
+              </label>
+              <TaskNotesEditor
+                value={notesMarkdown}
+                onChange={setNotesMarkdown}
+                placeholder="Add links, checklists, tables, and context for this task"
+              />
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Supports Markdown. Switch to the Markdown tab for direct source editing.
+              </p>
             </div>
             
             {/* Action buttons */}

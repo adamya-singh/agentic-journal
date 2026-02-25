@@ -5,6 +5,9 @@ import { randomUUID } from 'crypto';
 import { handleDueDateSetup } from '../due-date-utils';
 import { Task, TasksData, ListType } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
+import { validateDueTimeRange } from '@/lib/due-time';
+
+const NOTES_MAX_LENGTH = 20000;
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
@@ -42,18 +45,19 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/add
  * Adds a new task to the list at the specified position (or appends to end if no position given)
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, isDaily?: boolean, projects?: string[] }
+ * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string }
  * - task: The task text to add
  * - position: Optional index where to insert the task (0 = highest priority)
  * - listType: Which task list to add to (defaults to 'have-to-do')
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
  * - isDaily: Optional flag to mark task as recurring daily
  * - projects: Optional list of project slugs/labels (normalized to kebab-case slugs)
+ * - notesMarkdown: Optional markdown notes
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate, isDaily, projects } = body;
+    const { task, position, listType = 'have-to-do', dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -85,13 +89,68 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (notesMarkdown !== undefined && typeof notesMarkdown !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'notesMarkdown must be a string when provided' },
+        { status: 400 }
+      );
+    }
+
+    if (dueTimeStart !== undefined && typeof dueTimeStart !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'dueTimeStart must be a string in HH:mm format when provided' },
+        { status: 400 }
+      );
+    }
+    if (dueTimeEnd !== undefined && typeof dueTimeEnd !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'dueTimeEnd must be a string in HH:mm format when provided' },
+        { status: 400 }
+      );
+    }
+
+    const normalizedNotes = typeof notesMarkdown === 'string' ? notesMarkdown.trim() : '';
+    const normalizedDueDate = typeof dueDate === 'string' ? dueDate.trim() : '';
+    const normalizedDueTimeStart = typeof dueTimeStart === 'string' ? dueTimeStart.trim() : '';
+    const normalizedDueTimeEnd = typeof dueTimeEnd === 'string' ? dueTimeEnd.trim() : '';
+    const dueTimeStartValue = normalizedDueTimeStart.length > 0 ? normalizedDueTimeStart : undefined;
+    const dueTimeEndValue = normalizedDueTimeEnd.length > 0 ? normalizedDueTimeEnd : undefined;
+
+    if (!normalizedDueDate && (dueTimeStartValue || dueTimeEndValue)) {
+      return NextResponse.json(
+        { success: false, error: 'dueTimeStart/dueTimeEnd require dueDate' },
+        { status: 400 }
+      );
+    }
+
+    const dueTimeValidation = validateDueTimeRange(dueTimeStartValue, dueTimeEndValue);
+    if (!dueTimeValidation.valid) {
+      return NextResponse.json(
+        { success: false, error: dueTimeValidation.error },
+        { status: 400 }
+      );
+    }
+
+    if (normalizedNotes.length > NOTES_MAX_LENGTH) {
+      return NextResponse.json(
+        { success: false, error: `notesMarkdown cannot exceed ${NOTES_MAX_LENGTH} characters` },
+        { status: 400 }
+      );
+    }
+
     // Build task object with generated UUID
     const newTask: Task = { 
       id: randomUUID(),
       text: trimmedTask 
     };
-    if (dueDate && typeof dueDate === 'string') {
-      newTask.dueDate = dueDate;
+    if (normalizedDueDate) {
+      newTask.dueDate = normalizedDueDate;
+    }
+    if (dueTimeStartValue) {
+      newTask.dueTimeStart = dueTimeStartValue;
+    }
+    if (dueTimeEndValue) {
+      newTask.dueTimeEnd = dueTimeEndValue;
     }
     if (isDaily === true) {
       newTask.isDaily = true;
@@ -99,6 +158,9 @@ export async function POST(request: NextRequest) {
     const normalizedProjects = normalizeProjectList(projects);
     if (normalizedProjects.length > 0) {
       newTask.projects = normalizedProjects;
+    }
+    if (normalizedNotes.length > 0) {
+      newTask.notesMarkdown = normalizedNotes;
     }
 
     // Read current tasks

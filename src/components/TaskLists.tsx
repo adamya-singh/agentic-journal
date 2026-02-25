@@ -1,15 +1,36 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Play, CheckCircle, Clock, Pencil } from 'lucide-react';
+import { Play, CheckCircle, Clock, Pencil, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  PointerSensor,
+  KeyboardSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DraggableAttributes,
+  type DraggableSyntheticListeners,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  sortableKeyboardCoordinates,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskResortModal } from './TaskResortModal';
+import { TaskNotesPreview } from './TaskNotesPreview';
 import { TaskTextWithProjectBadges } from './TaskTextWithProjectBadges';
 import { Task, ListType } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
 import { useRefresh } from '@/lib/RefreshContext';
+import { compareDueTimes, formatDueTimeRangeForDisplay } from '@/lib/due-time';
 
 // Re-export for backward compatibility
 export type { Task, ListType };
@@ -47,6 +68,12 @@ interface TaskListProps {
   onEdit?: (task: Task) => void;
   sortMode?: DueSortMode;
   onToggleSort?: () => void;
+  onReorder?: (params: { taskId: string; newIndex: number; isDaily: boolean }) => Promise<void> | void;
+  dragEnabled?: boolean;
+  dragDisabledReason?: string;
+  reorderError?: string | null;
+  expandedNotesTaskIds: Set<string>;
+  onToggleNotes: (taskId: string) => void;
 }
 
 type DueSortMode = 'off' | 'asc' | 'desc';
@@ -127,6 +154,13 @@ function isIsoDate(value: string | undefined): value is string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value);
 }
 
+function formatTaskDueLabel(task: Task): string | null {
+  if (!task.dueDate) return null;
+  const dueTimeLabel = formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd);
+  if (!dueTimeLabel) return `due: ${task.dueDate}`;
+  return `due: ${task.dueDate} @ ${dueTimeLabel}`;
+}
+
 function getDueSortLabel(mode: DueSortMode): string {
   if (mode === 'asc') return 'Due: ↑';
   if (mode === 'desc') return 'Due: ↓';
@@ -154,6 +188,11 @@ function getDisplayedTasks(tasks: Task[], mode: DueSortMode): Task[] {
       const bDate = b.task.dueDate as string;
       const dateCmp = mode === 'asc' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
       if (dateCmp !== 0) return dateCmp;
+      if (a.task.dueTimeStart && b.task.dueTimeStart) {
+        const rawTimeCmp = compareDueTimes(a.task.dueTimeStart, b.task.dueTimeStart);
+        const timeCmp = mode === 'asc' ? rawTimeCmp : -rawTimeCmp;
+        if (timeCmp !== 0) return timeCmp;
+      }
       return a.index - b.index;
     });
 
@@ -166,6 +205,55 @@ function getDisplayedTasks(tasks: Task[], mode: DueSortMode): Task[] {
     datedCursor += 1;
     return nextDated.task;
   });
+}
+
+function reorderTasksWithinType(tasks: Task[], taskId: string, newIndex: number, isDaily: boolean): Task[] {
+  const matches = tasks.filter((task) => (task.isDaily === true) === isDaily);
+  const currentTypeIndex = matches.findIndex((task) => task.id === taskId);
+  if (currentTypeIndex === -1) return tasks;
+
+  const clampedNewIndex = Math.max(0, Math.min(newIndex, matches.length - 1));
+  if (currentTypeIndex === clampedNewIndex) return tasks;
+
+  const reorderedMatches = arrayMove(matches, currentTypeIndex, clampedNewIndex);
+  let reorderedCursor = 0;
+
+  return tasks.map((task) => {
+    if ((task.isDaily === true) !== isDaily) return task;
+    const nextTask = reorderedMatches[reorderedCursor];
+    reorderedCursor += 1;
+    return nextTask;
+  });
+}
+
+interface SortableTaskItemProps {
+  id: string;
+  disabled: boolean;
+  className: string;
+  style: React.CSSProperties;
+  children: (handle: { attributes: DraggableAttributes; listeners: DraggableSyntheticListeners | undefined }) => React.ReactNode;
+}
+
+function SortableTaskItem({ id, disabled, className, style, children }: SortableTaskItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+    disabled,
+  });
+
+  return (
+    <li
+      ref={setNodeRef}
+      className={`${className} ${isDragging ? 'z-10 shadow-md' : ''}`}
+      style={{
+        ...style,
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.88 : 1,
+      }}
+    >
+      {children({ attributes, listeners })}
+    </li>
+  );
 }
 
 function TaskList({ 
@@ -183,10 +271,28 @@ function TaskList({
   onEdit,
   sortMode = 'off',
   onToggleSort,
+  onReorder,
+  dragEnabled = false,
+  dragDisabledReason,
+  reorderError,
+  expandedNotesTaskIds,
+  onToggleNotes,
 }: TaskListProps) {
   // Separate daily tasks from regular tasks
   const dailyTasks = tasks.filter(task => task.isDaily === true);
   const regularTasks = tasks.filter(task => !task.isDaily);
+  const allTasks = [...dailyTasks, ...regularTasks];
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 6,
+      },
+    }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
 
   const headerContent = (
     <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700 flex items-center justify-between`}>
@@ -214,38 +320,101 @@ function TaskList({
     </div>
   );
 
-  const renderTaskItem = (task: Task, index: number, isLast: boolean, totalCount: number) => {
+  const handleDragEnd = useCallback(
+    async (event: DragEndEvent, isDaily: boolean, sectionTasks: Task[]) => {
+      if (!onReorder || !dragEnabled) return;
+
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      const ids = sectionTasks.map((task) => task.id);
+      const oldIndex = ids.indexOf(String(active.id));
+      const newIndex = ids.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return;
+
+      await onReorder({
+        taskId: String(active.id),
+        newIndex,
+        isDaily,
+      });
+    },
+    [dragEnabled, onReorder]
+  );
+
+  const renderTaskItem = (task: Task, index: number, isLast: boolean, totalCount: number, sortable: boolean) => {
     const isInToday = clickedTasks?.has(task.id);
     const priorityColor = getPriorityTierColor(index, totalCount);
-    return (
-      <li 
-        key={task.id} 
-        className={`text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''}`}
-        style={{ borderLeft: `4px solid ${priorityColor}`, paddingLeft: '8px', marginLeft: '-4px' }}
-      >
-        <span 
-          className="flex-1"
-          onClick={() => onTaskClick?.(task)}
-        >
-          <span className="text-gray-400 dark:text-gray-500 mr-2">{index + 1}.</span>
-          <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
-          {task.isDaily && (
-            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300" title="Daily recurring task">
-              <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-              Daily
-            </span>
+    const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
+    const isNotesExpanded = expandedNotesTaskIds.has(task.id);
+    const rowClassName = `text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''} ${onReorder && dragEnabled ? 'select-none' : ''}`;
+    const rowStyle = { borderLeft: `4px solid ${priorityColor}`, paddingLeft: '8px', marginLeft: '-4px' };
+
+    const content = (handle: { attributes: DraggableAttributes; listeners: DraggableSyntheticListeners | undefined } | null) => (
+      <>
+        <div className="flex items-start flex-1 min-w-0">
+          {onReorder && (
+            <button
+              type="button"
+              className={`mr-1 mt-0.5 p-1 rounded text-gray-400 dark:text-gray-500 ${dragEnabled ? 'hover:bg-gray-200 dark:hover:bg-gray-700 cursor-grab active:cursor-grabbing' : 'cursor-not-allowed opacity-40'}`}
+              title={dragEnabled ? 'Drag to reorder task priority' : dragDisabledReason || 'Reordering is currently disabled'}
+              aria-label={dragEnabled ? 'Drag to reorder task priority' : 'Task reordering disabled'}
+              disabled={!dragEnabled}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              {...(handle ? handle.attributes : {})}
+              {...(handle ? handle.listeners : {})}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
           )}
-          {task.dueDate && (
-            <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
-              (due: {task.dueDate})
-            </span>
-          )}
-          {isInToday && (
-            <span className="ml-2 text-xs text-green-600 dark:text-green-400">✓ in today</span>
-          )}
-        </span>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex-1" onClick={() => onTaskClick?.(task)}>
+              <span className="text-gray-400 dark:text-gray-500 mr-2">{index + 1}.</span>
+              <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
+              {task.isDaily && (
+                <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300" title="Daily recurring task">
+                  <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Daily
+                </span>
+              )}
+              {formatTaskDueLabel(task) && (
+                <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
+                  ({formatTaskDueLabel(task)})
+                </span>
+              )}
+              {isInToday && (
+                <span className="ml-2 text-xs text-green-600 dark:text-green-400">✓ in today</span>
+              )}
+            </div>
+            {hasNotes && (
+              <div className="mt-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleNotes(task.id);
+                  }}
+                  className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
+                >
+                  {isNotesExpanded ? 'Hide notes' : 'Show notes'}
+                </button>
+                {isNotesExpanded && (
+                  <div className="mt-2 rounded-md bg-gray-50 dark:bg-gray-700/40 p-2 text-xs">
+                    <TaskNotesPreview markdown={task.notesMarkdown || ''} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
         
         <div className="flex items-center">
           {/* Edit button */}
@@ -278,6 +447,26 @@ function TaskList({
             </button>
           )}
         </div>
+      </>
+    );
+
+    if (sortable) {
+      return (
+        <SortableTaskItem
+          key={task.id}
+          id={task.id}
+          disabled={!dragEnabled}
+          className={rowClassName}
+          style={rowStyle}
+        >
+          {(handle) => content(handle)}
+        </SortableTaskItem>
+      );
+    }
+
+    return (
+      <li key={task.id} className={rowClassName} style={rowStyle}>
+        {content(null)}
       </li>
     );
   };
@@ -305,25 +494,57 @@ function TaskList({
   }
 
   const hasTasks = dailyTasks.length > 0 || regularTasks.length > 0;
-  const allTasks = [...dailyTasks, ...regularTasks];
+  const dragControlsEnabled = Boolean(onReorder);
 
   return (
     <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
       {headerContent}
       <div className="p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
+        {reorderError && (
+          <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+            {reorderError}
+          </div>
+        )}
         {hasTasks ? (
-          <ul className="space-y-0">
+          <div className="space-y-0">
             {/* Daily Tasks */}
-            {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0, allTasks.length))}
+            {dailyTasks.length > 0 && (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={(event) => handleDragEnd(event, true, dailyTasks)}
+              >
+                <SortableContext items={dailyTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+                  <ul className="space-y-0">
+                    {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0, allTasks.length, dragControlsEnabled))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
+            )}
             
             {/* Separator if both sections have tasks */}
             {dailyTasks.length > 0 && regularTasks.length > 0 && (
-              <li className="border-t-2 border-gray-300 dark:border-gray-600 my-3" />
+              <div className="border-t-2 border-gray-300 dark:border-gray-600 my-3" />
             )}
             
             {/* Regular Tasks */}
-            {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1, allTasks.length))}
-          </ul>
+            {regularTasks.length > 0 && (
+              <DndContext
+                sensors={sensors}
+                collisionDetection={closestCenter}
+                onDragEnd={(event) => handleDragEnd(event, false, regularTasks)}
+              >
+                <SortableContext items={regularTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
+                  <ul className="space-y-0">
+                    {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1, allTasks.length, dragControlsEnabled))}
+                  </ul>
+                </SortableContext>
+              </DndContext>
+            )}
+            {dragControlsEnabled && !dragEnabled && dragDisabledReason && (
+              <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{dragDisabledReason}</p>
+            )}
+          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">
             No tasks
@@ -346,9 +567,11 @@ interface TodayTaskListProps {
   onAddToPlan?: (task: Task) => void;
   onStartTask?: (task: Task) => void;
   currentDate?: string;
+  expandedNotesTaskIds: Set<string>;
+  onToggleNotes: (taskId: string) => void;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate, expandedNotesTaskIds, onToggleNotes }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
@@ -387,6 +610,8 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
           <ol className="space-y-0">
             {orderedTasks.map((task, index) => {
               const isLast = index === orderedTasks.length - 1;
+              const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
+              const isNotesExpanded = expandedNotesTaskIds.has(task.id);
               return (
                 <li 
                   key={task.id} 
@@ -394,40 +619,58 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                     task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
                   }`}
                 >
-                  <span className="flex items-center flex-1">
-                    {/* Always visible complete button */}
-                    {onComplete && (
-                      <button
-                        onClick={() => onComplete(task)}
-                        className={`mr-2 p-1.5 rounded transition-colors ${
-                          task.completed 
-                            ? 'text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/30' 
-                            : 'text-gray-300 dark:text-gray-600 hover:text-green-500 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
-                        }`}
-                        title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
-                      >
-                        <CheckCircle className="h-5 w-5" />
-                      </button>
+                  <div className="flex-1">
+                    <span className="flex items-center">
+                      {/* Always visible complete button */}
+                      {onComplete && (
+                        <button
+                          onClick={() => onComplete(task)}
+                          className={`mr-2 p-1.5 rounded transition-colors ${
+                            task.completed 
+                              ? 'text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/30' 
+                              : 'text-gray-300 dark:text-gray-600 hover:text-green-500 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
+                          }`}
+                          title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
+                        >
+                          <CheckCircle className="h-5 w-5" />
+                        </button>
+                      )}
+                      <TaskTextWithProjectBadges
+                        text={task.text}
+                        projects={task.projects}
+                        textClassName={task.completed ? 'line-through' : undefined}
+                      />
+                      {task.isDaily && (
+                        <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
+                          <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                          </svg>
+                          Daily
+                        </span>
+                      )}
+                      {formatTaskDueLabel(task) && (
+                        <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400 dark:text-gray-500'}`}>
+                          ({formatTaskDueLabel(task)})
+                        </span>
+                      )}
+                    </span>
+                    {hasNotes && (
+                      <div className="mt-1 ml-9">
+                        <button
+                          type="button"
+                          onClick={() => onToggleNotes(task.id)}
+                          className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
+                        >
+                          {isNotesExpanded ? 'Hide notes' : 'Show notes'}
+                        </button>
+                        {isNotesExpanded && (
+                          <div className="mt-2 rounded-md bg-gray-50 dark:bg-gray-700/40 p-2 text-xs">
+                            <TaskNotesPreview markdown={task.notesMarkdown || ''} />
+                          </div>
+                        )}
+                      </div>
                     )}
-                    <TaskTextWithProjectBadges
-                      text={task.text}
-                      projects={task.projects}
-                      textClassName={task.completed ? 'line-through' : undefined}
-                    />
-                    {task.isDaily && (
-                      <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
-                        <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                        </svg>
-                        Daily
-                      </span>
-                    )}
-                    {task.dueDate && (
-                      <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400 dark:text-gray-500'}`}>
-                        (due: {task.dueDate})
-                      </span>
-                    )}
-                  </span>
+                  </div>
                   <div className="flex items-center gap-1">
                     {/* Starting now button - only show if task is not completed */}
                     {onStartTask && !task.completed && (
@@ -524,6 +767,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [wantToDo, setWantToDo] = useState<Task[]>([]);
   const [haveSortMode, setHaveSortMode] = useState<DueSortMode>('off');
   const [wantSortMode, setWantSortMode] = useState<DueSortMode>('off');
+  const [haveReorderError, setHaveReorderError] = useState<string | null>(null);
+  const [wantReorderError, setWantReorderError] = useState<string | null>(null);
   const [loadingHave, setLoadingHave] = useState(true);
   const [loadingWant, setLoadingWant] = useState(true);
   const [errorHave, setErrorHave] = useState<string | null>(null);
@@ -540,6 +785,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Track which tasks are in today's lists
   const [todayHaveTasks, setTodayHaveTasks] = useState<Set<string>>(new Set());
   const [todayWantTasks, setTodayWantTasks] = useState<Set<string>>(new Set());
+  const [expandedNotesTaskIds, setExpandedNotesTaskIds] = useState<Set<string>>(new Set());
 
   // Notify parent when task data changes
   useEffect(() => {
@@ -578,6 +824,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const haveData = await haveRes.json();
       if (haveData.success) {
         setHaveToDo(haveData.tasks);
+        setHaveReorderError(null);
       } else {
         setErrorHave(haveData.error || 'Failed to fetch');
       }
@@ -593,6 +840,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const wantData = await wantRes.json();
       if (wantData.success) {
         setWantToDo(wantData.tasks);
+        setWantReorderError(null);
       } else {
         setErrorWant(wantData.error || 'Failed to fetch');
       }
@@ -848,8 +1096,53 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
+  const handleReorderTask = useCallback(async (
+    listType: ListType,
+    params: { taskId: string; newIndex: number; isDaily: boolean }
+  ) => {
+    const setList = listType === 'have-to-do' ? setHaveToDo : setWantToDo;
+    const setReorderError = listType === 'have-to-do' ? setHaveReorderError : setWantReorderError;
+
+    setReorderError(null);
+
+    setList((prev) => reorderTasksWithinType(prev, params.taskId, params.newIndex, params.isDaily));
+
+    try {
+      const response = await fetch('/api/tasks/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: params.taskId,
+          newPosition: params.newIndex,
+          listType,
+          positionMode: 'type-relative',
+        }),
+      });
+
+      const data = await response.json();
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to reorder task');
+      }
+    } catch (error) {
+      console.error('Failed to reorder task:', error);
+      setReorderError('Could not save task order. Restoring latest server state.');
+      fetchGeneralTasks();
+    }
+  }, [fetchGeneralTasks]);
+
   const displayedHaveToDo = getDisplayedTasks(haveToDo, haveSortMode);
   const displayedWantToDo = getDisplayedTasks(wantToDo, wantSortMode);
+  const toggleTaskNotes = (taskId: string) => {
+    setExpandedNotesTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
   const projectSuggestions = useMemo(() => {
     const values = [...haveToDo, ...wantToDo].flatMap((task) => normalizeProjectList(task.projects));
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
@@ -874,6 +1167,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
           onStartTask={(task) => handleStartTask(task, 'have-to-do')}
           currentDate={currentDate}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
         />
         <TodayTaskList
           title="Want to Do Today"
@@ -887,6 +1182,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
           onStartTask={(task) => handleStartTask(task, 'want-to-do')}
           currentDate={currentDate}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
         />
       </div>
 
@@ -910,6 +1207,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onEdit={(task) => handleEditTask(task, 'have-to-do')}
           sortMode={haveSortMode}
           onToggleSort={() => setHaveSortMode((prev) => cycleDueSortMode(prev))}
+          onReorder={(params) => handleReorderTask('have-to-do', params)}
+          dragEnabled={haveSortMode === 'off'}
+          dragDisabledReason="Turn due sort Off to reorder tasks."
+          reorderError={haveReorderError}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
         />
         <TaskList
           title="Want to Do"
@@ -929,6 +1232,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onEdit={(task) => handleEditTask(task, 'want-to-do')}
           sortMode={wantSortMode}
           onToggleSort={() => setWantSortMode((prev) => cycleDueSortMode(prev))}
+          onReorder={(params) => handleReorderTask('want-to-do', params)}
+          dragEnabled={wantSortMode === 'off'}
+          dragDisabledReason="Turn due sort Off to reorder tasks."
+          reorderError={wantReorderError}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
         />
       </div>
 
@@ -964,7 +1273,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
                 <TaskTextWithProjectBadges text={taskToDelete.task.text} projects={taskToDelete.task.projects} />
               </p>
               {taskToDelete.task.dueDate && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Due: {taskToDelete.task.dueDate}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  Due: {formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)
+                    ? `${taskToDelete.task.dueDate} @ ${formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)}`
+                    : taskToDelete.task.dueDate}
+                </p>
               )}
             </div>
             <p className="text-xs text-red-500 dark:text-red-400 mb-4">

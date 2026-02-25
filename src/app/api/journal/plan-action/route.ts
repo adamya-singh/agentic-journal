@@ -106,9 +106,19 @@ function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletion
   if (task.dueDate) {
     snapshot.dueDate = task.dueDate;
   }
+  if (task.dueTimeStart) {
+    snapshot.dueTimeStart = task.dueTimeStart;
+  }
+  if (task.dueTimeEnd) {
+    snapshot.dueTimeEnd = task.dueTimeEnd;
+  }
 
   if (task.projects && task.projects.length > 0) {
     snapshot.projects = normalizeProjectList(task.projects);
+  }
+
+  if (task.notesMarkdown && task.notesMarkdown.trim().length > 0) {
+    snapshot.notesMarkdown = task.notesMarkdown.trim();
   }
 
   if (task.isDaily) {

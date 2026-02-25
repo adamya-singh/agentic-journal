@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Task, ListType } from '@/lib/types';
 import { formatTaskTextWithProjects } from '@/lib/projects';
+import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 
 type ModalPhase = 'loading' | 'comparing' | 'reordering' | 'complete' | 'error';
 
@@ -186,7 +187,11 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                       )}
                     </span>
                     {task.dueDate && (
-                      <span className={`text-sm ${accentClass === 'teal' ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>Due: {task.dueDate}</span>
+                      <span className={`text-sm ${accentClass === 'teal' ? 'text-teal-600 dark:text-teal-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                        Due: {formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)
+                          ? `${task.dueDate} @ ${formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)}`
+                          : task.dueDate}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -210,7 +215,11 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                       })()}
                     </span>
                     {getCurrentComparisonTask()?.dueDate && (
-                      <span className="text-gray-500 dark:text-gray-400 text-sm">Due: {getCurrentComparisonTask()?.dueDate}</span>
+                      <span className="text-gray-500 dark:text-gray-400 text-sm">
+                        Due: {formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)
+                          ? `${getCurrentComparisonTask()?.dueDate} @ ${formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)}`
+                          : getCurrentComparisonTask()?.dueDate}
+                      </span>
                     )}
                   </div>
                 </div>

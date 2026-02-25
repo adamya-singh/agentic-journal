@@ -4,6 +4,9 @@ import * as path from 'path';
 import { handleDueDateSetup } from '../due-date-utils';
 import { TasksData, ListType } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
+import { validateDueTimeRange } from '@/lib/due-time';
+
+const NOTES_MAX_LENGTH = 20000;
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
@@ -41,13 +44,14 @@ function writeTasks(data: TasksData, listType: ListType): void {
  * POST /api/tasks/update
  * Updates a task's text, dueDate, and/or isDaily flag
  * 
- * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, isDaily?: boolean, projects?: string[], listType?: 'have-to-do' | 'want-to-do' }
+ * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, listType?: 'have-to-do' | 'want-to-do' }
  * - taskId: The unique ID of the task to update (preferred)
  * - oldText: Legacy text-based lookup (fallback if taskId not provided)
  * - newText: The new text for the task (optional)
  * - dueDate: The new due date in ISO format, or empty string to remove (optional)
  * - isDaily: Whether the task is daily recurring (optional)
  * - projects: Optional full replacement list of project slugs/labels (normalized to kebab-case slugs)
+ * - notesMarkdown: Optional full replacement markdown notes (empty string clears notes)
  * - listType: Which task list to update in (defaults to 'have-to-do')
  * 
  * At least one of taskId or oldText must be provided.
@@ -55,7 +59,7 @@ function writeTasks(data: TasksData, listType: ListType): void {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, oldText, newText, dueDate, isDaily, projects, listType = 'have-to-do' } = body;
+    const { taskId, oldText, newText, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -79,6 +83,31 @@ export async function POST(request: NextRequest) {
     if (projects !== undefined && !Array.isArray(projects)) {
       return NextResponse.json(
         { success: false, error: 'projects must be an array of strings when provided' },
+        { status: 400 }
+      );
+    }
+
+    if (notesMarkdown !== undefined && typeof notesMarkdown !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'notesMarkdown must be a string when provided' },
+        { status: 400 }
+      );
+    }
+    if (dueTimeStart !== undefined && typeof dueTimeStart !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'dueTimeStart must be a string in HH:mm format when provided' },
+        { status: 400 }
+      );
+    }
+    if (dueTimeEnd !== undefined && typeof dueTimeEnd !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'dueTimeEnd must be a string in HH:mm format when provided' },
+        { status: 400 }
+      );
+    }
+    if (typeof notesMarkdown === 'string' && notesMarkdown.trim().length > NOTES_MAX_LENGTH) {
+      return NextResponse.json(
+        { success: false, error: `notesMarkdown cannot exceed ${NOTES_MAX_LENGTH} characters` },
         { status: 400 }
       );
     }
@@ -118,8 +147,54 @@ export async function POST(request: NextRequest) {
     if (dueDate !== undefined) {
       if (dueDate === '') {
         delete data.tasks[taskIndex].dueDate;
+        delete data.tasks[taskIndex].dueTimeStart;
+        delete data.tasks[taskIndex].dueTimeEnd;
       } else if (typeof dueDate === 'string') {
         data.tasks[taskIndex].dueDate = dueDate;
+      }
+    }
+
+    if (dueTimeStart !== undefined || dueTimeEnd !== undefined) {
+      if (typeof dueTimeStart === 'string' && dueTimeStart.trim() === '') {
+        delete data.tasks[taskIndex].dueTimeStart;
+        delete data.tasks[taskIndex].dueTimeEnd;
+      } else {
+        const currentStart = data.tasks[taskIndex].dueTimeStart;
+        const currentEnd = data.tasks[taskIndex].dueTimeEnd;
+        const nextStartRaw = typeof dueTimeStart === 'string' ? dueTimeStart.trim() : currentStart;
+        const nextEndRaw = typeof dueTimeEnd === 'string' ? dueTimeEnd.trim() : currentEnd;
+        const nextStart = nextStartRaw && nextStartRaw.length > 0 ? nextStartRaw : undefined;
+        const nextEnd = nextEndRaw && nextEndRaw.length > 0 ? nextEndRaw : undefined;
+
+        const validation = validateDueTimeRange(nextStart, nextEnd);
+        if (!validation.valid) {
+          return NextResponse.json(
+            { success: false, error: validation.error },
+            { status: 400 }
+          );
+        }
+
+        const effectiveDueDate = dueDate !== undefined
+          ? (typeof dueDate === 'string' && dueDate.trim().length > 0 ? dueDate.trim() : undefined)
+          : data.tasks[taskIndex].dueDate;
+
+        if (!effectiveDueDate && (nextStart || nextEnd)) {
+          return NextResponse.json(
+            { success: false, error: 'dueTimeStart/dueTimeEnd require dueDate' },
+            { status: 400 }
+          );
+        }
+
+        if (nextStart) {
+          data.tasks[taskIndex].dueTimeStart = nextStart;
+        } else {
+          delete data.tasks[taskIndex].dueTimeStart;
+        }
+        if (nextEnd) {
+          data.tasks[taskIndex].dueTimeEnd = nextEnd;
+        } else {
+          delete data.tasks[taskIndex].dueTimeEnd;
+        }
       }
     }
 
@@ -138,6 +213,15 @@ export async function POST(request: NextRequest) {
         data.tasks[taskIndex].projects = normalizedProjects;
       } else {
         delete data.tasks[taskIndex].projects;
+      }
+    }
+
+    if (notesMarkdown !== undefined) {
+      const normalizedNotes = notesMarkdown.trim();
+      if (normalizedNotes.length > 0) {
+        data.tasks[taskIndex].notesMarkdown = normalizedNotes;
+      } else {
+        delete data.tasks[taskIndex].notesMarkdown;
       }
     }
 

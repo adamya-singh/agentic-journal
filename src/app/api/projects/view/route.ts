@@ -12,6 +12,8 @@ interface ProjectTaskView {
   text: string;
   projects?: string[];
   dueDate?: string;
+  dueTimeStart?: string;
+  dueTimeEnd?: string;
   isDaily?: boolean;
   completed?: boolean;
   completedAt?: string;
@@ -179,6 +181,8 @@ export async function GET(request: NextRequest) {
         text: task.text,
         ...(projects.length > 0 ? { projects } : {}),
         ...(task.dueDate ? { dueDate: task.dueDate } : {}),
+        ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
+        ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
         ...(task.isDaily ? { isDaily: true } : {}),
       };
 
@@ -195,6 +199,8 @@ export async function GET(request: NextRequest) {
         text: task.text,
         ...(projects.length > 0 ? { projects } : {}),
         ...(task.dueDate ? { dueDate: task.dueDate } : {}),
+        ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
+        ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
         ...(task.isDaily ? { isDaily: true } : {}),
         ...(task.completed === true ? { completed: true } : {}),
       };
@@ -212,6 +218,8 @@ export async function GET(request: NextRequest) {
       completedAt?: string;
       sourceDate?: string;
       dueDate?: string;
+      dueTimeStart?: string;
+      dueTimeEnd?: string;
       isDaily?: boolean;
       projects?: string[];
     }) => {
@@ -222,6 +230,8 @@ export async function GET(request: NextRequest) {
         completed: true,
         ...(projects.length > 0 ? { projects } : {}),
         ...(snapshot.dueDate ? { dueDate: snapshot.dueDate } : {}),
+        ...(snapshot.dueTimeStart ? { dueTimeStart: snapshot.dueTimeStart } : {}),
+        ...(snapshot.dueTimeEnd ? { dueTimeEnd: snapshot.dueTimeEnd } : {}),
         ...(snapshot.isDaily ? { isDaily: true } : {}),
         ...(snapshot.completedAt ? { completedAt: snapshot.completedAt } : {}),
         ...(snapshot.sourceDate ? { sourceDate: snapshot.sourceDate } : {}),

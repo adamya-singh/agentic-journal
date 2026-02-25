@@ -6,8 +6,11 @@ import { normalizeProjectList } from '@/lib/projects';
 export interface TaskCompletionSnapshot {
   id: string;
   text: string;
+  notesMarkdown?: string;
   projects?: string[];
   dueDate?: string;
+  dueTimeStart?: string;
+  dueTimeEnd?: string;
   isDaily?: boolean;
   completed: true;
   completedAt: string;
@@ -111,6 +114,17 @@ function toCompletionSnapshot(value: unknown, listType: ListType, fallbackComple
 
   if (typeof value.dueDate === 'string' && value.dueDate.length > 0) {
     snapshot.dueDate = value.dueDate;
+  }
+
+  if (typeof value.dueTimeStart === 'string' && value.dueTimeStart.length > 0) {
+    snapshot.dueTimeStart = value.dueTimeStart;
+  }
+  if (typeof value.dueTimeEnd === 'string' && value.dueTimeEnd.length > 0) {
+    snapshot.dueTimeEnd = value.dueTimeEnd;
+  }
+
+  if (typeof value.notesMarkdown === 'string' && value.notesMarkdown.trim().length > 0) {
+    snapshot.notesMarkdown = value.notesMarkdown.trim();
   }
 
   if (Array.isArray(value.projects)) {
@@ -574,8 +588,18 @@ export function taskFromCompletionSnapshot(snapshot: TaskCompletionSnapshot): Ta
     task.projects = normalizeProjectList(snapshot.projects);
   }
 
+  if (snapshot.notesMarkdown && snapshot.notesMarkdown.length > 0) {
+    task.notesMarkdown = snapshot.notesMarkdown;
+  }
+
   if (snapshot.dueDate) {
     task.dueDate = snapshot.dueDate;
+  }
+  if (snapshot.dueTimeStart) {
+    task.dueTimeStart = snapshot.dueTimeStart;
+  }
+  if (snapshot.dueTimeEnd) {
+    task.dueTimeEnd = snapshot.dueTimeEnd;
   }
 
   if (snapshot.isDaily) {

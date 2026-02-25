@@ -40,6 +40,8 @@ export const AddTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
   position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
+  dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
+  dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range (requires dueTimeStart)'),
   isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s computed today list'),
   projects: z.array(z.string()).optional().describe('Optional list of projects to tag the task with'),
 });
@@ -56,6 +58,8 @@ export const UpdateTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
   newText: z.string().optional().describe('The new text for the task'),
   dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
+  dueTimeStart: z.string().optional().describe('Optional due time start (HH:mm), or empty string to remove due time'),
+  dueTimeEnd: z.string().optional().describe('Optional due time end (HH:mm), or empty string for single-time'),
   projects: z.array(z.string()).optional().describe('Optional replacement list of projects for the task'),
 });
 
@@ -191,17 +195,21 @@ export const addTaskTool = createTool({
       listType: z.enum(['have-to-do', 'want-to-do']),
       position: z.number().optional(),
       dueDate: z.string().optional(),
+      dueTimeStart: z.string().optional(),
+      dueTimeEnd: z.string().optional(),
       isDaily: z.boolean().optional(),
       projects: z.array(z.string()).optional(),
     }).optional(),
     message: z.string(),
   }),
   execute: async ({ context }) => {
-    const { text, listType, position, dueDate, isDaily, projects } = context as {
+    const { text, listType, position, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects } = context as {
       text: string;
       listType: 'have-to-do' | 'want-to-do';
       position?: number;
       dueDate?: string;
+      dueTimeStart?: string;
+      dueTimeEnd?: string;
       isDaily?: boolean;
       projects?: string[];
     };
@@ -211,7 +219,7 @@ export const addTaskTool = createTool({
       const response = await fetch('http://localhost:3000/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: text, listType, position, dueDate, isDaily, projects }),
+        body: JSON.stringify({ task: text, listType, position, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }),
       });
       
       const result = await response.json();
@@ -222,6 +230,8 @@ export const addTaskTool = createTool({
               id?: string;
               text?: string;
               dueDate?: string;
+              dueTimeStart?: string;
+              dueTimeEnd?: string;
               isDaily?: boolean;
               projects?: string[];
             }
@@ -236,6 +246,8 @@ export const addTaskTool = createTool({
             listType,
             position,
             dueDate: createdTask?.dueDate ?? dueDate,
+            dueTimeStart: createdTask?.dueTimeStart ?? dueTimeStart,
+            dueTimeEnd: createdTask?.dueTimeEnd ?? dueTimeEnd,
             isDaily: createdTask?.isDaily ?? isDaily,
             projects: createdTask?.projects ?? projects,
           },
@@ -273,7 +285,7 @@ export const updateTaskTool = createMastraToolForStateSetter(
   'updateTask',
   UpdateTaskSchema,
   {
-    description: 'Update an existing task\'s text, due date, or projects in a general task list.',
+    description: 'Update an existing task\'s text, due date/time, or projects in a general task list.',
     toolId: 'updateTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,

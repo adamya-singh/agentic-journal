@@ -3,6 +3,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Task, ListType } from '@/lib/types';
 import { formatTaskTextWithProjects, normalizeProjectList } from '@/lib/projects';
+import { TaskNotesEditor } from './TaskNotesEditor';
+import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 
 type ModalPhase = 'entering-task' | 'loading' | 'comparing' | 'inserting' | 'complete' | 'error';
 
@@ -32,8 +34,12 @@ export function PriorityComparisonModal({
   const [phase, setPhase] = useState<ModalPhase>('entering-task');
   const [taskInput, setTaskInput] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [dueTimeStart, setDueTimeStart] = useState('');
+  const [dueTimeEnd, setDueTimeEnd] = useState('');
+  const [useDueTimeRange, setUseDueTimeRange] = useState(false);
   const [isDaily, setIsDaily] = useState(false);
   const [projectsInput, setProjectsInput] = useState('');
+  const [notesMarkdown, setNotesMarkdown] = useState('');
   const [existingTasks, setExistingTasks] = useState<Task[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
   
@@ -49,8 +55,12 @@ export function PriorityComparisonModal({
       setPhase('entering-task');
       setTaskInput('');
       setDueDate('');
+      setDueTimeStart('');
+      setDueTimeEnd('');
+      setUseDueTimeRange(false);
       setIsDaily(false);
       setProjectsInput('');
+      setNotesMarkdown('');
       setExistingTasks([]);
       setErrorMessage('');
       setLow(0);
@@ -73,8 +83,11 @@ export function PriorityComparisonModal({
           position, 
           listType,
           dueDate: dueDate || undefined,
+          dueTimeStart: dueDate && dueTimeStart ? dueTimeStart : undefined,
+          dueTimeEnd: dueDate && useDueTimeRange && dueTimeEnd ? dueTimeEnd : undefined,
           isDaily: isDaily || undefined,
           projects: parseProjectsFromInput(projectsInput),
+          notesMarkdown: notesMarkdown.trim() || undefined,
         }),
       });
       
@@ -94,7 +107,7 @@ export function PriorityComparisonModal({
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, onTaskAdded, onClose, listType, dueDate, isDaily, projectsInput]);
+  }, [taskInput, onTaskAdded, onClose, listType, dueDate, dueTimeStart, dueTimeEnd, useDueTimeRange, isDaily, projectsInput, notesMarkdown]);
 
   // Fetch existing tasks when entering comparison phase
   // Daily tasks only compare against other daily tasks, regular tasks only against regular tasks
@@ -197,9 +210,58 @@ export function PriorityComparisonModal({
               <input
                 type="date"
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
+                onChange={(e) => {
+                  const nextDueDate = e.target.value;
+                  setDueDate(nextDueDate);
+                  if (!nextDueDate) {
+                    setDueTimeStart('');
+                    setDueTimeEnd('');
+                    setUseDueTimeRange(false);
+                  }
+                }}
                 className="w-full px-4 py-3 text-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all"
               />
+            </div>
+
+            <div className="mb-4">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-gray-600 dark:text-gray-300">
+                  Due time (optional)
+                </label>
+                <label className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <input
+                    type="checkbox"
+                    checked={useDueTimeRange}
+                    disabled={!dueDate}
+                    onChange={(e) => {
+                      setUseDueTimeRange(e.target.checked);
+                      if (!e.target.checked) {
+                        setDueTimeEnd('');
+                      }
+                    }}
+                  />
+                  Range
+                </label>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <input
+                  type="time"
+                  value={dueTimeStart}
+                  disabled={!dueDate}
+                  onChange={(e) => setDueTimeStart(e.target.value)}
+                  className="w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all disabled:opacity-50"
+                />
+                <input
+                  type="time"
+                  value={dueTimeEnd}
+                  disabled={!dueDate || !useDueTimeRange}
+                  onChange={(e) => setDueTimeEnd(e.target.value)}
+                  className="w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent transition-all disabled:opacity-50"
+                />
+              </div>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Set a single time or enable range for start-end.
+              </p>
             </div>
             
             <div className="mb-6">
@@ -246,6 +308,17 @@ export function PriorityComparisonModal({
                   ))}
                 </datalist>
               )}
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                Task notes (optional)
+              </label>
+              <TaskNotesEditor
+                value={notesMarkdown}
+                onChange={setNotesMarkdown}
+                placeholder="Add links, subtasks, context, and reference data"
+              />
             </div>
             
             <div className="flex justify-end gap-3">
@@ -319,7 +392,11 @@ export function PriorityComparisonModal({
                       )}
                     </span>
                     {dueDate && (
-                      <span className="text-amber-600 dark:text-amber-400 text-sm">Due: {dueDate}</span>
+                      <span className="text-amber-600 dark:text-amber-400 text-sm">
+                        Due: {formatDueTimeRangeForDisplay(dueTimeStart || undefined, useDueTimeRange ? dueTimeEnd || undefined : undefined)
+                          ? `${dueDate} @ ${formatDueTimeRangeForDisplay(dueTimeStart || undefined, useDueTimeRange ? dueTimeEnd || undefined : undefined)}`
+                          : dueDate}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -343,7 +420,11 @@ export function PriorityComparisonModal({
                       })()}
                     </span>
                     {getCurrentComparisonTask()?.dueDate && (
-                      <span className="text-gray-500 dark:text-gray-400 text-sm">Due: {getCurrentComparisonTask()?.dueDate}</span>
+                      <span className="text-gray-500 dark:text-gray-400 text-sm">
+                        Due: {formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)
+                          ? `${getCurrentComparisonTask()?.dueDate} @ ${formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)}`
+                          : getCurrentComparisonTask()?.dueDate}
+                      </span>
                     )}
                   </div>
                 </div>

@@ -3,16 +3,26 @@
 import Link from 'next/link';
 import React from 'react';
 import { TaskTextWithProjectBadges } from '@/components/TaskTextWithProjectBadges';
+import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 
 interface ProjectTaskView {
   id: string;
   text: string;
   projects?: string[];
   dueDate?: string;
+  dueTimeStart?: string;
+  dueTimeEnd?: string;
   isDaily?: boolean;
   completed?: boolean;
   completedAt?: string;
   sourceDate?: string;
+}
+
+function formatDueLabel(task: ProjectTaskView): string {
+  if (!task.dueDate) return 'no due date';
+  const dueTime = formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd);
+  if (!dueTime) return `due ${task.dueDate}`;
+  return `due ${task.dueDate} @ ${dueTime}`;
 }
 
 interface ProjectBucket {
@@ -95,7 +105,7 @@ function DetailedTaskList({
                   <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {task.dueDate ? `due ${task.dueDate}` : 'no due date'}
+                  {formatDueLabel(task)}
                   {task.isDaily ? ' | daily' : ''}
                   {task.completed ? ' | completed' : ''}
                 </div>
@@ -148,7 +158,7 @@ function UnifiedTaskList({ tasks }: { tasks: ProjectTaskView[] }) {
                       />
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {task.dueDate ? `due ${task.dueDate}` : 'no due date'}
+                      {formatDueLabel(task)}
                       {task.isDaily ? ' | daily' : ''}
                       {task.completed ? ' | completed' : ' | active'}
                     </p>
