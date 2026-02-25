@@ -123,40 +123,91 @@ npm run dev:next
 npm run dev:mastra
 ```
 
-## Local Raspberry Pi Access (Tailscale First)
+## Local Raspberry Pi Access (Tailscale HTTPS)
 
-If `agentic-journal` is running as a system service on your Raspberry Pi, use Tailscale as the primary access path from your MacBook instead of a Cloudflare SSH tunnel.
+Use Tailscale as the default access path from your MacBook for both apps:
+- Agentic Journal (`:3000`)
+- OpenClaw Web UI (`:18789`)
 
-### Default Access URL (from MacBook)
+### One-time setup
 
-```bash
-http://rpi5.taile85e97.ts.net:3000
-```
-
-Fallback equivalent:
+If your tailnet has Serve disabled, enable it once:
 
 ```bash
-http://100.95.230.73:3000
+https://login.tailscale.com/f/serve
 ```
 
-### Quick Verification on the Raspberry Pi
+Then on the Raspberry Pi run:
+
+```bash
+npm run setup:tailscale-https
+```
+
+This configures:
+- `https://<pi-magicdns>` -> `http://127.0.0.1:3000` (Agentic Journal)
+- `https://<pi-magicdns>:18443` -> `http://127.0.0.1:18789` (OpenClaw)
+
+### Default URLs (from MacBook on Tailscale)
+
+```bash
+https://rpi5.taile85e97.ts.net
+https://rpi5.taile85e97.ts.net:18443
+```
+
+### Quick verification on the Raspberry Pi
 
 ```bash
 npm run status:local-access
 ```
 
 This checks:
-- `tailscaled` service status
-- `agentic-journal` service status
-- Tailnet IPv4 and MagicDNS name
+- `tailscaled` system service
+- `agentic-journal` system service
+- `openclaw-gateway` user service
+- Tailnet identity and `tailscale serve` route status
 
-### Optional Fallback: SSH Tunnel
+### Fallbacks
 
-Keep your existing Cloudflare reverse SSH tunnel command as a backup if Tailscale is unavailable:
+If HTTPS routes are unavailable:
 
 ```bash
-ssh -N -L 3000:127.0.0.1:3000 rpi5cloudflare
+# Agentic Journal over tailnet HTTP
+http://rpi5.taile85e97.ts.net:3000
+
+# OpenClaw via SSH tunnel
+ssh -N -L 18789:127.0.0.1:18789 rpi5
 ```
+
+### OpenClaw auth and pairing troubleshooting
+
+If OpenClaw over Tailscale shows:
+- `disconnected (1008): unauthorized: gateway token missing`
+- then `pairing required`
+
+Use this flow:
+
+1. Confirm gateway token from the Pi service config:
+
+```bash
+systemctl --user cat openclaw-gateway | rg OPENCLAW_GATEWAY_TOKEN
+```
+
+2. In the OpenClaw Control UI opened at `https://rpi5.taile85e97.ts.net:18443`, paste that token in **Control UI settings**.
+3. If pairing is still required, approve from terminal on the Pi:
+
+```bash
+# show paired/pending device state
+node /home/rpi5/projects/openclaw/dist/index.js devices list
+
+# approve pending request (if any)
+node /home/rpi5/projects/openclaw/dist/index.js devices approve
+```
+
+4. Refresh the browser tab.
+
+Notes:
+- Pairing is origin-based, so `https://rpi5...:18443` is treated as a new device even if `http://127.0.0.1:18789` already worked.
+- The current gateway service uses `OPENCLAW_GATEWAY_TOKEN=dev` unless you rotate it.
 
 ## Learn More
 
