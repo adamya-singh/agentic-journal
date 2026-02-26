@@ -46,6 +46,7 @@ export interface TaskJournalEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  autoPlannedFromDueTime?: true;
   planId?: string;
   planStatus?: PlanStatus;
   planCreatedAt?: string;
@@ -141,6 +142,7 @@ export interface TaskJournalRangeEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  autoPlannedFromDueTime?: true;
   planId?: string;
   planStatus?: PlanStatus;
   planCreatedAt?: string;

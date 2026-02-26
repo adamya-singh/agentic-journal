@@ -228,10 +228,11 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeTasks(data, listType);
 
-    // If task has a due date set (not removed), ensure due-date journal + staged task are initialized
+    // Ensure due-date setup / due-time auto-plan state is synchronized (including cleanup on retime/removal).
     const updatedTask = data.tasks[taskIndex];
-    if (updatedTask.dueDate) {
-      handleDueDateSetup(updatedTask.dueDate, listType, updatedTask);
+    const targetDate = updatedTask.dueDate || previousTask.dueDate;
+    if (targetDate) {
+      handleDueDateSetup(targetDate, listType, updatedTask, previousTask);
     }
 
     return NextResponse.json({
