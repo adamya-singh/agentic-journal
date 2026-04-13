@@ -765,7 +765,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
   const [wantToDo, setWantToDo] = useState<Task[]>([]);
-  const [haveSortMode, setHaveSortMode] = useState<DueSortMode>('off');
+  const [haveSortMode, setHaveSortMode] = useState<DueSortMode>('asc');
   const [wantSortMode, setWantSortMode] = useState<DueSortMode>('off');
   const [haveReorderError, setHaveReorderError] = useState<string | null>(null);
   const [wantReorderError, setWantReorderError] = useState<string | null>(null);
