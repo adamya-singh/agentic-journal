@@ -8,6 +8,7 @@ export interface TaskCompletionSnapshot {
   text: string;
   notesMarkdown?: string;
   projects?: string[];
+  parentTaskId?: string;
   dueDate?: string;
   dueTimeStart?: string;
   dueTimeEnd?: string;
@@ -134,6 +135,10 @@ function toCompletionSnapshot(value: unknown, listType: ListType, fallbackComple
     if (projects.length > 0) {
       snapshot.projects = projects;
     }
+  }
+
+  if (typeof value.parentTaskId === 'string' && value.parentTaskId.trim().length > 0) {
+    snapshot.parentTaskId = value.parentTaskId.trim();
   }
 
   if (value.isDaily === true) {
@@ -368,6 +373,28 @@ export function removeCompletedTaskIndexSnapshot(taskId: string): void {
   writeCompletedTaskIndex(index);
 }
 
+export function removeCompletedTaskIndexSnapshots(taskIds: string[]): boolean {
+  if (taskIds.length === 0) {
+    return false;
+  }
+
+  const index = readCompletedTaskIndex();
+  let changed = false;
+
+  for (const taskId of taskIds) {
+    if (taskId in index.tasks) {
+      delete index.tasks[taskId];
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeCompletedTaskIndex(index);
+  }
+
+  return changed;
+}
+
 function parseDailyListFilename(fileName: string): { date: string; listType: ListType } | null {
   const match = fileName.match(/^(\d{4}-\d{2}-\d{2})-(have-to-do|want-to-do)\.json$/);
   if (!match) {
@@ -531,6 +558,63 @@ export function writeTodayOverrides(date: string, listType: ListType, overrides:
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
 }
 
+export function removeTaskIdsFromTodayOverrides(taskIds: string[], listType: ListType): number {
+  if (taskIds.length === 0 || !fs.existsSync(TODAY_OVERRIDES_DIR)) {
+    return 0;
+  }
+
+  const idSet = new Set(taskIds);
+  let changedFiles = 0;
+
+  for (const fileName of fs.readdirSync(TODAY_OVERRIDES_DIR)) {
+    const parsed = parseDailyListFilename(fileName);
+    if (!parsed || parsed.listType !== listType) {
+      continue;
+    }
+
+    const overrides = readTodayOverrides(parsed.date, parsed.listType);
+    const nextOverrides: TodayOverridesData = {
+      includedTaskIds: overrides.includedTaskIds.filter((taskId) => !idSet.has(taskId)),
+      excludedTaskIds: overrides.excludedTaskIds.filter((taskId) => !idSet.has(taskId)),
+    };
+
+    if (
+      nextOverrides.includedTaskIds.length !== overrides.includedTaskIds.length ||
+      nextOverrides.excludedTaskIds.length !== overrides.excludedTaskIds.length
+    ) {
+      writeTodayOverrides(parsed.date, parsed.listType, nextOverrides);
+      changedFiles += 1;
+    }
+  }
+
+  return changedFiles;
+}
+
+export function removeTaskIdsFromCompletedSnapshots(taskIds: string[], listType: ListType): number {
+  if (taskIds.length === 0 || !fs.existsSync(DAILY_LISTS_DIR)) {
+    return 0;
+  }
+
+  const idSet = new Set(taskIds);
+  let changedFiles = 0;
+
+  for (const fileName of fs.readdirSync(DAILY_LISTS_DIR)) {
+    const parsed = parseDailyListFilename(fileName);
+    if (!parsed || parsed.listType !== listType) {
+      continue;
+    }
+
+    const snapshots = readCompletedTaskSnapshots(parsed.date, parsed.listType);
+    const nextSnapshots = snapshots.filter((snapshot) => !idSet.has(snapshot.id));
+    if (nextSnapshots.length !== snapshots.length) {
+      writeCompletedTaskSnapshots(parsed.date, parsed.listType, nextSnapshots);
+      changedFiles += 1;
+    }
+  }
+
+  return changedFiles;
+}
+
 export function includeTaskInTodayOverrides(
   date: string,
   listType: ListType,
@@ -590,6 +674,10 @@ export function taskFromCompletionSnapshot(snapshot: TaskCompletionSnapshot): Ta
 
   if (snapshot.notesMarkdown && snapshot.notesMarkdown.length > 0) {
     task.notesMarkdown = snapshot.notesMarkdown;
+  }
+
+  if (snapshot.parentTaskId && snapshot.parentTaskId.length > 0) {
+    task.parentTaskId = snapshot.parentTaskId;
   }
 
   if (snapshot.dueDate) {

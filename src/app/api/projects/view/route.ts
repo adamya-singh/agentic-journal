@@ -11,6 +11,8 @@ interface ProjectTaskView {
   id: string;
   text: string;
   projects?: string[];
+  parentTaskId?: string;
+  parentTaskText?: string;
   dueDate?: string;
   dueTimeStart?: string;
   dueTimeEnd?: string;
@@ -162,6 +164,26 @@ export async function GET(request: NextRequest) {
     const generalWant = readGeneralTasks('want-to-do').tasks;
     const todayByList = computeTodayTasksByList(date);
     const completedIndex = readCompletedTaskIndex();
+    const taskTextById = new Map<string, string>();
+
+    const registerTaskText = (task: { id: string; text: string }) => {
+      taskTextById.set(task.id, task.text);
+    };
+
+    [...generalHave, ...generalWant].forEach(registerTaskText);
+    [...todayByList['have-to-do'], ...todayByList['want-to-do']].forEach(registerTaskText);
+    Object.values(completedIndex.tasks).forEach(registerTaskText);
+
+    const getParentContext = (task: { parentTaskId?: string } | { parentTaskId?: string | undefined; [key: string]: unknown }) => {
+      if (!task.parentTaskId) {
+        return {};
+      }
+
+      return {
+        parentTaskId: task.parentTaskId,
+        ...(taskTextById.get(task.parentTaskId) ? { parentTaskText: taskTextById.get(task.parentTaskId) } : {}),
+      };
+    };
 
     const groups = new Map<string, ProjectGroup>();
     const getOrCreateGroup = (project: string): ProjectGroup => {
@@ -180,6 +202,7 @@ export async function GET(request: NextRequest) {
         id: task.id,
         text: task.text,
         ...(projects.length > 0 ? { projects } : {}),
+        ...getParentContext(task),
         ...(task.dueDate ? { dueDate: task.dueDate } : {}),
         ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
         ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
@@ -198,6 +221,7 @@ export async function GET(request: NextRequest) {
         id: task.id,
         text: task.text,
         ...(projects.length > 0 ? { projects } : {}),
+        ...getParentContext(task),
         ...(task.dueDate ? { dueDate: task.dueDate } : {}),
         ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
         ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
@@ -229,6 +253,7 @@ export async function GET(request: NextRequest) {
         text: snapshot.text,
         completed: true,
         ...(projects.length > 0 ? { projects } : {}),
+        ...getParentContext(snapshot),
         ...(snapshot.dueDate ? { dueDate: snapshot.dueDate } : {}),
         ...(snapshot.dueTimeStart ? { dueTimeStart: snapshot.dueTimeStart } : {}),
         ...(snapshot.dueTimeEnd ? { dueTimeEnd: snapshot.dueTimeEnd } : {}),

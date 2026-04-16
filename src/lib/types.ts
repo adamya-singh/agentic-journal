@@ -9,6 +9,9 @@ export interface Task {
   text: string;
   notesMarkdown?: string;
   projects?: string[];
+  parentTaskId?: string;
+  parentTaskText?: string;
+  childTasks?: Task[];
   dueDate?: string;
   dueTimeStart?: string;
   dueTimeEnd?: string;
@@ -110,6 +113,8 @@ export interface ResolvedJournalEntry {
   missedAt?: string;
   taskId?: string;
   listType?: ListType;
+  parentTaskId?: string;
+  parentTaskText?: string;
   completed?: boolean;
 }
 
@@ -174,6 +179,8 @@ export interface ResolvedJournalRangeEntry {
   missedAt?: string;
   taskId?: string;
   listType?: ListType;
+  parentTaskId?: string;
+  parentTaskText?: string;
   completed?: boolean;
 }
 
@@ -195,6 +202,8 @@ export interface ResolvedStagedEntry {
   text: string;
   taskId: string;
   listType: ListType;
+  parentTaskId?: string;
+  parentTaskText?: string;
   completed?: boolean;
 }
 

@@ -15,6 +15,7 @@ interface EditTaskModalProps {
   task: Task | null;
   listType: ListType;
   existingProjectSuggestions?: string[];
+  candidateParentTasks?: Task[];
 }
 
 type SaveMode = 'save' | 'resort';
@@ -27,6 +28,7 @@ export function EditTaskModal({
   task,
   listType,
   existingProjectSuggestions = [],
+  candidateParentTasks = [],
 }: EditTaskModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('editing');
   const [taskText, setTaskText] = useState('');
@@ -37,6 +39,7 @@ export function EditTaskModal({
   const [isDaily, setIsDaily] = useState(false);
   const [projects, setProjects] = useState<string[]>([]);
   const [notesMarkdown, setNotesMarkdown] = useState('');
+  const [parentTaskId, setParentTaskId] = useState('');
   const [projectInput, setProjectInput] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
 
@@ -52,6 +55,7 @@ export function EditTaskModal({
       setIsDaily(task.isDaily || false);
       setProjects(normalizeProjectList(task.projects));
       setNotesMarkdown(task.notesMarkdown || '');
+      setParentTaskId(task.parentTaskId || '');
       setProjectInput('');
       setErrorMessage('');
     }
@@ -95,6 +99,7 @@ export function EditTaskModal({
           isDaily: isDaily,
           projects,
           notesMarkdown,
+          parentTaskId,
           listType,
         }),
       });
@@ -111,6 +116,7 @@ export function EditTaskModal({
           ...(isDaily ? { isDaily: true } : {}),
           ...(projects.length > 0 ? { projects } : {}),
           ...(notesMarkdown.trim() ? { notesMarkdown: notesMarkdown.trim() } : {}),
+          ...(parentTaskId ? { parentTaskId } : {}),
         };
 
         if (mode === 'resort') {
@@ -322,6 +328,27 @@ export function EditTaskModal({
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
+                Parent task
+              </label>
+              <select
+                value={parentTaskId}
+                onChange={(e) => setParentTaskId(e.target.value)}
+                className={`w-full px-4 py-3 text-base border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-${accentColor}-500 focus:border-transparent transition-all`}
+              >
+                <option value="">No parent</option>
+                {candidateParentTasks.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.text}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-400 dark:text-gray-500">
+                Subtasks stay in the same list as their parent.
+              </p>
             </div>
 
             <div className="mb-6">

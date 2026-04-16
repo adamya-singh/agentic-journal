@@ -86,15 +86,26 @@ export default function HomePage() {
 
     // Find any new addTask tool results that we haven't processed yet
     for (const message of messages) {
+      const toolMessage = message as typeof message & {
+        payload?: {
+          toolName?: string;
+          toolCallId?: string;
+          result?: {
+            success?: boolean;
+            task?: unknown;
+          };
+        };
+      };
+
       // Check if this is a tool-result message for addTask
       if (
-        message.type === 'tool-result' &&
-        message.payload?.toolName === 'addTask' &&
-        message.payload?.result?.success &&
-        message.payload?.result?.task &&
-        message.payload?.toolCallId
+        toolMessage.type === 'tool-result' &&
+        toolMessage.payload?.toolName === 'addTask' &&
+        toolMessage.payload?.result?.success &&
+        toolMessage.payload?.result?.task &&
+        toolMessage.payload?.toolCallId
       ) {
-        const toolCallId = message.payload.toolCallId;
+        const toolCallId = toolMessage.payload.toolCallId;
         
         // Skip if we've already processed this tool call
         if (processedToolCallIds.current.has(toolCallId)) {
@@ -104,11 +115,12 @@ export default function HomePage() {
         // Mark as processed
         processedToolCallIds.current.add(toolCallId);
 
-        const task = message.payload.result.task as {
+        const task = toolMessage.payload.result.task as {
           id: string;
           text: string;
           listType: 'have-to-do' | 'want-to-do';
           position?: number;
+          parentTaskId?: string;
           dueDate?: string;
           dueTimeStart?: string;
           dueTimeEnd?: string;
@@ -130,6 +142,7 @@ export default function HomePage() {
           const newTask: Task = {
             id: task.id,
             text: task.text,
+            ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
             ...(task.dueDate && { dueDate: task.dueDate }),
             ...(task.dueTimeStart && { dueTimeStart: task.dueTimeStart }),
             ...(task.dueTimeEnd && { dueTimeEnd: task.dueTimeEnd }),
@@ -433,6 +446,7 @@ export default function HomePage() {
         name: 'updateTask',
         description: 'Update an existing task\'s text, due date/time, or projects in a general task list.',
         argsSchema: z.object({
+          taskId: z.string().optional().describe('The ID of the task to update when available'),
           oldText: z.string().min(1).describe('The current text of the task to update'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
           newText: z.string().optional().describe('The new text for the task'),
@@ -440,11 +454,13 @@ export default function HomePage() {
           dueTimeStart: z.string().optional().describe('Optional due time start (HH:mm), or empty string to remove due time'),
           dueTimeEnd: z.string().optional().describe('Optional due time end (HH:mm) for ranges, or empty string for single-time'),
           projects: z.array(z.string()).optional().describe('Optional replacement list of projects for this task'),
+          parentTaskId: z.string().optional().describe('Optional parent task ID, or empty string to clear'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
           args: {
+            taskId?: string;
             oldText: string;
             listType: ListType;
             newText?: string;
@@ -452,13 +468,15 @@ export default function HomePage() {
             dueTimeStart?: string;
             dueTimeEnd?: string;
             projects?: string[];
+            parentTaskId?: string;
           }
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
           const updatedTasks = currentData.generalTasks[key].map(task => {
-            if (task.text === args.oldText.trim()) {
+            const matchesTask = args.taskId ? task.id === args.taskId : task.text === args.oldText.trim();
+            if (matchesTask) {
               const updated: Task = { ...task };
               if (args.newText) updated.text = args.newText.trim();
               if (args.dueDate !== undefined) {
@@ -492,6 +510,13 @@ export default function HomePage() {
                   updated.projects = args.projects;
                 }
               }
+              if (args.parentTaskId !== undefined) {
+                if (args.parentTaskId.trim().length === 0) {
+                  delete updated.parentTaskId;
+                } else {
+                  updated.parentTaskId = args.parentTaskId.trim();
+                }
+              }
               return updated;
             }
             return task;
@@ -512,11 +537,13 @@ export default function HomePage() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               oldText: args.oldText,
+              taskId: args.taskId,
               newText: args.newText,
               dueDate: args.dueDate,
               dueTimeStart: args.dueTimeStart,
               dueTimeEnd: args.dueTimeEnd,
               projects: args.projects,
+              parentTaskId: args.parentTaskId,
               listType: args.listType,
             }),
           });

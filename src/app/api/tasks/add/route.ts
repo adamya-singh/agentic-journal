@@ -1,51 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { handleDueDateSetup } from '../due-date-utils';
-import { Task, TasksData, ListType } from '@/lib/types';
+import { Task, TasksData } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
+import { getDescendantTaskIds, validateParentTaskAssignment, buildChildrenByParentId } from '@/lib/tasks';
+import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
 
 const NOTES_MAX_LENGTH = 20000;
-
-// Get the path for a specific task list
-function getTasksFilePath(listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-/**
- * Helper function to read tasks from file
- */
-function readTasks(listType: ListType): TasksData {
-  const tasksFile = getTasksFilePath(listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
-  }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
-}
-
-/**
- * Helper function to write tasks to file
- */
-function writeTasks(data: TasksData, listType: ListType): void {
-  const tasksFile = getTasksFilePath(listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
 
 /**
  * POST /api/tasks/add
  * Adds a new task to the list at the specified position (or appends to end if no position given)
  * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string }
+ * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, parentTaskId?: string }
  * - task: The task text to add
  * - position: Optional index where to insert the task (0 = highest priority)
  * - listType: Which task list to add to (defaults to 'have-to-do')
@@ -57,7 +25,7 @@ function writeTasks(data: TasksData, listType: ListType): void {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown } = body;
+    const { task, position, listType = 'have-to-do', dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, parentTaskId } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -108,8 +76,15 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (parentTaskId !== undefined && typeof parentTaskId !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'parentTaskId must be a string when provided' },
+        { status: 400 }
+      );
+    }
 
     const normalizedNotes = typeof notesMarkdown === 'string' ? notesMarkdown.trim() : '';
+    const normalizedParentTaskId = typeof parentTaskId === 'string' ? parentTaskId.trim() : '';
     const normalizedDueDate = typeof dueDate === 'string' ? dueDate.trim() : '';
     const normalizedDueTimeStart = typeof dueTimeStart === 'string' ? dueTimeStart.trim() : '';
     const normalizedDueTimeEnd = typeof dueTimeEnd === 'string' ? dueTimeEnd.trim() : '';
@@ -162,19 +137,42 @@ export async function POST(request: NextRequest) {
     if (normalizedNotes.length > 0) {
       newTask.notesMarkdown = normalizedNotes;
     }
+    if (normalizedParentTaskId.length > 0) {
+      newTask.parentTaskId = normalizedParentTaskId;
+    }
 
     // Read current tasks
-    const data = readTasks(listType);
+    const data = readGeneralTasks(listType) as TasksData;
+
+    const parentValidation = validateParentTaskAssignment(data.tasks, newTask.id, normalizedParentTaskId);
+    if (!parentValidation.valid) {
+      return NextResponse.json(
+        { success: false, error: parentValidation.error },
+        { status: 400 }
+      );
+    }
 
     // Insert at specified position or append to end
-    // Position is relative to task type (daily tasks vs regular tasks)
-    if (typeof position === 'number' && position >= 0) {
+    // Position is relative to task type (daily tasks vs regular tasks) for top-level tasks.
+    if (normalizedParentTaskId.length > 0) {
+      const childrenByParentId = buildChildrenByParentId(data.tasks);
+      const subtreeIds = new Set([normalizedParentTaskId, ...getDescendantTaskIds(normalizedParentTaskId, childrenByParentId)]);
+      let insertAt = data.tasks.findIndex((existingTask) => existingTask.id === normalizedParentTaskId);
+
+      data.tasks.forEach((existingTask, index) => {
+        if (subtreeIds.has(existingTask.id)) {
+          insertAt = Math.max(insertAt, index);
+        }
+      });
+
+      data.tasks.splice(insertAt + 1, 0, newTask);
+    } else if (typeof position === 'number' && position >= 0) {
       // Find indices of tasks matching the type we're adding
       const matchingIndices: number[] = [];
       data.tasks.forEach((t, idx) => {
         const taskIsDaily = t.isDaily === true;
         const newTaskIsDaily = isDaily === true;
-        if (taskIsDaily === newTaskIsDaily) {
+        if (!t.parentTaskId && taskIsDaily === newTaskIsDaily) {
           matchingIndices.push(idx);
         }
       });
@@ -200,7 +198,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Write updated tasks
-    writeTasks(data, listType);
+    writeGeneralTasks(data, listType);
 
     // If task has a due date, ensure due-date journal + staged task are initialized
     if (newTask.dueDate) {

@@ -18,6 +18,7 @@ import {
   writeGeneralTasks,
   TaskCompletionSnapshot,
 } from '../today-store-utils';
+import { buildChildrenByParentId, getDescendantTaskIds } from '@/lib/tasks';
 
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 
@@ -61,6 +62,10 @@ function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletion
     snapshot.projects = normalizeProjectList(task.projects);
   }
 
+  if (task.parentTaskId && task.parentTaskId.trim().length > 0) {
+    snapshot.parentTaskId = task.parentTaskId.trim();
+  }
+
   if (task.notesMarkdown && task.notesMarkdown.trim().length > 0) {
     snapshot.notesMarkdown = task.notesMarkdown.trim();
   }
@@ -84,6 +89,10 @@ function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
 
   if (snapshot.notesMarkdown && snapshot.notesMarkdown.length > 0) {
     task.notesMarkdown = snapshot.notesMarkdown;
+  }
+
+  if (snapshot.parentTaskId && snapshot.parentTaskId.length > 0) {
+    task.parentTaskId = snapshot.parentTaskId;
   }
 
   if (snapshot.dueDate) {
@@ -198,6 +207,27 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    const childrenByParentId = buildChildrenByParentId(generalData.tasks);
+    const completedTodayIds = new Set(completedSnapshots.map((snapshot) => snapshot.id));
+
+    if (!taskToComplete.parentTaskId) {
+      const openDescendants = getDescendantTaskIds(taskToComplete.id, childrenByParentId).filter(
+        (descendantId) => !completedTodayIds.has(descendantId)
+      );
+
+      if (openDescendants.length > 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Task has incomplete subtasks',
+            blockedByOpenSubtasks: true,
+            openSubtaskCount: openDescendants.length,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     const completionSnapshot = buildCompletionSnapshot(taskToComplete, typedListType);
     upsertCompletedTaskSnapshot(date, typedListType, completionSnapshot);
     upsertCompletedTaskIndexSnapshot(taskId, completionSnapshot, date);
@@ -210,12 +240,42 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    let promptToCompleteParent = false;
+    let parentTask: { id: string; text: string; listType: ListType } | null = null;
+    if (taskToComplete.parentTaskId) {
+      const parentId = taskToComplete.parentTaskId;
+      const completedAfterThisAction = new Set(completedTodayIds);
+      completedAfterThisAction.add(taskToComplete.id);
+
+      const openSiblingDescendants = getDescendantTaskIds(parentId, childrenByParentId).filter(
+        (descendantId) => !completedAfterThisAction.has(descendantId)
+      );
+
+      if (openSiblingDescendants.length === 0) {
+        const parentFromGeneral = generalData.tasks.find((task) => task.id === parentId) ?? null;
+        const parentFromToday = computedTodayTasks.find((task) => task.id === parentId) ?? null;
+        const parentFromLegacy = findLegacyDailyTaskById(date, typedListType, parentId);
+        const resolvedParent = parentFromGeneral ?? parentFromToday ?? parentFromLegacy ?? null;
+
+        if (resolvedParent) {
+          promptToCompleteParent = true;
+          parentTask = {
+            id: resolvedParent.id,
+            text: resolvedParent.text,
+            listType: typedListType,
+          };
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       completed: true,
       message: taskToComplete.isDaily
         ? 'Daily task marked as completed (stays in general list for tomorrow)'
         : 'Task marked as completed and removed from general list',
+      promptToCompleteParent,
+      parentTask,
     });
   } catch (error) {
     console.error('Error toggling task completion:', error);

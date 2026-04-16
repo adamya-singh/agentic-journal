@@ -136,6 +136,32 @@ function writeJournalFile(date: string, journal: DayJournalWithRangesAndStaged):
   fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
 }
 
+function getParentTaskContext(task: Task, listType: ListType, date: string): { parentTaskId?: string; parentTaskText?: string } {
+  if (!task.parentTaskId) {
+    return {};
+  }
+
+  const parentTask = findTaskById(task.parentTaskId, listType, date);
+  if (!parentTask) {
+    return { parentTaskId: task.parentTaskId };
+  }
+
+  return {
+    parentTaskId: task.parentTaskId,
+    parentTaskText: parentTask.text,
+  };
+}
+
+function formatResolvedTaskText(task: Task, listType: ListType, date: string): string {
+  const baseText = formatTaskTextWithProjects(task);
+  const { parentTaskText } = getParentTaskContext(task, listType, date);
+  if (!parentTaskText) {
+    return baseText;
+  }
+
+  return `${baseText} [subtask of ${parentTaskText}]`;
+}
+
 /**
  * Resolve a journal entry to displayable format
  */
@@ -145,9 +171,10 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
     const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
     const task = findTaskById(entry.taskId, entry.listType, date);
     if (task) {
+      const parentContext = getParentTaskContext(task, entry.listType, date);
       return {
         hour,
-        text: formatTaskTextWithProjects(task),
+        text: formatResolvedTaskText(task, entry.listType, date),
         type: 'task',
         entryMode: entry.entryMode,
         planId: entry.planId,
@@ -157,6 +184,7 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
         missedAt: entry.missedAt,
         taskId: entry.taskId,
         listType: entry.listType,
+        ...parentContext,
         completed: task.completed,
       };
     }
@@ -221,10 +249,11 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
     const resolvedPlanStatus = entry.entryMode === 'planned' ? (entry.planStatus ?? 'active') : undefined;
     const task = findTaskById(entry.taskId, entry.listType, date);
     if (task) {
+      const parentContext = getParentTaskContext(task, entry.listType, date);
       return {
         start: entry.start,
         end: entry.end,
-        text: formatTaskTextWithProjects(task),
+        text: formatResolvedTaskText(task, entry.listType, date),
         type: 'task',
         entryMode: entry.entryMode,
         planId: entry.planId,
@@ -234,6 +263,7 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
         missedAt: entry.missedAt,
         taskId: entry.taskId,
         listType: entry.listType,
+        ...parentContext,
         completed: task.completed,
       };
     }
@@ -278,10 +308,12 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
 function resolveStagedEntry(entry: StagedTaskEntry, date: string): ResolvedStagedEntry | null {
   const task = findTaskById(entry.taskId, entry.listType, date);
   if (task) {
+    const parentContext = getParentTaskContext(task, entry.listType, date);
     return {
-      text: formatTaskTextWithProjects(task),
+      text: formatResolvedTaskText(task, entry.listType, date),
       taskId: entry.taskId,
       listType: entry.listType,
+      ...parentContext,
       completed: task.completed,
     };
   }

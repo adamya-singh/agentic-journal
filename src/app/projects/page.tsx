@@ -9,6 +9,8 @@ interface ProjectTaskView {
   id: string;
   text: string;
   projects?: string[];
+  parentTaskId?: string;
+  parentTaskText?: string;
   dueDate?: string;
   dueTimeStart?: string;
   dueTimeEnd?: string;
@@ -16,6 +18,18 @@ interface ProjectTaskView {
   completed?: boolean;
   completedAt?: string;
   sourceDate?: string;
+}
+
+function renderParentTaskBadge(parentTaskText?: string) {
+  if (!parentTaskText) {
+    return null;
+  }
+
+  return (
+    <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
+      {parentTaskText}
+    </span>
+  );
 }
 
 function formatDueLabel(task: ProjectTaskView): string {
@@ -103,6 +117,7 @@ function DetailedTaskList({
               <li key={task.id} className="text-sm text-gray-700 dark:text-gray-200">
                 <div>
                   <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
+                  {renderParentTaskBadge(task.parentTaskText)}
                 </div>
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   {formatDueLabel(task)}
@@ -156,6 +171,7 @@ function UnifiedTaskList({ tasks }: { tasks: ProjectTaskView[] }) {
                         projects={task.projects}
                         textClassName={task.completed ? 'line-through' : undefined}
                       />
+                      {renderParentTaskBadge(task.parentTaskText)}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
                       {formatDueLabel(task)}

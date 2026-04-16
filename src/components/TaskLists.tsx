@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Play, CheckCircle, Clock, Pencil, GripVertical } from 'lucide-react';
+import { Play, CheckCircle, Clock, Pencil, GripVertical, ChevronDown, ChevronRight, Plus } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
@@ -29,6 +29,7 @@ import { TaskNotesPreview } from './TaskNotesPreview';
 import { TaskTextWithProjectBadges } from './TaskTextWithProjectBadges';
 import { Task, ListType } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
+import { buildTaskHierarchy, buildTaskMap, findParentTask, getDescendantTaskIds } from '@/lib/tasks';
 import { useRefresh } from '@/lib/RefreshContext';
 import { compareDueTimes, formatDueTimeRangeForDisplay } from '@/lib/due-time';
 
@@ -66,6 +67,7 @@ interface TaskListProps {
   onAddClick?: () => void;
   onDelete?: (task: Task) => void;
   onEdit?: (task: Task) => void;
+  onAddSubtask?: (task: Task) => void;
   sortMode?: DueSortMode;
   onToggleSort?: () => void;
   onReorder?: (params: { taskId: string; newIndex: number; isDaily: boolean }) => Promise<void> | void;
@@ -74,6 +76,8 @@ interface TaskListProps {
   reorderError?: string | null;
   expandedNotesTaskIds: Set<string>;
   onToggleNotes: (taskId: string) => void;
+  collapsedParentTaskIds: Set<string>;
+  onToggleChildren: (taskId: string) => void;
 }
 
 type DueSortMode = 'off' | 'asc' | 'desc';
@@ -226,6 +230,25 @@ function reorderTasksWithinType(tasks: Task[], taskId: string, newIndex: number,
   });
 }
 
+function getIndentedChildClass(depth: number): string {
+  if (depth <= 0) return '';
+  if (depth === 1) return 'ml-6';
+  if (depth === 2) return 'ml-10';
+  return 'ml-14';
+}
+
+function renderParentContextBadge(parentTaskText?: string) {
+  if (!parentTaskText) {
+    return null;
+  }
+
+  return (
+    <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
+      {parentTaskText}
+    </span>
+  );
+}
+
 interface SortableTaskItemProps {
   id: string;
   disabled: boolean;
@@ -269,6 +292,7 @@ function TaskList({
   onAddClick,
   onDelete,
   onEdit,
+  onAddSubtask,
   sortMode = 'off',
   onToggleSort,
   onReorder,
@@ -277,10 +301,12 @@ function TaskList({
   reorderError,
   expandedNotesTaskIds,
   onToggleNotes,
+  collapsedParentTaskIds,
+  onToggleChildren,
 }: TaskListProps) {
-  // Separate daily tasks from regular tasks
-  const dailyTasks = tasks.filter(task => task.isDaily === true);
-  const regularTasks = tasks.filter(task => !task.isDaily);
+  const hierarchy = useMemo(() => buildTaskHierarchy(tasks), [tasks]);
+  const dailyTasks = hierarchy.topLevelTasks.filter((task) => task.isDaily === true);
+  const regularTasks = hierarchy.topLevelTasks.filter((task) => task.isDaily !== true);
   const allTasks = [...dailyTasks, ...regularTasks];
 
   const sensors = useSensors(
@@ -341,18 +367,28 @@ function TaskList({
     [dragEnabled, onReorder]
   );
 
-  const renderTaskItem = (task: Task, index: number, isLast: boolean, totalCount: number, sortable: boolean) => {
+  const renderTaskItem = (
+    task: Task,
+    index: number,
+    isLast: boolean,
+    totalCount: number,
+    options?: { sortable?: boolean; depth?: number }
+  ) => {
+    const sortable = options?.sortable ?? false;
+    const depth = options?.depth ?? 0;
     const isInToday = clickedTasks?.has(task.id);
-    const priorityColor = getPriorityTierColor(index, totalCount);
+    const priorityColor = depth === 0 ? getPriorityTierColor(index, totalCount) : '#CBD5E1';
     const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
     const isNotesExpanded = expandedNotesTaskIds.has(task.id);
-    const rowClassName = `text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 -mx-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''} ${onReorder && dragEnabled ? 'select-none' : ''}`;
-    const rowStyle = { borderLeft: `4px solid ${priorityColor}`, paddingLeft: '8px', marginLeft: '-4px' };
+    const hasChildren = Boolean(task.childTasks && task.childTasks.length > 0);
+    const isCollapsed = collapsedParentTaskIds.has(task.id);
+    const rowClassName = `text-sm text-gray-700 dark:text-gray-200 flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${onTaskClick ? 'cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded px-2 transition-colors' : ''} ${isInToday ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : ''} ${sortable && onReorder && dragEnabled ? 'select-none' : ''} ${getIndentedChildClass(depth)}`;
+    const rowStyle = { borderLeft: `4px solid ${priorityColor}`, paddingLeft: '8px' };
 
     const content = (handle: { attributes: DraggableAttributes; listeners: DraggableSyntheticListeners | undefined } | null) => (
       <>
         <div className="flex items-start flex-1 min-w-0">
-          {onReorder && (
+          {sortable && onReorder && (
             <button
               type="button"
               className={`mr-1 mt-0.5 p-1 rounded text-gray-400 dark:text-gray-500 ${dragEnabled ? 'hover:bg-gray-200 dark:hover:bg-gray-700 cursor-grab active:cursor-grabbing' : 'cursor-not-allowed opacity-40'}`}
@@ -375,6 +411,20 @@ function TaskList({
 
           <div className="flex-1 min-w-0">
             <div className="flex-1" onClick={() => onTaskClick?.(task)}>
+              {hasChildren && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onToggleChildren(task.id);
+                  }}
+                  className="mr-1 inline-flex items-center rounded p-0.5 text-gray-400 hover:bg-gray-200 hover:text-gray-600 dark:text-gray-500 dark:hover:bg-gray-700 dark:hover:text-gray-300"
+                  title={isCollapsed ? 'Show subtasks' : 'Hide subtasks'}
+                >
+                  {isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+                </button>
+              )}
               <span className="text-gray-400 dark:text-gray-500 mr-2">{index + 1}.</span>
               <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
               {task.isDaily && (
@@ -392,6 +442,11 @@ function TaskList({
               )}
               {isInToday && (
                 <span className="ml-2 text-xs text-green-600 dark:text-green-400">✓ in today</span>
+              )}
+              {depth > 0 && (
+                <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
+                  Subtask
+                </span>
               )}
             </div>
             {hasNotes && (
@@ -417,6 +472,18 @@ function TaskList({
         </div>
         
         <div className="flex items-center">
+          {onAddSubtask && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAddSubtask(task);
+              }}
+              className="p-1 text-emerald-400 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Add subtask"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
           {/* Edit button */}
           {onEdit && (
             <button
@@ -471,6 +538,39 @@ function TaskList({
     );
   };
 
+  const renderNestedChildren = (children: Task[], depth: number) => (
+    <ul className="space-y-0">
+      {children.map((child, childIndex) => {
+        const childChildren = child.childTasks ?? [];
+        const childCollapsed = collapsedParentTaskIds.has(child.id);
+
+        return (
+          <React.Fragment key={child.id}>
+            {renderTaskItem(child, childIndex, childIndex === children.length - 1 && (childCollapsed || childChildren.length === 0), children.length, {
+              depth,
+            })}
+            {!childCollapsed && childChildren.length > 0 && renderNestedChildren(childChildren, depth + 1)}
+          </React.Fragment>
+        );
+      })}
+    </ul>
+  );
+
+  const renderTaskTree = (task: Task, rootIndex: number, isLastRoot: boolean, totalRoots: number, sortable: boolean) => {
+    const children = task.childTasks ?? [];
+    const isCollapsed = collapsedParentTaskIds.has(task.id);
+
+    return (
+      <React.Fragment key={task.id}>
+        {renderTaskItem(task, rootIndex, isLastRoot && (isCollapsed || children.length === 0), totalRoots, {
+          sortable,
+          depth: 0,
+        })}
+        {!isCollapsed && children.length > 0 && renderNestedChildren(children, 1)}
+      </React.Fragment>
+    );
+  };
+
   if (loading) {
     return (
       <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
@@ -516,7 +616,9 @@ function TaskList({
               >
                 <SortableContext items={dailyTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
                   <ul className="space-y-0">
-                    {dailyTasks.map((task, index) => renderTaskItem(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0, allTasks.length, dragControlsEnabled))}
+                    {dailyTasks.map((task, index) =>
+                      renderTaskTree(task, index, index === dailyTasks.length - 1 && regularTasks.length === 0, allTasks.length, dragControlsEnabled)
+                    )}
                   </ul>
                 </SortableContext>
               </DndContext>
@@ -536,7 +638,9 @@ function TaskList({
               >
                 <SortableContext items={regularTasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
                   <ul className="space-y-0">
-                    {regularTasks.map((task, index) => renderTaskItem(task, dailyTasks.length + index, index === regularTasks.length - 1, allTasks.length, dragControlsEnabled))}
+                    {regularTasks.map((task, index) =>
+                      renderTaskTree(task, dailyTasks.length + index, index === regularTasks.length - 1, allTasks.length, dragControlsEnabled)
+                    )}
                   </ul>
                 </SortableContext>
               </DndContext>
@@ -569,9 +673,10 @@ interface TodayTaskListProps {
   currentDate?: string;
   expandedNotesTaskIds: Set<string>;
   onToggleNotes: (taskId: string) => void;
+  taskMap: Map<string, Task>;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate, expandedNotesTaskIds, onToggleNotes }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate, expandedNotesTaskIds, onToggleNotes, taskMap }: TodayTaskListProps) {
   const orderedTasks = tasks;
 
   if (loading) {
@@ -612,6 +717,7 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
               const isLast = index === orderedTasks.length - 1;
               const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
               const isNotesExpanded = expandedNotesTaskIds.has(task.id);
+              const parentTask = findParentTask(task, taskMap);
               return (
                 <li 
                   key={task.id} 
@@ -640,6 +746,7 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
                         projects={task.projects}
                         textClassName={task.completed ? 'line-through' : undefined}
                       />
+                      {renderParentContextBadge(parentTask?.text)}
                       {task.isDaily && (
                         <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
                           <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -746,6 +853,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false);
   const [activeListType, setActiveListType] = useState<ListType>('have-to-do');
+  const [parentTaskForNewTask, setParentTaskForNewTask] = useState<Task | null>(null);
   
   // Add to plan modal state
   const [showPlanModal, setShowPlanModal] = useState(false);
@@ -754,7 +862,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   
   // Delete confirmation modal state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [taskToDelete, setTaskToDelete] = useState<{ task: Task; listType: ListType } | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<{ task: Task; listType: ListType; descendantCount: number } | null>(null);
   
   // Edit task modal state
   const [showEditModal, setShowEditModal] = useState(false);
@@ -786,6 +894,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [todayHaveTasks, setTodayHaveTasks] = useState<Set<string>>(new Set());
   const [todayWantTasks, setTodayWantTasks] = useState<Set<string>>(new Set());
   const [expandedNotesTaskIds, setExpandedNotesTaskIds] = useState<Set<string>>(new Set());
+  const [collapsedParentTaskIds, setCollapsedParentTaskIds] = useState<Set<string>>(new Set());
 
   // Notify parent when task data changes
   useEffect(() => {
@@ -1006,6 +1115,28 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         fetchGeneralTasks();
         // Notify WeekView to refresh (journal was modified)
         refreshJournal();
+        if (data.promptToCompleteParent && data.parentTask) {
+          const shouldCompleteParent = window.confirm(
+            `That finished the last open subtask for "${data.parentTask.text}". Complete the parent task too?`
+          );
+
+          if (shouldCompleteParent) {
+            await fetch('/api/tasks/today/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                taskId: data.parentTask.id,
+                listType: data.parentTask.listType,
+                date: currentDate,
+              }),
+            });
+            fetchTodayTasks();
+            fetchGeneralTasks();
+            refreshJournal();
+          }
+        }
+      } else if (data.blockedByOpenSubtasks) {
+        window.alert(`This task still has ${data.openSubtaskCount} incomplete subtask${data.openSubtaskCount === 1 ? '' : 's'}.`);
       }
     } catch (error) {
       console.error('Failed to toggle task completion:', error);
@@ -1058,7 +1189,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
 
   // Handler to show delete confirmation
   const confirmDeleteTask = (task: Task, listType: ListType) => {
-    setTaskToDelete({ task, listType });
+    const sourceTasks = listType === 'have-to-do' ? haveToDo : wantToDo;
+    const descendantCount = getDescendantTaskIds(task.id, buildTaskHierarchy(sourceTasks).childrenByParentId).length;
+    setTaskToDelete({ task, listType, descendantCount });
     setShowDeleteConfirm(true);
   };
 
@@ -1079,6 +1212,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         body: JSON.stringify({
           taskId: taskToDelete.task.id,
           listType: taskToDelete.listType,
+          recursive: taskToDelete.descendantCount > 0,
         }),
       });
       
@@ -1132,6 +1266,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
 
   const displayedHaveToDo = getDisplayedTasks(haveToDo, haveSortMode);
   const displayedWantToDo = getDisplayedTasks(wantToDo, wantSortMode);
+  const haveToDoTaskMap = useMemo(() => buildTaskMap(haveToDo), [haveToDo]);
+  const wantToDoTaskMap = useMemo(() => buildTaskMap(wantToDo), [wantToDo]);
   const toggleTaskNotes = (taskId: string) => {
     setExpandedNotesTaskIds((current) => {
       const next = new Set(current);
@@ -1147,6 +1283,40 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     const values = [...haveToDo, ...wantToDo].flatMap((task) => normalizeProjectList(task.projects));
     return Array.from(new Set(values)).sort((a, b) => a.localeCompare(b));
   }, [haveToDo, wantToDo]);
+  const toggleTaskChildren = (taskId: string) => {
+    setCollapsedParentTaskIds((current) => {
+      const next = new Set(current);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  };
+  const openAddTaskModal = (listType: ListType, parentTask: Task | null = null) => {
+    setActiveListType(listType);
+    setParentTaskForNewTask(parentTask);
+    setShowTaskModal(true);
+  };
+  const openAddSubtaskModal = (task: Task, listType: ListType) => {
+    setCollapsedParentTaskIds((current) => {
+      const next = new Set(current);
+      next.delete(task.id);
+      return next;
+    });
+    openAddTaskModal(listType, task);
+  };
+  const eligibleParentTasksForEdit = useMemo(() => {
+    if (!taskToEdit) {
+      return [];
+    }
+
+    const sourceTasks = taskToEdit.listType === 'have-to-do' ? haveToDo : wantToDo;
+    const descendants = new Set(getDescendantTaskIds(taskToEdit.task.id, buildTaskHierarchy(sourceTasks).childrenByParentId));
+
+    return sourceTasks.filter((task) => task.id !== taskToEdit.task.id && !descendants.has(task.id));
+  }, [taskToEdit, haveToDo, wantToDo]);
 
   return (
     <div className="w-full max-w-7xl mx-auto px-4 pb-4">
@@ -1169,6 +1339,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           currentDate={currentDate}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
+          taskMap={haveToDoTaskMap}
         />
         <TodayTaskList
           title="Want to Do Today"
@@ -1184,6 +1355,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           currentDate={currentDate}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
+          taskMap={wantToDoTaskMap}
         />
       </div>
 
@@ -1200,11 +1372,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onTaskClick={(task) => handleAddToToday(task, 'have-to-do')}
           clickedTasks={todayHaveTasks}
           onAddClick={() => {
-            setActiveListType('have-to-do');
-            setShowTaskModal(true);
+            openAddTaskModal('have-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
           onEdit={(task) => handleEditTask(task, 'have-to-do')}
+          onAddSubtask={(task) => openAddSubtaskModal(task, 'have-to-do')}
           sortMode={haveSortMode}
           onToggleSort={() => setHaveSortMode((prev) => cycleDueSortMode(prev))}
           onReorder={(params) => handleReorderTask('have-to-do', params)}
@@ -1213,6 +1385,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           reorderError={haveReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
+          collapsedParentTaskIds={collapsedParentTaskIds}
+          onToggleChildren={toggleTaskChildren}
         />
         <TaskList
           title="Want to Do"
@@ -1225,11 +1399,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onTaskClick={(task) => handleAddToToday(task, 'want-to-do')}
           clickedTasks={todayWantTasks}
           onAddClick={() => {
-            setActiveListType('want-to-do');
-            setShowTaskModal(true);
+            openAddTaskModal('want-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
           onEdit={(task) => handleEditTask(task, 'want-to-do')}
+          onAddSubtask={(task) => openAddSubtaskModal(task, 'want-to-do')}
           sortMode={wantSortMode}
           onToggleSort={() => setWantSortMode((prev) => cycleDueSortMode(prev))}
           onReorder={(params) => handleReorderTask('want-to-do', params)}
@@ -1238,16 +1412,25 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           reorderError={wantReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
+          collapsedParentTaskIds={collapsedParentTaskIds}
+          onToggleChildren={toggleTaskChildren}
         />
       </div>
 
       {/* Add Task Modal */}
       <PriorityComparisonModal
         isOpen={showTaskModal}
-        onClose={() => setShowTaskModal(false)}
-        onTaskAdded={fetchGeneralTasks}
+        onClose={() => {
+          setShowTaskModal(false);
+          setParentTaskForNewTask(null);
+        }}
+        onTaskAdded={() => {
+          fetchGeneralTasks();
+          fetchTodayTasks();
+        }}
         listType={activeListType}
         existingProjectSuggestions={projectSuggestions}
+        parentTask={parentTaskForNewTask}
       />
 
       {/* Add to Plan Modal */}
@@ -1266,7 +1449,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Delete Task?</h3>
             <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-              Are you sure you want to permanently delete this task?
+              {taskToDelete.descendantCount > 0
+                ? `This will permanently delete this task and its ${taskToDelete.descendantCount} subtask${taskToDelete.descendantCount === 1 ? '' : 's'}.`
+                : 'Are you sure you want to permanently delete this task?'}
             </p>
             <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
               <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">
@@ -1322,6 +1507,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         task={taskToEdit?.task ?? null}
         listType={taskToEdit?.listType ?? 'have-to-do'}
         existingProjectSuggestions={projectSuggestions}
+        candidateParentTasks={eligibleParentTasksForEdit}
       />
 
       <TaskResortModal

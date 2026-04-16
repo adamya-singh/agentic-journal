@@ -1,39 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
-import { TasksData, ListType } from '@/lib/types';
-
-// Get the path for a specific task list
-function getTasksFilePath(listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-/**
- * Helper function to read tasks from file
- */
-function readTasks(listType: ListType): TasksData {
-  const tasksFile = getTasksFilePath(listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
-  }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
-}
-
-/**
- * Helper function to write tasks to file
- */
-function writeTasks(data: TasksData, listType: ListType): void {
-  const tasksFile = getTasksFilePath(listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
+import { TasksData } from '@/lib/types';
+import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
 
 /**
  * POST /api/tasks/reorder
@@ -79,7 +46,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Read current tasks
-    const data = readTasks(listType);
+    const data = readGeneralTasks(listType) as TasksData;
 
     // Find the task by ID
     const currentIndex = data.tasks.findIndex(task => task.id === taskId);
@@ -94,7 +61,41 @@ export async function POST(request: NextRequest) {
     let clampedPosition: number;
     let clampedRelativePosition: number | undefined;
 
-    if (positionMode === 'absolute') {
+    if (currentTask.parentTaskId) {
+      const siblingTaskIds = data.tasks
+        .filter((task) => task.parentTaskId === currentTask.parentTaskId)
+        .map((task) => task.id);
+
+      const siblingIndex = siblingTaskIds.indexOf(taskId);
+      clampedRelativePosition = Math.min(newPosition, Math.max(siblingTaskIds.length - 1, 0));
+
+      if (siblingIndex === clampedRelativePosition) {
+        return NextResponse.json({
+          success: true,
+          message: 'Task is already at the specified sibling position',
+          position: currentIndex,
+          relativePosition: clampedRelativePosition,
+        });
+      }
+
+      const [task] = data.tasks.splice(currentIndex, 1);
+      const siblingsWithoutCurrent = data.tasks
+        .filter((existingTask) => existingTask.parentTaskId === currentTask.parentTaskId)
+        .map((existingTask) => existingTask.id);
+
+      if (siblingsWithoutCurrent.length === 0) {
+        const parentIndex = data.tasks.findIndex((existingTask) => existingTask.id === currentTask.parentTaskId);
+        clampedPosition = parentIndex === -1 ? data.tasks.length : parentIndex + 1;
+      } else if (clampedRelativePosition >= siblingsWithoutCurrent.length) {
+        const lastSiblingId = siblingsWithoutCurrent[siblingsWithoutCurrent.length - 1];
+        clampedPosition = data.tasks.findIndex((existingTask) => existingTask.id === lastSiblingId) + 1;
+      } else {
+        const anchorSiblingId = siblingsWithoutCurrent[clampedRelativePosition];
+        clampedPosition = data.tasks.findIndex((existingTask) => existingTask.id === anchorSiblingId);
+      }
+
+      data.tasks.splice(clampedPosition, 0, task);
+    } else if (positionMode === 'absolute') {
       // Clamp position to valid range
       clampedPosition = Math.min(newPosition, data.tasks.length - 1);
 
@@ -117,7 +118,7 @@ export async function POST(request: NextRequest) {
       // Build the absolute indices of tasks that match the moved task's daily/regular type
       const matchingIndices: number[] = [];
       tasksWithoutCurrent.forEach((t, idx) => {
-        if ((t.isDaily === true) === taskIsDaily) {
+        if (!t.parentTaskId && (t.isDaily === true) === taskIsDaily) {
           matchingIndices.push(idx);
         }
       });
@@ -140,7 +141,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Write updated tasks
-    writeTasks(data, listType);
+    writeGeneralTasks(data, listType);
 
     return NextResponse.json({
       success: true,

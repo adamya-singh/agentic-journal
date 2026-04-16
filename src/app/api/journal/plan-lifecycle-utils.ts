@@ -684,7 +684,10 @@ export function applyPlanActionInJournal(
     };
   }
 
-  const normalizedTask = normalizePlannedTaskEntry(target.entry, nowIso);
+  const normalizedTask = normalizePlannedTaskEntry(
+    target.entry as TaskJournalEntry | TaskJournalRangeEntry,
+    nowIso
+  );
   const nextTaskPlanned: TaskJournalEntry | TaskJournalRangeEntry = target.kind === 'hour'
     ? {
         ...(normalizedTask as TaskJournalEntry),

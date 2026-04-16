@@ -14,6 +14,7 @@ interface PriorityComparisonModalProps {
   onTaskAdded: () => void;
   listType?: ListType;
   existingProjectSuggestions?: string[];
+  parentTask?: Task | null;
 }
 
 function parseProjectsFromInput(value: string): string[] {
@@ -30,6 +31,7 @@ export function PriorityComparisonModal({
   onTaskAdded,
   listType = 'have-to-do',
   existingProjectSuggestions = [],
+  parentTask = null,
 }: PriorityComparisonModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('entering-task');
   const [taskInput, setTaskInput] = useState('');
@@ -82,6 +84,7 @@ export function PriorityComparisonModal({
           task: taskInput.trim(), 
           position, 
           listType,
+          parentTaskId: parentTask?.id,
           dueDate: dueDate || undefined,
           dueTimeStart: dueDate && dueTimeStart ? dueTimeStart : undefined,
           dueTimeEnd: dueDate && useDueTimeRange && dueTimeEnd ? dueTimeEnd : undefined,
@@ -107,12 +110,17 @@ export function PriorityComparisonModal({
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, onTaskAdded, onClose, listType, dueDate, dueTimeStart, dueTimeEnd, useDueTimeRange, isDaily, projectsInput, notesMarkdown]);
+  }, [taskInput, onTaskAdded, onClose, listType, parentTask?.id, dueDate, dueTimeStart, dueTimeEnd, useDueTimeRange, isDaily, projectsInput, notesMarkdown]);
 
   // Fetch existing tasks when entering comparison phase
   // Daily tasks only compare against other daily tasks, regular tasks only against regular tasks
   const startComparison = useCallback(async () => {
     if (!taskInput.trim()) return;
+
+    if (parentTask) {
+      await insertTask(0);
+      return;
+    }
     
     setPhase('loading');
     
@@ -146,7 +154,7 @@ export function PriorityComparisonModal({
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [taskInput, listType, isDaily, insertTask]);
+  }, [taskInput, listType, isDaily, insertTask, parentTask]);
 
   // Handle user's comparison choice
   const handleComparisonChoice = useCallback((newTaskIsMoreImportant: boolean) => {
@@ -189,9 +197,15 @@ export function PriorityComparisonModal({
         {phase === 'entering-task' && (
           <>
             <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-              Add {listType === 'want-to-do' ? 'Want-to-Do' : 'Have-to-Do'} Task
+              {parentTask
+                ? `Add Subtask to "${parentTask.text}"`
+                : `Add ${listType === 'want-to-do' ? 'Want-to-Do' : 'Have-to-Do'} Task`}
             </h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-6">Enter your task, then we&apos;ll find its priority</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-6">
+              {parentTask
+                ? 'Enter the subtask details below'
+                : 'Enter your task, then we&apos;ll find its priority'}
+            </p>
             
             <input
               type="text"

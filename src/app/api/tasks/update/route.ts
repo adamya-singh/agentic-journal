@@ -1,50 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'fs';
-import * as path from 'path';
 import { handleDueDateSetup } from '../due-date-utils';
-import { TasksData, ListType } from '@/lib/types';
+import { TasksData } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
+import { validateParentTaskAssignment } from '@/lib/tasks';
+import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
 
 const NOTES_MAX_LENGTH = 20000;
-
-// Get the path for a specific task list
-function getTasksFilePath(listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
-}
-
-/**
- * Helper function to read tasks from file
- */
-function readTasks(listType: ListType): TasksData {
-  const tasksFile = getTasksFilePath(listType);
-  if (!fs.existsSync(tasksFile)) {
-    return {
-      _comment: 'Queue structure - first element is highest priority',
-      tasks: [],
-    };
-  }
-  const content = fs.readFileSync(tasksFile, 'utf-8');
-  return JSON.parse(content);
-}
-
-/**
- * Helper function to write tasks to file
- */
-function writeTasks(data: TasksData, listType: ListType): void {
-  const tasksFile = getTasksFilePath(listType);
-  const dir = path.dirname(tasksFile);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
-}
 
 /**
  * POST /api/tasks/update
  * Updates a task's text, dueDate, and/or isDaily flag
  * 
- * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, listType?: 'have-to-do' | 'want-to-do' }
+ * Body: { taskId?: string, oldText?: string, newText?: string, dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, parentTaskId?: string, listType?: 'have-to-do' | 'want-to-do' }
  * - taskId: The unique ID of the task to update (preferred)
  * - oldText: Legacy text-based lookup (fallback if taskId not provided)
  * - newText: The new text for the task (optional)
@@ -59,7 +27,7 @@ function writeTasks(data: TasksData, listType: ListType): void {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, oldText, newText, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, listType = 'have-to-do' } = body;
+    const { taskId, oldText, newText, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, parentTaskId, listType = 'have-to-do' } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -111,9 +79,15 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    if (parentTaskId !== undefined && typeof parentTaskId !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'parentTaskId must be a string when provided' },
+        { status: 400 }
+      );
+    }
 
     // Read current tasks
-    const data = readTasks(listType);
+    const data = readGeneralTasks(listType) as TasksData;
 
     // Find the task - prioritize taskId lookup, fall back to oldText
     let taskIndex = -1;
@@ -225,8 +199,25 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (parentTaskId !== undefined) {
+      const normalizedParentTaskId = parentTaskId.trim();
+      const validation = validateParentTaskAssignment(data.tasks, data.tasks[taskIndex].id, normalizedParentTaskId);
+      if (!validation.valid) {
+        return NextResponse.json(
+          { success: false, error: validation.error },
+          { status: 400 }
+        );
+      }
+
+      if (normalizedParentTaskId.length > 0) {
+        data.tasks[taskIndex].parentTaskId = normalizedParentTaskId;
+      } else {
+        delete data.tasks[taskIndex].parentTaskId;
+      }
+    }
+
     // Write updated tasks
-    writeTasks(data, listType);
+    writeGeneralTasks(data, listType);
 
     // Ensure due-date setup / due-time auto-plan state is synchronized (including cleanup on retime/removal).
     const updatedTask = data.tasks[taskIndex];
