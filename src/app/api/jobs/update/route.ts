@@ -41,11 +41,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const currentListing = data.listings[listingIndex];
+    const now = new Date().toISOString();
+    const statusChanged = parsed.data.status !== undefined && parsed.data.status !== currentListing.status;
+
     const updatedListing = {
-      ...data.listings[listingIndex],
+      ...currentListing,
       ...parsed.data,
-      updatedAt: new Date().toISOString(),
+      statusHistory: statusChanged
+        ? [
+            ...currentListing.statusHistory,
+            {
+              status: parsed.data.status!,
+              changedAt: now,
+            },
+          ]
+        : currentListing.statusHistory,
+      updatedAt: now,
     };
+
+    if (updatedListing.postedDate === undefined) {
+      delete updatedListing.postedDate;
+    }
 
     data.listings[listingIndex] = updatedListing;
     writeJobListings(data);

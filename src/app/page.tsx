@@ -21,7 +21,7 @@ import { useRefresh } from '@/lib/RefreshContext';
 import { JobListingsData, JobListing } from '@/lib/types';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
-type JobListingInput = Omit<JobListing, 'id' | 'createdAt' | 'updatedAt' | 'notes' | 'status'> & {
+type JobListingInput = Omit<JobListing, 'id' | 'createdAt' | 'updatedAt' | 'savedAt' | 'statusHistory' | 'notes' | 'status'> & {
   notes?: string;
   status?: JobListing['status'];
 };
@@ -812,7 +812,7 @@ export default function HomePage() {
   // Register job listings as Cedar state with setters for OpenClaw.
   useRegisterState({
     key: 'jobListings',
-    description: 'OpenClaw-maintained job listings with company, position title, location, job type, status, salary, link, and free-form notes.',
+    description: 'OpenClaw-maintained job listings with company, simple company summary, position title, location, job type, status, salary, link, free-form notes, posted date, saved timestamp, and status history.',
     value: jobListingsData,
     setValue: setJobListingsData,
     stateSetters: {
@@ -821,12 +821,14 @@ export default function HomePage() {
         description: 'Add a job listing to the OpenClaw-maintained job board.',
         argsSchema: z.object({
           company: z.string().min(1).describe('The company name'),
+          companySummary: z.string().min(1).describe('A simple-English 1-2 sentence description of what the company does at a high level'),
           positionTitle: z.string().min(1).describe('The job title or role name'),
           location: z.string().min(1).describe('The job location or remote/hybrid location text'),
           jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
           status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
           salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
           link: z.string().url().describe('The application or job posting URL'),
+          postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The date the job was posted, if visible, in YYYY-MM-DD format'),
           notes: z.string().min(1).refine(
             (value) => /pros:/i.test(value) && /cons:/i.test(value),
             { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
@@ -860,12 +862,14 @@ export default function HomePage() {
         argsSchema: z.object({
           id: z.string().min(1).describe('The job listing ID'),
           company: z.string().min(1).optional().describe('Updated company name'),
+          companySummary: z.string().min(1).optional().describe('Updated simple-English 1-2 sentence description of what the company does at a high level'),
           positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
           location: z.string().min(1).optional().describe('Updated job location'),
           jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
           status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
           salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
           link: z.string().url().optional().describe('Updated application or job posting URL'),
+          postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated date the job was posted, if visible, in YYYY-MM-DD format'),
           notes: z.string().refine(
             (value) => /pros:/i.test(value) && /cons:/i.test(value),
             { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }

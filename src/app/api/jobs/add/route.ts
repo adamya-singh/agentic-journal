@@ -28,6 +28,7 @@ export async function POST(request: NextRequest) {
     const listing: JobListing = {
       id: randomUUID(),
       company: parsed.data.company,
+      companySummary: parsed.data.companySummary,
       positionTitle: parsed.data.positionTitle,
       location: parsed.data.location,
       jobType: parsed.data.jobType,
@@ -35,6 +36,9 @@ export async function POST(request: NextRequest) {
       salary: parsed.data.salary,
       link: parsed.data.link,
       notes: parsed.data.notes ?? '',
+      postedDate: parsed.data.postedDate,
+      savedAt: now,
+      statusHistory: [],
       createdAt: now,
       updatedAt: now,
     };

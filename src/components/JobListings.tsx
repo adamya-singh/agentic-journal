@@ -17,11 +17,24 @@ const JOB_TYPE_LABELS: Record<JobType, string> = {
   'new-grad': 'New grad',
 };
 
+const STATUS_LABELS: Record<JobListingStatus, string> = {
+  saved: 'Saved',
+  starred: 'Starred',
+  applied: 'Applied',
+  archived: 'Archived',
+};
+
 const ACTIVE_STATUS_OPTIONS: Array<{ value: Exclude<JobListingStatus, 'archived'>; label: string }> = [
   { value: 'saved', label: 'Saved' },
   { value: 'starred', label: 'Starred' },
   { value: 'applied', label: 'Applied' },
 ];
+
+const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+  year: 'numeric',
+});
 
 function formatJobType(jobType: JobType): string {
   return JOB_TYPE_LABELS[jobType] ?? jobType;
@@ -29,6 +42,25 @@ function formatJobType(jobType: JobType): string {
 
 function getStatus(listing: JobListing): JobListingStatus {
   return listing.status ?? 'saved';
+}
+
+function formatDate(value?: string): string {
+  if (!value) {
+    return 'Not listed';
+  }
+
+  const date = new Date(value.includes('T') ? value : `${value}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? 'Not listed' : DATE_FORMATTER.format(date);
+}
+
+function getStatusHistoryText(listing: JobListing): string {
+  if (!listing.statusHistory.length) {
+    return 'No status changes yet';
+  }
+
+  return listing.statusHistory
+    .map((entry) => `${STATUS_LABELS[entry.status]}: ${formatDate(entry.changedAt)}`)
+    .join('\n');
 }
 
 export function JobListings({ data, loading = false, error = null, onStatusChange }: JobListingsProps) {
@@ -122,6 +154,9 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                     Notes
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Dates
+                  </th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Status
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -142,6 +177,9 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                     <tr key={listing.id} className="align-top">
                       <td className="max-w-48 px-5 py-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
                         <span className="block break-words">{listing.company}</span>
+                        <span className="mt-1 block text-xs font-normal leading-5 text-slate-500 dark:text-slate-400">
+                          {listing.companySummary || 'Company description not available yet.'}
+                        </span>
                       </td>
                       <td className="max-w-72 px-5 py-4 text-sm text-slate-700 dark:text-slate-200">
                         <span className="block break-words">{listing.positionTitle}</span>
@@ -161,6 +199,22 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                         <span className="block whitespace-pre-wrap break-words">
                           {listing.notes || 'No notes'}
                         </span>
+                      </td>
+                      <td className="min-w-44 px-5 py-4 text-xs text-slate-600 dark:text-slate-300">
+                        <dl className="space-y-1">
+                          <div>
+                            <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Posted: </dt>
+                            <dd className="inline">{formatDate(listing.postedDate)}</dd>
+                          </div>
+                          <div>
+                            <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Saved: </dt>
+                            <dd className="inline">{formatDate(listing.savedAt ?? listing.createdAt)}</dd>
+                          </div>
+                          <div>
+                            <dt className="font-semibold text-slate-700 dark:text-slate-200">Status changes:</dt>
+                            <dd className="mt-0.5 whitespace-pre-wrap">{getStatusHistoryText(listing)}</dd>
+                          </div>
+                        </dl>
                       </td>
                       <td className="px-5 py-4 text-sm">
                         <select

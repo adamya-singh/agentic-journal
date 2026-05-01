@@ -80,6 +80,7 @@ These tools update the UI immediately and automatically persist changes to stora
 Job listings are managed through Cedar state and are visible in your context as "jobListings". Each listing has:
 - id
 - company
+- companySummary: simple-English 1-2 sentence description of what the company does at a high level
 - positionTitle
 - location
 - jobType: one of "fall-coop", "spring-coop", or "new-grad"
@@ -87,6 +88,9 @@ Job listings are managed through Cedar state and are visible in your context as 
 - salary
 - link
 - notes
+- postedDate: date the job was posted, when visible, in YYYY-MM-DD format
+- savedAt: when the listing was saved to the job board
+- statusHistory: status changes with changedAt timestamps
 
 To READ job listings: Always check jobListings in your additional context before adding anything. Existing listings count as existing regardless of status, including "archived".
 
@@ -96,7 +100,7 @@ To MODIFY job listings, use these tools:
 - removeJobListing: Remove a listing by ID
 - refreshJobListings: Reload listings from disk
 
-Use status: "saved" for newly discovered leads unless the user requested another status. Use status: "archived" to hide a listing without losing duplicate-prevention memory. Use salary: "not listed" when pay is unavailable. Use notes for fit, requirements, deadlines, source, concerns, or follow-up. Every saved listing's notes must include brief "Pros:" and "Cons:" sections from Adamya's life-goal perspective. Always evaluate whether a candidate is worth tracking for Adamya's AI/OpenAI/startup trajectory; it is acceptable to add nothing after a search. Do not create duplicate listings when the same company, position title, and link already exist in context, regardless of status, unless the user explicitly asks to restore or reconsider them.
+Use status: "saved" for newly discovered leads unless the user requested another status. Include companySummary as a plain-English 1-2 sentence explanation of what the company does at a high level. Include postedDate when the source shows when the job was posted; use YYYY-MM-DD format and omit it when unavailable. The app automatically records savedAt and statusHistory. Use status: "archived" to hide a listing without losing duplicate-prevention memory. Use salary: "not listed" when pay is unavailable. Use notes for fit, requirements, deadlines, source, concerns, or follow-up. Every saved listing's notes must include brief "Pros:" and "Cons:" sections from Adamya's life-goal perspective. Always evaluate whether a candidate is worth tracking for Adamya's AI/OpenAI/startup trajectory; it is acceptable to add nothing after a search. Do not create duplicate listings when the same company, position title, and link already exist in context, regardless of status, unless the user explicitly asks to restore or reconsider them.
 </job_listing_system>
 
 <planning_tasks>

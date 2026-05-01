@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { JobListing, JobListingStatus, JobListingsData } from '@/lib/types';
+import { JobListing, JobListingStatus, JobListingStatusHistoryEntry, JobListingsData, JobType } from '@/lib/types';
 
 const JOBS_DIR = path.join(process.cwd(), 'src/backend/data/jobs');
 const JOBS_FILE = path.join(JOBS_DIR, 'listings.json');
@@ -22,7 +22,7 @@ export function readJobListings(): JobListingsData {
 
   return {
     schemaVersion: 1,
-    listings: Array.isArray(parsed.listings) ? parsed.listings.map(normalizeJobListing) : [],
+    listings: Array.isArray(parsed.listings) ? parsed.listings.map((listing) => normalizeJobListing(listing)) : [],
   };
 }
 
@@ -37,13 +37,73 @@ export function ensureJobListingsFile(): JobListingsData {
   return data;
 }
 
-function normalizeJobListing(listing: JobListing): JobListing {
-  return {
-    ...listing,
+function normalizeJobListing(listing: Partial<JobListing>): JobListing {
+  const fallbackTimestamp = new Date().toISOString();
+  const savedAt = normalizeTimestamp(listing.savedAt) ?? normalizeTimestamp(listing.createdAt) ?? fallbackTimestamp;
+  const createdAt = normalizeTimestamp(listing.createdAt) ?? savedAt;
+  const updatedAt = normalizeTimestamp(listing.updatedAt) ?? createdAt;
+  const postedDate = normalizePostedDate(listing.postedDate);
+  const normalized: JobListing = {
+    id: normalizeString(listing.id),
+    company: normalizeString(listing.company),
+    companySummary: normalizeString(listing.companySummary) || 'Company description not available yet.',
+    positionTitle: normalizeString(listing.positionTitle),
+    location: normalizeString(listing.location),
+    jobType: normalizeJobType(listing.jobType),
     status: normalizeStatus(listing.status),
+    salary: normalizeString(listing.salary),
+    link: normalizeString(listing.link),
+    notes: normalizeString(listing.notes),
+    savedAt,
+    statusHistory: normalizeStatusHistory(listing.statusHistory),
+    createdAt,
+    updatedAt,
   };
+
+  if (postedDate) {
+    normalized.postedDate = postedDate;
+  }
+
+  return normalized;
 }
 
 function normalizeStatus(status: unknown): JobListingStatus {
   return status === 'starred' || status === 'applied' || status === 'archived' ? status : 'saved';
+}
+
+function normalizeJobType(jobType: unknown): JobType {
+  return jobType === 'fall-coop' || jobType === 'spring-coop' || jobType === 'new-grad' ? jobType : 'new-grad';
+}
+
+function normalizeStatusHistory(value: unknown): JobListingStatusHistoryEntry[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return [];
+    }
+
+    const status = normalizeStatus((entry as Record<string, unknown>).status);
+    const changedAt = normalizeTimestamp((entry as Record<string, unknown>).changedAt);
+    return changedAt ? [{ status, changedAt }] : [];
+  });
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function normalizeTimestamp(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function normalizePostedDate(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(trimmed) ? trimmed : undefined;
 }

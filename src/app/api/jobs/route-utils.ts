@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 export const JobTypeSchema = z.enum(['fall-coop', 'spring-coop', 'new-grad']);
 export const JobListingStatusSchema = z.enum(['saved', 'starred', 'applied', 'archived']);
+export const PostedDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'postedDate must use YYYY-MM-DD format');
 
 const NotesWithProsAndConsSchema = z.string().min(1).refine(
   (value) => /pros:/i.test(value) && /cons:/i.test(value),
@@ -10,6 +11,7 @@ const NotesWithProsAndConsSchema = z.string().min(1).refine(
 
 export const JobListingFieldsSchema = z.object({
   company: z.string().min(1),
+  companySummary: z.string().min(1),
   positionTitle: z.string().min(1),
   location: z.string().min(1),
   jobType: JobTypeSchema,
@@ -17,6 +19,7 @@ export const JobListingFieldsSchema = z.object({
   salary: z.string().min(1),
   link: z.string().url(),
   notes: NotesWithProsAndConsSchema,
+  postedDate: PostedDateSchema.optional(),
 });
 
 export const UpdateJobListingFieldsSchema = JobListingFieldsSchema.partial().extend({
@@ -33,11 +36,15 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function normalizeJobListingFields(fields: Record<string, unknown>): Record<string, unknown> {
   const normalized = { ...fields };
 
-  for (const key of ['company', 'positionTitle', 'location', 'status', 'salary', 'link', 'notes']) {
+  for (const key of ['company', 'companySummary', 'positionTitle', 'location', 'status', 'salary', 'link', 'notes', 'postedDate']) {
     const value = normalized[key];
     if (typeof value === 'string') {
       normalized[key] = value.trim();
     }
+  }
+
+  if (normalized.postedDate === '') {
+    delete normalized.postedDate;
   }
 
   return normalized;

@@ -152,12 +152,14 @@ export const RemoveJournalRangeSchema = z.object({
 
 export const AddJobListingSchema = z.object({
   company: z.string().min(1).describe('The company name'),
+  companySummary: z.string().min(1).describe('A simple-English 1-2 sentence description of what the company does at a high level'),
   positionTitle: z.string().min(1).describe('The job title or role name'),
   location: z.string().min(1).describe('The job location or remote/hybrid location text'),
   jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
   status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
   salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
   link: z.string().url().describe('The application or job posting URL'),
+  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The date the job was posted, if visible, in YYYY-MM-DD format'),
   notes: z.string().min(1).refine(
     (value) => /pros:/i.test(value) && /cons:/i.test(value),
     { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
@@ -167,12 +169,14 @@ export const AddJobListingSchema = z.object({
 export const UpdateJobListingSchema = z.object({
   id: z.string().min(1).describe('The job listing ID'),
   company: z.string().min(1).optional().describe('Updated company name'),
+  companySummary: z.string().min(1).optional().describe('Updated simple-English 1-2 sentence description of what the company does at a high level'),
   positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
   location: z.string().min(1).optional().describe('Updated job location'),
   jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
   status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
   salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
   link: z.string().url().optional().describe('Updated application or job posting URL'),
+  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated date the job was posted, if visible, in YYYY-MM-DD format'),
   notes: z.string().refine(
     (value) => /pros:/i.test(value) && /cons:/i.test(value),
     { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
@@ -454,7 +458,7 @@ export const addJobListingTool = createMastraToolForStateSetter(
   'addJobListing',
   AddJobListingSchema,
   {
-    description: 'Add a job listing to the OpenClaw-maintained job board. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
+    description: 'Add a job listing to the OpenClaw-maintained job board. Include a simple-English 1-2 sentence companySummary and postedDate in YYYY-MM-DD format when visible. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
     toolId: 'addJobListing',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,

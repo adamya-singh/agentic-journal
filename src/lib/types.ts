@@ -29,9 +29,15 @@ export interface TasksData {
 export type JobType = 'fall-coop' | 'spring-coop' | 'new-grad';
 export type JobListingStatus = 'saved' | 'starred' | 'applied' | 'archived';
 
+export interface JobListingStatusHistoryEntry {
+  status: JobListingStatus;
+  changedAt: string;
+}
+
 export interface JobListing {
   id: string;
   company: string;
+  companySummary: string;
   positionTitle: string;
   location: string;
   jobType: JobType;
@@ -39,6 +45,9 @@ export interface JobListing {
   salary: string;
   link: string;
   notes: string;
+  postedDate?: string;
+  savedAt: string;
+  statusHistory: JobListingStatusHistoryEntry[];
   createdAt: string;
   updatedAt: string;
 }
