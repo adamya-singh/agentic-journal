@@ -148,6 +148,43 @@ export const RemoveJournalRangeSchema = z.object({
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
 
+// ==================== JOB LISTING STATE SETTER SCHEMAS ====================
+
+export const AddJobListingSchema = z.object({
+  company: z.string().min(1).describe('The company name'),
+  positionTitle: z.string().min(1).describe('The job title or role name'),
+  location: z.string().min(1).describe('The job location or remote/hybrid location text'),
+  jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
+  status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
+  salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
+  link: z.string().url().describe('The application or job posting URL'),
+  notes: z.string().min(1).refine(
+    (value) => /pros:/i.test(value) && /cons:/i.test(value),
+    { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
+  ).describe('Free-form notes with source, fit rationale, and brief Pros: and Cons: sections from the perspective of life goals'),
+});
+
+export const UpdateJobListingSchema = z.object({
+  id: z.string().min(1).describe('The job listing ID'),
+  company: z.string().min(1).optional().describe('Updated company name'),
+  positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
+  location: z.string().min(1).optional().describe('Updated job location'),
+  jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
+  status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
+  salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
+  link: z.string().url().optional().describe('Updated application or job posting URL'),
+  notes: z.string().refine(
+    (value) => /pros:/i.test(value) && /cons:/i.test(value),
+    { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
+  ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals'),
+});
+
+export const RemoveJobListingSchema = z.object({
+  id: z.string().min(1).describe('The job listing ID to remove'),
+});
+
+export const RefreshJobListingsSchema = z.object({});
+
 // ==================== TOOL CREATION ====================
 
 // Create backend tools for the frontend tool
@@ -410,6 +447,56 @@ export const removeJournalRangeTool = createMastraToolForStateSetter(
   },
 );
 
+// ==================== JOB LISTING STATE SETTER TOOLS ====================
+
+export const addJobListingTool = createMastraToolForStateSetter(
+  'jobListings',
+  'addJobListing',
+  AddJobListingSchema,
+  {
+    description: 'Add a job listing to the OpenClaw-maintained job board. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
+    toolId: 'addJobListing',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const updateJobListingTool = createMastraToolForStateSetter(
+  'jobListings',
+  'updateJobListing',
+  UpdateJobListingSchema,
+  {
+    description: 'Update one or more fields on an existing job listing by ID.',
+    toolId: 'updateJobListing',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const removeJobListingTool = createMastraToolForStateSetter(
+  'jobListings',
+  'removeJobListing',
+  RemoveJobListingSchema,
+  {
+    description: 'Remove a job listing from the OpenClaw-maintained job board by ID.',
+    toolId: 'removeJobListing',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const refreshJobListingsTool = createMastraToolForStateSetter(
+  'jobListings',
+  'refreshJobListings',
+  RefreshJobListingsSchema,
+  {
+    description: 'Reload job listings from the JSON file on disk.',
+    toolId: 'refreshJobListings',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
 export const requestAdditionalContextTool = createRequestAdditionalContextTool();
 
 /**
@@ -437,6 +524,12 @@ export const TOOL_REGISTRY = {
     removeTaskFromTodayTool,
     completeTaskTool,
   },
+  jobListingManagement: {
+    addJobListingTool,
+    updateJobListingTool,
+    removeJobListingTool,
+    refreshJobListingsTool,
+  },
 };
 
 // Export all tools as an array for easy registration
@@ -455,4 +548,8 @@ export const ALL_TOOLS = [
   addTaskToTodayTool,
   removeTaskFromTodayTool,
   completeTaskTool,
+  addJobListingTool,
+  updateJobListingTool,
+  removeJobListingTool,
+  refreshJobListingsTool,
 ];

@@ -12,13 +12,19 @@ import {
 import { ChatModeSelector } from '@/components/ChatModeSelector';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
+import { JobListings } from '@/components/JobListings';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
 import { DebuggerPanel } from '@/cedar/components/debugger';
 import { useRefresh } from '@/lib/RefreshContext';
+import { JobListingsData, JobListing } from '@/lib/types';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
+type JobListingInput = Omit<JobListing, 'id' | 'createdAt' | 'updatedAt' | 'notes' | 'status'> & {
+  notes?: string;
+  status?: JobListing['status'];
+};
 
 /**
  * Get current date in ISO format (YYYY-MM-DD)
@@ -63,7 +69,7 @@ export default function HomePage() {
   const [chatMode, setChatMode] = React.useState<ChatMode>('sidepanel');
 
   // Cedar state for the main text that can be changed by the agent
-  const [mainText, setMainText] = React.useState('tell Cedar to change me');
+  const [mainText, setMainText] = React.useState('');
 
   // Cedar state for dynamically added text lines
   const [textLines, setTextLines] = React.useState<string[]>([]);
@@ -80,12 +86,13 @@ export default function HomePage() {
   // Cedar state for task lists data (general and today lists)
   const [taskListsData, setTaskListsData] = React.useState<TaskListsData | null>(null);
 
+  // Cedar state for OpenClaw-maintained job listings
+  const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
+  const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
+  const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
+
   // Get refresh functions from context
   const { refreshTasks, refreshJournal, refreshAll } = useRefresh();
-
-  // State for journal creation button
-  const [journalStatus, setJournalStatus] = React.useState<'idle' | 'loading' | 'success' | 'error' | 'exists'>('idle');
-  const [journalMessage, setJournalMessage] = React.useState<string>('');
 
   // Get messages from Cedar store to watch for addTask tool results
   const messages = useCedarStore((state) => state.messages);
@@ -188,6 +195,33 @@ export default function HomePage() {
 
   // System message to pre-fill in chat input when page loads
   const systemMessage = `[System] The user has opened the journal page. Current date: ${currentDate}, Current time: ${currentTime}. Read today's journal using the readJournal tool and ask the user terse, efficient questions to help fill in the journal entries for the day. If any entries already exist for today, don't try to fill in any gaps before the latest entry.`;
+
+  const refreshJobListings = React.useCallback(async () => {
+    setJobListingsLoading(true);
+    setJobListingsError(null);
+
+    try {
+      const response = await fetch('/api/jobs/list');
+      const data = await response.json();
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load job listings');
+      }
+
+      setJobListingsData({
+        schemaVersion: 1,
+        listings: Array.isArray(data.listings) ? data.listings : [],
+      });
+    } catch (error) {
+      setJobListingsError(error instanceof Error ? error.message : 'Failed to load job listings');
+    } finally {
+      setJobListingsLoading(false);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    refreshJobListings();
+  }, [refreshJobListings]);
 
   // Register the main text as Cedar state with a state setter
   useRegisterState({
@@ -775,6 +809,147 @@ export default function HomePage() {
     },
   });
 
+  // Register job listings as Cedar state with setters for OpenClaw.
+  useRegisterState({
+    key: 'jobListings',
+    description: 'OpenClaw-maintained job listings with company, position title, location, job type, status, salary, link, and free-form notes.',
+    value: jobListingsData,
+    setValue: setJobListingsData,
+    stateSetters: {
+      addJobListing: {
+        name: 'addJobListing',
+        description: 'Add a job listing to the OpenClaw-maintained job board.',
+        argsSchema: z.object({
+          company: z.string().min(1).describe('The company name'),
+          positionTitle: z.string().min(1).describe('The job title or role name'),
+          location: z.string().min(1).describe('The job location or remote/hybrid location text'),
+          jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
+          status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
+          salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
+          link: z.string().url().describe('The application or job posting URL'),
+          notes: z.string().min(1).refine(
+            (value) => /pros:/i.test(value) && /cons:/i.test(value),
+            { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
+          ).describe('Free-form notes from OpenClaw with brief Pros: and Cons: sections from the perspective of life goals'),
+        }),
+        execute: async (
+          currentData: JobListingsData | null,
+          setValue: (newValue: JobListingsData | null) => void,
+          args: JobListingInput
+        ) => {
+          const response = await fetch('/api/jobs/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(args),
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to add job listing');
+          }
+
+          setValue({
+            schemaVersion: 1,
+            listings: data.listings,
+          });
+        },
+      },
+      updateJobListing: {
+        name: 'updateJobListing',
+        description: 'Update one or more fields on an existing job listing by ID.',
+        argsSchema: z.object({
+          id: z.string().min(1).describe('The job listing ID'),
+          company: z.string().min(1).optional().describe('Updated company name'),
+          positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
+          location: z.string().min(1).optional().describe('Updated job location'),
+          jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
+          status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
+          salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
+          link: z.string().url().optional().describe('Updated application or job posting URL'),
+          notes: z.string().refine(
+            (value) => /pros:/i.test(value) && /cons:/i.test(value),
+            { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
+          ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals'),
+        }),
+        execute: async (
+          currentData: JobListingsData | null,
+          setValue: (newValue: JobListingsData | null) => void,
+          args: { id: string } & Partial<JobListingInput>
+        ) => {
+          const response = await fetch('/api/jobs/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(args),
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to update job listing');
+          }
+
+          setValue({
+            schemaVersion: 1,
+            listings: data.listings,
+          });
+        },
+      },
+      removeJobListing: {
+        name: 'removeJobListing',
+        description: 'Remove a job listing from the OpenClaw-maintained job board by ID.',
+        argsSchema: z.object({
+          id: z.string().min(1).describe('The job listing ID to remove'),
+        }),
+        execute: async (
+          currentData: JobListingsData | null,
+          setValue: (newValue: JobListingsData | null) => void,
+          args: { id: string }
+        ) => {
+          const response = await fetch('/api/jobs/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(args),
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to remove job listing');
+          }
+
+          setValue({
+            schemaVersion: 1,
+            listings: data.listings,
+          });
+        },
+      },
+      refreshJobListings: {
+        name: 'refreshJobListings',
+        description: 'Reload job listings from the JSON file on disk.',
+        argsSchema: z.object({}),
+        execute: async () => {
+          await refreshJobListings();
+        },
+      },
+    },
+  });
+
+  const updateJobListingStatus = React.useCallback(async (id: string, status: JobListing['status']) => {
+    const response = await fetch('/api/jobs/update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, status }),
+    });
+    const data = await response.json();
+
+    if (!response.ok || !data.success) {
+      throw new Error(data.error || 'Failed to update job listing status');
+    }
+
+    setJobListingsData({
+      schemaVersion: 1,
+      listings: data.listings,
+    });
+  }, []);
+
   // Publish React state to Cedar context after render to avoid first-render registration races.
   usePublishCedarContext('mainText', mainText, {
     showInChat: true,
@@ -797,38 +972,9 @@ export default function HomePage() {
     showInChat: false,
   });
 
-  // Handler for creating today's journal
-  const handleCreateTodayJournal = async () => {
-    setJournalStatus('loading');
-    setJournalMessage('');
-    
-    try {
-      const response = await fetch('/api/journal/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date: currentDate }),
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (data.alreadyExists) {
-          setJournalStatus('exists');
-          setJournalMessage(`Journal for ${currentDate} already exists`);
-        } else {
-          setJournalStatus('success');
-          setJournalMessage(`Created journal for ${currentDate}`);
-        }
-      } else {
-        setJournalStatus('error');
-        setJournalMessage(data.error || 'Failed to create journal');
-      }
-    } catch {
-      setJournalStatus('error');
-      setJournalMessage('Failed to connect to server');
-    }
-  };
-
+  usePublishCedarContext('jobListings', jobListingsData, {
+    showInChat: false,
+  });
 
   // Register frontend tool for adding text lines
   useRegisterFrontendTool({
@@ -855,7 +1001,7 @@ export default function HomePage() {
   });
 
   const renderContent = () => (
-    <div className="relative min-h-screen w-full bg-white dark:bg-gray-900">
+    <div className="relative min-h-screen w-full bg-white pb-40 dark:bg-gray-900">
       <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
       <div className="absolute top-4 right-4 z-10">
         <Link
@@ -876,62 +1022,7 @@ export default function HomePage() {
 
       {/* Main interactive content area */}
       <div className="flex flex-col items-center justify-center p-8 space-y-8">
-        {/* Journal creation section */}
-        <div className="flex flex-col items-center gap-3">
-          <div className="text-sm text-gray-500 dark:text-gray-400">
-            Today: {currentDate}
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={handleCreateTodayJournal}
-              disabled={journalStatus === 'loading'}
-              className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                journalStatus === 'loading'
-                  ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed'
-                  : journalStatus === 'success'
-                    ? 'bg-green-500 dark:bg-green-600 text-white hover:bg-green-600 dark:hover:bg-green-500'
-                    : journalStatus === 'exists'
-                      ? 'bg-blue-500 dark:bg-blue-600 text-white hover:bg-blue-600 dark:hover:bg-blue-500'
-                      : journalStatus === 'error'
-                        ? 'bg-red-500 dark:bg-red-600 text-white hover:bg-red-600 dark:hover:bg-red-500'
-                        : 'bg-indigo-500 dark:bg-indigo-600 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500'
-              }`}
-            >
-              {journalStatus === 'loading'
-                ? 'Creating...'
-                : journalStatus === 'success'
-                  ? '✓ Created'
-                  : journalStatus === 'exists'
-                    ? '✓ Already Exists'
-                    : journalStatus === 'error'
-                      ? 'Retry'
-                      : "Create Today's Journal"}
-            </button>
-          </div>
-          {journalMessage && (
-            <p className={`text-sm ${journalStatus === 'error' ? 'text-red-600 dark:text-red-400' : 'text-gray-600 dark:text-gray-400'}`}>
-              {journalMessage}
-            </p>
-          )}
-        </div>
-
-        {/* Big text that Cedar can change */}
-        <div className="text-center">
-          <h1 className="text-6xl font-bold text-gray-800 dark:text-gray-100 mb-4">{mainText}</h1>
-          <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
-            This text can be changed by Cedar using state setters
-          </p>
-        </div>
-
-        {/* Instructions for adding new text */}
-        <div className="text-center">
-          <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-2">
-            tell cedar to add new lines of text to the screen
-          </h2>
-          <p className="text-md text-gray-500 dark:text-gray-400 mb-6">
-            Cedar can add new text using frontend tools with different styles
-          </p>
-        </div>
+        <div className="h-[23rem]" aria-hidden="true" />
 
         {/* Display dynamically added text lines */}
         {textLines.length > 0 && (
@@ -958,6 +1049,13 @@ export default function HomePage() {
           </div>
         )}
       </div>
+
+      <JobListings
+        data={jobListingsData}
+        loading={jobListingsLoading}
+        error={jobListingsError}
+        onStatusChange={updateJobListingStatus}
+      />
 
       {chatMode === 'caption' && <CedarCaptionChat />}
 

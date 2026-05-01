@@ -24,6 +24,30 @@ export interface TasksData {
   tasks: Task[];
 }
 
+// ============ Job Listing Types ============
+
+export type JobType = 'fall-coop' | 'spring-coop' | 'new-grad';
+export type JobListingStatus = 'saved' | 'starred' | 'applied' | 'archived';
+
+export interface JobListing {
+  id: string;
+  company: string;
+  positionTitle: string;
+  location: string;
+  jobType: JobType;
+  status: JobListingStatus;
+  salary: string;
+  link: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobListingsData {
+  schemaVersion: 1;
+  listings: JobListing[];
+}
+
 // ============ Journal Entry Types ============
 
 /**
