@@ -6,7 +6,6 @@ import { z } from 'zod';
 import {
   useRegisterState,
   useRegisterFrontendTool,
-  useSubscribeStateToAgentContext,
   useCedarStore,
 } from 'cedar-os';
 
@@ -42,6 +41,20 @@ function getCurrentTime(): string {
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const hours12 = hours % 12 || 12;
   return `${hours12}:${minutes} ${ampm}`;
+}
+
+function usePublishCedarContext(
+  key: string,
+  value: unknown,
+  options?: { color?: string; showInChat?: boolean }
+) {
+  const putAdditionalContext = useCedarStore((state) => state.putAdditionalContext);
+  const color = options?.color;
+  const showInChat = options?.showInChat;
+
+  React.useEffect(() => {
+    putAdditionalContext(key, value, { color, showInChat });
+  }, [key, value, color, showInChat, putAdditionalContext]);
 }
 
 export default function HomePage() {
@@ -762,29 +775,25 @@ export default function HomePage() {
     },
   });
 
-  // Subscribe the main text state to the backend
-  useSubscribeStateToAgentContext('mainText', (mainText) => ({ mainText }), {
+  // Publish React state to Cedar context after render to avoid first-render registration races.
+  usePublishCedarContext('mainText', mainText, {
     showInChat: true,
     color: '#4F46E5',
   });
 
-  // Subscribe the current date to agent context
-  useSubscribeStateToAgentContext('currentDate', (currentDate) => ({ currentDate }), {
+  usePublishCedarContext('currentDate', currentDate, {
     showInChat: false,
   });
 
-  // Subscribe the current time to agent context
-  useSubscribeStateToAgentContext('currentTime', (currentTime) => ({ currentTime }), {
+  usePublishCedarContext('currentTime', currentTime, {
     showInChat: false,
   });
 
-  // Subscribe week journals to agent context
-  useSubscribeStateToAgentContext('weekJournals', (weekJournals) => ({ weekJournals }), {
+  usePublishCedarContext('weekJournals', weekViewData, {
     showInChat: false,
   });
 
-  // Subscribe task lists to agent context
-  useSubscribeStateToAgentContext('taskLists', (taskLists) => ({ taskLists }), {
+  usePublishCedarContext('taskLists', taskListsData, {
     showInChat: false,
   });
 
