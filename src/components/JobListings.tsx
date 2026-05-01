@@ -44,6 +44,13 @@ function getStatus(listing: JobListing): JobListingStatus {
   return listing.status ?? 'saved';
 }
 
+function getSource(listing: JobListing): { name: string; link: string } {
+  return {
+    name: listing.source?.name || 'Unknown',
+    link: listing.source?.link || listing.link,
+  };
+}
+
 function formatDate(value?: string): string {
   if (!value) {
     return 'Not listed';
@@ -51,6 +58,17 @@ function formatDate(value?: string): string {
 
   const date = new Date(value.includes('T') ? value : `${value}T00:00:00`);
   return Number.isNaN(date.getTime()) ? 'Not listed' : DATE_FORMATTER.format(date);
+}
+
+function formatPostedDate(listing: JobListing): string {
+  const postedDate = formatDate(listing.postedDate);
+  const postedDateText = listing.postedDateText?.trim();
+
+  if (postedDateText && postedDate !== 'Not listed') {
+    return `${postedDateText} (${postedDate})`;
+  }
+
+  return postedDateText || postedDate;
 }
 
 function getStatusHistoryText(listing: JobListing): string {
@@ -66,7 +84,18 @@ function getStatusHistoryText(listing: JobListing): string {
 export function JobListings({ data, loading = false, error = null, onStatusChange }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const listings = (data?.listings ?? []).filter((listing) => getStatus(listing) !== 'archived');
+  const listings = (data?.listings ?? [])
+    .filter((listing) => getStatus(listing) !== 'archived')
+    .sort((first, second) => {
+      const firstStarred = getStatus(first) === 'starred';
+      const secondStarred = getStatus(second) === 'starred';
+
+      if (firstStarred === secondStarred) {
+        return 0;
+      }
+
+      return firstStarred ? -1 : 1;
+    });
 
   const setStatus = async (listing: JobListing, status: JobListingStatus) => {
     if (!onStatusChange || pendingListingId) {
@@ -151,6 +180,9 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                     Salary
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Source
+                  </th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Notes
                   </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -170,6 +202,7 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
               <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
                 {listings.map((listing) => {
                   const status = getStatus(listing);
+                  const source = getSource(listing);
                   const pending = pendingListingId === listing.id;
                   const starDisabled = !onStatusChange || pending || status === 'applied';
 
@@ -195,6 +228,17 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                       <td className="max-w-44 px-5 py-4 text-sm text-slate-600 dark:text-slate-300">
                         <span className="block break-words">{listing.salary}</span>
                       </td>
+                      <td className="max-w-44 px-5 py-4 text-sm">
+                        <a
+                          href={source.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 break-words font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+                        >
+                          {source.name}
+                          <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+                        </a>
+                      </td>
                       <td className="min-w-64 max-w-96 px-5 py-4 text-sm text-slate-600 dark:text-slate-300">
                         <span className="block whitespace-pre-wrap break-words">
                           {listing.notes || 'No notes'}
@@ -204,7 +248,7 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                         <dl className="space-y-1">
                           <div>
                             <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Posted: </dt>
-                            <dd className="inline">{formatDate(listing.postedDate)}</dd>
+                            <dd className="inline">{formatPostedDate(listing)}</dd>
                           </div>
                           <div>
                             <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Saved: </dt>

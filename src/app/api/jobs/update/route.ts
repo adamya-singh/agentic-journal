@@ -64,6 +64,10 @@ export async function POST(request: NextRequest) {
       delete updatedListing.postedDate;
     }
 
+    if (updatedListing.postedDateText === undefined) {
+      delete updatedListing.postedDateText;
+    }
+
     data.listings[listingIndex] = updatedListing;
     writeJobListings(data);
 

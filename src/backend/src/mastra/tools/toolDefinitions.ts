@@ -150,6 +150,11 @@ export const RemoveJournalRangeSchema = z.object({
 
 // ==================== JOB LISTING STATE SETTER SCHEMAS ====================
 
+const JobListingSourceSchema = z.object({
+  name: z.string().min(1).describe('The source where this job was discovered, such as Jobright, SpeedyApply, or a GitHub list name'),
+  link: z.string().url().describe('A link to the source posting or source page where the listing was found'),
+});
+
 export const AddJobListingSchema = z.object({
   company: z.string().min(1).describe('The company name'),
   companySummary: z.string().min(1).describe('A simple-English 1-2 sentence description of what the company does at a high level'),
@@ -159,11 +164,13 @@ export const AddJobListingSchema = z.object({
   status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
   salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
   link: z.string().url().describe('The application or job posting URL'),
-  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The date the job was posted, if visible, in YYYY-MM-DD format'),
+  source: JobListingSourceSchema.describe('Where this listing was discovered and the page URL for that source'),
+  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
+  postedDateText: z.string().min(1).optional().describe('The raw posted-date wording shown on the job posting, such as "posted today", "posted 30+ days ago", or "posted Apr 12"'),
   notes: z.string().min(1).refine(
     (value) => /pros:/i.test(value) && /cons:/i.test(value),
     { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-  ).describe('Free-form notes with source, fit rationale, and brief Pros: and Cons: sections from the perspective of life goals'),
+  ).describe('Free-form notes with fit rationale and brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
 });
 
 export const UpdateJobListingSchema = z.object({
@@ -176,11 +183,13 @@ export const UpdateJobListingSchema = z.object({
   status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
   salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
   link: z.string().url().optional().describe('Updated application or job posting URL'),
-  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated date the job was posted, if visible, in YYYY-MM-DD format'),
+  source: JobListingSourceSchema.optional().describe('Updated source name and source page URL'),
+  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
+  postedDateText: z.string().min(1).optional().describe('Updated raw posted-date wording shown on the job posting'),
   notes: z.string().refine(
     (value) => /pros:/i.test(value) && /cons:/i.test(value),
     { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-  ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals'),
+  ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
 });
 
 export const RemoveJobListingSchema = z.object({
@@ -458,7 +467,7 @@ export const addJobListingTool = createMastraToolForStateSetter(
   'addJobListing',
   AddJobListingSchema,
   {
-    description: 'Add a job listing to the OpenClaw-maintained job board. Include a simple-English 1-2 sentence companySummary and postedDate in YYYY-MM-DD format when visible. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
+    description: 'Add a job listing to the OpenClaw-maintained job board. Include a simple-English 1-2 sentence companySummary, structured source metadata, postedDateText when the posting shows age/date wording, and postedDate in YYYY-MM-DD format when visible or confidently derivable. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
     toolId: 'addJobListing',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { JobListing, JobListingStatus, JobListingStatusHistoryEntry, JobListingsData, JobType } from '@/lib/types';
+import { JobListing, JobListingSource, JobListingStatus, JobListingStatusHistoryEntry, JobListingsData, JobType } from '@/lib/types';
 
 const JOBS_DIR = path.join(process.cwd(), 'src/backend/data/jobs');
 const JOBS_FILE = path.join(JOBS_DIR, 'listings.json');
@@ -39,10 +39,13 @@ export function ensureJobListingsFile(): JobListingsData {
 
 function normalizeJobListing(listing: Partial<JobListing>): JobListing {
   const fallbackTimestamp = new Date().toISOString();
+  const link = normalizeString(listing.link);
+  const sourceFromNotes = parseSourceFromNotes(listing.notes);
   const savedAt = normalizeTimestamp(listing.savedAt) ?? normalizeTimestamp(listing.createdAt) ?? fallbackTimestamp;
   const createdAt = normalizeTimestamp(listing.createdAt) ?? savedAt;
   const updatedAt = normalizeTimestamp(listing.updatedAt) ?? createdAt;
   const postedDate = normalizePostedDate(listing.postedDate);
+  const postedDateText = normalizeNonEmptyString(listing.postedDateText);
   const normalized: JobListing = {
     id: normalizeString(listing.id),
     company: normalizeString(listing.company),
@@ -52,8 +55,9 @@ function normalizeJobListing(listing: Partial<JobListing>): JobListing {
     jobType: normalizeJobType(listing.jobType),
     status: normalizeStatus(listing.status),
     salary: normalizeString(listing.salary),
-    link: normalizeString(listing.link),
-    notes: normalizeString(listing.notes),
+    link,
+    source: normalizeSource(listing.source, sourceFromNotes?.name, link),
+    notes: sourceFromNotes?.notes ?? normalizeString(listing.notes),
     savedAt,
     statusHistory: normalizeStatusHistory(listing.statusHistory),
     createdAt,
@@ -64,7 +68,44 @@ function normalizeJobListing(listing: Partial<JobListing>): JobListing {
     normalized.postedDate = postedDate;
   }
 
+  if (postedDateText) {
+    normalized.postedDateText = postedDateText;
+  }
+
   return normalized;
+}
+
+function normalizeSource(source: unknown, sourceNameFromNotes: string | undefined, listingLink: string): JobListingSource {
+  const fallbackName = sourceNameFromNotes || 'Unknown';
+  const fallbackLink = listingLink;
+
+  if (typeof source === 'object' && source !== null && !Array.isArray(source)) {
+    const record = source as Record<string, unknown>;
+    const name = normalizeString(record.name) || fallbackName;
+    const link = normalizeString(record.link) || fallbackLink;
+    return { name, link };
+  }
+
+  return {
+    name: fallbackName,
+    link: fallbackLink,
+  };
+}
+
+function parseSourceFromNotes(value: unknown): { name: string; notes: string } | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const match = value.match(/^\s*Source:\s*([^.\n]+)\.\s*(.*)$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  return {
+    name: match[1].trim(),
+    notes: match[2].trim(),
+  };
 }
 
 function normalizeStatus(status: unknown): JobListingStatus {
@@ -93,6 +134,15 @@ function normalizeStatusHistory(value: unknown): JobListingStatusHistoryEntry[] 
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function normalizeNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 function normalizeTimestamp(value: unknown): string | undefined {
