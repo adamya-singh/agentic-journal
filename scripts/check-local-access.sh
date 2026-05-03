@@ -26,8 +26,26 @@ print_user_status() {
 echo "Local access checks (Raspberry Pi)"
 echo "=================================="
 print_system_status tailscaled
-print_system_status agentic-journal
+print_system_status agentic-journal-next
+print_system_status agentic-journal-mastra
 print_user_status openclaw-gateway
+
+echo
+echo "Agentic Journal endpoint probes"
+echo "-------------------------------"
+for probe in \
+  "Next root|http://127.0.0.1:3000/" \
+  "Jobs API|http://127.0.0.1:3000/api/jobs/list" \
+  "Mastra direct|http://127.0.0.1:4111/" \
+  "Mastra proxy|http://127.0.0.1:3000/mastra"; do
+  label="${probe%%|*}"
+  url="${probe#*|}"
+  if curl -fsS -o /dev/null --max-time 5 "$url"; then
+    printf "%-24s ok %s\n" "$label" "$url"
+  else
+    printf "%-24s failed %s\n" "$label" "$url"
+  fi
+done
 
 if command -v tailscale >/dev/null 2>&1; then
   ts_ip="$(tailscale ip -4 2>/dev/null | head -n 1 || true)"

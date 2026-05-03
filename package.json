@@ -5,12 +5,17 @@
   "scripts": {
     "dev": "dotenv -e .env -- concurrently -n \"NEXT,MASTRA\" -c \"blue.bold,magenta.bold\" \"npm run dev:next\" \"npm run dev:mastra\"",
     "dev:next": "next dev --turbopack",
-    "dev:mastra": "npm --prefix src/backend run dev",
+    "dev:mastra": "pnpm --dir src/backend run dev",
     "setup:tailscale-https": "bash scripts/setup-tailscale-https.sh",
     "status:local-access": "bash scripts/check-local-access.sh",
+    "deploy:production": "bash scripts/deploy-production.sh",
     "migrate:journal-entry-mode": "node scripts/migrate-journal-entry-mode.mjs --write",
     "build": "next build",
+    "build:mastra": "pnpm --dir src/backend run build",
+    "build:all": "npm run build && npm run build:mastra",
     "start": "next start",
+    "start:next": "next start",
+    "start:mastra": "pnpm --dir src/backend run start",
     "lint": "next lint",
     "pretty": "npx prettier --write ."
   },

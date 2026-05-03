@@ -162,9 +162,21 @@ npm run status:local-access
 
 This checks:
 - `tailscaled` system service
-- `agentic-journal` system service
+- `agentic-journal-next` system service
+- `agentic-journal-mastra` system service
 - `openclaw-gateway` user service
+- Local Agentic Journal endpoint probes for Next, jobs, Mastra, and the `/mastra` proxy
 - Tailnet identity and `tailscale serve` route status
+
+### Production rebuild and restart
+
+If the app fails after a reboot, rebuild the ignored production artifacts and restart both services:
+
+```bash
+npm run deploy:production
+```
+
+This performs a clean Next.js build, a clean Mastra build, installs Mastra's generated production dependencies, restarts `agentic-journal-next` and `agentic-journal-mastra`, and probes the local endpoints.
 
 ### Fallbacks
 
