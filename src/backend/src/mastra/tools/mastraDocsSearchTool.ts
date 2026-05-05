@@ -13,9 +13,7 @@ export const mastraDocsSearchTool = createTool({
   inputSchema: z.object({ query: z.string() }),
   outputSchema: z.object({ answer: z.string() }),
 
-  execute: async ({ context }) => {
-    // Extract the query from the validated input
-    const { query } = context as { query: string };
+  execute: async ({ query }) => {
     // TODO: Replace with real documentation search
     return { answer: `Documentation search not yet implemented for query: ${query}` };
   },

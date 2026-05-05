@@ -13,6 +13,7 @@ import { generateCategorizedToolDescriptions } from '@cedar-os/backend';
  * about the user's day-to-day life and organizes it by date and hour.
  */
 export const journalAgent = new Agent({
+  id: 'journalAgent',
   name: 'Journal Agent',
   instructions: ` 
 <role>

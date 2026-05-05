@@ -256,19 +256,7 @@ export const addTaskTool = createTool({
     }).optional(),
     message: z.string(),
   }),
-  execute: async ({ context }) => {
-    const { text, listType, position, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects } = context as {
-      text: string;
-      listType: 'have-to-do' | 'want-to-do';
-      position?: number;
-      parentTaskId?: string;
-      dueDate?: string;
-      dueTimeStart?: string;
-      dueTimeEnd?: string;
-      isDaily?: boolean;
-      projects?: string[];
-    };
-    
+  execute: async ({ text, listType, position, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }) => {
     try {
       // Call the API directly to add the task
       const response = await fetch('http://localhost:3000/api/tasks/add', {

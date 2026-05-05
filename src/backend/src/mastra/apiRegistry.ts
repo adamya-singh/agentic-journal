@@ -1,5 +1,5 @@
 import { registerApiRoute } from '@mastra/core/server';
-import { ChatInputSchema, ChatOutput, chatWorkflow } from './workflows/chatWorkflow';
+import { ChatInputSchema, chatWorkflow } from './workflows/chatWorkflow';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { createSSEStream } from '../utils/streamUtils';
 
@@ -43,7 +43,7 @@ export const apiRoutes = [
         } = ChatInputSchema.parse(body);
 
         return createSSEStream(async (controller) => {
-          const run = await chatWorkflow.createRunAsync();
+          const run = await chatWorkflow.createRun();
           const result = await run.start({
             inputData: {
               prompt,

@@ -19,9 +19,6 @@ export const mastra = new Mastra({
   agents: { journalAgent },
   workflows: { chatWorkflow },
   storage,
-  telemetry: {
-    enabled: true,
-  },
   server: {
     apiRoutes,
   },

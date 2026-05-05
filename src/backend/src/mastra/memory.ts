@@ -2,6 +2,7 @@ import { Memory } from '@mastra/memory';
 import { LibSQLStore } from '@mastra/libsql';
 
 const storage = new LibSQLStore({
+  id: 'journal-storage',
   url: 'file:./storage.db', // Local SQLite database file
 });
 

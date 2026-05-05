@@ -4,7 +4,7 @@
 // ---------------------------------------------
 
 import { createWorkflow, createStep } from '@mastra/core/workflows';
-import { RuntimeContext } from '@mastra/core/di';
+import { RequestContext } from '@mastra/core/di';
 import { z } from 'zod';
 import { journalAgent } from '../agents/journalAgent';
 import { handleTextStream, streamJSONEvent } from '../../utils/streamUtils';
@@ -53,10 +53,10 @@ const callAgent = createStep({
 
     console.log('Chat workflow received input data', inputData);
 
-    // Create runtime context with additionalContext and streamController
-    const runtimeContext = new RuntimeContext();
-    runtimeContext.set('additionalContext', additionalContext);
-    runtimeContext.set('streamController', streamController);
+    // Create request context with additionalContext and streamController
+    const requestContext = new RequestContext();
+    requestContext.set('additionalContext', additionalContext);
+    requestContext.set('streamController', streamController);
 
     const messages = [
       'User message: ' + prompt,
@@ -65,18 +65,18 @@ const callAgent = createStep({
 
     let responseText = '';
     /**
-     * Using Mastra streamVNext for enhanced streaming capabilities.
-     * streamVNext returns a stream result that we can iterate over to get chunks
+     * Using Mastra streaming capabilities.
+     * stream returns a stream result that we can iterate over to get chunks
      * and properly handle different event types such as text-delta, tool calls, etc.
      */
-    const streamResult = await journalAgent.streamVNext(messages, {
+    const streamResult = await journalAgent.stream(messages, {
       // If system prompt is provided, overwrite the default system prompt for this agent
       ...(systemPrompt ? ({ instructions: systemPrompt } as const) : {}),
       modelSettings: {
         temperature,
         maxOutputTokens: maxTokens,
       },
-      runtimeContext,
+      requestContext,
       ...(threadId && resourceId
         ? {
             memory: {
