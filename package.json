@@ -16,6 +16,9 @@
     "start": "next start",
     "start:next": "next start",
     "start:mastra": "pnpm --dir src/backend run start",
+    "start:production": "dotenv -e .env -- concurrently --kill-others-on-fail -n \"NEXT,MASTRA\" -c \"blue.bold,magenta.bold\" \"npm run start:production:next\" \"npm run start:production:mastra\"",
+    "start:production:next": "next start -H 127.0.0.1 -p 3000",
+    "start:production:mastra": "cd src/backend/.mastra/output && HOST=127.0.0.1 PORT=4111 node ./index.mjs",
     "lint": "next lint",
     "pretty": "npx prettier --write ."
   },

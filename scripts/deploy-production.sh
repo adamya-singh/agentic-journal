@@ -45,8 +45,8 @@ require_command sudo
 
 cd "$ROOT_DIR"
 
-echo "Stopping production services..."
-systemctl_cmd stop agentic-journal-next.service agentic-journal-mastra.service || true
+echo "Stopping Agentic Journal service..."
+systemctl_cmd stop agentic-journal.service || true
 
 echo
 echo "Installing root dependencies..."
@@ -73,10 +73,9 @@ echo "Installing Mastra generated production dependencies..."
 pnpm --dir "$MASTRA_OUTPUT_DIR" install --prod
 
 echo
-echo "Starting production services..."
+echo "Starting Agentic Journal service..."
 systemctl_cmd daemon-reload
-systemctl_cmd start agentic-journal-next.service
-systemctl_cmd start agentic-journal-mastra.service
+systemctl_cmd start agentic-journal.service
 
 echo
 echo "Verifying local endpoints..."
@@ -87,4 +86,4 @@ wait_for_http "Mastra proxy" "http://127.0.0.1:3000/mastra"
 
 echo
 echo "Service status:"
-systemctl --no-pager --full status agentic-journal-next.service agentic-journal-mastra.service
+systemctl --no-pager --full status agentic-journal.service
