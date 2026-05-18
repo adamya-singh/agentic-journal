@@ -84,7 +84,11 @@ function getStatusHistoryText(listing: JobListing): string {
 export function JobListings({ data, loading = false, error = null, onStatusChange }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const listings = (data?.listings ?? [])
+  const [showAppliedOnly, setShowAppliedOnly] = React.useState(false);
+  const nonArchivedListings = (data?.listings ?? []).filter((listing) => getStatus(listing) !== 'archived');
+  const activeListings = nonArchivedListings.filter((listing) => getStatus(listing) !== 'applied');
+  const appliedListings = nonArchivedListings.filter((listing) => getStatus(listing) === 'applied');
+  const listings = (showAppliedOnly ? appliedListings : activeListings)
     .filter((listing) => getStatus(listing) !== 'archived')
     .sort((first, second) => {
       const firstStarred = getStatus(first) === 'starred';
@@ -139,8 +143,18 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
               </p>
             </div>
           </div>
-          <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
-            {loading ? 'Loading...' : `${listings.length} listing${listings.length === 1 ? '' : 's'}`}
+          <div className="flex flex-col gap-2 sm:items-end">
+            <button
+              type="button"
+              onClick={() => setShowAppliedOnly((current) => !current)}
+              className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-indigo-900/60"
+              aria-pressed={showAppliedOnly}
+            >
+              {showAppliedOnly ? 'Show Active' : 'Show Applied'}
+            </button>
+            <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
+              {loading ? 'Loading...' : `${listings.length} ${showAppliedOnly ? 'applied ' : ''}listing${listings.length === 1 ? '' : 's'}`}
+            </div>
           </div>
         </div>
 
@@ -153,10 +167,12 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
         {listings.length === 0 ? (
           <div className="px-5 py-12 text-center">
             <p className="text-base font-medium text-slate-700 dark:text-slate-200">
-              No job listings yet.
+              {showAppliedOnly ? 'No applied job listings yet.' : 'No active job listings yet.'}
             </p>
             <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-              OpenClaw can add opportunities here as it finds them.
+              {showAppliedOnly
+                ? 'Jobs marked applied will appear here.'
+                : 'OpenClaw can add opportunities here as it finds them.'}
             </p>
           </div>
         ) : (
@@ -164,6 +180,12 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
             <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
               <thead className="bg-slate-50 dark:bg-slate-800/70">
                 <tr>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Actions
+                  </th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                    Link
+                  </th>
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Company
                   </th>
@@ -191,12 +213,6 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                   <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
                     Status
                   </th>
-                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    Link
-                  </th>
-                  <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                    Actions
-                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 bg-white dark:divide-slate-800 dark:bg-slate-900">
@@ -208,6 +224,41 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
 
                   return (
                     <tr key={listing.id} className="align-top">
+                      <td className="px-5 py-4 text-left text-sm">
+                        <div className="flex justify-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => toggleStar(listing)}
+                            disabled={starDisabled}
+                            title={status === 'applied' ? 'Applied listings use the status dropdown' : status === 'starred' ? 'Unstar listing' : 'Star listing'}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
+                            aria-label={status === 'starred' ? 'Unstar listing' : 'Star listing'}
+                          >
+                            <Star className={`h-4 w-4 ${status === 'starred' ? 'fill-amber-400 text-amber-500' : ''}`} aria-hidden="true" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setStatus(listing, 'archived')}
+                            disabled={!onStatusChange || pending}
+                            title="Archive listing"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                            aria-label="Archive listing"
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 text-sm">
+                        <a
+                          href={listing.link}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+                        >
+                          Open
+                          <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                        </a>
+                      </td>
                       <td className="max-w-48 px-5 py-4 text-sm font-semibold text-slate-900 dark:text-slate-100">
                         <span className="block break-words">{listing.company}</span>
                         <span className="mt-1 block text-xs font-normal leading-5 text-slate-500 dark:text-slate-400">
@@ -274,41 +325,6 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                             </option>
                           ))}
                         </select>
-                      </td>
-                      <td className="px-5 py-4 text-sm">
-                        <a
-                          href={listing.link}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
-                        >
-                          Open
-                          <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                        </a>
-                      </td>
-                      <td className="px-5 py-4 text-right text-sm">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => toggleStar(listing)}
-                            disabled={starDisabled}
-                            title={status === 'applied' ? 'Applied listings use the status dropdown' : status === 'starred' ? 'Unstar listing' : 'Star listing'}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
-                            aria-label={status === 'starred' ? 'Unstar listing' : 'Star listing'}
-                          >
-                            <Star className={`h-4 w-4 ${status === 'starred' ? 'fill-amber-400 text-amber-500' : ''}`} aria-hidden="true" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setStatus(listing, 'archived')}
-                            disabled={!onStatusChange || pending}
-                            title="Archive listing"
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
-                            aria-label="Archive listing"
-                          >
-                            <Trash2 className="h-4 w-4" aria-hidden="true" />
-                          </button>
-                        </div>
                       </td>
                     </tr>
                   );
