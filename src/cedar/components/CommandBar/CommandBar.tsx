@@ -9,10 +9,10 @@ import {
 	CommandSeparator,
 } from '@/cedar/components/ui/command';
 import { KeyboardShortcut } from '@/cedar/components/ui/KeyboardShortcut';
-import { EditorContent } from '@tiptap/react';
 import type { ActivationEvent, ActivationMode } from 'cedar-os';
 import {
 	ActivationMode as ActivationModeEnum,
+	CedarEditorContent as EditorContent,
 	cn,
 	useCedarEditor,
 	useMessages,
