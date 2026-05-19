@@ -2,12 +2,15 @@
 
 import Link from 'next/link';
 import React from 'react';
+import { AddToPlanModal } from '@/components/AddToPlanModal';
 import { TaskTextWithProjectBadges } from '@/components/TaskTextWithProjectBadges';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
+import type { ListType, RoadmapCheckpointStatus, Task } from '@/lib/types';
 
 interface ProjectTaskView {
   id: string;
   text: string;
+  listType: ListType;
   projects?: string[];
   parentTaskId?: string;
   parentTaskText?: string;
@@ -18,6 +21,32 @@ interface ProjectTaskView {
   completed?: boolean;
   completedAt?: string;
   sourceDate?: string;
+}
+
+interface RoadmapTaskView extends ProjectTaskView {
+  missing?: boolean;
+}
+
+interface RoadmapCheckpointView {
+  id: string;
+  title: string;
+  description?: string;
+  status: RoadmapCheckpointStatus;
+  tasks: RoadmapTaskView[];
+  progress: {
+    completed: number;
+    total: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProjectRoadmapView {
+  project: string;
+  goal: string;
+  checkpoints: RoadmapCheckpointView[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 function renderParentTaskBadge(parentTaskText?: string) {
@@ -51,6 +80,7 @@ interface ProjectGroup {
   general: ProjectBucket;
   today: ProjectBucket;
   completed: ProjectBucket;
+  roadmap: ProjectRoadmapView | null;
   totals: {
     general: number;
     today: number;
@@ -75,7 +105,7 @@ function getCurrentDateISO(): string {
   return `${year}-${month}-${day}`;
 }
 
-type ProjectViewMode = 'unified' | 'detailed';
+type ProjectViewMode = 'unified' | 'detailed' | 'roadmap';
 
 function getPriorityTierColor(index: number, totalCount: number): string {
   if (totalCount === 0) return 'transparent';
@@ -189,14 +219,514 @@ function UnifiedTaskList({ tasks }: { tasks: ProjectTaskView[] }) {
   );
 }
 
+function statusLabel(status: RoadmapCheckpointStatus): string {
+  if (status === 'in-progress') return 'In progress';
+  if (status === 'completed') return 'Completed';
+  return 'Not started';
+}
+
+function toTaskForPlanning(task: ProjectTaskView): Task {
+  return {
+    id: task.id,
+    text: task.text,
+    ...(task.projects ? { projects: task.projects } : {}),
+    ...(task.parentTaskId ? { parentTaskId: task.parentTaskId } : {}),
+    ...(task.dueDate ? { dueDate: task.dueDate } : {}),
+    ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
+    ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
+    ...(task.isDaily ? { isDaily: true } : {}),
+    ...(task.completed ? { completed: true } : {}),
+  };
+}
+
+function RoadmapPanel({
+  group,
+  date,
+  onChanged,
+}: {
+  group: ProjectGroup;
+  date: string;
+  onChanged: () => void;
+}) {
+  const [goal, setGoal] = React.useState(group.roadmap?.goal ?? '');
+  const [savingGoal, setSavingGoal] = React.useState(false);
+  const [newCheckpointTitle, setNewCheckpointTitle] = React.useState('');
+  const [newCheckpointDescription, setNewCheckpointDescription] = React.useState('');
+  const [creatingCheckpoint, setCreatingCheckpoint] = React.useState(false);
+  const [taskToPlan, setTaskToPlan] = React.useState<ProjectTaskView | null>(null);
+  const [checkpointDrafts, setCheckpointDrafts] = React.useState<
+    Record<string, { title: string; description: string; status: RoadmapCheckpointStatus }>
+  >({});
+  const [linkSelections, setLinkSelections] = React.useState<Record<string, string>>({});
+  const [taskDrafts, setTaskDrafts] = React.useState<
+    Record<string, { text: string; listType: ListType; dueDate: string; dueTimeStart: string; dueTimeEnd: string }>
+  >({});
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    setGoal(group.roadmap?.goal ?? '');
+    setCheckpointDrafts({});
+    setLinkSelections({});
+    setTaskDrafts({});
+    setError(null);
+  }, [group.roadmap, group.project]);
+
+  const requestRoadmapChange = React.useCallback(
+    async (payload: Record<string, unknown>) => {
+      setError(null);
+      const response = await fetch('/api/projects/roadmap', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          project: group.project,
+          ...payload,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update roadmap');
+      }
+      onChanged();
+      return data;
+    },
+    [group.project, onChanged]
+  );
+
+  const checkpoints = group.roadmap?.checkpoints ?? [];
+  const linkedTaskKeys = new Set(
+    checkpoints.flatMap((checkpoint) => checkpoint.tasks.map((task) => `${task.id}:${task.listType}`))
+  );
+  const linkableTasks = group.unified.filter((task) => !linkedTaskKeys.has(`${task.id}:${task.listType}`));
+
+  const getCheckpointDraft = (checkpoint: RoadmapCheckpointView) =>
+    checkpointDrafts[checkpoint.id] ?? {
+      title: checkpoint.title,
+      description: checkpoint.description ?? '',
+      status: checkpoint.status,
+    };
+
+  const getTaskDraft = (checkpointId: string) =>
+    taskDrafts[checkpointId] ?? {
+      text: '',
+      listType: 'have-to-do',
+      dueDate: '',
+      dueTimeStart: '',
+      dueTimeEnd: '',
+    };
+
+  const saveGoal = async () => {
+    setSavingGoal(true);
+    try {
+      await requestRoadmapChange({ action: 'set-goal', goal });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save goal');
+    } finally {
+      setSavingGoal(false);
+    }
+  };
+
+  const addCheckpoint = async () => {
+    if (!newCheckpointTitle.trim()) return;
+    setCreatingCheckpoint(true);
+    try {
+      await requestRoadmapChange({
+        action: 'add-checkpoint',
+        title: newCheckpointTitle,
+        description: newCheckpointDescription,
+      });
+      setNewCheckpointTitle('');
+      setNewCheckpointDescription('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add checkpoint');
+    } finally {
+      setCreatingCheckpoint(false);
+    }
+  };
+
+  const updateCheckpoint = async (checkpoint: RoadmapCheckpointView) => {
+    const draft = getCheckpointDraft(checkpoint);
+    try {
+      await requestRoadmapChange({
+        action: 'update-checkpoint',
+        checkpointId: checkpoint.id,
+        title: draft.title,
+        description: draft.description,
+        status: draft.status,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update checkpoint');
+    }
+  };
+
+  const removeCheckpoint = async (checkpointId: string) => {
+    if (!window.confirm('Delete this checkpoint? Linked tasks will stay in your task lists.')) {
+      return;
+    }
+
+    try {
+      await requestRoadmapChange({ action: 'remove-checkpoint', checkpointId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove checkpoint');
+    }
+  };
+
+  const reorderCheckpoint = async (checkpointId: string, newIndex: number) => {
+    try {
+      await requestRoadmapChange({ action: 'reorder-checkpoint', checkpointId, newIndex });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reorder checkpoint');
+    }
+  };
+
+  const linkTask = async (checkpointId: string) => {
+    const selected = linkSelections[checkpointId];
+    if (!selected) return;
+    const [taskId, listType] = selected.split(':') as [string, ListType];
+    try {
+      await requestRoadmapChange({ action: 'link-task', checkpointId, taskId, listType });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to link task');
+    }
+  };
+
+  const unlinkTask = async (checkpointId: string, task: RoadmapTaskView) => {
+    try {
+      await requestRoadmapChange({
+        action: 'unlink-task',
+        checkpointId,
+        taskId: task.id,
+        listType: task.listType,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to unlink task');
+    }
+  };
+
+  const createCheckpointTask = async (checkpointId: string) => {
+    const draft = getTaskDraft(checkpointId);
+    if (!draft.text.trim()) return;
+    try {
+      await requestRoadmapChange({
+        action: 'create-task',
+        checkpointId,
+        text: draft.text,
+        listType: draft.listType,
+        dueDate: draft.dueDate || undefined,
+        dueTimeStart: draft.dueDate ? draft.dueTimeStart || undefined : undefined,
+        dueTimeEnd: draft.dueDate ? draft.dueTimeEnd || undefined : undefined,
+      });
+      setTaskDrafts((current) => ({
+        ...current,
+        [checkpointId]: { text: '', listType: draft.listType, dueDate: '', dueTimeStart: '', dueTimeEnd: '' },
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create task');
+    }
+  };
+
+  return (
+    <div className="p-4 space-y-4">
+      {error && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
+          {error}
+        </div>
+      )}
+
+      <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+        <div className="flex flex-col gap-2 md:flex-row md:items-start">
+          <div className="flex-1">
+            <label className="mb-1 block text-sm font-medium text-gray-600 dark:text-gray-300">Project goal</label>
+            <textarea
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              rows={2}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              placeholder="Define the project outcome"
+            />
+          </div>
+          <button
+            onClick={saveGoal}
+            disabled={savingGoal}
+            className="rounded-md bg-teal-500 px-3 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50 dark:bg-teal-600 dark:hover:bg-teal-500"
+          >
+            {savingGoal ? 'Saving...' : 'Save Goal'}
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+        <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">Add Checkpoint</h4>
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
+          <input
+            value={newCheckpointTitle}
+            onChange={(e) => setNewCheckpointTitle(e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            placeholder="Checkpoint title"
+          />
+          <input
+            value={newCheckpointDescription}
+            onChange={(e) => setNewCheckpointDescription(e.target.value)}
+            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+            placeholder="Description"
+          />
+          <button
+            onClick={addCheckpoint}
+            disabled={!newCheckpointTitle.trim() || creatingCheckpoint}
+            className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
+          >
+            Add
+          </button>
+        </div>
+      </div>
+
+      {checkpoints.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
+          No roadmap checkpoints yet
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {checkpoints.map((checkpoint, index) => {
+            const draft = getCheckpointDraft(checkpoint);
+            const taskDraft = getTaskDraft(checkpoint.id);
+
+            return (
+              <section key={checkpoint.id} className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                    <span className="font-semibold text-gray-700 dark:text-gray-200">Checkpoint {index + 1}</span>
+                    <span>{statusLabel(checkpoint.status)}</span>
+                    <span>
+                      {checkpoint.progress.completed}/{checkpoint.progress.total} tasks complete
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => reorderCheckpoint(checkpoint.id, index - 1)}
+                      disabled={index === 0}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      Up
+                    </button>
+                    <button
+                      onClick={() => reorderCheckpoint(checkpoint.id, index + 1)}
+                      disabled={index === checkpoints.length - 1}
+                      className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+                    >
+                      Down
+                    </button>
+                    <button
+                      onClick={() => removeCheckpoint(checkpoint.id)}
+                      className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_180px_auto]">
+                  <input
+                    value={draft.title}
+                    onChange={(e) =>
+                      setCheckpointDrafts((current) => ({
+                        ...current,
+                        [checkpoint.id]: { ...draft, title: e.target.value },
+                      }))
+                    }
+                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  />
+                  <select
+                    value={draft.status}
+                    onChange={(e) =>
+                      setCheckpointDrafts((current) => ({
+                        ...current,
+                        [checkpoint.id]: { ...draft, status: e.target.value as RoadmapCheckpointStatus },
+                      }))
+                    }
+                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                  >
+                    <option value="not-started">Not started</option>
+                    <option value="in-progress">In progress</option>
+                    <option value="completed">Completed</option>
+                  </select>
+                  <button
+                    onClick={() => updateCheckpoint(checkpoint)}
+                    className="rounded-md bg-teal-500 px-3 py-2 text-sm font-medium text-white hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-500"
+                  >
+                    Save
+                  </button>
+                  <textarea
+                    value={draft.description}
+                    onChange={(e) =>
+                      setCheckpointDrafts((current) => ({
+                        ...current,
+                        [checkpoint.id]: { ...draft, description: e.target.value },
+                      }))
+                    }
+                    rows={2}
+                    className="md:col-span-3 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                    placeholder="Checkpoint notes"
+                  />
+                </div>
+
+                <div className="mt-3 rounded-md bg-gray-50 p-3 dark:bg-gray-700/40">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <select
+                      value={linkSelections[checkpoint.id] ?? ''}
+                      onChange={(e) => setLinkSelections((current) => ({ ...current, [checkpoint.id]: e.target.value }))}
+                      className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    >
+                      <option value="">Link existing project task</option>
+                      {linkableTasks.map((task) => (
+                        <option key={`${task.id}:${task.listType}`} value={`${task.id}:${task.listType}`}>
+                          {task.text} ({task.listType})
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      onClick={() => linkTask(checkpoint.id)}
+                      disabled={!linkSelections[checkpoint.id]}
+                      className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-white disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
+                    >
+                      Link
+                    </button>
+                  </div>
+
+                  <div className="mb-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_140px_150px_120px_120px_auto]">
+                    <input
+                      value={taskDraft.text}
+                      onChange={(e) =>
+                        setTaskDrafts((current) => ({
+                          ...current,
+                          [checkpoint.id]: { ...taskDraft, text: e.target.value },
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      placeholder="New checkpoint task"
+                    />
+                    <select
+                      value={taskDraft.listType}
+                      onChange={(e) =>
+                        setTaskDrafts((current) => ({
+                          ...current,
+                          [checkpoint.id]: { ...taskDraft, listType: e.target.value as ListType },
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    >
+                      <option value="have-to-do">Have to do</option>
+                      <option value="want-to-do">Want to do</option>
+                    </select>
+                    <input
+                      type="date"
+                      value={taskDraft.dueDate}
+                      onChange={(e) =>
+                        setTaskDrafts((current) => ({
+                          ...current,
+                          [checkpoint.id]: { ...taskDraft, dueDate: e.target.value },
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    />
+                    <input
+                      type="time"
+                      value={taskDraft.dueTimeStart}
+                      disabled={!taskDraft.dueDate}
+                      onChange={(e) =>
+                        setTaskDrafts((current) => ({
+                          ...current,
+                          [checkpoint.id]: { ...taskDraft, dueTimeStart: e.target.value },
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    />
+                    <input
+                      type="time"
+                      value={taskDraft.dueTimeEnd}
+                      disabled={!taskDraft.dueDate || !taskDraft.dueTimeStart}
+                      onChange={(e) =>
+                        setTaskDrafts((current) => ({
+                          ...current,
+                          [checkpoint.id]: { ...taskDraft, dueTimeEnd: e.target.value },
+                        }))
+                      }
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                    />
+                    <button
+                      onClick={() => createCheckpointTask(checkpoint.id)}
+                      disabled={!taskDraft.text.trim()}
+                      className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-40 dark:bg-amber-600 dark:hover:bg-amber-500"
+                    >
+                      Add Task
+                    </button>
+                  </div>
+
+                  {checkpoint.tasks.length === 0 ? (
+                    <p className="text-xs italic text-gray-400 dark:text-gray-500">No tasks linked</p>
+                  ) : (
+                    <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                      {checkpoint.tasks.map((task) => (
+                        <li key={`${task.id}:${task.listType}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                          <div className={task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'}>
+                            <TaskTextWithProjectBadges
+                              text={task.text}
+                              projects={task.projects}
+                              textClassName={task.completed ? 'line-through' : undefined}
+                            />
+                            <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
+                              {task.missing ? 'missing' : `${formatDueLabel(task)} | ${task.listType}${task.completed ? ' | completed' : ''}`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            {!task.missing && !task.completed && (
+                              <button
+                                onClick={() => setTaskToPlan(task)}
+                                className="rounded-md border border-indigo-200 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
+                              >
+                                Schedule
+                              </button>
+                            )}
+                            <button
+                              onClick={() => unlinkTask(checkpoint.id, task)}
+                              className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-white dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                            >
+                              Unlink
+                            </button>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+
+      <AddToPlanModal
+        isOpen={Boolean(taskToPlan)}
+        onClose={() => setTaskToPlan(null)}
+        onSuccess={() => undefined}
+        task={taskToPlan ? toTaskForPlanning(taskToPlan) : null}
+        listType={taskToPlan?.listType ?? 'have-to-do'}
+        date={date}
+      />
+    </div>
+  );
+}
+
 function ProjectCard({
   group,
   mode,
   onModeChange,
+  date,
+  onChanged,
 }: {
   group: ProjectGroup;
   mode: ProjectViewMode;
   onModeChange: (mode: ProjectViewMode) => void;
+  date: string;
+  onChanged: () => void;
 }) {
   return (
     <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
@@ -242,9 +772,23 @@ function ProjectCard({
           >
             Detailed
           </button>
+          {group.project !== '__unassigned__' && (
+            <button
+              onClick={() => onModeChange('roadmap')}
+              className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 dark:border-gray-600 transition-colors ${
+                mode === 'roadmap'
+                  ? 'bg-indigo-500 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              Roadmap
+            </button>
+          )}
         </div>
       </div>
-      {mode === 'unified' ? (
+      {mode === 'roadmap' && group.project !== '__unassigned__' ? (
+        <RoadmapPanel group={group} date={date} onChanged={onChanged} />
+      ) : mode === 'unified' ? (
         <div className="p-4">
           <UnifiedTaskList tasks={group.unified} />
         </div>
@@ -344,12 +888,16 @@ export default function ProjectsPage() {
                 group={group}
                 mode={getModeForProject(group.project)}
                 onModeChange={(mode) => setModeForProject(group.project, mode)}
+                date={date}
+                onChanged={() => fetchData(date)}
               />
             ))}
             <ProjectCard
               group={data.unassigned}
               mode={getModeForProject(data.unassigned.project)}
               onModeChange={(mode) => setModeForProject(data.unassigned.project, mode)}
+              date={date}
+              onChanged={() => fetchData(date)}
             />
           </div>
         )}

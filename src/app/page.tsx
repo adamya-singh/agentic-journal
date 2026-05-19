@@ -95,6 +95,7 @@ export default function HomePage() {
   const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
   const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
   const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
+  const [projectRoadmapsData, setProjectRoadmapsData] = React.useState<unknown>(null);
 
   // Get refresh functions from context
   const { refreshTasks, refreshJournal, refreshAll } = useRefresh();
@@ -104,6 +105,7 @@ export default function HomePage() {
 
   // Track processed tool call IDs to avoid duplicate processing
   const processedToolCallIds = React.useRef<Set<string>>(new Set());
+  const processedRoadmapToolCallIds = React.useRef<Set<string>>(new Set());
 
   // Stream processor: Watch for addTask tool results and auto-sync React state
   React.useEffect(() => {
@@ -227,6 +229,78 @@ export default function HomePage() {
   React.useEffect(() => {
     refreshJobListings();
   }, [refreshJobListings]);
+
+  const refreshProjectRoadmaps = React.useCallback(async () => {
+    try {
+      const response = await fetch(`/api/projects/view?date=${currentDate}`);
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        return;
+      }
+
+      setProjectRoadmapsData({
+        date: data.date,
+        projects: Array.isArray(data.projects)
+          ? data.projects
+              .filter((group: { roadmap?: unknown }) => Boolean(group.roadmap))
+              .map((group: { project: string; roadmap: unknown }) => ({
+                project: group.project,
+                roadmap: group.roadmap,
+              }))
+          : [],
+      });
+    } catch {
+      setProjectRoadmapsData(null);
+    }
+  }, [currentDate]);
+
+  React.useEffect(() => {
+    refreshProjectRoadmaps();
+  }, [refreshProjectRoadmaps, taskListsData]);
+
+  React.useEffect(() => {
+    if (!messages || messages.length === 0) return;
+
+    const roadmapToolNames = new Set([
+      'setProjectGoal',
+      'addRoadmapCheckpoint',
+      'updateRoadmapCheckpoint',
+      'reorderRoadmapCheckpoint',
+      'removeRoadmapCheckpoint',
+      'linkRoadmapTask',
+      'unlinkRoadmapTask',
+      'createRoadmapTask',
+    ]);
+
+    for (const message of messages) {
+      const toolMessage = message as typeof message & {
+        payload?: {
+          toolName?: string;
+          toolCallId?: string;
+          result?: {
+            success?: boolean;
+          };
+        };
+      };
+
+      const toolName = toolMessage.payload?.toolName;
+      const toolCallId = toolMessage.payload?.toolCallId;
+      if (
+        toolMessage.type !== 'tool-result' ||
+        !toolName ||
+        !roadmapToolNames.has(toolName) ||
+        !toolMessage.payload?.result?.success ||
+        !toolCallId ||
+        processedRoadmapToolCallIds.current.has(toolCallId)
+      ) {
+        continue;
+      }
+
+      processedRoadmapToolCallIds.current.add(toolCallId);
+      refreshTasks();
+      refreshProjectRoadmaps();
+    }
+  }, [messages, refreshProjectRoadmaps, refreshTasks]);
 
   // Register the main text as Cedar state with a state setter
   useRegisterState({
@@ -986,6 +1060,10 @@ export default function HomePage() {
   });
 
   usePublishCedarContext('jobListings', jobListingsData, {
+    showInChat: false,
+  });
+
+  usePublishCedarContext('projectRoadmaps', projectRoadmapsData, {
     showInChat: false,
   });
 

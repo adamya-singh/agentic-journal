@@ -91,6 +91,68 @@ export const CompleteTaskSchema = z.object({
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
 });
 
+// ==================== PROJECT ROADMAP TOOL SCHEMAS ====================
+
+const RoadmapCheckpointStatusSchema = z.enum(['not-started', 'in-progress', 'completed']);
+
+export const SetProjectGoalSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  goal: z.string().describe('The project goal. Use an empty string to clear it.'),
+});
+
+export const AddRoadmapCheckpointSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  title: z.string().min(1).describe('Checkpoint title'),
+  description: z.string().optional().describe('Optional checkpoint description'),
+  status: RoadmapCheckpointStatusSchema.optional().describe('Manual checkpoint status. Defaults to not-started.'),
+});
+
+export const UpdateRoadmapCheckpointSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to update'),
+  title: z.string().min(1).optional().describe('Updated checkpoint title'),
+  description: z.string().optional().describe('Updated checkpoint description. Use empty string to clear.'),
+  status: RoadmapCheckpointStatusSchema.optional().describe('Manual checkpoint status'),
+});
+
+export const ReorderRoadmapCheckpointSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to move'),
+  newIndex: z.number().int().min(0).describe('New zero-based checkpoint position'),
+});
+
+export const RemoveRoadmapCheckpointSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to remove'),
+});
+
+export const LinkRoadmapTaskSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to link the task into'),
+  taskId: z.string().min(1).describe('The existing task ID'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+});
+
+export const UnlinkRoadmapTaskSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to unlink the task from'),
+  taskId: z.string().min(1).describe('The task ID'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+});
+
+export const CreateRoadmapTaskSchema = z.object({
+  project: z.string().min(1).describe('The normalized project slug or project label'),
+  checkpointId: z.string().min(1).describe('The checkpoint ID to create the task under'),
+  text: z.string().min(1).describe('The task text/description'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which task list to add to'),
+  position: z.number().int().min(0).optional().describe('Optional priority position in the task list'),
+  dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
+  dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
+  dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range'),
+  isDaily: z.boolean().optional().describe('If true, task recurs daily'),
+  notesMarkdown: z.string().optional().describe('Optional markdown task notes'),
+});
+
 // ==================== JOURNAL STATE SETTER SCHEMAS ====================
 
 // Schema for createDayJournal state setter
@@ -386,6 +448,127 @@ export const completeTaskTool = createMastraToolForStateSetter(
   },
 );
 
+const RoadmapToolOutputSchema = z.object({
+  success: z.boolean(),
+  roadmap: z.unknown().optional(),
+  checkpoint: z.unknown().optional(),
+  taskId: z.string().optional(),
+  task: z.unknown().optional(),
+  message: z.string(),
+});
+
+async function executeRoadmapAction(payload: Record<string, unknown>) {
+  try {
+    const response = await fetch('http://localhost:3000/api/projects/roadmap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      return {
+        success: false,
+        message: result.error || 'Failed to update project roadmap',
+      };
+    }
+
+    return {
+      ...result,
+      success: true,
+      message: 'Project roadmap updated',
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: `Error updating project roadmap: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+export const setProjectGoalTool = createTool({
+  id: 'setProjectGoal',
+  description: 'Set or clear the goal for a project roadmap. Project identity is the normalized project slug used in task projects.',
+  inputSchema: SetProjectGoalSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, goal }) => executeRoadmapAction({ action: 'set-goal', project, goal }),
+});
+
+export const addRoadmapCheckpointTool = createTool({
+  id: 'addRoadmapCheckpoint',
+  description: 'Add an ordered checkpoint to a project roadmap. Checkpoint status is manual and defaults to not-started.',
+  inputSchema: AddRoadmapCheckpointSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, title, description, status }) =>
+    executeRoadmapAction({ action: 'add-checkpoint', project, title, description, status }),
+});
+
+export const updateRoadmapCheckpointTool = createTool({
+  id: 'updateRoadmapCheckpoint',
+  description: 'Update a roadmap checkpoint title, description, or manual status.',
+  inputSchema: UpdateRoadmapCheckpointSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId, title, description, status }) =>
+    executeRoadmapAction({ action: 'update-checkpoint', project, checkpointId, title, description, status }),
+});
+
+export const reorderRoadmapCheckpointTool = createTool({
+  id: 'reorderRoadmapCheckpoint',
+  description: 'Move a roadmap checkpoint to a new zero-based position.',
+  inputSchema: ReorderRoadmapCheckpointSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId, newIndex }) =>
+    executeRoadmapAction({ action: 'reorder-checkpoint', project, checkpointId, newIndex }),
+});
+
+export const removeRoadmapCheckpointTool = createTool({
+  id: 'removeRoadmapCheckpoint',
+  description: 'Remove a checkpoint from a project roadmap. Linked tasks remain in the normal task lists.',
+  inputSchema: RemoveRoadmapCheckpointSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId }) =>
+    executeRoadmapAction({ action: 'remove-checkpoint', project, checkpointId }),
+});
+
+export const linkRoadmapTaskTool = createTool({
+  id: 'linkRoadmapTask',
+  description: 'Link an existing normal task into a roadmap checkpoint. A task can appear only once within a project roadmap, so linking moves it from any previous checkpoint in that project.',
+  inputSchema: LinkRoadmapTaskSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId, taskId, listType }) =>
+    executeRoadmapAction({ action: 'link-task', project, checkpointId, taskId, listType }),
+});
+
+export const unlinkRoadmapTaskTool = createTool({
+  id: 'unlinkRoadmapTask',
+  description: 'Unlink a task from a roadmap checkpoint without deleting the underlying normal task.',
+  inputSchema: UnlinkRoadmapTaskSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId, taskId, listType }) =>
+    executeRoadmapAction({ action: 'unlink-task', project, checkpointId, taskId, listType }),
+});
+
+export const createRoadmapTaskTool = createTool({
+  id: 'createRoadmapTask',
+  description: 'Create a normal schedulable task tagged with the project and link it into a roadmap checkpoint. The returned taskId can be planned with addTaskToToday and journal planning tools.',
+  inputSchema: CreateRoadmapTaskSchema,
+  outputSchema: RoadmapToolOutputSchema,
+  execute: async ({ project, checkpointId, text, listType, position, dueDate, dueTimeStart, dueTimeEnd, isDaily, notesMarkdown }) =>
+    executeRoadmapAction({
+      action: 'create-task',
+      project,
+      checkpointId,
+      text,
+      listType,
+      position,
+      dueDate,
+      dueTimeStart,
+      dueTimeEnd,
+      isDaily,
+      notesMarkdown,
+    }),
+});
+
 // ==================== JOURNAL STATE SETTER TOOLS ====================
 
 export const createDayJournalTool = createMastraToolForStateSetter(
@@ -525,6 +708,16 @@ export const TOOL_REGISTRY = {
     removeTaskFromTodayTool,
     completeTaskTool,
   },
+  projectRoadmapManagement: {
+    setProjectGoalTool,
+    addRoadmapCheckpointTool,
+    updateRoadmapCheckpointTool,
+    reorderRoadmapCheckpointTool,
+    removeRoadmapCheckpointTool,
+    linkRoadmapTaskTool,
+    unlinkRoadmapTaskTool,
+    createRoadmapTaskTool,
+  },
   jobListingManagement: {
     addJobListingTool,
     updateJobListingTool,
@@ -549,6 +742,14 @@ export const ALL_TOOLS = [
   addTaskToTodayTool,
   removeTaskFromTodayTool,
   completeTaskTool,
+  setProjectGoalTool,
+  addRoadmapCheckpointTool,
+  updateRoadmapCheckpointTool,
+  reorderRoadmapCheckpointTool,
+  removeRoadmapCheckpointTool,
+  linkRoadmapTaskTool,
+  unlinkRoadmapTaskTool,
+  createRoadmapTaskTool,
   addJobListingTool,
   updateJobListingTool,
   removeJobListingTool,

@@ -24,6 +24,39 @@ export interface TasksData {
   tasks: Task[];
 }
 
+// ============ Project Roadmap Types ============
+
+export type RoadmapCheckpointStatus = 'not-started' | 'in-progress' | 'completed';
+
+export interface RoadmapTaskRef {
+  taskId: string;
+  listType: ListType;
+}
+
+export interface RoadmapCheckpoint {
+  id: string;
+  title: string;
+  description?: string;
+  status: RoadmapCheckpointStatus;
+  tasks: RoadmapTaskRef[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectRoadmap {
+  project: string;
+  goal: string;
+  checkpoints: RoadmapCheckpoint[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectRoadmapsData {
+  _comment: string;
+  schemaVersion: 1;
+  roadmaps: Record<string, ProjectRoadmap>;
+}
+
 // ============ Job Listing Types ============
 
 export type JobType = 'fall-coop' | 'spring-coop' | 'new-grad';

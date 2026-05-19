@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ListType, Task } from '@/lib/types';
+import { ListType, ProjectRoadmap, RoadmapCheckpoint, RoadmapTaskRef, Task } from '@/lib/types';
 import { formatProjectTag, normalizeProjectList } from '@/lib/projects';
 import { computeTodayTasksByList } from '../../tasks/today/staged-sync-utils';
 import { readCompletedTaskIndex, readGeneralTasks } from '../../tasks/today/today-store-utils';
+import { readProjectRoadmaps, taskRefKey } from '../roadmap-store-utils';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const UNASSIGNED_KEY = '__unassigned__';
@@ -10,6 +11,7 @@ const UNASSIGNED_KEY = '__unassigned__';
 interface ProjectTaskView {
   id: string;
   text: string;
+  listType: ListType;
   projects?: string[];
   parentTaskId?: string;
   parentTaskText?: string;
@@ -20,6 +22,32 @@ interface ProjectTaskView {
   completed?: boolean;
   completedAt?: string;
   sourceDate?: string;
+}
+
+interface RoadmapTaskView extends ProjectTaskView {
+  missing?: boolean;
+}
+
+interface RoadmapCheckpointView {
+  id: string;
+  title: string;
+  description?: string;
+  status: RoadmapCheckpoint['status'];
+  tasks: RoadmapTaskView[];
+  progress: {
+    completed: number;
+    total: number;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProjectRoadmapView {
+  project: string;
+  goal: string;
+  checkpoints: RoadmapCheckpointView[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 interface ProjectBucket {
@@ -34,6 +62,7 @@ interface ProjectGroup {
   general: ProjectBucket;
   today: ProjectBucket;
   completed: ProjectBucket;
+  roadmap: ProjectRoadmapView | null;
   totals: {
     general: number;
     today: number;
@@ -75,6 +104,7 @@ function createGroup(project: string): ProjectGroup {
     general: emptyBucket(),
     today: emptyBucket(),
     completed: emptyBucket(),
+    roadmap: null,
     totals: {
       general: 0,
       today: 0,
@@ -141,6 +171,68 @@ function buildUnifiedList(group: ProjectGroup): ProjectTaskView[] {
   return [...open, ...completed];
 }
 
+function makeTaskView(
+  task: Task,
+  listType: ListType,
+  getParentContext: (task: { parentTaskId?: string }) => { parentTaskId?: string; parentTaskText?: string },
+  options?: { completedAt?: string; sourceDate?: string; completed?: boolean }
+): ProjectTaskView {
+  const projects = normalizeProjectList(task.projects);
+  return {
+    id: task.id,
+    text: task.text,
+    listType,
+    ...(projects.length > 0 ? { projects } : {}),
+    ...getParentContext(task),
+    ...(task.dueDate ? { dueDate: task.dueDate } : {}),
+    ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
+    ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
+    ...(task.isDaily ? { isDaily: true } : {}),
+    ...(options?.completed ? { completed: true } : {}),
+    ...(options?.completedAt ? { completedAt: options.completedAt } : {}),
+    ...(options?.sourceDate ? { sourceDate: options.sourceDate } : {}),
+  };
+}
+
+function buildRoadmapView(roadmap: ProjectRoadmap, taskViewsByKey: Map<string, ProjectTaskView>): ProjectRoadmapView {
+  return {
+    project: roadmap.project,
+    goal: roadmap.goal,
+    checkpoints: roadmap.checkpoints.map((checkpoint) => {
+      const tasks = checkpoint.tasks.map((ref: RoadmapTaskRef): RoadmapTaskView => {
+        const resolved = taskViewsByKey.get(taskRefKey(ref));
+        if (resolved) {
+          return resolved;
+        }
+
+        return {
+          id: ref.taskId,
+          text: 'Missing task',
+          listType: ref.listType,
+          missing: true,
+        };
+      });
+      const completed = tasks.filter((task) => task.completed).length;
+
+      return {
+        id: checkpoint.id,
+        title: checkpoint.title,
+        ...(checkpoint.description ? { description: checkpoint.description } : {}),
+        status: checkpoint.status,
+        tasks,
+        progress: {
+          completed,
+          total: tasks.length,
+        },
+        createdAt: checkpoint.createdAt,
+        updatedAt: checkpoint.updatedAt,
+      };
+    }),
+    createdAt: roadmap.createdAt,
+    updatedAt: roadmap.updatedAt,
+  };
+}
+
 /**
  * GET /api/projects/view
  * Returns tasks grouped by project for general, today, and completed lifecycle buckets.
@@ -164,7 +256,9 @@ export async function GET(request: NextRequest) {
     const generalWant = readGeneralTasks('want-to-do').tasks;
     const todayByList = computeTodayTasksByList(date);
     const completedIndex = readCompletedTaskIndex();
+    const roadmapsData = readProjectRoadmaps();
     const taskTextById = new Map<string, string>();
+    const taskViewsByKey = new Map<string, ProjectTaskView>();
 
     const registerTaskText = (task: { id: string; text: string }) => {
       taskTextById.set(task.id, task.text);
@@ -196,18 +290,13 @@ export async function GET(request: NextRequest) {
       return created;
     };
 
+    const registerTaskView = (taskView: ProjectTaskView) => {
+      taskViewsByKey.set(taskRefKey({ taskId: taskView.id, listType: taskView.listType }), taskView);
+    };
+
     const addGeneralTask = (task: Task, listType: ListType) => {
-      const projects = normalizeProjectList(task.projects);
-      const taskView: ProjectTaskView = {
-        id: task.id,
-        text: task.text,
-        ...(projects.length > 0 ? { projects } : {}),
-        ...getParentContext(task),
-        ...(task.dueDate ? { dueDate: task.dueDate } : {}),
-        ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
-        ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
-        ...(task.isDaily ? { isDaily: true } : {}),
-      };
+      const taskView = makeTaskView(task, listType, getParentContext);
+      registerTaskView(taskView);
 
       for (const project of getProjectKeys(task)) {
         const group = getOrCreateGroup(project);
@@ -216,18 +305,10 @@ export async function GET(request: NextRequest) {
     };
 
     const addTodayTask = (task: Task, listType: ListType) => {
-      const projects = normalizeProjectList(task.projects);
-      const taskView: ProjectTaskView = {
-        id: task.id,
-        text: task.text,
-        ...(projects.length > 0 ? { projects } : {}),
-        ...getParentContext(task),
-        ...(task.dueDate ? { dueDate: task.dueDate } : {}),
-        ...(task.dueTimeStart ? { dueTimeStart: task.dueTimeStart } : {}),
-        ...(task.dueTimeEnd ? { dueTimeEnd: task.dueTimeEnd } : {}),
-        ...(task.isDaily ? { isDaily: true } : {}),
-        ...(task.completed === true ? { completed: true } : {}),
-      };
+      const taskView = makeTaskView(task, listType, getParentContext, {
+        completed: task.completed === true,
+      });
+      registerTaskView(taskView);
 
       for (const project of getProjectKeys(task)) {
         const group = getOrCreateGroup(project);
@@ -246,21 +327,25 @@ export async function GET(request: NextRequest) {
       dueTimeEnd?: string;
       isDaily?: boolean;
       projects?: string[];
+      parentTaskId?: string;
     }) => {
       const projects = normalizeProjectList(snapshot.projects);
-      const taskView: ProjectTaskView = {
+      const task: Task = {
         id: snapshot.id,
         text: snapshot.text,
-        completed: true,
         ...(projects.length > 0 ? { projects } : {}),
-        ...getParentContext(snapshot),
         ...(snapshot.dueDate ? { dueDate: snapshot.dueDate } : {}),
         ...(snapshot.dueTimeStart ? { dueTimeStart: snapshot.dueTimeStart } : {}),
         ...(snapshot.dueTimeEnd ? { dueTimeEnd: snapshot.dueTimeEnd } : {}),
         ...(snapshot.isDaily ? { isDaily: true } : {}),
-        ...(snapshot.completedAt ? { completedAt: snapshot.completedAt } : {}),
-        ...(snapshot.sourceDate ? { sourceDate: snapshot.sourceDate } : {}),
+        ...(snapshot.parentTaskId ? { parentTaskId: snapshot.parentTaskId } : {}),
       };
+      const taskView = makeTaskView(task, snapshot.listType, getParentContext, {
+        completed: true,
+        completedAt: snapshot.completedAt,
+        sourceDate: snapshot.sourceDate,
+      });
+      registerTaskView(taskView);
 
       for (const project of (projects.length > 0 ? projects : [UNASSIGNED_KEY])) {
         const group = getOrCreateGroup(project);
@@ -285,7 +370,15 @@ export async function GET(request: NextRequest) {
       addCompletedTask(snapshot);
     }
 
+    for (const roadmap of Object.values(roadmapsData.roadmaps)) {
+      const group = getOrCreateGroup(roadmap.project);
+      group.roadmap = buildRoadmapView(roadmap, taskViewsByKey);
+    }
+
     for (const group of groups.values()) {
+      if (!group.roadmap && group.project !== UNASSIGNED_KEY && roadmapsData.roadmaps[group.project]) {
+        group.roadmap = buildRoadmapView(roadmapsData.roadmaps[group.project], taskViewsByKey);
+      }
       group.completed.haveToDo.sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
       group.completed.wantToDo.sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''));
       group.unified = buildUnifiedList(group);
