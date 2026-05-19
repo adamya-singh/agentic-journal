@@ -25,6 +25,7 @@ import { PriorityComparisonModal } from './PriorityComparisonModal';
 import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskResortModal } from './TaskResortModal';
+import { ModalShell } from './ModalShell';
 import { TaskNotesPreview } from './TaskNotesPreview';
 import { TaskTextWithProjectBadges } from './TaskTextWithProjectBadges';
 import { Task, ListType } from '@/lib/types';
@@ -1624,31 +1625,42 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       />
 
       {/* Delete Confirmation Modal */}
-      {showDeleteConfirm && taskToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
-            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">Delete Task?</h3>
-            <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
-              {taskToDelete.descendantCount > 0
-                ? `This will permanently delete this task and its ${taskToDelete.descendantCount} subtask${taskToDelete.descendantCount === 1 ? '' : 's'}.`
-                : 'Are you sure you want to permanently delete this task?'}
-            </p>
-            <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
-              <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">
-                <TaskTextWithProjectBadges text={taskToDelete.task.text} projects={taskToDelete.task.projects} />
+      <ModalShell
+        isOpen={showDeleteConfirm && !!taskToDelete}
+        onClose={() => {
+          setShowDeleteConfirm(false);
+          setTaskToDelete(null);
+        }}
+        maxWidth="md"
+      >
+        {taskToDelete && (
+          <>
+            <ModalShell.Header>
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Delete Task?</h3>
+            </ModalShell.Header>
+            <ModalShell.Body>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                {taskToDelete.descendantCount > 0
+                  ? `This will permanently delete this task and its ${taskToDelete.descendantCount} subtask${taskToDelete.descendantCount === 1 ? '' : 's'}.`
+                  : 'Are you sure you want to permanently delete this task?'}
               </p>
-              {taskToDelete.task.dueDate && (
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Due: {formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)
-                    ? `${taskToDelete.task.dueDate} @ ${formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)}`
-                    : taskToDelete.task.dueDate}
+              <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
+                <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">
+                  <TaskTextWithProjectBadges text={taskToDelete.task.text} projects={taskToDelete.task.projects} />
                 </p>
-              )}
-            </div>
-            <p className="text-xs text-red-500 dark:text-red-400 mb-4">
-              This action cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
+                {taskToDelete.task.dueDate && (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Due: {formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)
+                      ? `${taskToDelete.task.dueDate} @ ${formatDueTimeRangeForDisplay(taskToDelete.task.dueTimeStart, taskToDelete.task.dueTimeEnd)}`
+                      : taskToDelete.task.dueDate}
+                  </p>
+                )}
+              </div>
+              <p className="text-xs text-red-500 dark:text-red-400">
+                This action cannot be undone.
+              </p>
+            </ModalShell.Body>
+            <ModalShell.Footer>
               <button
                 onClick={() => {
                   setShowDeleteConfirm(false);
@@ -1664,10 +1676,10 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
               >
                 Delete
               </button>
-            </div>
-          </div>
-        </div>
-      )}
+            </ModalShell.Footer>
+          </>
+        )}
+      </ModalShell>
 
       {/* Edit Task Modal */}
       <EditTaskModal

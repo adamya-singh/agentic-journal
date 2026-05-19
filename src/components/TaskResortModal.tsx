@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Task, ListType } from '@/lib/types';
 import { formatTaskTextWithProjects } from '@/lib/projects';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
+import { ModalShell } from './ModalShell';
 
 type ModalPhase = 'loading' | 'comparing' | 'reordering' | 'complete' | 'error';
 
@@ -136,35 +137,37 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
     return existingTasks[mid];
   }, [low, high, existingTasks]);
 
-  if (!isOpen || !task) return null;
+  if (!task) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-2xl transform transition-all">
+    <ModalShell isOpen={isOpen} onClose={onClose} maxWidth="lg">
         {phase === 'loading' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className={`inline-block w-12 h-12 border-4 ${spinnerBorderClass} border-t-transparent rounded-full animate-spin mb-4`} />
             <p className="text-gray-600 dark:text-gray-300 text-lg">Preparing re-sort...</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {phase === 'comparing' && (
           <>
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Re-sort task priority</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Comparison {comparisonCount + 1} of ~{maxComparisons}
-              </p>
-            </div>
+            <ModalShell.Header>
+              <div className="text-center mb-4">
+                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Re-sort task priority</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Comparison {comparisonCount + 1} of ~{maxComparisons}
+                </p>
+              </div>
 
-            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full mb-8 overflow-hidden">
-              <div
-                className={`h-full bg-gradient-to-r ${accentClass === 'teal' ? 'from-teal-400 to-teal-500' : 'from-amber-400 to-amber-500'} transition-all duration-300`}
-                style={{ width: `${((comparisonCount + 1) / maxComparisons) * 100}%` }}
-              />
-            </div>
+              <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className={`h-full bg-gradient-to-r ${accentClass === 'teal' ? 'from-teal-400 to-teal-500' : 'from-amber-400 to-amber-500'} transition-all duration-300`}
+                  style={{ width: `${((comparisonCount + 1) / maxComparisons) * 100}%` }}
+                />
+              </div>
+            </ModalShell.Header>
 
-            <div className="space-y-4">
+            <ModalShell.Body>
+            <div className="space-y-4 py-4">
               <button
                 onClick={() => handleComparisonChoice(true)}
                 className={`w-full p-5 text-left rounded-xl border-2 ${
@@ -225,38 +228,39 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                 </div>
               </button>
             </div>
+            </ModalShell.Body>
 
-            <div className="mt-6 text-center">
+            <ModalShell.Footer className="justify-center border-t-0">
               <button
                 onClick={onClose}
                 className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm"
               >
                 Cancel
               </button>
-            </div>
+            </ModalShell.Footer>
           </>
         )}
 
         {phase === 'reordering' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className={`inline-block w-12 h-12 border-4 ${spinnerBorderClass} border-t-transparent rounded-full animate-spin mb-4`} />
             <p className="text-gray-600 dark:text-gray-300 text-lg">Re-sorting task...</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {phase === 'complete' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
               <svg className="w-8 h-8 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
             </div>
             <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Task re-sorted!</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {phase === 'error' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 mb-4">
               <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -278,9 +282,8 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                 Try Again
               </button>
             </div>
-          </div>
+          </ModalShell.Body>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 }

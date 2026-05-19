@@ -5,6 +5,7 @@ import { Task, ListType } from '@/lib/types';
 import { formatTaskTextWithProjects, normalizeProjectList } from '@/lib/projects';
 import { TaskNotesEditor } from './TaskNotesEditor';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
+import { ModalShell } from './ModalShell';
 
 type ModalPhase = 'entering-task' | 'loading' | 'comparing' | 'inserting' | 'complete' | 'error';
 
@@ -187,26 +188,25 @@ export function PriorityComparisonModal({
     return existingTasks[mid];
   }, [low, high, existingTasks]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-lg shadow-2xl transform transition-all">
-        
+    <ModalShell isOpen={isOpen} onClose={onClose} maxWidth="lg">
         {/* Phase: Entering Task */}
         {phase === 'entering-task' && (
           <>
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-              {parentTask
-                ? `Add Subtask to "${parentTask.text}"`
-                : `Add ${listType === 'want-to-do' ? 'Want-to-Do' : 'Have-to-Do'} Task`}
-            </h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-6">
-              {parentTask
-                ? 'Enter the subtask details below'
-                : 'Enter your task, then we&apos;ll find its priority'}
-            </p>
-            
+            <ModalShell.Header>
+              <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
+                {parentTask
+                  ? `Add Subtask to "${parentTask.text}"`
+                  : `Add ${listType === 'want-to-do' ? 'Want-to-Do' : 'Have-to-Do'} Task`}
+              </h2>
+              <p className="text-gray-500 dark:text-gray-400">
+                {parentTask
+                  ? 'Enter the subtask details below'
+                  : 'Enter your task, then we&apos;ll find its priority'}
+              </p>
+            </ModalShell.Header>
+
+            <ModalShell.Body>
             <input
               type="text"
               value={taskInput}
@@ -324,7 +324,7 @@ export function PriorityComparisonModal({
               )}
             </div>
 
-            <div className="mb-6">
+            <div className="mb-2">
               <label className="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-2">
                 Task notes (optional)
               </label>
@@ -334,8 +334,9 @@ export function PriorityComparisonModal({
                 placeholder="Add links, subtasks, context, and reference data"
               />
             </div>
-            
-            <div className="flex justify-end gap-3">
+            </ModalShell.Body>
+
+            <ModalShell.Footer>
               <button
                 onClick={onClose}
                 className="px-5 py-2.5 rounded-xl font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -353,38 +354,41 @@ export function PriorityComparisonModal({
               >
                 Next →
               </button>
-            </div>
+            </ModalShell.Footer>
           </>
         )}
 
         {/* Phase: Loading */}
         {phase === 'loading' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-block w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-gray-600 dark:text-gray-300 text-lg">Loading tasks...</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {/* Phase: Comparing */}
         {phase === 'comparing' && (
           <>
-            <div className="text-center mb-6">
-              <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Which is more important?</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Comparison {comparisonCount + 1} of ~{maxComparisons}
-              </p>
-            </div>
-            
-            {/* Progress bar */}
-            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full mb-8 overflow-hidden">
-              <div 
-                className="h-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-300"
-                style={{ width: `${((comparisonCount + 1) / maxComparisons) * 100}%` }}
-              />
-            </div>
-            
+            <ModalShell.Header>
+              <div className="text-center mb-4">
+                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Which is more important?</h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Comparison {comparisonCount + 1} of ~{maxComparisons}
+                </p>
+              </div>
+
+              {/* Progress bar */}
+              <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-300"
+                  style={{ width: `${((comparisonCount + 1) / maxComparisons) * 100}%` }}
+                />
+              </div>
+            </ModalShell.Header>
+
+            <ModalShell.Body>
             {/* Comparison buttons */}
-            <div className="space-y-4">
+            <div className="space-y-4 py-4">
               <button
                 onClick={() => handleComparisonChoice(true)}
                 className="w-full p-5 text-left rounded-xl border-2 border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 hover:border-amber-400 dark:hover:border-amber-600 transition-all group"
@@ -444,29 +448,30 @@ export function PriorityComparisonModal({
                 </div>
               </button>
             </div>
-            
-            <div className="mt-6 text-center">
+            </ModalShell.Body>
+
+            <ModalShell.Footer className="justify-center border-t-0">
               <button
                 onClick={onClose}
                 className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm"
               >
                 Cancel
               </button>
-            </div>
+            </ModalShell.Footer>
           </>
         )}
 
         {/* Phase: Inserting */}
         {phase === 'inserting' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-block w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-gray-600 dark:text-gray-300 text-lg">Adding task...</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {/* Phase: Complete */}
         {phase === 'complete' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
               <svg className="w-8 h-8 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -474,12 +479,12 @@ export function PriorityComparisonModal({
             </div>
             <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Task added!</p>
             <p className="text-gray-500 dark:text-gray-400 mt-1">Priority position: #{low + 1}</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {/* Phase: Error */}
         {phase === 'error' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 mb-4">
               <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -493,9 +498,8 @@ export function PriorityComparisonModal({
             >
               Try Again
             </button>
-          </div>
+          </ModalShell.Body>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 }

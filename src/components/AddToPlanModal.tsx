@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import type { Task, ListType } from './TaskLists';
 import { formatTaskTextWithProjects } from '@/lib/projects';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
+import { ModalShell } from './ModalShell';
 
 // Valid hours matching the API
 const VALID_HOURS = [
@@ -124,34 +125,35 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
     }
   };
 
-  if (!isOpen || !task) return null;
+  if (!task) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl p-8 w-full max-w-md shadow-2xl transform transition-all">
-        
+    <ModalShell isOpen={isOpen} onClose={onClose} maxWidth="md">
         {/* Phase: Selecting Time */}
         {phase === 'selecting' && (
           <>
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
-              Add to Daily Plan
-            </h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">Schedule this task for today</p>
-            
-            {/* Task Preview */}
-            <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-4 mb-6 border border-gray-200 dark:border-gray-600">
-              <p className="text-gray-700 dark:text-gray-200 font-medium">{formatTaskTextWithProjects(task)}</p>
-              {task.dueDate && (
-                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  Due: {formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)
-                    ? `${task.dueDate} @ ${formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)}`
-                    : task.dueDate}
-                </p>
-              )}
-            </div>
+            <ModalShell.Header>
+              <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-2">
+                Add to Daily Plan
+              </h2>
+              <p className="text-gray-500 dark:text-gray-400 mb-4">Schedule this task for today</p>
 
+              {/* Task Preview */}
+              <div className="bg-gray-50 dark:bg-gray-700 rounded-xl p-4 border border-gray-200 dark:border-gray-600">
+                <p className="text-gray-700 dark:text-gray-200 font-medium">{formatTaskTextWithProjects(task)}</p>
+                {task.dueDate && (
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    Due: {formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)
+                      ? `${task.dueDate} @ ${formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)}`
+                      : task.dueDate}
+                  </p>
+                )}
+              </div>
+            </ModalShell.Header>
+
+            <ModalShell.Body>
             {/* Time Mode Toggle */}
-            <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1 mb-6">
+            <div className="flex bg-gray-100 dark:bg-gray-700 rounded-xl p-1 mb-6 mt-2">
               <button
                 onClick={() => setTimeMode('single')}
                 className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
@@ -231,9 +233,9 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
                 )}
               </div>
             )}
+            </ModalShell.Body>
 
-            {/* Actions */}
-            <div className="flex justify-end gap-3">
+            <ModalShell.Footer>
               <button
                 onClick={onClose}
                 className="px-5 py-2.5 rounded-xl font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -251,21 +253,21 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
               >
                 Add to Plan
               </button>
-            </div>
+            </ModalShell.Footer>
           </>
         )}
 
         {/* Phase: Submitting */}
         {phase === 'submitting' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-block w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
             <p className="text-gray-600 dark:text-gray-300 text-lg">Adding to plan...</p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {/* Phase: Complete */}
         {phase === 'complete' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-green-100 dark:bg-green-900/30 mb-4">
               <svg className="w-8 h-8 text-green-500 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
@@ -275,12 +277,12 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
             <p className="text-gray-500 dark:text-gray-400 mt-1">
               {timeMode === 'single' ? selectedHour : `${startHour} - ${endHour}`}
             </p>
-          </div>
+          </ModalShell.Body>
         )}
 
         {/* Phase: Error */}
         {phase === 'error' && (
-          <div className="text-center py-8">
+          <ModalShell.Body className="text-center py-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 dark:bg-red-900/30 mb-4">
               <svg className="w-8 h-8 text-red-500 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" />
@@ -294,9 +296,8 @@ export function AddToPlanModal({ isOpen, onClose, onSuccess, task, listType, dat
             >
               Try Again
             </button>
-          </div>
+          </ModalShell.Body>
         )}
-      </div>
-    </div>
+    </ModalShell>
   );
 }
