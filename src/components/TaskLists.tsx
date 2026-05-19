@@ -70,6 +70,8 @@ interface TaskListProps {
   onAddSubtask?: (task: Task) => void;
   sortMode?: DueSortMode;
   onToggleSort?: () => void;
+  groupMode?: GroupMode;
+  onToggleGroup?: () => void;
   onReorder?: (params: { taskId: string; newIndex: number; isDaily: boolean }) => Promise<void> | void;
   dragEnabled?: boolean;
   dragDisabledReason?: string;
@@ -81,6 +83,16 @@ interface TaskListProps {
 }
 
 type DueSortMode = 'off' | 'asc' | 'desc';
+
+type GroupMode = 'off' | 'project';
+
+type GroupedBlock =
+  | { kind: 'standalone'; task: Task }
+  | {
+      kind: 'project';
+      project: string;
+      entries: { task: Task; parentBadgeText?: string }[];
+    };
 
 /**
  * Get current hour in API format (e.g., "3pm", "10am")
@@ -211,6 +223,102 @@ function getDisplayedTasks(tasks: Task[], mode: DueSortMode): Task[] {
   });
 }
 
+function getPrimaryProject(task: Pick<Task, 'projects'>): string | null {
+  const projects = normalizeProjectList(task.projects);
+  return projects.length > 0 ? projects[0] : null;
+}
+
+/**
+ * Returns a deep-cloned task whose `childTasks` subtree is filtered to only
+ * keep descendants that belong in `bucketProject` (i.e. their primary project
+ * matches, or they have no project tag). Descendants whose primary project
+ * differs are removed from the subtree and pushed onto `promotions` so they
+ * can be rendered as top-level entries inside their own project bucket.
+ */
+function filterTreeForBucket(
+  task: Task,
+  bucketProject: string | null,
+  promotions: { task: Task; parent: Task }[]
+): Task {
+  const children = task.childTasks ?? [];
+  if (children.length === 0) {
+    const cloned = { ...task };
+    delete cloned.childTasks;
+    return cloned;
+  }
+
+  const keptChildren: Task[] = [];
+  for (const child of children) {
+    const childProject = getPrimaryProject(child);
+    if (childProject !== null && childProject !== bucketProject) {
+      const promoted = filterTreeForBucket(child, childProject, promotions);
+      promotions.push({ task: promoted, parent: task });
+    } else {
+      keptChildren.push(filterTreeForBucket(child, bucketProject, promotions));
+    }
+  }
+
+  if (keptChildren.length === 0) {
+    const cloned = { ...task };
+    delete cloned.childTasks;
+    return cloned;
+  }
+
+  return { ...task, childTasks: keptChildren };
+}
+
+/**
+ * Groups top-level tasks by their primary project. Tasks with no project tag
+ * render as standalone blocks at their natural priority position. Subtasks
+ * whose primary project differs from their parent's bucket are "promoted" to
+ * top-level entries of their own bucket with a parent-context badge.
+ */
+function buildProjectGroupedBlocks(topLevelTasks: Task[]): GroupedBlock[] {
+  const blocks: GroupedBlock[] = [];
+  const indexByProject = new Map<string, number>();
+
+  const ensureProjectBlock = (project: string): number => {
+    const existing = indexByProject.get(project);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const idx = blocks.length;
+    indexByProject.set(project, idx);
+    blocks.push({ kind: 'project', project, entries: [] });
+    return idx;
+  };
+
+  for (const task of topLevelTasks) {
+    const primary = getPrimaryProject(task);
+    const promotions: { task: Task; parent: Task }[] = [];
+
+    if (primary === null) {
+      const filtered = filterTreeForBucket(task, null, promotions);
+      blocks.push({ kind: 'standalone', task: filtered });
+    } else {
+      const filtered = filterTreeForBucket(task, primary, promotions);
+      const idx = ensureProjectBlock(primary);
+      (blocks[idx] as Extract<GroupedBlock, { kind: 'project' }>).entries.push({
+        task: filtered,
+      });
+    }
+
+    for (const { task: promoted, parent } of promotions) {
+      const promotedPrimary = getPrimaryProject(promoted);
+      if (promotedPrimary === null) {
+        continue;
+      }
+      const idx = ensureProjectBlock(promotedPrimary);
+      (blocks[idx] as Extract<GroupedBlock, { kind: 'project' }>).entries.push({
+        task: promoted,
+        parentBadgeText: parent.text,
+      });
+    }
+  }
+
+  return blocks;
+}
+
 function reorderTasksWithinType(tasks: Task[], taskId: string, newIndex: number, isDaily: boolean): Task[] {
   const matches = tasks.filter((task) => (task.isDaily === true) === isDaily);
   const currentTypeIndex = matches.findIndex((task) => task.id === taskId);
@@ -295,6 +403,8 @@ function TaskList({
   onAddSubtask,
   sortMode = 'off',
   onToggleSort,
+  groupMode = 'off',
+  onToggleGroup,
   onReorder,
   dragEnabled = false,
   dragDisabledReason,
@@ -332,6 +442,20 @@ function TaskList({
             aria-label={`Cycle due-date sort. Current mode: ${sortMode}`}
           >
             {getDueSortLabel(sortMode)}
+          </button>
+        )}
+        {onToggleGroup && (
+          <button
+            onClick={onToggleGroup}
+            className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-colors ${
+              groupMode === 'project'
+                ? 'border-indigo-400 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/60 dark:bg-indigo-900/30 dark:text-indigo-300 dark:hover:bg-indigo-900/50'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-100 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-700'
+            }`}
+            title="Toggle project grouping"
+            aria-label={`Toggle project grouping. Current mode: ${groupMode}`}
+          >
+            {groupMode === 'project' ? 'Group: Project' : 'Group: Off'}
           </button>
         )}
         {onAddClick && (
@@ -372,10 +496,11 @@ function TaskList({
     index: number,
     isLast: boolean,
     totalCount: number,
-    options?: { sortable?: boolean; depth?: number }
+    options?: { sortable?: boolean; depth?: number; parentBadgeText?: string }
   ) => {
     const sortable = options?.sortable ?? false;
     const depth = options?.depth ?? 0;
+    const parentBadgeText = options?.parentBadgeText;
     const isInToday = clickedTasks?.has(task.id);
     const priorityColor = depth === 0 ? getPriorityTierColor(index, totalCount) : '#CBD5E1';
     const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
@@ -448,6 +573,7 @@ function TaskList({
                   Subtask
                 </span>
               )}
+              {parentBadgeText && renderParentContextBadge(parentBadgeText)}
             </div>
             {hasNotes && (
               <div className="mt-1">
@@ -556,7 +682,14 @@ function TaskList({
     </ul>
   );
 
-  const renderTaskTree = (task: Task, rootIndex: number, isLastRoot: boolean, totalRoots: number, sortable: boolean) => {
+  const renderTaskTree = (
+    task: Task,
+    rootIndex: number,
+    isLastRoot: boolean,
+    totalRoots: number,
+    sortable: boolean,
+    parentBadgeText?: string
+  ) => {
     const children = task.childTasks ?? [];
     const isCollapsed = collapsedParentTaskIds.has(task.id);
 
@@ -565,6 +698,7 @@ function TaskList({
         {renderTaskItem(task, rootIndex, isLastRoot && (isCollapsed || children.length === 0), totalRoots, {
           sortable,
           depth: 0,
+          parentBadgeText,
         })}
         {!isCollapsed && children.length > 0 && renderNestedChildren(children, 1)}
       </React.Fragment>
@@ -630,7 +764,7 @@ function TaskList({
             )}
             
             {/* Regular Tasks */}
-            {regularTasks.length > 0 && (
+            {regularTasks.length > 0 && groupMode === 'off' && (
               <DndContext
                 sensors={sensors}
                 collisionDetection={closestCenter}
@@ -645,6 +779,46 @@ function TaskList({
                 </SortableContext>
               </DndContext>
             )}
+            {regularTasks.length > 0 && groupMode === 'project' && (() => {
+              const blocks = buildProjectGroupedBlocks(regularTasks);
+              return (
+                <div className="space-y-3">
+                  {blocks.map((block, blockIndex) => {
+                    if (block.kind === 'standalone') {
+                      return (
+                        <ul key={`standalone-${block.task.id}-${blockIndex}`} className="space-y-0">
+                          {renderTaskTree(block.task, 0, true, 1, false)}
+                        </ul>
+                      );
+                    }
+                    return (
+                      <div key={`project-${block.project}-${blockIndex}`}>
+                        <div className="mb-1 flex items-center gap-2">
+                          <span className="inline-flex items-center rounded-md bg-slate-100 px-2 py-0.5 font-mono text-[11px] text-slate-700 dark:bg-slate-700/60 dark:text-slate-200">
+                            {block.project}
+                          </span>
+                          <span className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                            {block.entries.length} task{block.entries.length === 1 ? '' : 's'}
+                          </span>
+                        </div>
+                        <ul className="space-y-0 border-l border-slate-200 pl-2 dark:border-slate-700/60">
+                          {block.entries.map((entry, entryIndex) =>
+                            renderTaskTree(
+                              entry.task,
+                              entryIndex,
+                              entryIndex === block.entries.length - 1,
+                              block.entries.length,
+                              false,
+                              entry.parentBadgeText
+                            )
+                          )}
+                        </ul>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
             {dragControlsEnabled && !dragEnabled && dragDisabledReason && (
               <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">{dragDisabledReason}</p>
             )}
@@ -875,6 +1049,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [wantToDo, setWantToDo] = useState<Task[]>([]);
   const [haveSortMode, setHaveSortMode] = useState<DueSortMode>('asc');
   const [wantSortMode, setWantSortMode] = useState<DueSortMode>('off');
+  const [haveGroupMode, setHaveGroupMode] = useState<GroupMode>('off');
+  const [wantGroupMode, setWantGroupMode] = useState<GroupMode>('off');
   const [haveReorderError, setHaveReorderError] = useState<string | null>(null);
   const [wantReorderError, setWantReorderError] = useState<string | null>(null);
   const [loadingHave, setLoadingHave] = useState(true);
@@ -1379,9 +1555,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onAddSubtask={(task) => openAddSubtaskModal(task, 'have-to-do')}
           sortMode={haveSortMode}
           onToggleSort={() => setHaveSortMode((prev) => cycleDueSortMode(prev))}
+          groupMode={haveGroupMode}
+          onToggleGroup={() => setHaveGroupMode((prev) => (prev === 'off' ? 'project' : 'off'))}
           onReorder={(params) => handleReorderTask('have-to-do', params)}
-          dragEnabled={haveSortMode === 'off'}
-          dragDisabledReason="Turn due sort Off to reorder tasks."
+          dragEnabled={haveSortMode === 'off' && haveGroupMode === 'off'}
+          dragDisabledReason="Turn due sort and project grouping Off to reorder tasks."
           reorderError={haveReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
@@ -1406,9 +1584,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onAddSubtask={(task) => openAddSubtaskModal(task, 'want-to-do')}
           sortMode={wantSortMode}
           onToggleSort={() => setWantSortMode((prev) => cycleDueSortMode(prev))}
+          groupMode={wantGroupMode}
+          onToggleGroup={() => setWantGroupMode((prev) => (prev === 'off' ? 'project' : 'off'))}
           onReorder={(params) => handleReorderTask('want-to-do', params)}
-          dragEnabled={wantSortMode === 'off'}
-          dragDisabledReason="Turn due sort Off to reorder tasks."
+          dragEnabled={wantSortMode === 'off' && wantGroupMode === 'off'}
+          dragDisabledReason="Turn due sort and project grouping Off to reorder tasks."
           reorderError={wantReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}

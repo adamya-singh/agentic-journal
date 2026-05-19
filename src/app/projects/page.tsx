@@ -49,25 +49,6 @@ interface ProjectRoadmapView {
   updatedAt: string;
 }
 
-function renderParentTaskBadge(parentTaskText?: string) {
-  if (!parentTaskText) {
-    return null;
-  }
-
-  return (
-    <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
-      {parentTaskText}
-    </span>
-  );
-}
-
-function formatDueLabel(task: ProjectTaskView): string {
-  if (!task.dueDate) return 'no due date';
-  const dueTime = formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd);
-  if (!dueTime) return `due ${task.dueDate}`;
-  return `due ${task.dueDate} @ ${dueTime}`;
-}
-
 interface ProjectBucket {
   haveToDo: ProjectTaskView[];
   wantToDo: ProjectTaskView[];
@@ -97,6 +78,8 @@ interface ProjectsViewResponse {
   error?: string;
 }
 
+type ProjectViewMode = 'unified' | 'detailed' | 'roadmap';
+
 function getCurrentDateISO(): string {
   const now = new Date();
   const year = now.getFullYear();
@@ -105,7 +88,12 @@ function getCurrentDateISO(): string {
   return `${year}-${month}-${day}`;
 }
 
-type ProjectViewMode = 'unified' | 'detailed' | 'roadmap';
+function formatDueLabel(task: ProjectTaskView): string {
+  if (!task.dueDate) return 'no due date';
+  const dueTime = formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd);
+  if (!dueTime) return `due ${task.dueDate}`;
+  return `due ${task.dueDate} @ ${dueTime}`;
+}
 
 function getPriorityTierColor(index: number, totalCount: number): string {
   if (totalCount === 0) return 'transparent';
@@ -115,114 +103,102 @@ function getPriorityTierColor(index: number, totalCount: number): string {
   return '#10B981';
 }
 
-function DetailedTaskList({
-  title,
-  tasks,
-  tone = 'neutral',
-}: {
-  title: string;
-  tasks: ProjectTaskView[];
-  tone?: 'amber' | 'teal' | 'indigo' | 'neutral';
-}) {
-  const toneClasses =
-    tone === 'amber'
-      ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300'
-      : tone === 'teal'
-        ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-700 dark:text-teal-300'
-        : tone === 'indigo'
-          ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300'
-          : 'bg-gray-50 dark:bg-gray-900/50 text-gray-700 dark:text-gray-200';
-
-  return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
-      <div className={`px-3 py-2 border-b border-gray-200 dark:border-gray-700 ${toneClasses}`}>
-        <h4 className="text-sm font-semibold">{title}</h4>
-      </div>
-      <div className="p-3 max-h-56 overflow-y-auto">
-        {tasks.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500 italic">No tasks</p>
-        ) : (
-          <ul className="space-y-2">
-            {tasks.map((task) => (
-              <li key={task.id} className="text-sm text-gray-700 dark:text-gray-200">
-                <div>
-                  <TaskTextWithProjectBadges text={task.text} projects={task.projects} />
-                  {renderParentTaskBadge(task.parentTaskText)}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
-                  {formatDueLabel(task)}
-                  {task.isDaily ? ' | daily' : ''}
-                  {task.completed ? ' | completed' : ''}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function UnifiedTaskList({ tasks }: { tasks: ProjectTaskView[] }) {
-  const activeTasks = tasks.filter((task) => !task.completed);
-
-  return (
-    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden shadow-sm">
-      <div className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r from-amber-50 via-white to-teal-50 dark:from-amber-900/20 dark:via-gray-800 dark:to-teal-900/20">
-        <h4 className="text-sm font-semibold text-gray-800 dark:text-gray-100">All Project Tasks</h4>
-      </div>
-      <div className="p-3 max-h-80 overflow-y-auto">
-        {tasks.length === 0 ? (
-          <p className="text-xs text-gray-400 dark:text-gray-500 italic">No tasks</p>
-        ) : (
-          <ol className="space-y-0">
-            {tasks.map((task, index) => (
-              <li
-                key={task.id}
-                className={`text-sm py-2 ${index !== tasks.length - 1 ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${
-                  task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
-                }`}
-                style={{
-                  borderLeft: `4px solid ${
-                    task.completed
-                      ? '#9CA3AF'
-                      : getPriorityTierColor(index, Math.max(activeTasks.length, 1))
-                  }`,
-                  paddingLeft: '8px',
-                  marginLeft: '-4px',
-                }}
-              >
-                <div className="flex items-start gap-2">
-                  <span className="text-gray-400 dark:text-gray-500 mt-0.5">{index + 1}.</span>
-                  <div className="min-w-0 flex-1">
-                    <p>
-                      <TaskTextWithProjectBadges
-                        text={task.text}
-                        projects={task.projects}
-                        textClassName={task.completed ? 'line-through' : undefined}
-                      />
-                      {renderParentTaskBadge(task.parentTaskText)}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {formatDueLabel(task)}
-                      {task.isDaily ? ' | daily' : ''}
-                      {task.completed ? ' | completed' : ' | active'}
-                    </p>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function statusLabel(status: RoadmapCheckpointStatus): string {
   if (status === 'in-progress') return 'In progress';
   if (status === 'completed') return 'Completed';
   return 'Not started';
+}
+
+function renderParentTaskBadge(parentTaskText?: string) {
+  if (!parentTaskText) {
+    return null;
+  }
+
+  return (
+    <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
+      {parentTaskText}
+    </span>
+  );
+}
+
+function filterProjectsExcept(
+  projects: string[] | undefined,
+  ownProject: string | undefined
+): string[] | undefined {
+  if (!projects || !ownProject) return projects;
+  const filtered = projects.filter((project) => project !== ownProject);
+  return filtered.length > 0 ? filtered : undefined;
+}
+
+interface TaskNode<T extends ProjectTaskView = ProjectTaskView> {
+  task: T;
+  children: TaskNode<T>[];
+}
+
+function buildTaskTree<T extends ProjectTaskView>(tasks: T[]): TaskNode<T>[] {
+  const nodes = new Map<string, TaskNode<T>>();
+  const ordered: TaskNode<T>[] = [];
+
+  for (const task of tasks) {
+    const node: TaskNode<T> = { task, children: [] };
+    nodes.set(task.id, node);
+    ordered.push(node);
+  }
+
+  const roots: TaskNode<T>[] = [];
+  for (const node of ordered) {
+    const parentId = node.task.parentTaskId;
+    if (parentId && parentId !== node.task.id && nodes.has(parentId)) {
+      nodes.get(parentId)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+interface FlatTaskRow<T extends ProjectTaskView = ProjectTaskView> {
+  node: TaskNode<T>;
+  depth: number;
+  indexAtLevel: number;
+  totalAtLevel: number;
+  isOrphanedChild: boolean;
+}
+
+function flattenTaskTree<T extends ProjectTaskView>(
+  roots: TaskNode<T>[]
+): FlatTaskRow<T>[] {
+  const result: FlatTaskRow<T>[] = [];
+  const visit = (
+    node: TaskNode<T>,
+    depth: number,
+    indexAtLevel: number,
+    totalAtLevel: number
+  ) => {
+    const isOrphanedChild = depth === 0 && Boolean(node.task.parentTaskId);
+    result.push({ node, depth, indexAtLevel, totalAtLevel, isOrphanedChild });
+    node.children.forEach((child, childIdx) =>
+      visit(child, depth + 1, childIdx, node.children.length)
+    );
+  };
+  roots.forEach((root, rootIdx) => visit(root, 0, rootIdx, roots.length));
+  return result;
+}
+
+function getIndentClass(depth: number): string {
+  if (depth <= 0) return '';
+  if (depth === 1) return 'ml-6';
+  if (depth === 2) return 'ml-10';
+  return 'ml-14';
+}
+
+function SubtaskBadge() {
+  return (
+    <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
+      Subtask
+    </span>
+  );
 }
 
 function toTaskForPlanning(task: ProjectTaskView): Task {
@@ -239,7 +215,326 @@ function toTaskForPlanning(task: ProjectTaskView): Task {
   };
 }
 
-function RoadmapPanel({
+function CheckmarkIcon({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+      <path
+        fillRule="evenodd"
+        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
+
+function PencilIcon({ className = 'w-3.5 h-3.5' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L4 13.172V16h2.828l7.379-7.379-2.828-2.828z" />
+    </svg>
+  );
+}
+
+function DetailedTaskList({
+  tasks,
+  tone,
+  hideOwnProjectBadge,
+}: {
+  tasks: ProjectTaskView[];
+  tone: 'amber' | 'teal' | 'indigo';
+  hideOwnProjectBadge?: string;
+}) {
+  const borderClass =
+    tone === 'amber'
+      ? 'border-l-4 border-amber-500/70'
+      : tone === 'teal'
+        ? 'border-l-4 border-teal-500/70'
+        : 'border-l-4 border-indigo-500/60';
+
+  const rows = flattenTaskTree(buildTaskTree(tasks));
+
+  return (
+    <div
+      className={`rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 ${borderClass} overflow-hidden`}
+    >
+      <div className="p-3 max-h-56 overflow-y-auto">
+        {rows.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500 italic">No tasks</p>
+        ) : (
+          <ul className="space-y-0">
+            {rows.map((row, idx) => {
+              const task = row.node.task;
+              const visibleProjects = filterProjectsExcept(task.projects, hideOwnProjectBadge);
+              return (
+                <li
+                  key={task.id}
+                  className={`text-sm text-gray-700 dark:text-gray-200 py-1.5 ${
+                    idx !== rows.length - 1
+                      ? 'border-b border-gray-100 dark:border-gray-700/50'
+                      : ''
+                  } ${getIndentClass(row.depth)}`}
+                >
+                  <div>
+                    <TaskTextWithProjectBadges
+                      text={task.text}
+                      projects={visibleProjects}
+                      textClassName={task.completed ? 'line-through' : undefined}
+                    />
+                    {row.depth > 0 && <SubtaskBadge />}
+                    {row.isOrphanedChild && renderParentTaskBadge(task.parentTaskText)}
+                  </div>
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mt-0.5">
+                    {formatDueLabel(task)}
+                    {task.isDaily ? ' · daily' : ''}
+                    {task.completed ? ' · completed' : ''}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CondensedDetailedView({
+  group,
+  hideOwnProjectBadge,
+}: {
+  group: ProjectGroup;
+  hideOwnProjectBadge?: string;
+}) {
+  const rows = [
+    {
+      label: 'General',
+      have: group.general.haveToDo,
+      want: group.general.wantToDo,
+      completedRow: false,
+    },
+    {
+      label: 'Today',
+      have: group.today.haveToDo,
+      want: group.today.wantToDo,
+      completedRow: false,
+    },
+    {
+      label: 'Completed',
+      have: group.completed.haveToDo,
+      want: group.completed.wantToDo,
+      completedRow: true,
+    },
+  ].filter((row) => row.have.length > 0 || row.want.length > 0);
+
+  if (rows.length === 0) {
+    return (
+      <p className="text-xs italic text-gray-500 dark:text-gray-400">No tasks in any list</p>
+    );
+  }
+
+  const anyHave = rows.some((row) => row.have.length > 0);
+  const anyWant = rows.some((row) => row.want.length > 0);
+  const cols = (anyHave ? 1 : 0) + (anyWant ? 1 : 0);
+
+  return (
+    <div className="space-y-5">
+      {rows.map((row) => (
+        <div key={row.label}>
+          <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+            {row.label}
+          </h4>
+          <div className={`grid gap-3 ${cols === 2 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1'}`}>
+            {anyHave &&
+              (row.have.length > 0 ? (
+                <DetailedTaskList
+                  tasks={row.have}
+                  tone={row.completedRow ? 'indigo' : 'amber'}
+                  hideOwnProjectBadge={hideOwnProjectBadge}
+                />
+              ) : (
+                <div aria-hidden className="hidden md:block" />
+              ))}
+            {anyWant &&
+              (row.want.length > 0 ? (
+                <DetailedTaskList
+                  tasks={row.want}
+                  tone={row.completedRow ? 'indigo' : 'teal'}
+                  hideOwnProjectBadge={hideOwnProjectBadge}
+                />
+              ) : (
+                <div aria-hidden className="hidden md:block" />
+              ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UnifiedTaskList({
+  tasks,
+  hideOwnProjectBadge,
+}: {
+  tasks: ProjectTaskView[];
+  hideOwnProjectBadge?: string;
+}) {
+  const roots = buildTaskTree(tasks);
+  const rows = flattenTaskTree(roots);
+  const activeRootCount = roots.reduce(
+    (count, root) => count + (root.task.completed ? 0 : 1),
+    0
+  );
+
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
+      <div className="p-3 max-h-[28rem] overflow-y-auto">
+        {rows.length === 0 ? (
+          <p className="text-xs text-gray-400 dark:text-gray-500 italic">No tasks</p>
+        ) : (
+          <ol className="space-y-0">
+            {rows.map((row, idx) => {
+              const task = row.node.task;
+              const visibleProjects = filterProjectsExcept(task.projects, hideOwnProjectBadge);
+              const priorityColor =
+                row.depth === 0
+                  ? task.completed
+                    ? '#9CA3AF'
+                    : getPriorityTierColor(row.indexAtLevel, Math.max(activeRootCount, 1))
+                  : '#CBD5E1';
+
+              return (
+                <li
+                  key={task.id}
+                  className={`text-sm py-2 ${idx !== rows.length - 1 ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${
+                    task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
+                  } ${getIndentClass(row.depth)}`}
+                  style={{
+                    borderLeft: `4px solid ${priorityColor}`,
+                    paddingLeft: '8px',
+                    marginLeft: row.depth === 0 ? '-4px' : undefined,
+                  }}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="text-gray-400 dark:text-gray-500 mt-0.5">
+                      {row.indexAtLevel + 1}.
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p>
+                        <TaskTextWithProjectBadges
+                          text={task.text}
+                          projects={visibleProjects}
+                          textClassName={task.completed ? 'line-through' : undefined}
+                        />
+                        {row.depth > 0 && <SubtaskBadge />}
+                        {row.isOrphanedChild && renderParentTaskBadge(task.parentTaskText)}
+                      </p>
+                      <p className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 mt-0.5">
+                        {formatDueLabel(task)}
+                        {task.isDaily ? ' · daily' : ''}
+                        {task.completed ? ' · completed' : ' · active'}
+                      </p>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StepperNode({
+  index,
+  checkpoint,
+  selected,
+  onClick,
+}: {
+  index: number;
+  checkpoint: RoadmapCheckpointView;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const completed = checkpoint.status === 'completed';
+  const inProgress = checkpoint.status === 'in-progress';
+
+  const circleClass = completed
+    ? 'bg-green-500 text-white'
+    : inProgress
+      ? 'bg-amber-500/20 text-amber-700 dark:text-amber-300 ring-2 ring-amber-500 dark:ring-amber-400'
+      : 'bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400';
+
+  const selectionRing = selected
+    ? 'ring-2 ring-offset-2 ring-offset-white dark:ring-offset-gray-800 ring-teal-500 dark:ring-teal-400'
+    : '';
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex-shrink-0 w-[120px] flex flex-col items-center gap-2 transition-opacity ${
+        selected ? 'opacity-100' : 'opacity-70 hover:opacity-100'
+      }`}
+    >
+      <div
+        className={`relative w-10 h-10 rounded-full flex items-center justify-center text-sm font-semibold ${circleClass} ${selectionRing}`}
+      >
+        {completed ? <CheckmarkIcon className="w-5 h-5" /> : index}
+      </div>
+      <div className="text-center min-w-0 w-full">
+        <div className="text-xs font-medium text-gray-800 dark:text-gray-100 leading-tight line-clamp-2 px-1">
+          {checkpoint.title}
+        </div>
+        <div className="text-[10px] uppercase tracking-wide text-gray-500 mt-0.5">
+          {checkpoint.progress.completed}/{checkpoint.progress.total}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function StepperConnector({ dashed = false }: { dashed?: boolean }) {
+  return (
+    <div className="flex-shrink-0 self-start mt-5 w-8">
+      <div
+        className={
+          dashed
+            ? 'h-0 border-t border-dashed border-gray-300 dark:border-gray-600'
+            : 'h-0.5 bg-gray-300 dark:bg-gray-600'
+        }
+      />
+    </div>
+  );
+}
+
+function AddCheckpointNode({
+  onClick,
+  isOpen,
+}: {
+  onClick: () => void;
+  isOpen: boolean;
+}) {
+  return (
+    <div className="flex-shrink-0 w-[120px] flex flex-col items-center gap-2">
+      <button
+        type="button"
+        onClick={onClick}
+        className={`w-10 h-10 rounded-full border-2 border-dashed flex items-center justify-center text-xl leading-none transition-colors ${
+          isOpen
+            ? 'border-teal-500 text-teal-500'
+            : 'border-gray-300 dark:border-gray-600 text-gray-400 hover:border-teal-400 hover:text-teal-400'
+        }`}
+        aria-label="Add checkpoint"
+      >
+        +
+      </button>
+      <div className="text-[10px] uppercase tracking-wide text-gray-500">Add</div>
+    </div>
+  );
+}
+
+function RoadmapStepper({
   group,
   date,
   onChanged,
@@ -248,28 +543,59 @@ function RoadmapPanel({
   date: string;
   onChanged: () => void;
 }) {
-  const [goal, setGoal] = React.useState(group.roadmap?.goal ?? '');
+  const checkpoints = React.useMemo(() => group.roadmap?.checkpoints ?? [], [group.roadmap]);
+  const currentGoal = group.roadmap?.goal ?? '';
+
+  const [goalDraft, setGoalDraft] = React.useState(currentGoal);
+  const [editingGoal, setEditingGoal] = React.useState(false);
   const [savingGoal, setSavingGoal] = React.useState(false);
+
+  const [showAddCheckpointForm, setShowAddCheckpointForm] = React.useState(false);
   const [newCheckpointTitle, setNewCheckpointTitle] = React.useState('');
   const [newCheckpointDescription, setNewCheckpointDescription] = React.useState('');
   const [creatingCheckpoint, setCreatingCheckpoint] = React.useState(false);
+
+  const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string | null>(null);
+
   const [taskToPlan, setTaskToPlan] = React.useState<ProjectTaskView | null>(null);
   const [checkpointDrafts, setCheckpointDrafts] = React.useState<
     Record<string, { title: string; description: string; status: RoadmapCheckpointStatus }>
   >({});
   const [linkSelections, setLinkSelections] = React.useState<Record<string, string>>({});
   const [taskDrafts, setTaskDrafts] = React.useState<
-    Record<string, { text: string; listType: ListType; dueDate: string; dueTimeStart: string; dueTimeEnd: string }>
+    Record<
+      string,
+      { text: string; listType: ListType; dueDate: string; dueTimeStart: string; dueTimeEnd: string }
+    >
   >({});
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    setGoal(group.roadmap?.goal ?? '');
+    setGoalDraft(group.roadmap?.goal ?? '');
+    setEditingGoal(false);
+    setShowAddCheckpointForm(false);
+    setNewCheckpointTitle('');
+    setNewCheckpointDescription('');
     setCheckpointDrafts({});
     setLinkSelections({});
     setTaskDrafts({});
     setError(null);
-  }, [group.roadmap, group.project]);
+    setSelectedCheckpointId(null);
+  }, [group.project, group.roadmap]);
+
+  React.useEffect(() => {
+    if (checkpoints.length === 0) {
+      if (selectedCheckpointId !== null) {
+        setSelectedCheckpointId(null);
+      }
+      return;
+    }
+    if (selectedCheckpointId && checkpoints.some((cp) => cp.id === selectedCheckpointId)) {
+      return;
+    }
+    const firstInProgress = checkpoints.find((cp) => cp.status === 'in-progress');
+    setSelectedCheckpointId((firstInProgress ?? checkpoints[0]).id);
+  }, [checkpoints, selectedCheckpointId]);
 
   const requestRoadmapChange = React.useCallback(
     async (payload: Record<string, unknown>) => {
@@ -292,11 +618,12 @@ function RoadmapPanel({
     [group.project, onChanged]
   );
 
-  const checkpoints = group.roadmap?.checkpoints ?? [];
   const linkedTaskKeys = new Set(
     checkpoints.flatMap((checkpoint) => checkpoint.tasks.map((task) => `${task.id}:${task.listType}`))
   );
-  const linkableTasks = group.unified.filter((task) => !linkedTaskKeys.has(`${task.id}:${task.listType}`));
+  const linkableTasks = group.unified.filter(
+    (task) => !linkedTaskKeys.has(`${task.id}:${task.listType}`)
+  );
 
   const getCheckpointDraft = (checkpoint: RoadmapCheckpointView) =>
     checkpointDrafts[checkpoint.id] ?? {
@@ -308,7 +635,7 @@ function RoadmapPanel({
   const getTaskDraft = (checkpointId: string) =>
     taskDrafts[checkpointId] ?? {
       text: '',
-      listType: 'have-to-do',
+      listType: 'have-to-do' as ListType,
       dueDate: '',
       dueTimeStart: '',
       dueTimeEnd: '',
@@ -317,7 +644,8 @@ function RoadmapPanel({
   const saveGoal = async () => {
     setSavingGoal(true);
     try {
-      await requestRoadmapChange({ action: 'set-goal', goal });
+      await requestRoadmapChange({ action: 'set-goal', goal: goalDraft });
+      setEditingGoal(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save goal');
     } finally {
@@ -336,6 +664,7 @@ function RoadmapPanel({
       });
       setNewCheckpointTitle('');
       setNewCheckpointDescription('');
+      setShowAddCheckpointForm(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to add checkpoint');
     } finally {
@@ -362,7 +691,6 @@ function RoadmapPanel({
     if (!window.confirm('Delete this checkpoint? Linked tasks will stay in your task lists.')) {
       return;
     }
-
     try {
       await requestRoadmapChange({ action: 'remove-checkpoint', checkpointId });
     } catch (err) {
@@ -424,6 +752,12 @@ function RoadmapPanel({
     }
   };
 
+  const selectedCheckpoint =
+    checkpoints.find((cp) => cp.id === selectedCheckpointId) ?? null;
+  const selectedIndex = selectedCheckpoint
+    ? checkpoints.findIndex((cp) => cp.id === selectedCheckpoint.id)
+    : -1;
+
   return (
     <div className="p-4 space-y-4">
       {error && (
@@ -433,88 +767,191 @@ function RoadmapPanel({
       )}
 
       <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
-        <div className="flex flex-col gap-2 md:flex-row md:items-start">
-          <div className="flex-1">
-            <label className="mb-1 block text-sm font-medium text-gray-600 dark:text-gray-300">Project goal</label>
+        {!editingGoal ? (
+          currentGoal ? (
+            <div className="flex items-start gap-3">
+              <div className="flex-1">
+                <div className="text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400 mb-1">
+                  Goal
+                </div>
+                <p className="text-sm text-gray-700 dark:text-gray-200">{currentGoal}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setGoalDraft(currentGoal);
+                  setEditingGoal(true);
+                }}
+                className="inline-flex items-center gap-1 text-xs text-teal-600 hover:text-teal-500 dark:text-teal-400 dark:hover:text-teal-300"
+              >
+                <PencilIcon />
+                Edit
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                setGoalDraft('');
+                setEditingGoal(true);
+              }}
+              className="inline-flex items-center gap-1 text-xs text-teal-600 hover:text-teal-500 dark:text-teal-400 dark:hover:text-teal-300"
+            >
+              <PencilIcon />
+              Set a goal for this project
+            </button>
+          )
+        ) : (
+          <div>
+            <label className="mb-1 block text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400">
+              Goal
+            </label>
             <textarea
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
+              value={goalDraft}
+              onChange={(e) => setGoalDraft(e.target.value)}
               rows={2}
               className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               placeholder="Define the project outcome"
             />
+            <div className="mt-2 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setGoalDraft(currentGoal);
+                  setEditingGoal(false);
+                }}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveGoal}
+                disabled={savingGoal}
+                className="rounded-md bg-teal-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-teal-600 disabled:opacity-50 dark:bg-teal-600 dark:hover:bg-teal-500"
+              >
+                {savingGoal ? 'Saving...' : 'Save'}
+              </button>
+            </div>
           </div>
-          <button
-            onClick={saveGoal}
-            disabled={savingGoal}
-            className="rounded-md bg-teal-500 px-3 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-50 dark:bg-teal-600 dark:hover:bg-teal-500"
-          >
-            {savingGoal ? 'Saving...' : 'Save Goal'}
-          </button>
-        </div>
+        )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
-        <h4 className="mb-3 text-sm font-semibold text-gray-800 dark:text-gray-100">Add Checkpoint</h4>
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto]">
-          <input
-            value={newCheckpointTitle}
-            onChange={(e) => setNewCheckpointTitle(e.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-            placeholder="Checkpoint title"
-          />
-          <input
-            value={newCheckpointDescription}
-            onChange={(e) => setNewCheckpointDescription(e.target.value)}
-            className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
-            placeholder="Description"
-          />
-          <button
-            onClick={addCheckpoint}
-            disabled={!newCheckpointTitle.trim() || creatingCheckpoint}
-            className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-50 dark:bg-amber-600 dark:hover:bg-amber-500"
-          >
-            Add
-          </button>
-        </div>
+      <div className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+        {checkpoints.length === 0 && !showAddCheckpointForm ? (
+          <div className="flex items-center justify-center gap-3 py-2">
+            <AddCheckpointNode
+              onClick={() => setShowAddCheckpointForm(true)}
+              isOpen={showAddCheckpointForm}
+            />
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              No roadmap checkpoints yet — click + to add the first one
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-start overflow-x-auto pb-1">
+            {checkpoints.map((checkpoint, index) => (
+              <React.Fragment key={checkpoint.id}>
+                <StepperNode
+                  index={index + 1}
+                  checkpoint={checkpoint}
+                  selected={selectedCheckpointId === checkpoint.id}
+                  onClick={() => setSelectedCheckpointId(checkpoint.id)}
+                />
+                {index < checkpoints.length - 1 && <StepperConnector />}
+              </React.Fragment>
+            ))}
+            {checkpoints.length > 0 && <StepperConnector dashed />}
+            <AddCheckpointNode
+              onClick={() => setShowAddCheckpointForm((current) => !current)}
+              isOpen={showAddCheckpointForm}
+            />
+          </div>
+        )}
+
+        {showAddCheckpointForm && (
+          <div className="mt-4 rounded-md border border-dashed border-teal-400/60 bg-teal-50/40 p-3 dark:border-teal-500/40 dark:bg-teal-900/10">
+            <h4 className="mb-2 text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400">
+              New Checkpoint
+            </h4>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_1fr_auto_auto]">
+              <input
+                value={newCheckpointTitle}
+                onChange={(e) => setNewCheckpointTitle(e.target.value)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                placeholder="Checkpoint title"
+                autoFocus
+              />
+              <input
+                value={newCheckpointDescription}
+                onChange={(e) => setNewCheckpointDescription(e.target.value)}
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                placeholder="Description (optional)"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddCheckpointForm(false);
+                  setNewCheckpointTitle('');
+                  setNewCheckpointDescription('');
+                }}
+                className="rounded-md border border-gray-300 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={addCheckpoint}
+                disabled={!newCheckpointTitle.trim() || creatingCheckpoint}
+                className="rounded-md bg-teal-500 px-3 py-2 text-xs font-medium text-white hover:bg-teal-600 disabled:opacity-50 dark:bg-teal-600 dark:hover:bg-teal-500"
+              >
+                {creatingCheckpoint ? 'Adding...' : 'Add'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {checkpoints.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 p-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-          No roadmap checkpoints yet
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {checkpoints.map((checkpoint, index) => {
+      {selectedCheckpoint && (
+        <section className="rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
+          {(() => {
+            const checkpoint = selectedCheckpoint;
             const draft = getCheckpointDraft(checkpoint);
             const taskDraft = getTaskDraft(checkpoint.id);
 
             return (
-              <section key={checkpoint.id} className="rounded-lg border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+              <>
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                    <span className="font-semibold text-gray-700 dark:text-gray-200">Checkpoint {index + 1}</span>
+                    <span className="font-semibold text-gray-700 dark:text-gray-200">
+                      Checkpoint {selectedIndex + 1}
+                    </span>
+                    <span>·</span>
                     <span>{statusLabel(checkpoint.status)}</span>
+                    <span>·</span>
                     <span>
                       {checkpoint.progress.completed}/{checkpoint.progress.total} tasks complete
                     </span>
                   </div>
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => reorderCheckpoint(checkpoint.id, index - 1)}
-                      disabled={index === 0}
+                      type="button"
+                      onClick={() => reorderCheckpoint(checkpoint.id, selectedIndex - 1)}
+                      disabled={selectedIndex <= 0}
                       className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                     >
                       Up
                     </button>
                     <button
-                      onClick={() => reorderCheckpoint(checkpoint.id, index + 1)}
-                      disabled={index === checkpoints.length - 1}
+                      type="button"
+                      onClick={() => reorderCheckpoint(checkpoint.id, selectedIndex + 1)}
+                      disabled={selectedIndex >= checkpoints.length - 1}
                       className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
                     >
                       Down
                     </button>
                     <button
+                      type="button"
                       onClick={() => removeCheckpoint(checkpoint.id)}
                       className="rounded-md border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-900/20"
                     >
@@ -539,7 +976,10 @@ function RoadmapPanel({
                     onChange={(e) =>
                       setCheckpointDrafts((current) => ({
                         ...current,
-                        [checkpoint.id]: { ...draft, status: e.target.value as RoadmapCheckpointStatus },
+                        [checkpoint.id]: {
+                          ...draft,
+                          status: e.target.value as RoadmapCheckpointStatus,
+                        },
                       }))
                     }
                     className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
@@ -549,6 +989,7 @@ function RoadmapPanel({
                     <option value="completed">Completed</option>
                   </select>
                   <button
+                    type="button"
                     onClick={() => updateCheckpoint(checkpoint)}
                     className="rounded-md bg-teal-500 px-3 py-2 text-sm font-medium text-white hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-500"
                   >
@@ -568,11 +1009,19 @@ function RoadmapPanel({
                   />
                 </div>
 
-                <div className="mt-3 rounded-md bg-gray-50 p-3 dark:bg-gray-700/40">
+                <div className="mt-4 rounded-md bg-gray-50 p-3 dark:bg-gray-700/40">
+                  <h5 className="mb-2 text-[11px] uppercase tracking-wider font-semibold text-gray-500 dark:text-gray-400">
+                    Tasks
+                  </h5>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
                     <select
                       value={linkSelections[checkpoint.id] ?? ''}
-                      onChange={(e) => setLinkSelections((current) => ({ ...current, [checkpoint.id]: e.target.value }))}
+                      onChange={(e) =>
+                        setLinkSelections((current) => ({
+                          ...current,
+                          [checkpoint.id]: e.target.value,
+                        }))
+                      }
                       className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     >
                       <option value="">Link existing project task</option>
@@ -583,6 +1032,7 @@ function RoadmapPanel({
                       ))}
                     </select>
                     <button
+                      type="button"
                       onClick={() => linkTask(checkpoint.id)}
                       disabled={!linkSelections[checkpoint.id]}
                       className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-white disabled:opacity-40 dark:border-gray-600 dark:text-gray-200 dark:hover:bg-gray-800"
@@ -652,55 +1102,86 @@ function RoadmapPanel({
                       className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     />
                     <button
+                      type="button"
                       onClick={() => createCheckpointTask(checkpoint.id)}
                       disabled={!taskDraft.text.trim()}
-                      className="rounded-md bg-amber-500 px-3 py-2 text-sm font-medium text-white hover:bg-amber-600 disabled:opacity-40 dark:bg-amber-600 dark:hover:bg-amber-500"
+                      className="rounded-md bg-teal-500 px-3 py-2 text-sm font-medium text-white hover:bg-teal-600 disabled:opacity-40 dark:bg-teal-600 dark:hover:bg-teal-500"
                     >
                       Add Task
                     </button>
                   </div>
 
-                  {checkpoint.tasks.length === 0 ? (
-                    <p className="text-xs italic text-gray-400 dark:text-gray-500">No tasks linked</p>
-                  ) : (
-                    <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                      {checkpoint.tasks.map((task) => (
-                        <li key={`${task.id}:${task.listType}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
-                          <div className={task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'}>
-                            <TaskTextWithProjectBadges
-                              text={task.text}
-                              projects={task.projects}
-                              textClassName={task.completed ? 'line-through' : undefined}
-                            />
-                            <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
-                              {task.missing ? 'missing' : `${formatDueLabel(task)} | ${task.listType}${task.completed ? ' | completed' : ''}`}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {!task.missing && !task.completed && (
-                              <button
-                                onClick={() => setTaskToPlan(task)}
-                                className="rounded-md border border-indigo-200 px-2 py-1 text-xs text-indigo-600 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-300 dark:hover:bg-indigo-900/20"
-                              >
-                                Schedule
-                              </button>
-                            )}
-                            <button
-                              onClick={() => unlinkTask(checkpoint.id, task)}
-                              className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-white dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                  {(() => {
+                    if (checkpoint.tasks.length === 0) {
+                      return (
+                        <p className="text-xs italic text-gray-400 dark:text-gray-500">
+                          No tasks linked
+                        </p>
+                      );
+                    }
+                    const roadmapRows = flattenTaskTree(buildTaskTree(checkpoint.tasks));
+                    return (
+                      <ul className="space-y-0">
+                        {roadmapRows.map((row, idx) => {
+                          const task = row.node.task;
+                          return (
+                            <li
+                              key={`${task.id}:${task.listType}`}
+                              className={`flex flex-wrap items-center justify-between gap-2 py-2 text-sm ${
+                                idx !== roadmapRows.length - 1
+                                  ? 'border-b border-gray-200 dark:border-gray-700'
+                                  : ''
+                              } ${getIndentClass(row.depth)}`}
                             >
-                              Unlink
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                              <div
+                                className={
+                                  task.completed
+                                    ? 'text-gray-400 dark:text-gray-500'
+                                    : 'text-gray-700 dark:text-gray-200'
+                                }
+                              >
+                                <TaskTextWithProjectBadges
+                                  text={task.text}
+                                  projects={filterProjectsExcept(task.projects, group.project)}
+                                  textClassName={task.completed ? 'line-through' : undefined}
+                                />
+                                {row.depth > 0 && <SubtaskBadge />}
+                                {row.isOrphanedChild && renderParentTaskBadge(task.parentTaskText)}
+                                <span className="ml-2 text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                                  {task.missing
+                                    ? 'missing'
+                                    : `${formatDueLabel(task)} · ${task.listType}${task.completed ? ' · completed' : ''}`}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                {!task.missing && !task.completed && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setTaskToPlan(task)}
+                                    className="rounded-md border border-teal-200 px-2 py-1 text-xs text-teal-600 hover:bg-teal-50 dark:border-teal-800 dark:text-teal-300 dark:hover:bg-teal-900/20"
+                                  >
+                                    Schedule
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => unlinkTask(checkpoint.id, task)}
+                                  className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-white dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-800"
+                                >
+                                  Unlink
+                                </button>
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    );
+                  })()}
                 </div>
-              </section>
+              </>
             );
-          })}
-        </div>
+          })()}
+        </section>
       )}
 
       <AddToPlanModal
@@ -728,81 +1209,122 @@ function ProjectCard({
   date: string;
   onChanged: () => void;
 }) {
+  const isUnassigned = group.project === '__unassigned__';
+  const activeCount = group.unified.filter((task) => !task.completed).length;
+  const completedCount = group.unified.filter((task) => task.completed).length;
+  const total = group.totals.all;
+  const completedPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+  const quietCard = activeCount === 0 && !isUnassigned;
+  const hideOwnProjectBadge = isUnassigned ? undefined : group.project;
+
   return (
-    <section className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between bg-gradient-to-r from-amber-50 via-white to-teal-50 dark:from-amber-900/20 dark:via-gray-800 dark:to-teal-900/20">
-        <div>
-          <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">
-            {group.project === '__unassigned__' ? (
-              'Unassigned'
+    <section
+      className={`rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 shadow-sm overflow-hidden transition-opacity ${
+        quietCard ? 'opacity-60 hover:opacity-100' : ''
+      }`}
+    >
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+        <div className="flex items-center justify-between gap-3 mb-2">
+          <div className="min-w-0 flex-1">
+            {isUnassigned ? (
+              <h3 className="text-base font-semibold text-gray-700 dark:text-gray-100">
+                Unassigned
+              </h3>
             ) : (
-              <span className="inline-flex items-center px-2 py-0.5 rounded bg-teal-100/90 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 text-sm font-semibold">
-                {group.tagged}
-              </span>
+              <h3>
+                <span className="inline-flex items-center px-2.5 py-1 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300 font-mono text-sm font-semibold">
+                  {group.project}
+                </span>
+              </h3>
             )}
-          </h3>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
-            <span className="px-2 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">Total {group.totals.all}</span>
-            <span className="px-2 py-0.5 rounded bg-teal-100 dark:bg-teal-900/40 text-teal-700 dark:text-teal-300">
-              Active {group.unified.filter((task) => !task.completed).length}
-            </span>
-            <span className="px-2 py-0.5 rounded bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">
-              Completed {group.unified.filter((task) => task.completed).length}
-            </span>
           </div>
-        </div>
-        <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden">
-          <button
-            onClick={() => onModeChange('unified')}
-            className={`px-3 py-1.5 text-xs font-medium transition-colors ${
-              mode === 'unified'
-                ? 'bg-teal-500 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
-            God View
-          </button>
-          <button
-            onClick={() => onModeChange('detailed')}
-            className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 dark:border-gray-600 transition-colors ${
-              mode === 'detailed'
-                ? 'bg-amber-500 text-white'
-                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
-            }`}
-          >
-            Detailed
-          </button>
-          {group.project !== '__unassigned__' && (
+          <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden shrink-0">
             <button
-              onClick={() => onModeChange('roadmap')}
-              className={`px-3 py-1.5 text-xs font-medium border-l border-gray-300 dark:border-gray-600 transition-colors ${
-                mode === 'roadmap'
-                  ? 'bg-indigo-500 text-white'
+              type="button"
+              onClick={() => onModeChange('unified')}
+              className={`px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                mode === 'unified'
+                  ? 'bg-teal-500 text-white'
                   : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
               }`}
             >
-              Roadmap
+              God View
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => onModeChange('detailed')}
+              className={`px-2.5 py-1 text-[11px] font-medium border-l border-gray-300 dark:border-gray-600 transition-colors ${
+                mode === 'detailed'
+                  ? 'bg-amber-500 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+              }`}
+            >
+              Detailed
+            </button>
+            {!isUnassigned && (
+              <button
+                type="button"
+                onClick={() => onModeChange('roadmap')}
+                className={`px-2.5 py-1 text-[11px] font-medium border-l border-gray-300 dark:border-gray-600 transition-colors ${
+                  mode === 'roadmap'
+                    ? 'bg-indigo-500 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                Roadmap
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div
+            className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden"
+            role="progressbar"
+            aria-valuenow={completedPct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className="h-full bg-teal-500 transition-all"
+              style={{ width: `${completedPct}%` }}
+            />
+          </div>
+          <div className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400 whitespace-nowrap">
+            {activeCount} active · {completedCount} completed
+          </div>
         </div>
       </div>
-      {mode === 'roadmap' && group.project !== '__unassigned__' ? (
-        <RoadmapPanel group={group} date={date} onChanged={onChanged} />
+      {mode === 'roadmap' && !isUnassigned ? (
+        <RoadmapStepper group={group} date={date} onChanged={onChanged} />
       ) : mode === 'unified' ? (
         <div className="p-4">
-          <UnifiedTaskList tasks={group.unified} />
+          <UnifiedTaskList tasks={group.unified} hideOwnProjectBadge={hideOwnProjectBadge} />
         </div>
       ) : (
-        <div className="p-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-          <DetailedTaskList title="General · Have to do" tasks={group.general.haveToDo} tone="amber" />
-          <DetailedTaskList title="General · Want to do" tasks={group.general.wantToDo} tone="teal" />
-          <DetailedTaskList title="Today · Have to do" tasks={group.today.haveToDo} tone="amber" />
-          <DetailedTaskList title="Today · Want to do" tasks={group.today.wantToDo} tone="teal" />
-          <DetailedTaskList title="Completed · Have to do" tasks={group.completed.haveToDo} tone="indigo" />
-          <DetailedTaskList title="Completed · Want to do" tasks={group.completed.wantToDo} tone="indigo" />
+        <div className="p-4">
+          <CondensedDetailedView group={group} hideOwnProjectBadge={hideOwnProjectBadge} />
         </div>
       )}
     </section>
+  );
+}
+
+function SkeletonCard() {
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden animate-pulse">
+      <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
+        <div className="flex items-center justify-between mb-3">
+          <div className="h-6 w-32 rounded bg-gray-200 dark:bg-gray-700" />
+          <div className="h-6 w-44 rounded bg-gray-200 dark:bg-gray-700" />
+        </div>
+        <div className="h-1.5 rounded-full bg-gray-200 dark:bg-gray-700" />
+      </div>
+      <div className="p-4 space-y-2">
+        <div className="h-4 w-3/4 rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="h-4 w-1/2 rounded bg-gray-200 dark:bg-gray-700" />
+        <div className="h-4 w-2/3 rounded bg-gray-200 dark:bg-gray-700" />
+      </div>
+    </div>
   );
 }
 
@@ -852,34 +1374,48 @@ export default function ProjectsPage() {
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
       <div className="max-w-7xl mx-auto px-4 py-6">
-        <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-2 text-center">Projects</h2>
-        <p className="text-sm text-gray-500 dark:text-gray-400 text-center mb-5">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">Projects</h2>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               Project-specific overview built for high-level context, not daily accounting
-        </p>
-
-        <div className="mb-6 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3 flex flex-wrap items-center justify-center gap-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <label htmlFor="projects-date" className="text-sm text-gray-600 dark:text-gray-300">
-              Context Date
-            </label>
-            <input
-              id="projects-date"
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100"
-            />
+            </p>
           </div>
-          <Link
-            href="/"
-            className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white transition-colors"
-          >
-            Back to Journal
-          </Link>
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label
+                htmlFor="projects-date"
+                className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400"
+              >
+                Context Date
+              </label>
+              <input
+                id="projects-date"
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-100"
+              />
+            </div>
+            <Link
+              href="/"
+              className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 underline-offset-4 hover:underline"
+            >
+              Back to Journal
+            </Link>
+          </div>
         </div>
 
-        {loading && <p className="text-sm text-gray-500 dark:text-gray-400">Loading projects view...</p>}
-        {!loading && error && <p className="text-sm text-red-500 dark:text-red-400">{error}</p>}
+        {loading && (
+          <div className="space-y-4">
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
+          </div>
+        )}
+        {!loading && error && (
+          <p className="text-sm text-red-500 dark:text-red-400">{error}</p>
+        )}
         {!loading && !error && data && (
           <div className="space-y-4">
             {data.projects.map((group) => (
