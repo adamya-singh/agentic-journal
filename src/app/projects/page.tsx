@@ -1373,15 +1373,15 @@ export default function ProjectsPage() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            <h2 className="text-2xl font-semibold text-gray-800 dark:text-gray-100">Projects</h2>
+            <h2 className="text-xl sm:text-2xl font-semibold text-gray-800 dark:text-gray-100">Projects</h2>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               Project-specific overview built for high-level context, not daily accounting
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2">
               <label
                 htmlFor="projects-date"

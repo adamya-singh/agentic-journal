@@ -18,6 +18,7 @@ import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCed
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
 import { DebuggerPanel } from '@/cedar/components/debugger';
 import { useRefresh } from '@/lib/RefreshContext';
+import { useIsMobile } from '@/lib/useIsMobile';
 import { JobListingsData, JobListing } from '@/lib/types';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
@@ -69,9 +70,15 @@ function usePublishCedarContext(
 }
 
 export default function HomePage() {
+  const isMobile = useIsMobile();
+
   // Cedar-OS chat components with mode selector
   // Choose between caption, floating, or side panel chat modes
   const [chatMode, setChatMode] = React.useState<ChatMode>('sidepanel');
+
+  // On mobile, only the sidepanel layout makes sense (it already goes full-width).
+  // The selector is hidden, so guarantee the selected mode is sidepanel there.
+  const effectiveChatMode: ChatMode = isMobile ? 'sidepanel' : chatMode;
 
   // Cedar state for the main text that can be changed by the agent
   const [mainText, setMainText] = React.useState('');
@@ -1093,8 +1100,13 @@ export default function HomePage() {
 
   const renderContent = () => (
     <div className="relative min-h-screen w-full bg-white pb-40 dark:bg-gray-900">
-      <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
-      <div className="absolute top-4 right-4 z-10">
+      {/* Desktop-only chat mode selector (top-left, absolute) */}
+      <div className="hidden sm:block">
+        <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
+      </div>
+
+      {/* Desktop-only Projects link (top-right, absolute) */}
+      <div className="hidden sm:block absolute top-4 right-4 z-10">
         <Link
           href="/projects"
           className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
@@ -1103,8 +1115,19 @@ export default function HomePage() {
         </Link>
       </div>
 
+      {/* Mobile-only top chrome row: flows above WeekView so the absolute desktop
+          chrome can keep its current position without touching mobile layout. */}
+      <div className="sm:hidden flex items-center justify-end gap-2 px-3 pt-3">
+        <Link
+          href="/projects"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Projects
+        </Link>
+      </div>
+
       {/* Week View */}
-      <div className="pt-16 pb-4">
+      <div className="pt-2 sm:pt-16 pb-4">
         <WeekView onDataChange={setWeekViewData} />
       </div>
 
@@ -1148,15 +1171,15 @@ export default function HomePage() {
         onStatusChange={updateJobListingStatus}
       />
 
-      {chatMode === 'caption' && <CedarCaptionChat />}
+      {effectiveChatMode === 'caption' && <CedarCaptionChat />}
 
-      {chatMode === 'floating' && (
+      {effectiveChatMode === 'floating' && (
         <FloatingCedarChat side="right" title="Cedarling Chat" collapsedLabel="Chat with Cedar" />
       )}
     </div>
   );
 
-  if (chatMode === 'sidepanel') {
+  if (effectiveChatMode === 'sidepanel') {
     return (
       <SidePanelCedarChat
         side="right"

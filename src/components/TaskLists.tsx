@@ -1496,12 +1496,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   }, [taskToEdit, haveToDo, wantToDo]);
 
   return (
-    <div className="w-full max-w-7xl mx-auto px-4 pb-4">
-      <h2 className="text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
+    <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 pb-4">
+      <h2 className="text-xl sm:text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
       
       {/* Today's Task Lists */}
-      <h3 className="text-lg font-medium text-gray-600 dark:text-gray-300 mb-3 text-center">Today ({currentDate})</h3>
-      <div className="flex gap-4 mb-4">
+      <h3 className="text-base sm:text-lg font-medium text-gray-600 dark:text-gray-300 mb-3 text-center">Today ({currentDate})</h3>
+      <div className="flex flex-col gap-4 mb-4 sm:flex-row">
         <TodayTaskList
           title="Have to Do Today"
           tasks={haveToDoToday}
@@ -1537,7 +1537,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       </div>
 
       {/* General Task Lists */}
-      <div className="flex gap-4">
+      <div className="flex flex-col gap-4 sm:flex-row">
         <TaskList
           title="Have to Do"
           tasks={displayedHaveToDo}

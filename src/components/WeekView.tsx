@@ -5,6 +5,7 @@ import { EntryMode, PlanStatus, ResolvedJournalEntry, ResolvedJournalRangeEntry,
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
 import { useRefresh } from '@/lib/RefreshContext';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // Resolved hour slot can be single entry, array of entries, or null
 type ResolvedHourSlot = ResolvedJournalEntry | ResolvedJournalEntry[] | null;
@@ -110,6 +111,47 @@ function addDaysISO(date: string, days: number): string {
   const nextMonth = String(d.getMonth() + 1).padStart(2, '0');
   const nextDay = String(d.getDate()).padStart(2, '0');
   return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
+const DAY_NAMES_MON_FIRST = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/**
+ * Build a DayInfo for a date that's been computed as today + dayOffset (in days).
+ */
+function getDayInfoForOffset(offsetFromToday: number): DayInfo {
+  const now = new Date();
+  const target = new Date(now);
+  target.setDate(now.getDate() + offsetFromToday);
+
+  const year = target.getFullYear();
+  const month = String(target.getMonth() + 1).padStart(2, '0');
+  const day = String(target.getDate()).padStart(2, '0');
+
+  // Day index 0 = Mon, 6 = Sun.
+  const jsDay = target.getDay();
+  const monIndex = jsDay === 0 ? 6 : jsDay - 1;
+
+  return {
+    date: `${year}-${month}-${day}`,
+    dayName: DAY_NAMES_MON_FIRST[monIndex],
+    displayDate: `${month}/${day}`,
+  };
+}
+
+/**
+ * Given a day offset relative to today, return the week offset (0 = current week,
+ * -1 = last week, etc.) for the week (Mon-Sun) that contains that day.
+ */
+function getWeekOffsetForDayOffset(dayOffsetFromToday: number): number {
+  const now = new Date();
+  const todayJsDay = now.getDay();
+  const todayMonIndex = todayJsDay === 0 ? 6 : todayJsDay - 1;
+
+  // Position of today within its Mon-Sun week, in [0, 6].
+  // dayOffsetFromToday + todayMonIndex = position of target within today's week.
+  // Floor-divide by 7 to wrap into adjacent weeks.
+  const positionFromCurrentMonday = todayMonIndex + dayOffsetFromToday;
+  return Math.floor(positionFromCurrentMonday / 7);
 }
 
 /**
@@ -301,7 +343,8 @@ function getDefaultDayViewMode(entries: TypedEntry[]): DayViewMode {
 
 export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const { journalRefreshCounter, refreshTasks } = useRefresh();
-  
+  const isMobile = useIsMobile();
+
   // Week offset: 0 = current week, -1 = last week, 1 = next week
   const [weekOffset, setWeekOffset] = useState(0);
   const [weekDates, setWeekDates] = useState<DayInfo[]>(() => getWeekDates(0));
@@ -310,11 +353,22 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   const [error, setError] = useState<string | null>(null);
   const [indicators, setIndicators] = useState<Record<string, number>>({});
   const [dayViewMode, setDayViewMode] = useState<Record<string, DayViewMode>>({});
-  
+
+  // Mobile-only: which day to display, expressed as days from today.
+  const [mobileDayOffsetFromToday, setMobileDayOffsetFromToday] = useState(0);
+
   // Update weekDates when offset changes
   useEffect(() => {
     setWeekDates(getWeekDates(weekOffset));
   }, [weekOffset]);
+
+  // Keep the loaded week in sync with the mobile-visible day so its data is fetched
+  // through the existing weekly fetch path (including 12am-2am carry-back).
+  useEffect(() => {
+    if (!isMobile) return;
+    const required = getWeekOffsetForDayOffset(mobileDayOffsetFromToday);
+    setWeekOffset((prev) => (prev === required ? prev : required));
+  }, [isMobile, mobileDayOffsetFromToday]);
   
   // Track which days have their unscheduled popover expanded (default: only today)
   const [expandedPopovers, setExpandedPopovers] = useState<Record<string, boolean>>({});
@@ -697,10 +751,13 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-7 gap-3">
+        <div className="hidden sm:grid grid-cols-7 gap-3">
           {Array.from({ length: 7 }).map((_, i) => (
             <div key={i} className="h-64 bg-gray-100 dark:bg-gray-700 rounded-lg animate-pulse" />
           ))}
+        </div>
+        <div className="sm:hidden">
+          <div className="h-64 bg-gray-100 dark:bg-gray-700 rounded-lg animate-pulse" />
         </div>
       </div>
     );
@@ -760,10 +817,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
     return `Week of ${weekDates[0]?.displayDate ?? ''}`;
   };
 
+  // Mobile-only: compute the single visible day from the day offset relative to today.
+  const mobileDayInfo = getDayInfoForOffset(mobileDayOffsetFromToday);
+  const visibleDayInfos: DayInfo[] = isMobile ? [mobileDayInfo] : weekDates;
+
   return (
-    <div className="w-full max-w-7xl mx-auto p-4">
-      {/* Week navigation header */}
-      <div className="flex items-center justify-center gap-4 mb-4">
+    <div className="w-full max-w-7xl mx-auto p-2 sm:p-4">
+      {/* Week navigation header (desktop only) */}
+      <div className="hidden sm:flex items-center justify-center gap-4 mb-4">
         <button
           onClick={() => setWeekOffset(prev => prev - 1)}
           className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -798,8 +859,46 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           </button>
         )}
       </div>
+
+      {/* Day navigation header (mobile only) */}
+      <div className="sm:hidden flex items-center justify-between gap-2 mb-3 px-1">
+        <button
+          onClick={() => setMobileDayOffsetFromToday((prev) => prev - 1)}
+          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          aria-label="Previous day"
+        >
+          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+          </svg>
+        </button>
+
+        <div className="flex flex-col items-center min-w-0">
+          <h2 className="text-lg font-semibold text-gray-700 dark:text-gray-200 truncate">
+            {mobileDayInfo.dayName} {mobileDayInfo.displayDate}
+          </h2>
+          {mobileDayOffsetFromToday !== 0 && (
+            <button
+              onClick={() => setMobileDayOffsetFromToday(0)}
+              className="mt-1 px-3 py-0.5 text-xs rounded-lg bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800 transition-colors"
+            >
+              Today
+            </button>
+          )}
+        </div>
+
+        <button
+          onClick={() => setMobileDayOffsetFromToday((prev) => prev + 1)}
+          className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          aria-label="Next day"
+        >
+          <svg className="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+
       {/* Legend */}
-      <div className="flex justify-center gap-6 mb-4 text-sm">
+      <div className="flex flex-wrap justify-center gap-x-4 gap-y-1 sm:gap-6 mb-4 text-xs sm:text-sm">
         <div className="flex items-center gap-2">
           <span className="w-3 h-3 rounded-full bg-amber-500"></span>
           <span className="text-gray-600 dark:text-gray-400">Unscheduled</span>
@@ -817,8 +916,11 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           <span className="text-gray-600 dark:text-gray-400">Logged</span>
         </div>
       </div>
-      <div className="grid gap-3" style={{ gridTemplateColumns }}>
-        {weekDates.map((dayInfo, dayIndex) => {
+      <div
+        className={isMobile ? 'block' : 'grid gap-3'}
+        style={isMobile ? undefined : { gridTemplateColumns }}
+      >
+        {visibleDayInfos.map((dayInfo, dayIndex) => {
           const currentDayJournal = weekData[dayInfo.date];
           const nextDayJournal = weekData[addDaysISO(dayInfo.date, 1)];
           const displayJournal = composeDisplayJournal(currentDayJournal, nextDayJournal);
@@ -943,8 +1045,16 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                 </div>
               </div>
 
-              {/* Journal and plan entries */}
-              <div className="flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto">
+              {/* Journal and plan entries.
+                  On mobile the day card expands naturally so the page scroll handles it;
+                  on desktop we keep the original min/max-height + inner scroll. */}
+              <div
+                className={
+                  isMobile
+                    ? 'flex-1 p-2 min-h-[200px]'
+                    : 'flex-1 p-2 min-h-[200px] max-h-[300px] overflow-y-auto'
+                }
+              >
                 {visibleEntries.length > 0 ? (
                   <div
                     key={`${dayInfo.date}-${activeMode}`}

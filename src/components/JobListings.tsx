@@ -176,7 +176,128 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+            {/* Mobile card list */}
+            <ul className="sm:hidden divide-y divide-slate-200 dark:divide-slate-700">
+              {listings.map((listing) => {
+                const status = getStatus(listing);
+                const source = getSource(listing);
+                const pending = pendingListingId === listing.id;
+                const starDisabled = !onStatusChange || pending || status === 'applied';
+
+                return (
+                  <li key={listing.id} className="px-4 py-4 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="text-base font-semibold text-slate-900 dark:text-slate-100 break-words">
+                          {listing.company}
+                        </div>
+                        <div className="mt-0.5 text-sm text-slate-700 dark:text-slate-200 break-words">
+                          {listing.positionTitle}
+                        </div>
+                        <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400 break-words">
+                          {listing.companySummary || 'Company description not available yet.'}
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleStar(listing)}
+                          disabled={starDisabled}
+                          title={status === 'applied' ? 'Applied listings use the status dropdown' : status === 'starred' ? 'Unstar listing' : 'Star listing'}
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-amber-50 hover:text-amber-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-amber-950/30 dark:hover:text-amber-300"
+                          aria-label={status === 'starred' ? 'Unstar listing' : 'Star listing'}
+                        >
+                          <Star className={`h-4 w-4 ${status === 'starred' ? 'fill-amber-400 text-amber-500' : ''}`} aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStatus(listing, 'archived')}
+                          disabled={!onStatusChange || pending}
+                          title="Archive listing"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-md border border-slate-300 text-slate-500 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:text-slate-400 dark:hover:bg-red-950/30 dark:hover:text-red-300"
+                          aria-label="Archive listing"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                      <span className="inline-flex whitespace-nowrap rounded-md bg-cyan-50 px-2 py-1 font-semibold text-cyan-700 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-200 dark:ring-cyan-800">
+                        {formatJobType(listing.jobType)}
+                      </span>
+                      <span className="break-words">{listing.location}</span>
+                      <span aria-hidden="true" className="text-slate-300 dark:text-slate-600">|</span>
+                      <span className="break-words">{listing.salary}</span>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                      <a
+                        href={listing.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+                      >
+                        Open posting
+                        <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                      </a>
+                      <a
+                        href={source.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1.5 break-words font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200"
+                      >
+                        {source.name}
+                        <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+                      </a>
+                    </div>
+
+                    <details className="text-xs text-slate-600 dark:text-slate-300">
+                      <summary className="cursor-pointer select-none font-semibold text-slate-700 dark:text-slate-200">
+                        Notes
+                      </summary>
+                      <p className="mt-2 whitespace-pre-wrap break-words">
+                        {listing.notes || 'No notes'}
+                      </p>
+                    </details>
+
+                    <dl className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
+                      <div>
+                        <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Posted: </dt>
+                        <dd className="inline">{formatPostedDate(listing)}</dd>
+                      </div>
+                      <div>
+                        <dt className="inline font-semibold text-slate-700 dark:text-slate-200">Saved: </dt>
+                        <dd className="inline">{formatDate(listing.savedAt ?? listing.createdAt)}</dd>
+                      </div>
+                    </dl>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                        Status
+                      </label>
+                      <select
+                        value={status === 'archived' ? 'saved' : status}
+                        disabled={!onStatusChange || pending}
+                        onChange={(event) => setStatus(listing, event.target.value as JobListingStatus)}
+                        className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-900/60"
+                        aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
+                      >
+                        {ACTIVE_STATUS_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {/* Desktop table */}
+            <div className="hidden sm:block overflow-x-auto">
             <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-700">
               <thead className="bg-slate-50 dark:bg-slate-800/70">
                 <tr>
@@ -331,7 +452,8 @@ export function JobListings({ data, loading = false, error = null, onStatusChang
                 })}
               </tbody>
             </table>
-          </div>
+            </div>
+          </>
         )}
       </div>
     </section>

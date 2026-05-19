@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mobile Preview</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #000; color: #ddd; font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+      .row { display: flex; gap: 16px; padding: 12px; align-items: flex-start; flex-wrap: wrap; }
+      .device { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .frame {
+        background: #1a1a1a;
+        border-radius: 28px;
+        padding: 10px;
+        box-shadow: 0 0 0 1px #333;
+      }
+      .frame iframe {
+        display: block;
+        border: 0;
+        border-radius: 18px;
+        background: #fff;
+      }
+      .label { font-size: 12px; opacity: 0.7; }
+      .iphone iframe { width: 390px; height: 844px; }
+      .android iframe { width: 360px; height: 800px; }
+      .badge { font-size: 10px; opacity: 0.8; color: #ddd; padding: 4px 8px; background: #222; border-radius: 4px; margin-top: 4px; }
+      .controls { padding: 12px; }
+      .controls input { padding: 6px 10px; font-size: 13px; border-radius: 6px; border: 1px solid #444; background: #111; color: #ddd; width: 60ch; max-width: 80%; }
+      .controls button { margin-left: 8px; padding: 6px 12px; font-size: 13px; border: 0; border-radius: 6px; background: #4f46e5; color: #fff; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="controls">
+      <label>
+        Target URL:
+        <input id="targetUrl" value="http://127.0.0.1:3000/" />
+      </label>
+      <button id="reloadBtn">Reload</button>
+      <button id="goJournal">Journal</button>
+      <button id="goProjects">Projects</button>
+    </div>
+    <div class="row">
+      <div class="device iphone">
+        <div class="label">iPhone 14 (390 x 844)</div>
+        <div class="frame">
+          <iframe id="iphoneFrame" src="http://127.0.0.1:3000/"></iframe>
+        </div>
+      </div>
+      <div class="device android">
+        <div class="label">Android (360 x 800)</div>
+        <div class="frame">
+          <iframe id="androidFrame" src="http://127.0.0.1:3000/"></iframe>
+        </div>
+      </div>
+    </div>
+    <div style="padding: 12px;">
+      <div id="iphoneDiag" class="badge">iPhone iframe: ...</div>
+      <div id="androidDiag" class="badge">Android iframe: ...</div>
+    </div>
+    <script>
+      const targetUrl = document.getElementById('targetUrl');
+      const reloadBtn = document.getElementById('reloadBtn');
+      const iphone = document.getElementById('iphoneFrame');
+      const android = document.getElementById('androidFrame');
+      const iphoneDiag = document.getElementById('iphoneDiag');
+      const androidDiag = document.getElementById('androidDiag');
+      function load(url) {
+        iphone.src = url;
+        android.src = url;
+      }
+      function diag(frame, label, target) {
+        try {
+          const w = frame.contentWindow;
+          target.textContent =
+            label +
+            ' contentWindow.innerWidth=' + w.innerWidth +
+            ' contentWindow.innerHeight=' + w.innerHeight +
+            ' getBoundingClientRect=' +
+            JSON.stringify(frame.getBoundingClientRect());
+        } catch (e) {
+          target.textContent = label + ' diag err: ' + e.message;
+        }
+      }
+      iphone.addEventListener('load', () => diag(iphone, 'iPhone', iphoneDiag));
+      android.addEventListener('load', () => diag(android, 'Android', androidDiag));
+      reloadBtn.addEventListener('click', () => load(targetUrl.value));
+      document.getElementById('goJournal').addEventListener('click', () => {
+        targetUrl.value = 'http://127.0.0.1:3000/';
+        load(targetUrl.value);
+      });
+      document.getElementById('goProjects').addEventListener('click', () => {
+        targetUrl.value = 'http://127.0.0.1:3000/projects';
+        load(targetUrl.value);
+      });
+
+      const params = new URLSearchParams(location.search);
+      const startUrl = params.get('app');
+      if (startUrl) {
+        targetUrl.value = startUrl;
+        load(startUrl);
+      }
+    </script>
+  </body>
+</html>
