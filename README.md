@@ -1,135 +1,154 @@
-# Cedar-OS + Mastra Starter Template
+# Agentic Journal
 
-A blank starter template combining [Cedar-OS](https://cedar.ai) for the frontend AI interface and [Mastra](https://mastra.ai) for the backend agent orchestration.
+Agentic Journal is a personal, Pi-hosted daily operating system for journaling, planning, task management, project tracking, and job lead tracking. It combines a Next.js interface, Cedar-OS chat surfaces, and a Mastra backend agent that can read current app state, update the UI, and persist journal/task/job changes to local JSON storage.
 
-## Features
+The app is built for everyday use from a MacBook over Tailscale, with the Raspberry Pi running the production service by default and a quick switch into hot-reloading development mode when editing.
 
-- **🤖 AI Chat Integration**: Built-in chat workflows powered by OpenAI through Mastra agents
-- **⚡ Real-time Streaming**: Server-sent events (SSE) for streaming AI responses
-- **🎨 Beautiful UI**: Cedar-OS components with 3D effects and modern design
-- **🔧 Type-safe Workflows**: Mastra-based backend with full TypeScript support
-- **📡 Dual API Modes**: Both streaming and non-streaming chat endpoints
+## What It Is
 
-## Quick Start
+Agentic Journal is an AI-assisted personal journal and planning workspace:
 
-The fastest way to get started:
+- A week view records what happened and what was planned, organized by date and hour.
+- Two persistent task queues separate obligations from optional work: `have-to-do` and `want-to-do`.
+- A computed today list pulls in due tasks, daily recurring tasks, manual today overrides, and per-day completion state.
+- Project tags roll tasks up into a dedicated project view.
+- A job board tracks co-op and new-grad leads, including source, status, salary, notes, and posting metadata.
+- Cedar chat modes let the journal agent inspect context and operate the app through structured tools.
 
-```bash
-npx cedar-os-cli plant-seed
-```
+## Core Features
 
-Then select this template when prompted. This will set up the entire project structure and dependencies automatically.
+- **Hourly journal and planner**: planned entries and logged entries live side by side, including single-hour entries and multi-hour ranges.
+- **Task queues**: maintain `have-to-do` and `want-to-do` backlogs with priority ordering, due dates, due-time ranges, notes, parent/child task links, project tags, and daily recurring tasks.
+- **Today computation**: today lists are derived from persistent tasks plus due dates, daily tasks, manual inclusions/exclusions, and completion history.
+- **Project view**: tasks are grouped by project so active, scheduled, completed, and unassigned work can be scanned outside the daily view.
+- **Job tracker**: save, star, apply, or archive fall co-op, spring co-op, and new-grad listings with structured source and status history.
+- **Agentic UI control**: the Mastra journal agent can create journal files, append planned/logged entries, update tasks, reorder priorities, complete tasks, and maintain job listings.
+- **Pi-first operations**: production runs as `agentic-journal.service`; development mode can temporarily take over the same Tailscale URL.
 
-This template contains the Cedar chat connected to a mastra backend to demonstrate what endpoints need to be implemented.
+## Architecture
 
-For more details, see the [Cedar Getting Started Guide](https://docs.cedarcopilot.com/getting-started/getting-started).
+The project has two cooperating runtimes:
 
-## Manual Setup
+- **Frontend**: Next.js 15, React 19, Tailwind CSS, and Cedar-OS components in `src/app`, `src/components`, and `src/cedar`.
+- **Backend agent**: Mastra lives under `src/backend` and exposes the Cedar-compatible chat and tool workflow.
+
+Runtime shape:
+
+- Next.js serves the main app on `127.0.0.1:3000`.
+- Mastra serves the backend on `127.0.0.1:4111`.
+- The Next app proxies Mastra through `/mastra` for browser access.
+- Cedar publishes app context such as `weekJournals`, `taskLists`, `jobListings`, `currentDate`, and `currentTime` to the agent.
+- The agent uses typed tools to update state and persist changes through the app's API routes.
+
+The current journal agent is configured for Google Vertex AI via `@ai-sdk/google-vertex`.
+
+## Local Development
 
 ### Prerequisites
 
-- Node.js 18+
-- OpenAI API key
-- pnpm (recommended) or npm
+- Node.js 20.9+ for the Mastra backend.
+- `npm` for the root Next.js app.
+- `pnpm` for `src/backend`.
+- Google Vertex AI credentials configured through `.env`.
 
-### Installation
+### Install
 
-1. **Clone and install dependencies:**
+From the repository root:
 
 ```bash
-git clone <repository-url>
-cd cedar-mastra-starter
-pnpm install && cd src/backend && pnpm install && cd ../..
+npm install
+pnpm --dir src/backend install
 ```
 
-2. **Set up environment variables:**
-   Create a `.env` file in the root directory:
+### Run
 
-```env
-OPENAI_API_KEY=your-openai-api-key-here
-```
-
-3. **Start the development servers:**
+Start both the frontend and backend:
 
 ```bash
 npm run dev
 ```
 
-This runs both the Next.js frontend and Mastra backend concurrently:
+This starts:
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:4111
+- Next.js: `http://127.0.0.1:3000`
+- Mastra: `http://127.0.0.1:4111`
+- Mastra proxy through Next.js: `http://127.0.0.1:3000/mastra`
 
-## Project Architecture
-
-### Frontend (Next.js + Cedar-OS)
-
-- **Simple Chat UI**: See Cedar OS components in action in a pre-configured chat interface
-- **Cedar-OS Components**: Cedar-OS Components installed in shadcn style for local changes
-- **Tailwind CSS, Typescript, NextJS**: Patterns you're used to in any NextJS project
-
-### Backend (Mastra)
-
-- **Chat Workflow**: Example of a Mastra workflow – a chained sequence of tasks including LLM calls
-- **Streaming Utils**: Examples of streaming text, status updates, and objects like tool calls
-- **API Routes**: Examples of registering endpoint handlers for interacting with the backend
-
-## API Endpoints (Mastra backend)
-
-### Non-streaming Chat
+Run either side independently when needed:
 
 ```bash
-POST /chat/execute-function
-Content-Type: application/json
-
-{
-  "prompt": "Hello, how can you help me?",
-  "temperature": 0.7,
-  "maxTokens": 1000,
-  "systemPrompt": "You are a helpful assistant."
-}
-```
-
-### Streaming Chat
-
-```bash
-POST /chat/execute-function/stream
-Content-Type: application/json
-
-{
-  "prompt": "Tell me a story",
-  "temperature": 0.7
-}
-```
-
-Returns Server-Sent Events with:
-
-- **JSON Objects**: `{ type: 'stage_update', status: 'update_begin', message: 'Generating response...'}`
-- **Text Chunks**: Streamed AI response text
-- **Completion**: `event: done` signal
-
-## Development
-
-### Running the Project
-
-```bash
-# Start both frontend and backend
-npm run dev
-
-# Run frontend only
 npm run dev:next
-
-# Run backend only
 npm run dev:mastra
 ```
 
-## Local Raspberry Pi Access (Tailscale HTTPS)
+Build both apps:
+
+```bash
+npm run build:all
+```
+
+## Environment
+
+Create a root `.env` file. Do not commit secrets or machine-specific credential files.
+
+The current app expects Google Vertex AI configuration:
+
+```env
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
+GOOGLE_VERTEX_PROJECT=your-gcp-project-id
+GOOGLE_VERTEX_LOCATION=your-vertex-location
+```
+
+The backend agent currently imports `vertex` from `@ai-sdk/google-vertex` and uses `vertex('gemini-2.5-flash')`.
+
+## Data Storage
+
+Local app data lives under `src/backend/data`.
+
+Important data areas:
+
+- `src/backend/data/journal`: daily journal JSON files.
+- `src/backend/data/tasks`: persistent task queues, daily lists, today overrides, and completion state.
+- `src/backend/data/jobs`: job listing data, when present.
+
+The app is designed around local JSON persistence. Treat this directory as important personal data and back it up before migrations or large edits.
+
+## Useful Commands
+
+```bash
+# Start Next.js and Mastra together
+npm run dev
+
+# Start only the frontend
+npm run dev:next
+
+# Start only the backend
+npm run dev:mastra
+
+# Build frontend and backend
+npm run build:all
+
+# Build only Mastra
+npm run build:mastra
+
+# Run production Next.js and generated Mastra output together
+npm run start:production
+
+# Check Pi/Tailscale access and service health
+npm run status:local-access
+
+# Rebuild and restart production on the Pi
+npm run deploy:production
+```
+
+## Raspberry Pi / Tailscale Operations
 
 Use Tailscale as the default access path from your MacBook for both apps:
+
 - Agentic Journal (`:3000`)
 - OpenClaw Web UI (`:18789`)
 
-### One-time setup
+### One-Time HTTPS Setup
 
 If your tailnet has Serve disabled, enable it once:
 
@@ -144,30 +163,32 @@ npm run setup:tailscale-https
 ```
 
 This configures:
+
 - `https://<pi-magicdns>` -> `http://127.0.0.1:3000` (Agentic Journal)
 - `https://<pi-magicdns>:18443` -> `http://127.0.0.1:18789` (OpenClaw)
 
-### Default URLs (from MacBook on Tailscale)
+### Default URLs From MacBook
 
 ```bash
 https://rpi5.taile85e97.ts.net
 https://rpi5.taile85e97.ts.net:18443
 ```
 
-### Quick verification on the Raspberry Pi
+### Quick Verification On The Pi
 
 ```bash
 npm run status:local-access
 ```
 
 This checks:
+
 - `tailscaled` system service
 - `agentic-journal` system service
 - `openclaw-gateway` user service
 - Local Agentic Journal endpoint probes for Next, jobs, Mastra, and the `/mastra` proxy
 - Tailnet identity and `tailscale serve` route status
 
-### Production rebuild and restart
+### Production Rebuild And Restart
 
 If the app fails after a reboot, rebuild the ignored production artifacts and restart both services:
 
@@ -177,7 +198,38 @@ npm run deploy:production
 
 This performs a clean Next.js build, a clean Mastra build, installs Mastra's generated production dependencies, restarts `agentic-journal`, and probes the local endpoints.
 
-### Fallbacks
+### Development Mode Over The Same Tailscale URL
+
+For normal everyday usage, the Pi runs the production service. When actively editing the app, switch the same Tailscale URL to hot-reloading dev mode:
+
+```bash
+npm run journal:dev
+```
+
+Then open or refresh:
+
+```bash
+https://rpi5.taile85e97.ts.net
+```
+
+Switch back to production:
+
+```bash
+npm run journal:prod
+```
+
+Useful checks:
+
+```bash
+npm run journal:status
+npm run journal:logs
+```
+
+Dev mode starts `agentic-journal-dev.service`, which runs `npm run dev` on `127.0.0.1:3000` with Mastra on `127.0.0.1:4111`. Production remains the boot default because only `agentic-journal.service` is enabled; `agentic-journal-dev.service` is intentionally disabled.
+
+## Troubleshooting
+
+### Tailscale Fallbacks
 
 If HTTPS routes are unavailable:
 
@@ -189,9 +241,10 @@ http://rpi5.taile85e97.ts.net:3000
 ssh -N -L 18789:127.0.0.1:18789 rpi5
 ```
 
-### OpenClaw auth and pairing troubleshooting
+### OpenClaw Auth And Pairing
 
 If OpenClaw over Tailscale shows:
+
 - `disconnected (1008): unauthorized: gateway token missing`
 - then `pairing required`
 
@@ -210,22 +263,24 @@ systemctl --user cat openclaw-gateway | rg OPENCLAW_GATEWAY_TOKEN
 # show paired/pending device state
 node /home/rpi5/projects/openclaw/dist/index.js devices list
 
-# approve pending request (if any)
+# approve pending request, if any
 node /home/rpi5/projects/openclaw/dist/index.js devices approve
 ```
 
 4. Refresh the browser tab.
 
 Notes:
+
 - Pairing is origin-based, so `https://rpi5...:18443` is treated as a new device even if `http://127.0.0.1:18789` already worked.
 - The current gateway service uses `OPENCLAW_GATEWAY_TOKEN=dev` unless you rotate it.
 
-## Learn More
+## Tech Stack
 
-- [Cedar-OS Documentation](https://docs.cedarcopilot.com/)
-- [Mastra Documentation](https://mastra.ai/docs)
-- [Next.js Documentation](https://nextjs.org/docs)
+- [Next.js](https://nextjs.org/docs)
+- [React](https://react.dev/)
+- [Cedar-OS](https://docs.cedarcopilot.com/)
+- [Mastra](https://mastra.ai/docs)
+- [Google Vertex AI](https://cloud.google.com/vertex-ai)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)
 
-## License
-
-MIT License - see LICENSE file for details.

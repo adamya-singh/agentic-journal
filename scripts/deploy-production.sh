@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT_DIR="/home/rpi5/projects/agentic-journal"
 BACKEND_DIR="${ROOT_DIR}/src/backend"
 MASTRA_OUTPUT_DIR="${BACKEND_DIR}/.mastra/output"
+PROD_SERVICE="agentic-journal.service"
+DEV_SERVICE="agentic-journal-dev.service"
+SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -18,6 +21,23 @@ require_command() {
   if ! command -v "$command_name" >/dev/null 2>&1; then
     echo "Required command not found: ${command_name}" >&2
     exit 1
+  fi
+}
+
+install_unit_if_changed() {
+  local service_name="$1"
+  local source_path="${SYSTEMD_DIR}/${service_name}"
+  local target_path="/etc/systemd/system/${service_name}"
+
+  test -f "$source_path"
+
+  if [[ ! -f "$target_path" ]] || ! cmp -s "$source_path" "$target_path"; then
+    echo "Installing ${service_name}..."
+    if [[ "${EUID}" -eq 0 ]]; then
+      install -m 0644 "$source_path" "$target_path"
+    else
+      sudo install -m 0644 "$source_path" "$target_path"
+    fi
   fi
 }
 
@@ -45,8 +65,16 @@ require_command sudo
 
 cd "$ROOT_DIR"
 
-echo "Stopping Agentic Journal service..."
-systemctl_cmd stop agentic-journal.service || true
+echo "Installing Agentic Journal service units..."
+install_unit_if_changed "$PROD_SERVICE"
+install_unit_if_changed "$DEV_SERVICE"
+systemctl_cmd daemon-reload
+systemctl_cmd enable "$PROD_SERVICE" >/dev/null
+systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
+
+echo "Stopping Agentic Journal services..."
+systemctl_cmd stop "$DEV_SERVICE" || true
+systemctl_cmd stop "$PROD_SERVICE" || true
 
 echo
 echo "Installing root dependencies..."
@@ -74,8 +102,7 @@ pnpm --dir "$MASTRA_OUTPUT_DIR" install --prod
 
 echo
 echo "Starting Agentic Journal service..."
-systemctl_cmd daemon-reload
-systemctl_cmd start agentic-journal.service
+systemctl_cmd start "$PROD_SERVICE"
 
 echo
 echo "Verifying local endpoints..."
@@ -86,4 +113,4 @@ wait_for_http "Mastra proxy" "http://127.0.0.1:3000/mastra"
 
 echo
 echo "Service status:"
-systemctl --no-pager --full status agentic-journal.service
+systemctl --no-pager --full status "$PROD_SERVICE"

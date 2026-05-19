@@ -1,0 +1,20 @@
+[Unit]
+Description=Agentic Journal development server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpi5
+Group=rpi5
+WorkingDirectory=/home/rpi5/projects/agentic-journal
+Environment=NODE_ENV=development
+EnvironmentFile=-/home/rpi5/projects/agentic-journal/.env
+ExecStart=/usr/bin/env npm run dev
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

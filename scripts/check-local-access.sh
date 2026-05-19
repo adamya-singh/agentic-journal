@@ -27,6 +27,7 @@ echo "Local access checks (Raspberry Pi)"
 echo "=================================="
 print_system_status tailscaled
 print_system_status agentic-journal
+print_system_status agentic-journal-dev
 print_user_status openclaw-gateway
 
 echo
