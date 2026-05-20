@@ -57,6 +57,14 @@ export interface ProjectRoadmapsData {
   roadmaps: Record<string, ProjectRoadmap>;
 }
 
+// ============ Project Preference Types ============
+
+export interface ProjectPreferencesData {
+  _comment: string;
+  schemaVersion: 1;
+  pinnedProjects: string[];
+}
+
 // ============ Job Listing Types ============
 
 export type JobType = 'fall-coop' | 'spring-coop' | 'new-grad';

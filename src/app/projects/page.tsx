@@ -5,7 +5,7 @@ import React from 'react';
 import { AddToPlanModal } from '@/components/AddToPlanModal';
 import { TaskTextWithProjectBadges } from '@/components/TaskTextWithProjectBadges';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
-import type { ListType, RoadmapCheckpointStatus, Task } from '@/lib/types';
+import type { ListType, ProjectPreferencesData, RoadmapCheckpointStatus, Task } from '@/lib/types';
 
 interface ProjectTaskView {
   id: string;
@@ -78,6 +78,12 @@ interface ProjectsViewResponse {
   error?: string;
 }
 
+interface ProjectPreferencesResponse {
+  success: boolean;
+  preferences?: ProjectPreferencesData;
+  error?: string;
+}
+
 type ProjectViewMode = 'unified' | 'detailed' | 'roadmap';
 
 function getCurrentDateISO(): string {
@@ -128,6 +134,15 @@ function filterProjectsExcept(
   if (!projects || !ownProject) return projects;
   const filtered = projects.filter((project) => project !== ownProject);
   return filtered.length > 0 ? filtered : undefined;
+}
+
+function getActiveTaskCount(group: ProjectGroup): number {
+  return group.unified.filter((task) => !task.completed).length;
+}
+
+function togglePinnedProject(pinnedProjects: string[], project: string, pinned: boolean): string[] {
+  const withoutProject = pinnedProjects.filter((entry) => entry !== project);
+  return pinned ? [project, ...withoutProject] : withoutProject;
 }
 
 interface TaskNode<T extends ProjectTaskView = ProjectTaskView> {
@@ -1202,15 +1217,21 @@ function ProjectCard({
   onModeChange,
   date,
   onChanged,
+  isPinned = false,
+  onPinnedChange,
+  isPinning = false,
 }: {
   group: ProjectGroup;
   mode: ProjectViewMode;
   onModeChange: (mode: ProjectViewMode) => void;
   date: string;
   onChanged: () => void;
+  isPinned?: boolean;
+  onPinnedChange?: (pinned: boolean) => void;
+  isPinning?: boolean;
 }) {
   const isUnassigned = group.project === '__unassigned__';
-  const activeCount = group.unified.filter((task) => !task.completed).length;
+  const activeCount = getActiveTaskCount(group);
   const completedCount = group.unified.filter((task) => task.completed).length;
   const total = group.totals.all;
   const completedPct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
@@ -1238,6 +1259,22 @@ function ProjectCard({
               </h3>
             )}
           </div>
+          {!isUnassigned && onPinnedChange && (
+            <button
+              type="button"
+              aria-pressed={isPinned}
+              disabled={isPinning}
+              onClick={() => onPinnedChange(!isPinned)}
+              className={`shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                isPinned
+                  ? 'border-teal-500 bg-teal-500 text-white hover:bg-teal-600'
+                  : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 dark:hover:text-gray-100'
+              }`}
+              title={isPinned ? 'Unpin project' : 'Pin project to top'}
+            >
+              {isPinned ? 'Pinned' : 'Pin'}
+            </button>
+          )}
           <div className="inline-flex rounded-md border border-gray-300 dark:border-gray-600 overflow-hidden shrink-0">
             <button
               type="button"
@@ -1333,20 +1370,47 @@ export default function ProjectsPage() {
   const [data, setData] = React.useState<ProjectsViewResponse | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
+  const [preferencesError, setPreferencesError] = React.useState<string | null>(null);
   const [viewModes, setViewModes] = React.useState<Record<string, ProjectViewMode>>({});
+  const [pinnedProjects, setPinnedProjects] = React.useState<string[]>([]);
+  const [pinningProjects, setPinningProjects] = React.useState<Record<string, boolean>>({});
+  const [inactiveProjectsExpanded, setInactiveProjectsExpanded] = React.useState(false);
 
   const fetchData = React.useCallback(async (forDate: string) => {
     setLoading(true);
     setError(null);
+    setPreferencesError(null);
     try {
-      const response = await fetch(`/api/projects/view?date=${forDate}`);
-      const payload = (await response.json()) as ProjectsViewResponse;
-      if (!payload.success) {
-        setError(payload.error || 'Failed to fetch projects view');
+      const [projectsResult, preferencesResult] = await Promise.allSettled([
+        fetch(`/api/projects/view?date=${forDate}`).then(async (response) => {
+          const payload = (await response.json()) as ProjectsViewResponse;
+          if (!response.ok || !payload.success) {
+            throw new Error(payload.error || 'Failed to fetch projects view');
+          }
+          return payload;
+        }),
+        fetch('/api/projects/preferences').then(async (response) => {
+          const payload = (await response.json()) as ProjectPreferencesResponse;
+          if (!response.ok || !payload.success || !payload.preferences) {
+            throw new Error(payload.error || 'Failed to fetch project preferences');
+          }
+          return payload.preferences;
+        }),
+      ]);
+
+      if (projectsResult.status === 'rejected') {
+        setError(projectsResult.reason instanceof Error ? projectsResult.reason.message : 'Failed to fetch projects view');
         setData(null);
         return;
       }
-      setData(payload);
+
+      setData(projectsResult.value);
+
+      if (preferencesResult.status === 'fulfilled') {
+        setPinnedProjects(preferencesResult.value.pinnedProjects);
+      } else {
+        setPreferencesError('Failed to load project pin preferences');
+      }
     } catch {
       setError('Failed to connect');
       setData(null);
@@ -1370,6 +1434,82 @@ export default function ProjectsPage() {
       [project]: mode,
     }));
   }, []);
+
+  const handlePinnedChange = React.useCallback(
+    async (project: string, pinned: boolean) => {
+      const previousPinnedProjects = pinnedProjects;
+      setPinnedProjects(togglePinnedProject(previousPinnedProjects, project, pinned));
+      setPinningProjects((current) => ({ ...current, [project]: true }));
+      setPreferencesError(null);
+
+      try {
+        const response = await fetch('/api/projects/preferences', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'set-pinned',
+            project,
+            pinned,
+          }),
+        });
+        const payload = (await response.json()) as ProjectPreferencesResponse;
+        if (!response.ok || !payload.success || !payload.preferences) {
+          throw new Error(payload.error || 'Failed to save project pin');
+        }
+        setPinnedProjects(payload.preferences.pinnedProjects);
+      } catch (pinError) {
+        setPinnedProjects(previousPinnedProjects);
+        setPreferencesError(pinError instanceof Error ? pinError.message : 'Failed to save project pin');
+      } finally {
+        setPinningProjects((current) => {
+          const next = { ...current };
+          delete next[project];
+          return next;
+        });
+      }
+    },
+    [pinnedProjects]
+  );
+
+  const pinnedProjectSet = React.useMemo(() => new Set(pinnedProjects), [pinnedProjects]);
+  const pinnedProjectOrder = React.useMemo(
+    () => new Map(pinnedProjects.map((project, index) => [project, index])),
+    [pinnedProjects]
+  );
+
+  const sortedProjects = React.useMemo(() => {
+    if (!data) {
+      return [];
+    }
+
+    return [...data.projects].sort((a, b) => {
+      const aPinnedIndex = pinnedProjectOrder.get(a.project);
+      const bPinnedIndex = pinnedProjectOrder.get(b.project);
+
+      if (aPinnedIndex === undefined && bPinnedIndex === undefined) {
+        return 0;
+      }
+      if (aPinnedIndex === undefined) {
+        return 1;
+      }
+      if (bPinnedIndex === undefined) {
+        return -1;
+      }
+      return aPinnedIndex - bPinnedIndex;
+    });
+  }, [data, pinnedProjectOrder]);
+
+  const visibleProjects = React.useMemo(
+    () => sortedProjects.filter((group) => pinnedProjectSet.has(group.project) || getActiveTaskCount(group) > 0),
+    [pinnedProjectSet, sortedProjects]
+  );
+
+  const hiddenProjects = React.useMemo(
+    () => sortedProjects.filter((group) => !pinnedProjectSet.has(group.project) && getActiveTaskCount(group) === 0),
+    [pinnedProjectSet, sortedProjects]
+  );
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
@@ -1418,7 +1558,11 @@ export default function ProjectsPage() {
         )}
         {!loading && !error && data && (
           <div className="space-y-4">
-            {data.projects.map((group) => (
+            {preferencesError && (
+              <p className="text-sm text-amber-600 dark:text-amber-300">{preferencesError}</p>
+            )}
+
+            {visibleProjects.map((group) => (
               <ProjectCard
                 key={group.project}
                 group={group}
@@ -1426,8 +1570,47 @@ export default function ProjectsPage() {
                 onModeChange={(mode) => setModeForProject(group.project, mode)}
                 date={date}
                 onChanged={() => fetchData(date)}
+                isPinned={pinnedProjectSet.has(group.project)}
+                isPinning={Boolean(pinningProjects[group.project])}
+                onPinnedChange={(pinned) => handlePinnedChange(group.project, pinned)}
               />
             ))}
+
+            {hiddenProjects.length > 0 && (
+              <details
+                open={inactiveProjectsExpanded}
+                onToggle={(event) => setInactiveProjectsExpanded(event.currentTarget.open)}
+                className="rounded-xl border border-dashed border-gray-300 bg-gray-50/70 p-4 dark:border-gray-700 dark:bg-gray-800/40"
+              >
+                <summary className="cursor-pointer select-none text-sm font-semibold text-gray-700 dark:text-gray-200">
+                  Hidden projects
+                  <span className="ml-2 rounded-full bg-gray-200 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-700 dark:text-gray-300">
+                    {hiddenProjects.length}
+                  </span>
+                </summary>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Projects with zero active tasks are tucked away here.
+                </p>
+                {inactiveProjectsExpanded && (
+                  <div className="mt-4 space-y-4">
+                    {hiddenProjects.map((group) => (
+                      <ProjectCard
+                        key={group.project}
+                        group={group}
+                        mode={getModeForProject(group.project)}
+                        onModeChange={(mode) => setModeForProject(group.project, mode)}
+                        date={date}
+                        onChanged={() => fetchData(date)}
+                        isPinned={pinnedProjectSet.has(group.project)}
+                        isPinning={Boolean(pinningProjects[group.project])}
+                        onPinnedChange={(pinned) => handlePinnedChange(group.project, pinned)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </details>
+            )}
+
             <ProjectCard
               group={data.unassigned}
               mode={getModeForProject(data.unassigned.project)}
