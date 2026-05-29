@@ -18,10 +18,10 @@ Cedar-OS enables agent-controlled UI generation, allowing the agent to create dy
 
 ### Journal-Centric Data Model
 
-The **journal is the source of truth** for what happened. Tasks are a priority queue that feeds into the journal. Plans are scheduled intentions (separate from journal actuals).
+The **journal is the source of truth** for what happened. General tasks are backlogs; Current tasks are the running priority queue; Today snapshots feed selected Current tasks and automatic dated tasks into the journal. Plans are scheduled intentions (separate from journal actuals).
 
 ```
-Task Queue → Plan Entry (scheduled time) → Execute → Journal Entry (actual time) → Complete
+General Backlog → Current Queue → Today Snapshot / Automatic Date Entry → Plan Entry → Journal Entry → Complete
 ```
 
 | Concept | Purpose |
@@ -37,11 +37,11 @@ Task Queue → Plan Entry (scheduled time) → Execute → Journal Entry (actual
 
 ### Tasks
 
-Tasks live in two priority queues:
+Tasks live in two unordered General backlogs:
 - **have-to-do**: Obligations and responsibilities
 - **want-to-do**: Desires and optional activities
 
-Priority is determined by position (first = highest priority). Binary search insertion with pairwise comparison determines placement.
+Each list also has an ordered running Current queue. Only Current is priority ordered; binary insertion and drag reorder determine its placement. Dated Today snapshots save explicit selections from Current plus an unranked automatic due/daily section.
 
 #### Task Properties
 
@@ -58,10 +58,12 @@ Priority is determined by position (first = highest priority). Binary search ins
 
 #### Task Lifecycle
 
-1. **Created**: Task enters queue at determined priority position
-2. **Scheduled**: Task is planned for a specific time (creates Plan Entry)
-3. **Staged**: Task is due today but not yet scheduled (appears in staging area)
-4. **Completed**: Task is done
+1. **Created**: Task appends to its General backlog
+2. **Current**: Selected work enters the running priority queue
+3. **Today**: A Current task is explicitly selected for the date, or due/daily rules add it automatically
+4. **Scheduled**: Task is planned for a specific time (creates Plan Entry)
+5. **Staged**: Today work appears unscheduled for a date
+6. **Completed**: Task is done
    - Non-daily tasks: Removed from queue, journal entry is the record
    - Daily tasks: Stay in queue, reset for next day
 
@@ -209,11 +211,11 @@ A 7-day calendar (Monday-Sunday) showing:
 
 ### Task Lists
 
-Two priority queues displayed side-by-side:
+Two General backlogs displayed side-by-side:
 - **Have to Do**: Obligations (amber theme)
 - **Want to Do**: Desires (teal theme)
 
-With "Today" sections showing tasks scheduled/due for current day.
+With `Today` sections first (selected Current tasks, then unranked automatic due/daily tasks), followed by ranked `Current` sections and General backlogs.
 
 ### UI Improvements Needed
 
@@ -222,10 +224,7 @@ With "Today" sections showing tasks scheduled/due for current day.
 
 ### Task Addition
 
-Binary search priority insertion via modal:
-1. Enter task text, optional due date, optional daily flag
-2. Compare against existing tasks ("Which is more important?")
-3. O(log n) comparisons to find correct priority position
+Creation appends to General without comparisons. Admission to Current and Current re-prioritization use binary comparison; ranked Current also supports drag reorder.
 
 ---
 
@@ -354,4 +353,3 @@ With clear foreign key relationships (plan entries and journal entries can refer
   "indicators": 2
 }
 ```
-

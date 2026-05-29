@@ -14,9 +14,10 @@ interface TaskResortModalProps {
   onTaskResorted: () => void;
   task: Task | null;
   listType: ListType;
+  mode?: 'admit' | 'reorder';
 }
 
-export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listType }: TaskResortModalProps) {
+export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listType, mode = 'reorder' }: TaskResortModalProps) {
   const [phase, setPhase] = useState<ModalPhase>('loading');
   const [existingTasks, setExistingTasks] = useState<Task[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
@@ -36,14 +37,13 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
     setPhase('reordering');
 
     try {
-      const response = await fetch('/api/tasks/reorder', {
+      const response = await fetch(mode === 'admit' ? '/api/tasks/current/add' : '/api/tasks/current/reorder', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskId: task.id,
-          newPosition: position,
+          ...(mode === 'admit' ? { position } : { newPosition: position }),
           listType,
-          positionMode: 'type-relative',
         }),
       });
 
@@ -62,7 +62,7 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
       setPhase('error');
       setErrorMessage('Failed to connect to server');
     }
-  }, [task, listType, onTaskResorted, onClose]);
+  }, [task, listType, mode, onTaskResorted, onClose]);
 
   const startComparison = useCallback(async () => {
     if (!task) return;
@@ -71,8 +71,7 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
     setErrorMessage('');
 
     try {
-      const isDailyParam = task.isDaily === true ? 'true' : 'false';
-      const response = await fetch(`/api/tasks/list?listType=${listType}&isDaily=${isDailyParam}`);
+      const response = await fetch(`/api/tasks/current/list?listType=${listType}`);
       const data = await response.json();
 
       if (!data.success) {
@@ -152,7 +151,9 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
           <>
             <ModalShell.Header>
               <div className="text-center mb-4">
-                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Re-sort task priority</h2>
+                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">
+                  {mode === 'admit' ? 'Add to Current priority' : 'Re-prioritize Current task'}
+                </h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400">
                   Comparison {comparisonCount + 1} of ~{maxComparisons}
                 </p>
@@ -255,7 +256,9 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Task re-sorted!</p>
+            <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">
+              {mode === 'admit' ? 'Added to Current!' : 'Current priority updated!'}
+            </p>
           </ModalShell.Body>
         )}
 

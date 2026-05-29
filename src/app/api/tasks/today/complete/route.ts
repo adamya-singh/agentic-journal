@@ -19,6 +19,11 @@ import {
   TaskCompletionSnapshot,
 } from '../today-store-utils';
 import { buildChildrenByParentId, getDescendantTaskIds } from '@/lib/tasks';
+import {
+  ensureCurrentSystemThroughToday,
+  findTaskInDailySnapshot,
+  removeTaskFromCurrent,
+} from '../../current/current-store-utils';
 
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 
@@ -148,6 +153,7 @@ export async function POST(request: NextRequest) {
     }
 
     const typedListType = listType as ListType;
+    ensureCurrentSystemThroughToday();
     markMissedPlansIfJournalExists(date);
     const generalData = readGeneralTasks(typedListType);
     const completedSnapshots = readCompletedTaskSnapshots(date, typedListType);
@@ -194,7 +200,9 @@ export async function POST(request: NextRequest) {
       completedSnapshots,
     });
 
-    const taskFromToday = computedTodayTasks.find((task) => task.id === taskId) ?? null;
+    const taskFromToday = findTaskInDailySnapshot(date, typedListType, taskId)
+      ?? computedTodayTasks.find((task) => task.id === taskId)
+      ?? null;
     const taskFromGeneral = generalData.tasks.find((task) => task.id === taskId) ?? null;
     const taskFromLegacyDaily = findLegacyDailyTaskById(date, typedListType, taskId);
 
@@ -238,6 +246,7 @@ export async function POST(request: NextRequest) {
       if (generalData.tasks.length !== initialLength) {
         writeGeneralTasks(generalData, typedListType);
       }
+      removeTaskFromCurrent(typedListType, taskId);
     }
 
     let promptToCompleteParent = false;

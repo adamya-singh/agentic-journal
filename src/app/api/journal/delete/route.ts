@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 import {
   DayJournal,
   JournalHourSlot,
@@ -79,6 +80,7 @@ function isSlotEmpty(slot: JournalHourSlot | null | undefined): boolean {
 
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, hour, taskId } = body;
 
@@ -196,4 +198,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

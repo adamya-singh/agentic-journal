@@ -235,10 +235,10 @@ function buildRoadmapView(roadmap: ProjectRoadmap, taskViewsByKey: Map<string, P
 
 /**
  * GET /api/projects/view
- * Returns tasks grouped by project for general, today, and completed lifecycle buckets.
+ * Returns tasks grouped by project for General, dated Today, and completed lifecycle buckets.
  *
  * Query params:
- * - date: ISO date (YYYY-MM-DD) used for computing today's tasks (defaults to current date)
+ * - date: ISO date (YYYY-MM-DD) used for resolving the Today snapshot (defaults to current date)
  */
 export async function GET(request: NextRequest) {
   try {

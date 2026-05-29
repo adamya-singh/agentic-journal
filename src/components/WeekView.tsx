@@ -527,19 +527,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
   // Handler for "Starting now" - logs to journal that task is starting
   const handleStartTask = useCallback(async (entry: StagedEntry, date: string) => {
     try {
-      // First ensure task is in today's list
-      await fetch('/api/tasks/today/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: entry.taskId,
-          taskText: entry.text,
-          listType: entry.listType,
-          date,
-        }),
-      });
-
-      // Then log to journal
+      // The staged entry already comes from the dated Today snapshot.
       await fetch('/api/journal/append', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

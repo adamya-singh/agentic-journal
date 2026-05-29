@@ -113,8 +113,7 @@ export function PriorityComparisonModal({
     }
   }, [taskInput, onTaskAdded, onClose, listType, parentTask?.id, dueDate, dueTimeStart, dueTimeEnd, useDueTimeRange, isDaily, projectsInput, notesMarkdown]);
 
-  // Fetch existing tasks when entering comparison phase
-  // Daily tasks only compare against other daily tasks, regular tasks only against regular tasks
+  // General is an unordered backlog; creation does not establish priority.
   const startComparison = useCallback(async () => {
     if (!taskInput.trim()) return;
 
@@ -123,39 +122,8 @@ export function PriorityComparisonModal({
       return;
     }
     
-    setPhase('loading');
-    
-    try {
-      // Filter by isDaily to only compare against tasks of the same type
-      const isDailyParam = isDaily ? 'true' : 'false';
-      const response = await fetch(`/api/tasks/list?listType=${listType}&isDaily=${isDailyParam}`);
-      const data = await response.json();
-      
-      if (!data.success) {
-        setPhase('error');
-        setErrorMessage('Failed to load tasks');
-        return;
-      }
-      
-      const tasks = data.tasks as Task[];
-      setExistingTasks(tasks);
-      
-      if (tasks.length === 0) {
-        // No existing tasks of this type, insert at position 0
-        await insertTask(0);
-      } else {
-        // Start binary search
-        setLow(0);
-        setHigh(tasks.length);
-        setMaxComparisons(Math.ceil(Math.log2(tasks.length + 1)));
-        setComparisonCount(0);
-        setPhase('comparing');
-      }
-    } catch {
-      setPhase('error');
-      setErrorMessage('Failed to connect to server');
-    }
-  }, [taskInput, listType, isDaily, insertTask, parentTask]);
+    await insertTask(Number.MAX_SAFE_INTEGER);
+  }, [taskInput, insertTask, parentTask]);
 
   // Handle user's comparison choice
   const handleComparisonChoice = useCallback((newTaskIsMoreImportant: boolean) => {
@@ -202,7 +170,7 @@ export function PriorityComparisonModal({
               <p className="text-gray-500 dark:text-gray-400">
                 {parentTask
                   ? 'Enter the subtask details below'
-                  : 'Enter your task, then we&apos;ll find its priority'}
+                  : 'Enter your task to add it to the General backlog'}
               </p>
             </ModalShell.Header>
 

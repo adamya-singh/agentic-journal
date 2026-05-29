@@ -6,6 +6,7 @@ import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
 import { getDescendantTaskIds, validateParentTaskAssignment, buildChildrenByParentId } from '@/lib/tasks';
 import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
+import { ensureCurrentSystemThroughToday, refreshActiveDailySnapshots } from '../current/current-store-utils';
 
 const NOTES_MAX_LENGTH = 20000;
 
@@ -25,7 +26,7 @@ const NOTES_MAX_LENGTH = 20000;
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { task, position, listType = 'have-to-do', dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, parentTaskId } = body;
+    const { task, listType = 'have-to-do', dueDate, dueTimeStart, dueTimeEnd, isDaily, projects, notesMarkdown, parentTaskId } = body;
 
     // Validate listType
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
@@ -141,6 +142,7 @@ export async function POST(request: NextRequest) {
       newTask.parentTaskId = normalizedParentTaskId;
     }
 
+    ensureCurrentSystemThroughToday();
     // Read current tasks
     const data = readGeneralTasks(listType) as TasksData;
 
@@ -166,34 +168,8 @@ export async function POST(request: NextRequest) {
       });
 
       data.tasks.splice(insertAt + 1, 0, newTask);
-    } else if (typeof position === 'number' && position >= 0) {
-      // Find indices of tasks matching the type we're adding
-      const matchingIndices: number[] = [];
-      data.tasks.forEach((t, idx) => {
-        const taskIsDaily = t.isDaily === true;
-        const newTaskIsDaily = isDaily === true;
-        if (!t.parentTaskId && taskIsDaily === newTaskIsDaily) {
-          matchingIndices.push(idx);
-        }
-      });
-
-      // Calculate actual insertion index
-      let actualPosition: number;
-      if (matchingIndices.length === 0) {
-        // No tasks of this type exist yet
-        // Daily tasks go at the beginning, regular tasks go at the end
-        actualPosition = isDaily === true ? 0 : data.tasks.length;
-      } else if (position >= matchingIndices.length) {
-        // Insert after all tasks of this type
-        actualPosition = matchingIndices[matchingIndices.length - 1] + 1;
-      } else {
-        // Insert at the position of the nth task of this type
-        actualPosition = matchingIndices[position];
-      }
-
-      data.tasks.splice(actualPosition, 0, newTask);
     } else {
-      // Default: push to end
+      // General lists are unordered backlogs; priority exists only in Current.
       data.tasks.push(newTask);
     }
 
@@ -204,6 +180,7 @@ export async function POST(request: NextRequest) {
     if (newTask.dueDate) {
       handleDueDateSetup(newTask.dueDate, listType, newTask);
     }
+    refreshActiveDailySnapshots();
 
     return NextResponse.json({
       success: true,
@@ -211,7 +188,7 @@ export async function POST(request: NextRequest) {
       taskId: newTask.id,
       task: newTask,
       taskCount: data.tasks.length,
-      insertedAt: typeof position === 'number' ? position : data.tasks.length - 1,
+      insertedAt: data.tasks.length - 1,
     });
   } catch (error) {
     console.error('Error adding task:', error);

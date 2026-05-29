@@ -4,11 +4,10 @@ import { getDescendantTaskIds, buildChildrenByParentId } from '@/lib/tasks';
 import { handleDueDateSetup } from '../due-date-utils';
 import {
   readGeneralTasks,
-  removeCompletedTaskIndexSnapshots,
-  removeTaskIdsFromCompletedSnapshots,
   removeTaskIdsFromTodayOverrides,
   writeGeneralTasks,
 } from '../today/today-store-utils';
+import { ensureCurrentSystemThroughToday, removeTaskIdsFromCurrent, refreshActiveDailySnapshots } from '../current/current-store-utils';
 
 /**
  * POST /api/tasks/remove
@@ -45,6 +44,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    ensureCurrentSystemThroughToday();
     // Read current tasks
     const data = readGeneralTasks(listType) as TasksData;
 
@@ -87,8 +87,8 @@ export async function POST(request: NextRequest) {
     // Write updated tasks
     writeGeneralTasks(data, listType as ListType);
     removeTaskIdsFromTodayOverrides(removedIds, listType as ListType);
-    removeTaskIdsFromCompletedSnapshots(removedIds, listType as ListType);
-    removeCompletedTaskIndexSnapshots(removedIds);
+    removeTaskIdsFromCurrent(listType as ListType, removedIds);
+    refreshActiveDailySnapshots();
 
     return NextResponse.json({
       success: true,

@@ -5,6 +5,7 @@ import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
 import { validateParentTaskAssignment } from '@/lib/tasks';
 import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
+import { ensureCurrentSystemThroughToday, refreshActiveDailySnapshots } from '../current/current-store-utils';
 
 const NOTES_MAX_LENGTH = 20000;
 
@@ -86,6 +87,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    ensureCurrentSystemThroughToday();
     // Read current tasks
     const data = readGeneralTasks(listType) as TasksData;
 
@@ -225,6 +227,7 @@ export async function POST(request: NextRequest) {
     if (targetDate) {
       handleDueDateSetup(targetDate, listType, updatedTask, previousTask);
     }
+    refreshActiveDailySnapshots();
 
     return NextResponse.json({
       success: true,

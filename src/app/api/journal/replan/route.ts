@@ -6,6 +6,7 @@ import {
   markMissedPlansForDate,
   replanTaskEntryInJournal,
 } from '../plan-lifecycle-utils';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -39,6 +40,7 @@ function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
 
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, fromPlanId, to } = body as {
       date?: string;

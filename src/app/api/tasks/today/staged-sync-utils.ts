@@ -10,8 +10,7 @@ import {
   isJournalEntryArray,
   isTaskJournalEntry,
 } from '@/lib/types';
-import { readCompletedTaskSnapshots, readGeneralTasks, readTodayOverrides } from './today-store-utils';
-import { computeTodayTasks } from './today-compute-utils';
+import { getEffectiveDailySnapshot } from '../current/current-store-utils';
 
 interface DayJournal {
   [key: string]: unknown;
@@ -56,16 +55,8 @@ function getScheduledTaskIds(journal: DayJournal): Set<string> {
 }
 
 export function computeTodayTasksForList(date: string, listType: ListType): Task[] {
-  const generalData = readGeneralTasks(listType);
-  const overrides = readTodayOverrides(date, listType);
-  const completedSnapshots = readCompletedTaskSnapshots(date, listType);
-
-  return computeTodayTasks({
-    date,
-    generalTasks: generalData.tasks,
-    overrides,
-    completedSnapshots,
-  });
+  const snapshot = getEffectiveDailySnapshot(date, listType);
+  return [...snapshot.selectedTasks, ...snapshot.automaticTasks];
 }
 
 export function computeTodayTasksByList(date: string): TodayTasksByList {

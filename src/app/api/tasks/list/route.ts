@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Task, TasksData, ListType } from '@/lib/types';
+import { TasksData, ListType } from '@/lib/types';
+import { ensureCurrentSystemThroughToday } from '../current/current-store-utils';
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
@@ -33,6 +34,7 @@ function readTasks(listType: ListType): TasksData {
  */
 export async function GET(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const { searchParams } = new URL(request.url);
     const listType = (searchParams.get('listType') || 'have-to-do') as ListType;
     const isDailyParam = searchParams.get('isDaily');
@@ -67,4 +69,3 @@ export async function GET(request: NextRequest) {
     );
   }
 }
-

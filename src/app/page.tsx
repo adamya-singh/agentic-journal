@@ -95,7 +95,7 @@ export default function HomePage() {
   // Cedar state for week view data (journals for the week)
   const [weekViewData, setWeekViewData] = React.useState<WeekViewData | null>(null);
 
-  // Cedar state for task lists data (general and today lists)
+  // Cedar state for Today selections, ordered Current queues, and unordered General backlogs.
   const [taskListsData, setTaskListsData] = React.useState<TaskListsData | null>(null);
 
   // Cedar state for OpenClaw-maintained job listings
@@ -528,7 +528,7 @@ export default function HomePage() {
   // Register task lists data as Cedar state with setters for task management
   useRegisterState({
     key: 'taskLists',
-    description: 'Task lists containing general tasks (have-to-do and want-to-do) and today\'s tasks. Tasks are prioritized with the first item being highest priority.',
+    description: 'Task lists containing dated Today selections, ordered running Current queues, and unordered General backlogs. Today contains selected Current tasks plus automatic due/daily tasks for the active date.',
     value: taskListsData,
     setValue: setTaskListsData,
     stateSetters: {
@@ -685,126 +685,64 @@ export default function HomePage() {
           refreshTasks();
         },
       },
-      reorderTask: {
-        name: 'reorderTask',
-        description: 'Move a task to a new position in the priority queue. Position 0 is highest priority.',
+      reorderCurrentTask: {
+        name: 'reorderCurrentTask',
+        description: 'Move a ranked Current task to a new priority position. Position 0 is highest priority.',
         argsSchema: z.object({
-          text: z.string().min(1).describe('The text of the task to move'),
+          taskId: z.string().min(1).describe('The ID of the Current task to move'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
           newPosition: z.number().int().min(0).describe('The new position index (0 = highest priority)'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { text: string; listType: ListType; newPosition: number }
+          args: { taskId: string; listType: ListType; newPosition: number }
         ) => {
           if (!currentData) return;
-
-          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const tasks = [...currentData.generalTasks[key]];
-          const currentIndex = tasks.findIndex(t => t.text === args.text.trim());
-          
-          if (currentIndex === -1) return;
-
-          const clampedPosition = Math.min(args.newPosition, tasks.length - 1);
-          const [task] = tasks.splice(currentIndex, 1);
-          tasks.splice(clampedPosition, 0, task);
-
-          // Optimistically update state
-          setValue({
-            ...currentData,
-            generalTasks: {
-              ...currentData.generalTasks,
-              [key]: tasks,
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/tasks/reorder', {
+          await fetch('/api/tasks/current/reorder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              text: args.text,
+              taskId: args.taskId,
               newPosition: args.newPosition,
               listType: args.listType,
             }),
           });
-
-          // Trigger TaskLists to refresh via context
           refreshTasks();
         },
       },
-      // ==================== DAILY TASK SETTERS ====================
-      addTaskToToday: {
-        name: 'addTaskToToday',
-        description: 'Add a manual inclusion override so an EXISTING task from a general list appears in today\'s computed task list.',
+      // ==================== CURRENT TASK SETTERS ====================
+      addTaskToCurrent: {
+        name: 'addTaskToCurrent',
+        description: 'Admit an existing General task to the ranked running Current queue.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of an existing task from the general list'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+          position: z.number().int().min(0).optional().describe('Priority position; omit to append'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType; position?: number }
         ) => {
           if (!currentData) return;
-
-          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          
-          // Find the task in the general list by ID
-          const sourceTask = currentData.generalTasks[key].find(t => t.id === args.taskId);
-          if (!sourceTask) {
-            console.error(`Task with ID ${args.taskId} not found in ${args.listType} list`);
-            return;
-          }
-          
-          // Check if already exists in today's list by ID
-          if (currentData.todayTasks[key].some(t => t.id === args.taskId)) {
-            return; // Already exists, don't duplicate
-          }
-
-          // Add the task reference to today's list
-          const taskForToday: Task = { 
-            id: sourceTask.id,
-            text: sourceTask.text,
-            ...(sourceTask.projects && sourceTask.projects.length > 0 ? { projects: sourceTask.projects } : {}),
-            ...(sourceTask.dueDate && { dueDate: sourceTask.dueDate }),
-            ...(sourceTask.dueTimeStart && { dueTimeStart: sourceTask.dueTimeStart }),
-            ...(sourceTask.dueTimeEnd && { dueTimeEnd: sourceTask.dueTimeEnd }),
-            ...(sourceTask.isDaily ? { isDaily: true } : {}),
-          };
-
-          // Optimistically update state
-          setValue({
-            ...currentData,
-            todayTasks: {
-              ...currentData.todayTasks,
-              [key]: [...currentData.todayTasks[key], taskForToday],
-            },
-          });
-
-          // Persist to JSON via API
-          await fetch('/api/tasks/today/add', {
+          await fetch('/api/tasks/current/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              taskId: sourceTask.id,
-              taskText: sourceTask.text,
+              taskId: args.taskId,
               listType: args.listType,
-              date: currentData.currentDate,
-              dueDate: sourceTask.dueDate,
+              position: args.position,
             }),
           });
-
-          // Trigger TaskLists to refresh via context
           refreshTasks();
         },
       },
-      removeTaskFromToday: {
-        name: 'removeTaskFromToday',
-        description: 'Add a manual exclusion override so a task is hidden from today\'s computed task list by ID.',
+      removeTaskFromCurrent: {
+        name: 'removeTaskFromCurrent',
+        description: 'Remove a ranked task from Current while leaving it in General. This also removes any uncompleted selected copy from active Today.',
         argsSchema: z.object({
-          taskId: z.string().min(1).describe('The ID of the task to remove from today\'s list'),
+          taskId: z.string().min(1).describe('The ID of the task to remove from Current'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
         }),
         execute: async (
@@ -813,20 +751,55 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType }
         ) => {
           if (!currentData) return;
-
-          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const filteredTasks = currentData.todayTasks[key].filter(t => t.id !== args.taskId);
-
-          // Optimistically update state
-          setValue({
-            ...currentData,
-            todayTasks: {
-              ...currentData.todayTasks,
-              [key]: filteredTasks,
-            },
+          await fetch('/api/tasks/current/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: args.taskId,
+              listType: args.listType,
+            }),
           });
-
-          // Persist to JSON via API
+          refreshTasks();
+        },
+      },
+      addCurrentTaskToToday: {
+        name: 'addCurrentTaskToToday',
+        description: 'Select an existing Current task into the active date\'s Today list without changing Current priority.',
+        argsSchema: z.object({
+          taskId: z.string().min(1).describe('The ID of the Current task to select for Today'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { taskId: string; listType: ListType }
+        ) => {
+          if (!currentData) return;
+          await fetch('/api/tasks/today/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              taskId: args.taskId,
+              listType: args.listType,
+              date: currentData.currentDate,
+            }),
+          });
+          refreshAll();
+        },
+      },
+      removeTaskFromToday: {
+        name: 'removeTaskFromToday',
+        description: 'Remove a selected task from the active date\'s Today list without changing Current or General.',
+        argsSchema: z.object({
+          taskId: z.string().min(1).describe('The ID of the selected Today task to remove'),
+          listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+        }),
+        execute: async (
+          currentData: TaskListsData | null,
+          setValue: (newValue: TaskListsData | null) => void,
+          args: { taskId: string; listType: ListType }
+        ) => {
+          if (!currentData) return;
           await fetch('/api/tasks/today/remove', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -836,9 +809,7 @@ export default function HomePage() {
               date: currentData.currentDate,
             }),
           });
-
-          // Trigger TaskLists to refresh via context
-          refreshTasks();
+          refreshAll();
         },
       },
       completeTask: {
@@ -855,29 +826,6 @@ export default function HomePage() {
         ) => {
           if (!currentData) return;
 
-          const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          
-          // Optimistically update state - mark as completed in today's list
-          const updatedTodayTasks = currentData.todayTasks[key].map(task => 
-            task.id === args.taskId ? { ...task, completed: true } : task
-          );
-          
-          // Remove from general list
-          const updatedGeneralTasks = currentData.generalTasks[key].filter(t => t.id !== args.taskId);
-
-          setValue({
-            ...currentData,
-            todayTasks: {
-              ...currentData.todayTasks,
-              [key]: updatedTodayTasks,
-            },
-            generalTasks: {
-              ...currentData.generalTasks,
-              [key]: updatedGeneralTasks,
-            },
-          });
-
-          // Persist to JSON via API
           await fetch('/api/tasks/today/complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

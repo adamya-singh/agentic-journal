@@ -16,6 +16,7 @@ import {
   normalizePlannedEntry,
   normalizePlannedTaskEntry,
 } from '../plan-lifecycle-utils';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -80,6 +81,7 @@ function getEntryText(entry: JournalEntry): string {
  */
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, hour, text, taskId, listType, entryMode } = body;
 

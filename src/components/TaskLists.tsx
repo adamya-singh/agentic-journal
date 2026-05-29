@@ -18,7 +18,6 @@ import {
   useSortable,
   verticalListSortingStrategy,
   sortableKeyboardCoordinates,
-  arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { PriorityComparisonModal } from './PriorityComparisonModal';
@@ -44,6 +43,10 @@ export interface TaskListsData {
     wantToDo: Task[];
   };
   todayTasks: {
+    haveToDo: { selectedTasks: Task[]; automaticTasks: Task[] };
+    wantToDo: { selectedTasks: Task[]; automaticTasks: Task[] };
+  };
+  currentTasks: {
     haveToDo: Task[];
     wantToDo: Task[];
   };
@@ -320,25 +323,6 @@ function buildProjectGroupedBlocks(topLevelTasks: Task[]): GroupedBlock[] {
   return blocks;
 }
 
-function reorderTasksWithinType(tasks: Task[], taskId: string, newIndex: number, isDaily: boolean): Task[] {
-  const matches = tasks.filter((task) => (task.isDaily === true) === isDaily);
-  const currentTypeIndex = matches.findIndex((task) => task.id === taskId);
-  if (currentTypeIndex === -1) return tasks;
-
-  const clampedNewIndex = Math.max(0, Math.min(newIndex, matches.length - 1));
-  if (currentTypeIndex === clampedNewIndex) return tasks;
-
-  const reorderedMatches = arrayMove(matches, currentTypeIndex, clampedNewIndex);
-  let reorderedCursor = 0;
-
-  return tasks.map((task) => {
-    if ((task.isDaily === true) !== isDaily) return task;
-    const nextTask = reorderedMatches[reorderedCursor];
-    reorderedCursor += 1;
-    return nextTask;
-  });
-}
-
 function getIndentedChildClass(depth: number): string {
   if (depth <= 0) return '';
   if (depth === 1) return 'ml-6';
@@ -567,7 +551,7 @@ function TaskList({
                 </span>
               )}
               {isInToday && (
-                <span className="ml-2 text-xs text-green-600 dark:text-green-400">✓ in today</span>
+                <span className="ml-2 text-xs text-green-600 dark:text-green-400">in Current</span>
               )}
               {depth > 0 && (
                 <span className="ml-2 inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-700/70 dark:text-slate-200">
@@ -837,6 +821,7 @@ function TaskList({
 interface TodayTaskListProps {
   title: string;
   tasks: Task[];
+  automaticTasks?: Task[];
   loading: boolean;
   error: string | null;
   accentColor: string;
@@ -845,14 +830,158 @@ interface TodayTaskListProps {
   onComplete?: (task: Task) => void;
   onAddToPlan?: (task: Task) => void;
   onStartTask?: (task: Task) => void;
-  currentDate?: string;
+  onAddToToday?: (task: Task) => void;
+  onPrioritize?: (task: Task) => void;
+  onReorder?: (taskId: string, newPosition: number) => void;
+  selectedTodayTaskIds?: Set<string>;
   expandedNotesTaskIds: Set<string>;
   onToggleNotes: (taskId: string) => void;
   taskMap: Map<string, Task>;
 }
 
-function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, currentDate, expandedNotesTaskIds, onToggleNotes, taskMap }: TodayTaskListProps) {
+function TodayTaskList({ title, tasks, automaticTasks = [], loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, onAddToToday, onPrioritize, onReorder, selectedTodayTaskIds, expandedNotesTaskIds, onToggleNotes, taskMap }: TodayTaskListProps) {
   const orderedTasks = tasks;
+  const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
+  const renderTaskItem = (task: Task, index: number, taskCount: number, options?: { automatic?: boolean }) => {
+    const isAutomatic = options?.automatic === true;
+    const isLast = index === taskCount - 1;
+    const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
+    const isNotesExpanded = expandedNotesTaskIds.has(task.id);
+    const parentTask = findParentTask(task, taskMap);
+    const canReorder = Boolean(onReorder) && !task.completed && !isAutomatic;
+    return (
+      <li
+        key={`${isAutomatic ? 'automatic' : 'selected'}-${task.id}`}
+        draggable={canReorder}
+        onDragStart={() => {
+          if (canReorder) setDraggedTaskId(task.id);
+        }}
+        onDragOver={(event) => {
+          if (canReorder) event.preventDefault();
+        }}
+        onDrop={() => {
+          if (canReorder && draggedTaskId && draggedTaskId !== task.id) {
+            onReorder?.(draggedTaskId, index);
+          }
+          setDraggedTaskId(null);
+        }}
+        onDragEnd={() => setDraggedTaskId(null)}
+        className={`text-sm flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${
+          task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
+        }`}
+      >
+        <div className="flex-1">
+          <span className="flex items-center">
+            {canReorder && (
+              <GripVertical className="mr-1 h-4 w-4 cursor-grab text-gray-400 dark:text-gray-500" />
+            )}
+            {onComplete && (
+              <button
+                onClick={() => onComplete(task)}
+                className={`mr-2 p-1.5 rounded transition-colors ${
+                  task.completed
+                    ? 'text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/30'
+                    : 'text-gray-300 dark:text-gray-600 hover:text-green-500 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
+                }`}
+                title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
+              >
+                <CheckCircle className="h-5 w-5" />
+              </button>
+            )}
+            <TaskTextWithProjectBadges
+              text={task.text}
+              projects={task.projects}
+              textClassName={task.completed ? 'line-through' : undefined}
+            />
+            {renderParentContextBadge(parentTask?.text)}
+            {task.isDaily && (
+              <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
+                <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Daily
+              </span>
+            )}
+            {formatTaskDueLabel(task) && (
+              <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400 dark:text-gray-500'}`}>
+                ({formatTaskDueLabel(task)})
+              </span>
+            )}
+          </span>
+          {hasNotes && (
+            <div className="mt-1 ml-9">
+              <button
+                type="button"
+                onClick={() => onToggleNotes(task.id)}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
+              >
+                {isNotesExpanded ? 'Hide notes' : 'Show notes'}
+              </button>
+              {isNotesExpanded && (
+                <div className="mt-2 rounded-md bg-gray-50 dark:bg-gray-700/40 p-2 text-xs">
+                  <TaskNotesPreview markdown={task.notesMarkdown || ''} />
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {onPrioritize && !task.completed && !isAutomatic && (
+            <button
+              onClick={() => onPrioritize(task)}
+              className="p-1.5 text-amber-500 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-900/30 rounded transition-colors"
+              title="Re-prioritize in Current with comparisons"
+            >
+              <Pencil className="h-4 w-4" />
+            </button>
+          )}
+          {onAddToToday && !task.completed && !isAutomatic && (
+            <button
+              onClick={() => onAddToToday(task)}
+              disabled={selectedTodayTaskIds?.has(task.id)}
+              className={`p-1.5 rounded transition-colors ${
+                selectedTodayTaskIds?.has(task.id)
+                  ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-40'
+                  : 'text-emerald-500 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-900/30'
+              }`}
+              title={selectedTodayTaskIds?.has(task.id) ? 'Already selected for Today' : 'Add to Today'}
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+          )}
+          {onStartTask && !task.completed && (
+            <button
+              onClick={() => onStartTask(task)}
+              className="p-1.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
+              title="Starting now - log to journal"
+            >
+              <Play className="h-4 w-4" />
+            </button>
+          )}
+          {onAddToPlan && (
+            <button
+              onClick={() => onAddToPlan(task)}
+              className="p-1.5 text-indigo-400 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded transition-colors"
+              title="Schedule for specific time"
+            >
+              <Clock className="h-4 w-4" />
+            </button>
+          )}
+          {onRemove && !task.completed && !isAutomatic && (
+            <button
+              onClick={() => onRemove(task)}
+              className="p-1 text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 rounded transition-colors opacity-60 hover:opacity-100"
+              title="Remove"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </li>
+    );
+  };
 
   if (loading) {
     return (
@@ -886,123 +1015,27 @@ function TodayTaskList({ title, tasks, loading, error, accentColor, bgColor, onR
         <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
       </div>
       <div className="p-4 min-h-[80px] max-h-[200px] overflow-y-auto">
-        {orderedTasks.length > 0 ? (
-          <ol className="space-y-0">
-            {orderedTasks.map((task, index) => {
-              const isLast = index === orderedTasks.length - 1;
-              const hasNotes = Boolean(task.notesMarkdown && task.notesMarkdown.trim().length > 0);
-              const isNotesExpanded = expandedNotesTaskIds.has(task.id);
-              const parentTask = findParentTask(task, taskMap);
-              return (
-                <li 
-                  key={task.id} 
-                  className={`text-sm flex items-center justify-between group py-2 ${!isLast ? 'border-b border-gray-200 dark:border-gray-700' : ''} ${
-                    task.completed ? 'text-gray-400 dark:text-gray-500' : 'text-gray-700 dark:text-gray-200'
-                  }`}
-                >
-                  <div className="flex-1">
-                    <span className="flex items-center">
-                      {/* Always visible complete button */}
-                      {onComplete && (
-                        <button
-                          onClick={() => onComplete(task)}
-                          className={`mr-2 p-1.5 rounded transition-colors ${
-                            task.completed 
-                              ? 'text-green-500 hover:text-green-700 dark:text-green-400 dark:hover:text-green-300 bg-green-50 dark:bg-green-900/30' 
-                              : 'text-gray-300 dark:text-gray-600 hover:text-green-500 dark:hover:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/30'
-                          }`}
-                          title={task.completed ? 'Mark as incomplete' : 'Mark as done'}
-                        >
-                          <CheckCircle className="h-5 w-5" />
-                        </button>
-                      )}
-                      <TaskTextWithProjectBadges
-                        text={task.text}
-                        projects={task.projects}
-                        textClassName={task.completed ? 'line-through' : undefined}
-                      />
-                      {renderParentContextBadge(parentTask?.text)}
-                      {task.isDaily && (
-                        <span className={`ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${task.completed ? 'bg-purple-50 dark:bg-purple-900/30 text-purple-400 dark:text-purple-500' : 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'}`} title="Daily recurring task">
-                          <svg className="w-3 h-3 mr-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          Daily
-                        </span>
-                      )}
-                      {formatTaskDueLabel(task) && (
-                        <span className={`ml-2 text-xs ${task.completed ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400 dark:text-gray-500'}`}>
-                          ({formatTaskDueLabel(task)})
-                        </span>
-                      )}
-                    </span>
-                    {hasNotes && (
-                      <div className="mt-1 ml-9">
-                        <button
-                          type="button"
-                          onClick={() => onToggleNotes(task.id)}
-                          className="text-xs text-indigo-600 dark:text-indigo-400 hover:text-indigo-700 dark:hover:text-indigo-300"
-                        >
-                          {isNotesExpanded ? 'Hide notes' : 'Show notes'}
-                        </button>
-                        {isNotesExpanded && (
-                          <div className="mt-2 rounded-md bg-gray-50 dark:bg-gray-700/40 p-2 text-xs">
-                            <TaskNotesPreview markdown={task.notesMarkdown || ''} />
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1">
-                    {/* Starting now button - only show if task is not completed */}
-                    {onStartTask && !task.completed && (
-                      <button
-                        onClick={() => onStartTask(task)}
-                        className="p-1.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors"
-                        title="Starting now - log to journal"
-                      >
-                        <Play className="h-4 w-4" />
-                      </button>
-                    )}
-                    {onAddToPlan && (
-                      <button
-                        onClick={() => onAddToPlan(task)}
-                        className="p-1.5 text-indigo-400 hover:text-indigo-600 dark:text-indigo-400 dark:hover:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded transition-colors"
-                        title="Schedule for specific time"
-                      >
-                        <Clock className="h-4 w-4" />
-                      </button>
-                    )}
-                    {onRemove && !task.completed && (
-                      (() => {
-                        const isDueToday = task.dueDate === currentDate;
-                        const isAutoAdded = isDueToday || task.isDaily;
-                        return (
-                          <button
-                            onClick={isAutoAdded ? undefined : () => onRemove(task)}
-                            disabled={isAutoAdded}
-                            className={`p-1 rounded transition-colors ${
-                              isAutoAdded
-                                ? 'text-gray-300 dark:text-gray-600 cursor-not-allowed opacity-30'
-                                : 'text-red-400 hover:text-red-600 dark:text-red-400 dark:hover:text-red-300 hover:bg-red-50 dark:hover:bg-red-900/30 opacity-60 hover:opacity-100'
-                            }`}
-                            title={task.isDaily ? 'Daily task will be auto-added back' : isDueToday ? 'Task is due today and will be auto-added back' : 'Remove from today'}
-                          >
-                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                            </svg>
-                          </button>
-                        );
-                      })()
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
+        {orderedTasks.length > 0 || automaticTasks.length > 0 ? (
+          <div className="space-y-3">
+            {orderedTasks.length > 0 && (
+              <ol className="space-y-0">
+                {orderedTasks.map((task, index) => renderTaskItem(task, index, orderedTasks.length))}
+              </ol>
+            )}
+            {automaticTasks.length > 0 && (
+              <div className={orderedTasks.length > 0 ? 'border-t border-gray-200 pt-3 dark:border-gray-700' : ''}>
+                <div className="mb-1 text-xs font-medium uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                  Automatic
+                </div>
+                <ol className="space-y-0">
+                  {automaticTasks.map((task, index) => renderTaskItem(task, index, automaticTasks.length, { automatic: true }))}
+                </ol>
+              </div>
+            )}
+          </div>
         ) : (
           <div className="flex items-center justify-center h-full text-gray-400 dark:text-gray-500 text-sm italic">
-            Click tasks above to add to today
+            No tasks
           </div>
         )}
       </div>
@@ -1044,6 +1077,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [taskToEdit, setTaskToEdit] = useState<{ task: Task; listType: ListType } | null>(null);
   const [showResortModal, setShowResortModal] = useState(false);
   const [taskToResort, setTaskToResort] = useState<{ task: Task; listType: ListType } | null>(null);
+  const [resortMode, setResortMode] = useState<'admit' | 'reorder'>('reorder');
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -1052,30 +1086,40 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [wantSortMode, setWantSortMode] = useState<DueSortMode>('off');
   const [haveGroupMode, setHaveGroupMode] = useState<GroupMode>('off');
   const [wantGroupMode, setWantGroupMode] = useState<GroupMode>('off');
-  const [haveReorderError, setHaveReorderError] = useState<string | null>(null);
-  const [wantReorderError, setWantReorderError] = useState<string | null>(null);
   const [loadingHave, setLoadingHave] = useState(true);
   const [loadingWant, setLoadingWant] = useState(true);
   const [errorHave, setErrorHave] = useState<string | null>(null);
   const [errorWant, setErrorWant] = useState<string | null>(null);
 
-  // Today's task lists
+  // Dated Today selections and date-driven automatic attention blocks
   const [haveToDoToday, setHaveToDoToday] = useState<Task[]>([]);
   const [wantToDoToday, setWantToDoToday] = useState<Task[]>([]);
+  const [haveToDoAutomatic, setHaveToDoAutomatic] = useState<Task[]>([]);
+  const [wantToDoAutomatic, setWantToDoAutomatic] = useState<Task[]>([]);
   const [loadingHaveToday, setLoadingHaveToday] = useState(true);
   const [loadingWantToday, setLoadingWantToday] = useState(true);
   const [errorHaveToday, setErrorHaveToday] = useState<string | null>(null);
   const [errorWantToday, setErrorWantToday] = useState<string | null>(null);
 
-  // Track which tasks are in today's lists
+  // Running Current queues.
+  const [haveToDoCurrent, setHaveToDoCurrent] = useState<Task[]>([]);
+  const [wantToDoCurrent, setWantToDoCurrent] = useState<Task[]>([]);
+  const [loadingHaveCurrent, setLoadingHaveCurrent] = useState(true);
+  const [loadingWantCurrent, setLoadingWantCurrent] = useState(true);
+  const [errorHaveCurrent, setErrorHaveCurrent] = useState<string | null>(null);
+  const [errorWantCurrent, setErrorWantCurrent] = useState<string | null>(null);
+
+  // Track which tasks are already selected for Today or admitted to Current.
   const [todayHaveTasks, setTodayHaveTasks] = useState<Set<string>>(new Set());
   const [todayWantTasks, setTodayWantTasks] = useState<Set<string>>(new Set());
+  const [currentHaveTasks, setCurrentHaveTasks] = useState<Set<string>>(new Set());
+  const [currentWantTasks, setCurrentWantTasks] = useState<Set<string>>(new Set());
   const [expandedNotesTaskIds, setExpandedNotesTaskIds] = useState<Set<string>>(new Set());
   const [collapsedParentTaskIds, setCollapsedParentTaskIds] = useState<Set<string>>(new Set());
 
   // Notify parent when task data changes
   useEffect(() => {
-    const isLoading = loadingHave || loadingWant || loadingHaveToday || loadingWantToday;
+    const isLoading = loadingHave || loadingWant || loadingHaveToday || loadingWantToday || loadingHaveCurrent || loadingWantCurrent;
     if (onDataChange && !isLoading) {
       onDataChange({
         generalTasks: {
@@ -1083,8 +1127,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           wantToDo,
         },
         todayTasks: {
-          haveToDo: haveToDoToday,
-          wantToDo: wantToDoToday,
+          haveToDo: { selectedTasks: haveToDoToday, automaticTasks: haveToDoAutomatic },
+          wantToDo: { selectedTasks: wantToDoToday, automaticTasks: wantToDoAutomatic },
+        },
+        currentTasks: {
+          haveToDo: haveToDoCurrent,
+          wantToDo: wantToDoCurrent,
         },
         currentDate,
       });
@@ -1094,10 +1142,16 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     wantToDo,
     haveToDoToday,
     wantToDoToday,
+    haveToDoAutomatic,
+    wantToDoAutomatic,
+    haveToDoCurrent,
+    wantToDoCurrent,
     loadingHave,
     loadingWant,
     loadingHaveToday,
     loadingWantToday,
+    loadingHaveCurrent,
+    loadingWantCurrent,
     currentDate,
     onDataChange,
   ]);
@@ -1110,7 +1164,6 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const haveData = await haveRes.json();
       if (haveData.success) {
         setHaveToDo(haveData.tasks);
-        setHaveReorderError(null);
       } else {
         setErrorHave(haveData.error || 'Failed to fetch');
       }
@@ -1126,7 +1179,6 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const wantData = await wantRes.json();
       if (wantData.success) {
         setWantToDo(wantData.tasks);
-        setWantReorderError(null);
       } else {
         setErrorWant(wantData.error || 'Failed to fetch');
       }
@@ -1141,15 +1193,15 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     fetchGeneralTasks();
   }, [fetchGeneralTasks]);
 
-  // Fetch today's tasks
+  // Fetch selected Today tasks and today's automatic overlay.
   const fetchTodayTasks = useCallback(async () => {
-    // Fetch have-to-do today
     try {
       const haveRes = await fetch(`/api/tasks/today/list?listType=have-to-do&date=${currentDate}`);
       const haveData = await haveRes.json();
       if (haveData.success) {
-        setHaveToDoToday(haveData.tasks);
-        setTodayHaveTasks(new Set(haveData.tasks.map((t: Task) => t.id)));
+        setHaveToDoToday(haveData.selectedTasks);
+        setHaveToDoAutomatic(haveData.automaticTasks);
+        setTodayHaveTasks(new Set(haveData.selectedTasks.map((t: Task) => t.id)));
       } else {
         setErrorHaveToday(haveData.error || 'Failed to fetch');
       }
@@ -1164,8 +1216,9 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       const wantRes = await fetch(`/api/tasks/today/list?listType=want-to-do&date=${currentDate}`);
       const wantData = await wantRes.json();
       if (wantData.success) {
-        setWantToDoToday(wantData.tasks);
-        setTodayWantTasks(new Set(wantData.tasks.map((t: Task) => t.id)));
+        setWantToDoToday(wantData.selectedTasks);
+        setWantToDoAutomatic(wantData.automaticTasks);
+        setTodayWantTasks(new Set(wantData.selectedTasks.map((t: Task) => t.id)));
       } else {
         setErrorWantToday(wantData.error || 'Failed to fetch');
       }
@@ -1176,52 +1229,91 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   }, [currentDate]);
 
+  const fetchCurrentTasks = useCallback(async () => {
+    try {
+      const haveRes = await fetch('/api/tasks/current/list?listType=have-to-do');
+      const haveData = await haveRes.json();
+      if (haveData.success) {
+        setHaveToDoCurrent(haveData.tasks);
+        setCurrentHaveTasks(new Set(haveData.tasks.map((t: Task) => t.id)));
+      } else {
+        setErrorHaveCurrent(haveData.error || 'Failed to fetch');
+      }
+    } catch {
+      setErrorHaveCurrent('Failed to connect');
+    } finally {
+      setLoadingHaveCurrent(false);
+    }
+
+    try {
+      const wantRes = await fetch('/api/tasks/current/list?listType=want-to-do');
+      const wantData = await wantRes.json();
+      if (wantData.success) {
+        setWantToDoCurrent(wantData.tasks);
+        setCurrentWantTasks(new Set(wantData.tasks.map((t: Task) => t.id)));
+      } else {
+        setErrorWantCurrent(wantData.error || 'Failed to fetch');
+      }
+    } catch {
+      setErrorWantCurrent('Failed to connect');
+    } finally {
+      setLoadingWantCurrent(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchTodayTasks();
-  }, [fetchTodayTasks]);
+    fetchCurrentTasks();
+  }, [fetchTodayTasks, fetchCurrentTasks]);
 
   // Re-fetch when refreshTrigger changes (triggered by Cedar state setters)
   useEffect(() => {
     if (refreshTrigger !== undefined && refreshTrigger > 0) {
       fetchGeneralTasks();
       fetchTodayTasks();
+      fetchCurrentTasks();
     }
-  }, [refreshTrigger, fetchGeneralTasks, fetchTodayTasks]);
+  }, [refreshTrigger, fetchGeneralTasks, fetchTodayTasks, fetchCurrentTasks]);
 
   // Re-fetch when taskRefreshCounter changes (triggered by RefreshContext)
   useEffect(() => {
     if (taskRefreshCounter > 0) {
       fetchGeneralTasks();
       fetchTodayTasks();
+      fetchCurrentTasks();
     }
-  }, [taskRefreshCounter, fetchGeneralTasks, fetchTodayTasks]);
+  }, [taskRefreshCounter, fetchGeneralTasks, fetchTodayTasks, fetchCurrentTasks]);
 
-  // Handler to add task to today's list
-  const handleAddToToday = async (task: Task, listType: ListType) => {
+  // Admission into Current is prioritized through binary comparison.
+  const handleAddToCurrent = async (task: Task, listType: ListType) => {
+    setTaskToResort({ task, listType });
+    setResortMode('admit');
+    setShowResortModal(true);
+  };
+
+  const handleAddCurrentTaskToToday = async (task: Task, listType: ListType) => {
     try {
       const response = await fetch('/api/tasks/today/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           taskId: task.id,
-          taskText: task.text,
           listType,
           date: currentDate,
-          dueDate: task.dueDate,
         }),
       });
-      
+
       const data = await response.json();
-      if (data.success && !data.alreadyExists) {
-        // Refresh today's tasks
+      if (data.success) {
         fetchTodayTasks();
+        refreshJournal();
       }
     } catch (error) {
-      console.error('Failed to add task to today:', error);
+      console.error('Failed to add Current task to Today:', error);
     }
   };
 
-  // Handler to remove task from today's list
+  // Remove only the dated Today selection; Current and General are preserved.
   const handleRemoveFromToday = async (task: Task, listType: ListType) => {
     try {
       const response = await fetch('/api/tasks/today/remove', {
@@ -1235,12 +1327,35 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       });
       
       const data = await response.json();
-      if (data.success && data.removed) {
-        // Refresh today's tasks
+      if (data.success) {
         fetchTodayTasks();
+        refreshJournal();
       }
     } catch (error) {
-      console.error('Failed to remove task from today:', error);
+      console.error('Failed to remove task from Today:', error);
+    }
+  };
+
+  // Remove only ranked Current membership; General backlog membership is preserved.
+  const handleRemoveFromCurrent = async (task: Task, listType: ListType) => {
+    try {
+      const response = await fetch('/api/tasks/current/remove', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId: task.id,
+          listType,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        fetchCurrentTasks();
+        fetchTodayTasks();
+        refreshJournal();
+      }
+    } catch (error) {
+      console.error('Failed to remove task from Current:', error);
     }
   };
 
@@ -1289,6 +1404,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       if (data.success) {
         // Refresh both today's tasks and general tasks (since completion affects both)
         fetchTodayTasks();
+        fetchCurrentTasks();
         fetchGeneralTasks();
         // Notify WeekView to refresh (journal was modified)
         refreshJournal();
@@ -1308,6 +1424,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
               }),
             });
             fetchTodayTasks();
+            fetchCurrentTasks();
             fetchGeneralTasks();
             refreshJournal();
           }
@@ -1323,20 +1440,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   // Handler for "Starting now" - logs to journal that task is starting
   const handleStartTask = async (task: Task, listType: ListType) => {
     try {
-      // First ensure task is in today's list
-      await fetch('/api/tasks/today/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: task.id,
-          taskText: task.text,
-          listType,
-          date: currentDate,
-          dueDate: task.dueDate,
-        }),
-      });
-
-      // Then log to journal
+      // Log the visible Today or Current task to the journal.
       await fetch('/api/journal/append', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1398,6 +1502,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         // Refresh both general and today's tasks
         fetchGeneralTasks();
         fetchTodayTasks();
+        fetchCurrentTasks();
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
@@ -1407,39 +1512,15 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
-  const handleReorderTask = useCallback(async (
-    listType: ListType,
-    params: { taskId: string; newIndex: number; isDaily: boolean }
-  ) => {
-    const setList = listType === 'have-to-do' ? setHaveToDo : setWantToDo;
-    const setReorderError = listType === 'have-to-do' ? setHaveReorderError : setWantReorderError;
-
-    setReorderError(null);
-
-    setList((prev) => reorderTasksWithinType(prev, params.taskId, params.newIndex, params.isDaily));
-
-    try {
-      const response = await fetch('/api/tasks/reorder', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: params.taskId,
-          newPosition: params.newIndex,
-          listType,
-          positionMode: 'type-relative',
-        }),
-      });
-
-      const data = await response.json();
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to reorder task');
-      }
-    } catch (error) {
-      console.error('Failed to reorder task:', error);
-      setReorderError('Could not save task order. Restoring latest server state.');
-      fetchGeneralTasks();
-    }
-  }, [fetchGeneralTasks]);
+  const handleReorderCurrent = useCallback(async (listType: ListType, taskId: string, newPosition: number) => {
+    await fetch('/api/tasks/current/reorder', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId, listType, newPosition }),
+    });
+    fetchCurrentTasks();
+    fetchTodayTasks();
+  }, [fetchCurrentTasks, fetchTodayTasks]);
 
   const displayedHaveToDo = getDisplayedTasks(haveToDo, haveSortMode);
   const displayedWantToDo = getDisplayedTasks(wantToDo, wantSortMode);
@@ -1499,12 +1580,13 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 pb-4">
       <h2 className="text-xl sm:text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
       
-      {/* Today's Task Lists */}
+      {/* Dated Today selections */}
       <h3 className="text-base sm:text-lg font-medium text-gray-600 dark:text-gray-300 mb-3 text-center">Today ({currentDate})</h3>
       <div className="flex flex-col gap-4 mb-4 sm:flex-row">
         <TodayTaskList
           title="Have to Do Today"
           tasks={haveToDoToday}
+          automaticTasks={haveToDoAutomatic}
           loading={loadingHaveToday}
           error={errorHaveToday}
           accentColor="text-amber-700 dark:text-amber-400"
@@ -1513,7 +1595,6 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
           onStartTask={(task) => handleStartTask(task, 'have-to-do')}
-          currentDate={currentDate}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
           taskMap={haveToDoTaskMap}
@@ -1521,6 +1602,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         <TodayTaskList
           title="Want to Do Today"
           tasks={wantToDoToday}
+          automaticTasks={wantToDoAutomatic}
           loading={loadingWantToday}
           error={errorWantToday}
           accentColor="text-teal-700 dark:text-teal-400"
@@ -1529,7 +1611,57 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
           onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
           onStartTask={(task) => handleStartTask(task, 'want-to-do')}
-          currentDate={currentDate}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
+          taskMap={wantToDoTaskMap}
+        />
+      </div>
+
+      {/* Running Current queues */}
+      <h3 className="text-base sm:text-lg font-medium text-gray-600 dark:text-gray-300 mb-3 text-center">Current</h3>
+      <div className="flex flex-col gap-4 mb-4 sm:flex-row">
+        <TodayTaskList
+          title="Have to Do Current"
+          tasks={haveToDoCurrent}
+          loading={loadingHaveCurrent}
+          error={errorHaveCurrent}
+          accentColor="text-amber-700 dark:text-amber-400"
+          bgColor="bg-amber-100 dark:bg-amber-900/30"
+          onRemove={(task) => handleRemoveFromCurrent(task, 'have-to-do')}
+          onAddToToday={(task) => handleAddCurrentTaskToToday(task, 'have-to-do')}
+          selectedTodayTaskIds={todayHaveTasks}
+          onPrioritize={(task) => {
+            setTaskToResort({ task, listType: 'have-to-do' });
+            setResortMode('reorder');
+            setShowResortModal(true);
+          }}
+          onReorder={(taskId, position) => handleReorderCurrent('have-to-do', taskId, position)}
+          onComplete={(task) => handleCompleteTask(task, 'have-to-do')}
+          onAddToPlan={(task) => handleAddToPlan(task, 'have-to-do')}
+          onStartTask={(task) => handleStartTask(task, 'have-to-do')}
+          expandedNotesTaskIds={expandedNotesTaskIds}
+          onToggleNotes={toggleTaskNotes}
+          taskMap={haveToDoTaskMap}
+        />
+        <TodayTaskList
+          title="Want to Do Current"
+          tasks={wantToDoCurrent}
+          loading={loadingWantCurrent}
+          error={errorWantCurrent}
+          accentColor="text-teal-700 dark:text-teal-400"
+          bgColor="bg-teal-100 dark:bg-teal-900/30"
+          onRemove={(task) => handleRemoveFromCurrent(task, 'want-to-do')}
+          onAddToToday={(task) => handleAddCurrentTaskToToday(task, 'want-to-do')}
+          selectedTodayTaskIds={todayWantTasks}
+          onPrioritize={(task) => {
+            setTaskToResort({ task, listType: 'want-to-do' });
+            setResortMode('reorder');
+            setShowResortModal(true);
+          }}
+          onReorder={(taskId, position) => handleReorderCurrent('want-to-do', taskId, position)}
+          onComplete={(task) => handleCompleteTask(task, 'want-to-do')}
+          onAddToPlan={(task) => handleAddToPlan(task, 'want-to-do')}
+          onStartTask={(task) => handleStartTask(task, 'want-to-do')}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
           taskMap={wantToDoTaskMap}
@@ -1546,8 +1678,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           accentColor="text-amber-600 dark:text-amber-400"
           bgColor="bg-amber-50 dark:bg-amber-900/20"
           buttonColor="bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500"
-          onTaskClick={(task) => handleAddToToday(task, 'have-to-do')}
-          clickedTasks={todayHaveTasks}
+          onTaskClick={(task) => handleAddToCurrent(task, 'have-to-do')}
+          clickedTasks={currentHaveTasks}
           onAddClick={() => {
             openAddTaskModal('have-to-do');
           }}
@@ -1558,10 +1690,6 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onToggleSort={() => setHaveSortMode((prev) => cycleDueSortMode(prev))}
           groupMode={haveGroupMode}
           onToggleGroup={() => setHaveGroupMode((prev) => (prev === 'off' ? 'project' : 'off'))}
-          onReorder={(params) => handleReorderTask('have-to-do', params)}
-          dragEnabled={haveSortMode === 'off' && haveGroupMode === 'off'}
-          dragDisabledReason="Turn due sort and project grouping Off to reorder tasks."
-          reorderError={haveReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
           collapsedParentTaskIds={collapsedParentTaskIds}
@@ -1575,8 +1703,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           accentColor="text-teal-600 dark:text-teal-400"
           bgColor="bg-teal-50 dark:bg-teal-900/20"
           buttonColor="bg-teal-500 hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-500"
-          onTaskClick={(task) => handleAddToToday(task, 'want-to-do')}
-          clickedTasks={todayWantTasks}
+          onTaskClick={(task) => handleAddToCurrent(task, 'want-to-do')}
+          clickedTasks={currentWantTasks}
           onAddClick={() => {
             openAddTaskModal('want-to-do');
           }}
@@ -1587,10 +1715,6 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
           onToggleSort={() => setWantSortMode((prev) => cycleDueSortMode(prev))}
           groupMode={wantGroupMode}
           onToggleGroup={() => setWantGroupMode((prev) => (prev === 'off' ? 'project' : 'off'))}
-          onReorder={(params) => handleReorderTask('want-to-do', params)}
-          dragEnabled={wantSortMode === 'off' && wantGroupMode === 'off'}
-          dragDisabledReason="Turn due sort and project grouping Off to reorder tasks."
-          reorderError={wantReorderError}
           expandedNotesTaskIds={expandedNotesTaskIds}
           onToggleNotes={toggleTaskNotes}
           collapsedParentTaskIds={collapsedParentTaskIds}
@@ -1608,6 +1732,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         onTaskAdded={() => {
           fetchGeneralTasks();
           fetchTodayTasks();
+          fetchCurrentTasks();
         }}
         listType={activeListType}
         existingProjectSuggestions={projectSuggestions}
@@ -1691,9 +1816,13 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         onTaskUpdated={() => {
           fetchGeneralTasks();
           fetchTodayTasks();
+          fetchCurrentTasks();
         }}
         onResortRequested={(updatedTask, resortListType) => {
+          const ranked = resortListType === 'have-to-do' ? haveToDoCurrent : wantToDoCurrent;
+          if (!ranked.some((task) => task.id === updatedTask.id)) return;
           setTaskToResort({ task: updatedTask, listType: resortListType });
+          setResortMode('reorder');
           setShowResortModal(true);
         }}
         task={taskToEdit?.task ?? null}
@@ -1711,9 +1840,11 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         onTaskResorted={() => {
           fetchGeneralTasks();
           fetchTodayTasks();
+          fetchCurrentTasks();
         }}
         task={taskToResort?.task ?? null}
         listType={taskToResort?.listType ?? 'have-to-do'}
+        mode={resortMode}
       />
     </div>
   );

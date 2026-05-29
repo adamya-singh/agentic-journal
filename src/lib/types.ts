@@ -16,6 +16,7 @@ export interface Task {
   dueTimeStart?: string;
   dueTimeEnd?: string;
   completed?: boolean;
+  completedAt?: string;
   isDaily?: boolean;
 }
 

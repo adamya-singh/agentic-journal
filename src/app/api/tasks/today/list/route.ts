@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ListType } from '@/lib/types';
 import { computeTodayTasksForList, computeTodayTasksByList, syncComputedTodayTasksToJournalStaged } from '../staged-sync-utils';
+import { getEffectiveDailySnapshot } from '../../current/current-store-utils';
 
 /**
  * GET /api/tasks/today/list
@@ -33,10 +34,13 @@ export async function GET(request: NextRequest) {
     const todayByList = computeTodayTasksByList(date);
     syncComputedTodayTasksToJournalStaged(date, todayByList);
     const todayTasks = todayByList[listType] ?? computeTodayTasksForList(date, listType);
+    const snapshot = getEffectiveDailySnapshot(date, listType as ListType);
 
     return NextResponse.json({
       success: true,
       tasks: todayTasks,
+      selectedTasks: snapshot.selectedTasks,
+      automaticTasks: snapshot.automaticTasks,
       date,
     });
   } catch (error) {

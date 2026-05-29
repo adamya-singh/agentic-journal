@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 
 // Path to the journal directory
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
@@ -74,6 +75,7 @@ function writeJournalFile(date: string, journal: Record<string, unknown>): void 
  */
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, action, count } = body;
 

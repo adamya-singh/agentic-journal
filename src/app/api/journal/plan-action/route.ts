@@ -21,6 +21,7 @@ import {
   upsertCompletedTaskSnapshot,
   writeGeneralTasks,
 } from '../../tasks/today/today-store-utils';
+import { ensureCurrentSystemThroughToday, findTaskInDailySnapshot, removeTaskFromCurrent } from '../../tasks/current/current-store-utils';
 
 const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -129,6 +130,7 @@ function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletion
 }
 
 function ensureTaskCompletedForDate(date: string, taskId: string, listType: ListType): boolean {
+  ensureCurrentSystemThroughToday();
   const completedSnapshots = readCompletedTaskSnapshots(date, listType);
   const alreadyCompleted = completedSnapshots.some((snapshot) => snapshot.id === taskId);
   if (alreadyCompleted) {
@@ -144,7 +146,9 @@ function ensureTaskCompletedForDate(date: string, taskId: string, listType: List
     completedSnapshots,
   });
 
-  const taskFromToday = computedTodayTasks.find((task) => task.id === taskId) ?? null;
+  const taskFromToday = findTaskInDailySnapshot(date, listType, taskId)
+    ?? computedTodayTasks.find((task) => task.id === taskId)
+    ?? null;
   const taskFromGeneral = generalData.tasks.find((task) => task.id === taskId) ?? null;
   const taskFromLegacyDaily = findLegacyDailyTaskById(date, listType, taskId);
   const taskToComplete = taskFromToday ?? taskFromGeneral ?? taskFromLegacyDaily;
@@ -163,6 +167,7 @@ function ensureTaskCompletedForDate(date: string, taskId: string, listType: List
     if (generalData.tasks.length !== initialLength) {
       writeGeneralTasks(generalData, listType);
     }
+    removeTaskFromCurrent(listType, taskId);
   }
 
   return true;
@@ -170,6 +175,7 @@ function ensureTaskCompletedForDate(date: string, taskId: string, listType: List
 
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, planId, source, action } = body as {
       date?: string;

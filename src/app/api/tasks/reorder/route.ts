@@ -58,6 +58,12 @@ export async function POST(request: NextRequest) {
     }
 
     const currentTask = data.tasks[currentIndex];
+    if (!currentTask.parentTaskId) {
+      return NextResponse.json(
+        { success: false, error: 'General backlogs are unordered. Use /api/tasks/current/reorder for priority changes.' },
+        { status: 400 }
+      );
+    }
     let clampedPosition: number;
     let clampedRelativePosition: number | undefined;
 

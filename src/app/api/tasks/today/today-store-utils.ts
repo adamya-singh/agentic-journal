@@ -258,6 +258,21 @@ export function readCompletedTaskSnapshots(date: string, listType: ListType): Ta
 
   const fallbackCompletedAt = `${date}T00:00:00.000Z`;
 
+  if (parsed.schemaVersion === 3) {
+    const snapshotTasks = [
+      ...(Array.isArray(parsed.selectedTasks)
+        ? parsed.selectedTasks
+        : Array.isArray(parsed.rankedTasks)
+          ? parsed.rankedTasks
+          : []),
+      ...(Array.isArray(parsed.automaticTasks) ? parsed.automaticTasks : []),
+    ];
+    return snapshotTasks
+      .filter((task) => isRecord(task) && task.completed === true)
+      .map((task) => toCompletionSnapshot(task, listType, fallbackCompletedAt))
+      .filter((entry): entry is TaskCompletionSnapshot => entry !== null);
+  }
+
   if (Array.isArray(parsed.completedTasks)) {
     return parsed.completedTasks
       .map((entry) => toCompletionSnapshot(entry, listType, fallbackCompletedAt))
@@ -278,6 +293,45 @@ export function readCompletedTaskSnapshots(date: string, listType: ListType): Ta
 export function writeCompletedTaskSnapshots(date: string, listType: ListType, completedTasks: TaskCompletionSnapshot[]): void {
   const filePath = getDailyTasksFilePath(date, listType);
   ensureDirExists(filePath);
+
+  const existing = readRawDailyFile(date, listType);
+  if (isRecord(existing) && existing.schemaVersion === 3) {
+    const completedById = new Map(completedTasks.map((task) => [task.id, task]));
+    const seen = new Set<string>();
+    const updateTasks = (raw: unknown): Task[] => {
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter((task): task is Task => isRecord(task) && typeof task.id === 'string' && typeof task.text === 'string')
+        .map((task) => {
+          const completion = completedById.get(task.id);
+          if (completion) {
+            seen.add(task.id);
+            return { ...task, ...completion };
+          }
+          const next = { ...task };
+          delete next.completed;
+          delete next.completedAt;
+          return next;
+        });
+    };
+    const selectedTasks = updateTasks(
+      Array.isArray(existing.selectedTasks) ? existing.selectedTasks : existing.rankedTasks
+    );
+    const automaticTasks = updateTasks(existing.automaticTasks);
+    for (const completion of completedTasks) {
+      if (!seen.has(completion.id)) {
+        automaticTasks.push({ ...completion });
+      }
+    }
+    const data: Record<string, unknown> = {
+      ...existing,
+      selectedTasks,
+      automaticTasks,
+    };
+    delete data.rankedTasks;
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    return;
+  }
 
   const data: CompletedDailyTasksData = {
     _comment: 'Computed today list history - only completed tasks are persisted',

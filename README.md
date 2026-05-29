@@ -9,8 +9,8 @@ The app is built for everyday use from a MacBook over Tailscale, with the Raspbe
 Agentic Journal is an AI-assisted personal journal and planning workspace:
 
 - A week view records what happened and what was planned, organized by date and hour.
-- Two persistent task queues separate obligations from optional work: `have-to-do` and `want-to-do`.
-- A computed today list pulls in due tasks, daily recurring tasks, manual today overrides, and per-day completion state.
+- Two persistent General backlogs separate obligations from optional work: `have-to-do` and `want-to-do`.
+- Today lists show the day’s selected Current work plus automatic due/daily tasks, with full historical snapshots.
 - Project tags roll tasks up into a dedicated project view.
 - A job board tracks co-op and new-grad leads, including source, status, salary, notes, and posting metadata.
 - Cedar chat modes let the journal agent inspect context and operate the app through structured tools.
@@ -18,8 +18,8 @@ Agentic Journal is an AI-assisted personal journal and planning workspace:
 ## Core Features
 
 - **Hourly journal and planner**: planned entries and logged entries live side by side, including single-hour entries and multi-hour ranges.
-- **Task queues**: maintain `have-to-do` and `want-to-do` backlogs with priority ordering, due dates, due-time ranges, notes, parent/child task links, project tags, and daily recurring tasks.
-- **Today computation**: today lists are derived from persistent tasks plus due dates, daily tasks, manual inclusions/exclusions, and completion history.
+- **General, Current, and Today tasks**: maintain unordered backlogs, prioritize running work in Current, then select Current tasks into Today.
+- **Daily snapshots**: dated Today lists retain selected Current work, unranked automatic due/daily work, and completion history.
 - **Project view**: tasks are grouped by project so active, scheduled, completed, and unassigned work can be scanned outside the daily view.
 - **Job tracker**: save, star, apply, or archive fall co-op, spring co-op, and new-grad listings with structured source and status history.
 - **Agentic UI control**: the Mastra journal agent can create journal files, append planned/logged entries, update tasks, reorder priorities, complete tasks, and maintain job listings.
@@ -108,7 +108,7 @@ Local app data lives under `src/backend/data`.
 Important data areas:
 
 - `src/backend/data/journal`: daily journal JSON files.
-- `src/backend/data/tasks`: persistent task queues, daily lists, today overrides, and completion state.
+- `src/backend/data/tasks`: General backlogs, Current queue membership, dated Today snapshots, legacy compatibility data, and completion state.
 - `src/backend/data/jobs`: job listing data, when present.
 
 The app is designed around local JSON persistence. Treat this directory as important personal data and back it up before migrations or large edits.
@@ -283,4 +283,3 @@ Notes:
 - [Google Vertex AI](https://cloud.google.com/vertex-ai)
 - [Tailwind CSS](https://tailwindcss.com/)
 - [Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)
-

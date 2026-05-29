@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 import * as fs from 'fs';
 import * as path from 'path';
 import { JournalRangeEntry, StagedTaskEntry } from '@/lib/types';
@@ -84,6 +85,7 @@ function parseSource(source: unknown): TextPlanSource | null {
 
 export async function POST(request: NextRequest) {
   try {
+    ensureCurrentSystemThroughToday();
     const body = await request.json();
     const { date, planId, source } = body as {
       date?: string;

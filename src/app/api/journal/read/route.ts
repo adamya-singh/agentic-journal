@@ -26,6 +26,7 @@ import {
   readGeneralTasks,
   taskFromCompletionSnapshot,
 } from '../../tasks/today/today-store-utils';
+import { findTaskInDailySnapshot } from '../../tasks/current/current-store-utils';
 import { syncComputedTodayTasksToJournalStaged } from '../../tasks/today/staged-sync-utils';
 
 // Path to the journal directory (relative to project root)
@@ -72,6 +73,11 @@ function getJournalFilePath(date: string): string {
  * Find a task by ID across completion history, general tasks, and legacy daily files.
  */
 function findTaskById(taskId: string, listType: ListType, date: string): Task | null {
+  const datedTask = findTaskInDailySnapshot(date, listType, taskId);
+  if (datedTask) {
+    return datedTask;
+  }
+
   // First prefer date-scoped completion snapshots (historical truth for completed tasks).
   const completionSnapshot = readCompletedTaskSnapshots(date, listType).find(
     (snapshot) => snapshot.id === taskId

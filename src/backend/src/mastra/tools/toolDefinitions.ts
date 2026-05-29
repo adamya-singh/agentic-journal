@@ -38,12 +38,11 @@ export const ErrorResponseSchema = z.object({
 export const AddTaskSchema = z.object({
   text: z.string().min(1).describe('The task text/description'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
-  position: z.number().int().min(0).optional().describe('Optional position (0 = highest priority)'),
   parentTaskId: z.string().optional().describe('Optional parent task ID to create this task as a subtask in the same list'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
   dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
   dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range (requires dueTimeStart)'),
-  isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s computed today list'),
+  isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s automatic Today block'),
   projects: z.array(z.string()).optional().describe('Optional list of projects to tag the task with'),
 });
 
@@ -66,23 +65,32 @@ export const UpdateTaskSchema = z.object({
   parentTaskId: z.string().optional().describe('Optional parent task ID, or empty string to remove the parent relationship'),
 });
 
-// Schema for reorderTask state setter
-export const ReorderTaskSchema = z.object({
-  text: z.string().min(1).describe('The text of the task to move'),
+// Schema for Current queue ordering.
+export const ReorderCurrentTaskSchema = z.object({
+  taskId: z.string().min(1).describe('The ID of the ranked Current task to move'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
   newPosition: z.number().int().min(0).describe('The new position index (0 = highest priority)'),
 });
 
-// Schema for addTaskToToday state setter
-export const AddTaskToTodaySchema = z.object({
-  taskId: z.string().min(1).describe('The ID of an existing task from the general list to add to today'),
+export const AddTaskToCurrentSchema = z.object({
+  taskId: z.string().min(1).describe('The ID of an existing task from General to admit to Current'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+  position: z.number().int().min(0).optional().describe('Optional Current priority position'),
+});
+
+export const RemoveTaskFromCurrentSchema = z.object({
+  taskId: z.string().min(1).describe('The ID of the ranked task to remove from Current'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
+});
+
+export const AddCurrentTaskToTodaySchema = z.object({
+  taskId: z.string().min(1).describe('The ID of an existing Current task to select for Today'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
 });
 
-// Schema for removeTaskFromToday state setter
 export const RemoveTaskFromTodaySchema = z.object({
-  taskId: z.string().min(1).describe('The ID of the task to remove from today\'s list'),
-  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
+  taskId: z.string().min(1).describe('The ID of the selected Today task to remove from Today'),
+  listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
 });
 
 // Schema for completeTask state setter
@@ -145,7 +153,6 @@ export const CreateRoadmapTaskSchema = z.object({
   checkpointId: z.string().min(1).describe('The checkpoint ID to create the task under'),
   text: z.string().min(1).describe('The task text/description'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which task list to add to'),
-  position: z.number().int().min(0).optional().describe('Optional priority position in the task list'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
   dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
   dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range'),
@@ -299,7 +306,7 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to a general list (have-to-do or want-to-do). Returns the taskId which can be used with addTaskToToday. Tasks are added to the end (lowest priority) by default. Daily tasks (isDaily: true) appear in each day\'s computed today list and persist after completion. You can optionally assign one or more projects, or pass parentTaskId to create a subtask in the same list.',
+  description: 'Add a new task to an unordered General backlog. Returns the taskId which can later be admitted to Current with addTaskToCurrent. Daily tasks appear in each date\'s automatic Today block and persist after completion.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),
@@ -318,13 +325,13 @@ export const addTaskTool = createTool({
     }).optional(),
     message: z.string(),
   }),
-  execute: async ({ text, listType, position, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }) => {
+  execute: async ({ text, listType, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }) => {
     try {
       // Call the API directly to add the task
       const response = await fetch('http://localhost:3000/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: text, listType, position, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }),
+        body: JSON.stringify({ task: text, listType, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }),
       });
       
       const result = await response.json();
@@ -350,7 +357,6 @@ export const addTaskTool = createTool({
             id: createdTask?.id ?? result.taskId,
             text: createdTask?.text ?? text.trim(),
             listType,
-            position,
             parentTaskId: createdTask?.parentTaskId ?? parentTaskId,
             dueDate: createdTask?.dueDate ?? dueDate,
             dueTimeStart: createdTask?.dueTimeStart ?? dueTimeStart,
@@ -399,26 +405,49 @@ export const updateTaskTool = createMastraToolForStateSetter(
   },
 );
 
-export const reorderTaskTool = createMastraToolForStateSetter(
+export const reorderCurrentTaskTool = createMastraToolForStateSetter(
   'taskLists',
-  'reorderTask',
-  ReorderTaskSchema,
+  'reorderCurrentTask',
+  ReorderCurrentTaskSchema,
   {
-    description: 'Move a task to a new position in the priority queue. Position 0 is highest priority.',
-    toolId: 'reorderTask',
+    description: 'Move an existing ranked Current task to a new priority position.',
+    toolId: 'reorderCurrentTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
 );
 
-// Daily task tools
-export const addTaskToTodayTool = createMastraToolForStateSetter(
+export const addTaskToCurrentTool = createMastraToolForStateSetter(
   'taskLists',
-  'addTaskToToday',
-  AddTaskToTodaySchema,
+  'addTaskToCurrent',
+  AddTaskToCurrentSchema,
   {
-    description: 'Add a manual inclusion override so an EXISTING task appears in today\'s computed task list. Use this ONLY when the user explicitly asks to include an existing task today.',
-    toolId: 'addTaskToToday',
+    description: 'Admit an existing General task to the ranked running Current queue.',
+    toolId: 'addTaskToCurrent',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const removeTaskFromCurrentTool = createMastraToolForStateSetter(
+  'taskLists',
+  'removeTaskFromCurrent',
+  RemoveTaskFromCurrentSchema,
+  {
+    description: 'Remove an item from ranked Current while leaving it in General.',
+    toolId: 'removeTaskFromCurrent',
+    streamEventFn: streamJSONEvent,
+    errorSchema: ErrorResponseSchema,
+  },
+);
+
+export const addCurrentTaskToTodayTool = createMastraToolForStateSetter(
+  'taskLists',
+  'addCurrentTaskToToday',
+  AddCurrentTaskToTodaySchema,
+  {
+    description: 'Select an existing Current task into today\'s dated Today list without changing Current priority.',
+    toolId: 'addCurrentTaskToToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
   },
@@ -429,7 +458,7 @@ export const removeTaskFromTodayTool = createMastraToolForStateSetter(
   'removeTaskFromToday',
   RemoveTaskFromTodaySchema,
   {
-    description: 'Add a manual exclusion override so a task is hidden from today\'s computed task list by ID.',
+    description: 'Remove a selected task from Today without changing Current or General.',
     toolId: 'removeTaskFromToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -550,17 +579,16 @@ export const unlinkRoadmapTaskTool = createTool({
 
 export const createRoadmapTaskTool = createTool({
   id: 'createRoadmapTask',
-  description: 'Create a normal schedulable task tagged with the project and link it into a roadmap checkpoint. The returned taskId can be planned with addTaskToToday and journal planning tools.',
+  description: 'Create a General backlog task tagged with the project and link it into a roadmap checkpoint. The returned taskId can be admitted with addTaskToCurrent or planned through journal tools.',
   inputSchema: CreateRoadmapTaskSchema,
   outputSchema: RoadmapToolOutputSchema,
-  execute: async ({ project, checkpointId, text, listType, position, dueDate, dueTimeStart, dueTimeEnd, isDaily, notesMarkdown }) =>
+  execute: async ({ project, checkpointId, text, listType, dueDate, dueTimeStart, dueTimeEnd, isDaily, notesMarkdown }) =>
     executeRoadmapAction({
       action: 'create-task',
       project,
       checkpointId,
       text,
       listType,
-      position,
       dueDate,
       dueTimeStart,
       dueTimeEnd,
@@ -703,8 +731,10 @@ export const TOOL_REGISTRY = {
     addTaskTool,
     removeTaskTool,
     updateTaskTool,
-    reorderTaskTool,
-    addTaskToTodayTool,
+    reorderCurrentTaskTool,
+    addTaskToCurrentTool,
+    removeTaskFromCurrentTool,
+    addCurrentTaskToTodayTool,
     removeTaskFromTodayTool,
     completeTaskTool,
   },
@@ -738,8 +768,10 @@ export const ALL_TOOLS = [
   addTaskTool,
   removeTaskTool,
   updateTaskTool,
-  reorderTaskTool,
-  addTaskToTodayTool,
+  reorderCurrentTaskTool,
+  addTaskToCurrentTool,
+  removeTaskFromCurrentTool,
+  addCurrentTaskToTodayTool,
   removeTaskFromTodayTool,
   completeTaskTool,
   setProjectGoalTool,

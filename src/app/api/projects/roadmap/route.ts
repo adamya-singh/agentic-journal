@@ -5,6 +5,7 @@ import { ListType, RoadmapCheckpointStatus, RoadmapTaskRef, Task, TasksData } fr
 import { validateDueTimeRange } from '@/lib/due-time';
 import { handleDueDateSetup } from '../../tasks/due-date-utils';
 import { readGeneralTasks, writeGeneralTasks } from '../../tasks/today/today-store-utils';
+import { ensureCurrentSystemThroughToday, refreshActiveDailySnapshots } from '../../tasks/current/current-store-utils';
 import {
   createCheckpoint,
   getRoadmap,
@@ -48,13 +49,7 @@ function findCheckpointIndex(checkpoints: { id: string }[], checkpointId: unknow
   return checkpoints.findIndex((checkpoint) => checkpoint.id === checkpointId.trim());
 }
 
-function appendTaskToList(data: TasksData, task: Task, position: unknown): number {
-  if (typeof position === 'number' && Number.isInteger(position) && position >= 0) {
-    const actualPosition = Math.min(position, data.tasks.length);
-    data.tasks.splice(actualPosition, 0, task);
-    return actualPosition;
-  }
-
+function appendTaskToList(data: TasksData, task: Task): number {
   data.tasks.push(task);
   return data.tasks.length - 1;
 }
@@ -261,6 +256,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'create-task') {
+      ensureCurrentSystemThroughToday();
       if (typeof body.checkpointId !== 'string' || body.checkpointId.trim().length === 0) {
         return badRequest('checkpointId is required');
       }
@@ -319,12 +315,13 @@ export async function POST(request: NextRequest) {
       };
 
       const tasksData = readGeneralTasks(body.listType);
-      const insertedAt = appendTaskToList(tasksData, task, body.position);
+      const insertedAt = appendTaskToList(tasksData, task);
       writeGeneralTasks(tasksData, body.listType);
 
       if (task.dueDate) {
         handleDueDateSetup(task.dueDate, body.listType, task);
       }
+      refreshActiveDailySnapshots();
 
       const ref: RoadmapTaskRef = { taskId: task.id, listType: body.listType };
       const updatedRoadmap = updateRoadmap(project, (current) => {
