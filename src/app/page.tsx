@@ -528,7 +528,7 @@ export default function HomePage() {
   // Register task lists data as Cedar state with setters for task management
   useRegisterState({
     key: 'taskLists',
-    description: 'Task lists containing dated Today selections, ordered running Current queues, and unordered General backlogs. Today contains selected Current tasks plus automatic due/daily tasks for the active date.',
+    description: 'Task lists containing dated Today selections, ordered running Current queues, and unordered General backlogs. Today contains selected Current tasks plus automatic due-date tasks for the active date.',
     value: taskListsData,
     setValue: setTaskListsData,
     stateSetters: {

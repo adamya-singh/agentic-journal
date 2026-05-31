@@ -157,7 +157,7 @@ export function readDailyCurrentSnapshot(date: string, listType: ListType): Dail
       ? parsed.automaticTasks.map(toTask).filter((task): task is Task => task !== null)
       : [];
     return {
-      _comment: 'Daily Today snapshot - selected Current tasks plus automatic due/daily attention',
+      _comment: 'Daily Today snapshot - selected Current tasks plus automatic due-date attention',
       schemaVersion: 3,
       date,
       listType,
@@ -281,7 +281,7 @@ function buildSnapshot(date: string, listType: ListType, selectedIdsOverride?: s
 
   const automaticTasks: Task[] = [];
   for (const task of generalTasks) {
-    if (seen.has(task.id) || (task.dueDate !== date && task.isDaily !== true)) {
+    if (seen.has(task.id) || task.dueDate !== date) {
       continue;
     }
     automaticTasks.push(withCompletion(task, completions));
@@ -301,7 +301,7 @@ function buildSnapshot(date: string, listType: ListType, selectedIdsOverride?: s
   }
 
   return {
-    _comment: 'Daily Today snapshot - selected Current tasks plus automatic due/daily attention',
+    _comment: 'Daily Today snapshot - selected Current tasks plus automatic due-date attention',
     schemaVersion: 3,
     date,
     listType,
@@ -323,6 +323,7 @@ function seedCurrentQueues(date: string): Record<ListType, string[]> {
       overrides: readTodayOverrides(date, listType),
       completedSnapshots: readCompletedTaskSnapshots(date, listType),
     })
+      .concat(generalTasks.filter((task) => task.isDaily === true))
       .filter((task) => task.completed !== true)
       .map((task) => task.id);
     writeCurrentTaskIds(listType, seeded);
@@ -375,6 +376,11 @@ export function getEffectiveDailySnapshot(date: string, listType: ListType): Dai
     ensureCurrentSystemThroughToday();
   } else {
     return buildSnapshot(date, listType);
+  }
+  if (date === today) {
+    const refreshed = buildSnapshot(date, listType);
+    writeDailyCurrentSnapshot(refreshed);
+    return refreshed;
   }
   const full = readDailyCurrentSnapshot(date, listType);
   if (full) return full;

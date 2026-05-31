@@ -42,7 +42,7 @@ export const AddTaskSchema = z.object({
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
   dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
   dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range (requires dueTimeStart)'),
-  isDaily: z.boolean().optional().describe('If true, task recurs daily and appears in each day\'s automatic Today block'),
+  isDaily: z.boolean().optional().describe('If true, task recurs daily and persists after completion'),
   projects: z.array(z.string()).optional().describe('Optional list of projects to tag the task with'),
 });
 
@@ -306,7 +306,7 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to an unordered General backlog. Returns the taskId which can later be admitted to Current with addTaskToCurrent. Daily tasks appear in each date\'s automatic Today block and persist after completion.',
+  description: 'Add a new task to an unordered General backlog. Returns the taskId which can later be admitted to Current with addTaskToCurrent. Daily tasks persist after completion and should be added to Today only when explicitly selected.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),

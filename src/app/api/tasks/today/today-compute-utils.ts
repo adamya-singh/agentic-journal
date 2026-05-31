@@ -10,7 +10,7 @@ interface ComputeTodayTasksParams {
 
 /**
  * Compute today's tasks from:
- * - General tasks (due today + daily)
+ * - General tasks due today
  * - Manual include/exclude overrides
  * - Completed snapshots for this date
  */
@@ -35,15 +35,14 @@ export function computeTodayTasks({
 
   for (const task of generalTasks) {
     const isDueToday = task.dueDate === date;
-    const isDaily = task.isDaily === true;
     const isManuallyIncluded = includedIds.has(task.id);
 
-    if (!isDueToday && !isDaily && !isManuallyIncluded) {
+    if (!isDueToday && !isManuallyIncluded) {
       continue;
     }
 
     const isExcluded = excludedIds.has(task.id);
-    const exclusionAllowed = !isDueToday && !isDaily;
+    const exclusionAllowed = !isDueToday;
     if (isExcluded && exclusionAllowed) {
       continue;
     }

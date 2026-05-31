@@ -41,7 +41,7 @@ Tasks live in two unordered General backlogs:
 - **have-to-do**: Obligations and responsibilities
 - **want-to-do**: Desires and optional activities
 
-Each list also has an ordered running Current queue. Only Current is priority ordered; binary insertion and drag reorder determine its placement. Dated Today snapshots save explicit selections from Current plus an unranked automatic due/daily section.
+Each list also has an ordered running Current queue. Only Current is priority ordered; binary insertion and drag reorder determine its placement. Dated Today snapshots save explicit selections from Current plus an unranked automatic due-date section.
 
 #### Task Properties
 
@@ -60,7 +60,7 @@ Each list also has an ordered running Current queue. Only Current is priority or
 
 1. **Created**: Task appends to its General backlog
 2. **Current**: Selected work enters the running priority queue
-3. **Today**: A Current task is explicitly selected for the date, or due/daily rules add it automatically
+3. **Today**: A Current task is explicitly selected for the date, or due-date rules add it automatically
 4. **Scheduled**: Task is planned for a specific time (creates Plan Entry)
 5. **Staged**: Today work appears unscheduled for a date
 6. **Completed**: Task is done
@@ -215,7 +215,7 @@ Two General backlogs displayed side-by-side:
 - **Have to Do**: Obligations (amber theme)
 - **Want to Do**: Desires (teal theme)
 
-With `Today` sections first (selected Current tasks, then unranked automatic due/daily tasks), followed by ranked `Current` sections and General backlogs.
+With `Today` sections first (selected Current tasks, then unranked automatic due-date tasks), followed by ranked `Current` sections and General backlogs.
 
 ### UI Improvements Needed
 

@@ -52,14 +52,14 @@ Plans are displayed alongside journal entries in the week view (in teal color).
 <task_system>
 Tasks are managed through Cedar state and are visible in your context as "taskLists". The state contains:
 - generalTasks: "haveToDo" (obligations) and "wantToDo" (desires) - unordered persistent backlogs
-- todayTasks: "haveToDo" and "wantToDo", each with selectedTasks (explicit Current selections for today) and automaticTasks (today's due/daily overlay)
+- todayTasks: "haveToDo" and "wantToDo", each with selectedTasks (explicit Current selections for today) and automaticTasks (today's due-date overlay)
 - currentTasks: "haveToDo" and "wantToDo", each an ordered running priority queue
 - currentDate: The current date in ISO format (YYYY-MM-DD)
 
 Only Current tasks are priority ordered; the FIRST Current task is HIGHEST priority. Today selected tasks follow Current relative order but are selected per date.
 
 DAILY TASKS (isDaily: true):
-- Daily tasks automatically appear in each date's automatic Today section
+- Daily tasks remain in General/Current and persist after completion; add them to Today only when the user explicitly wants them in today's working list
 - When a daily task is completed, it stays in the general list (unlike regular tasks which are removed)
 - Use isDaily: true when creating recurring tasks the user wants to do every day (e.g., "exercise", "meditate", "review goals")
 - Daily tasks will show up fresh (uncompleted) each new day
@@ -166,7 +166,7 @@ When a user reports COMPLETING or HAVING DONE a task (e.g., "I did X from Y to Z
 
 1. Find the task in your context (taskLists.todayTasks, taskLists.currentTasks, generalTasks, or weekJournals staged entries)
 
-2. A selected Today task or automatic due/daily task already appears in the dated snapshot; completion does not require a separate inclusion tool.
+2. A selected Today task or automatic due-date task already appears in the dated snapshot; completion does not require a separate inclusion tool.
 
 3. Add the journal entry as LOGGED using taskId + listType (NOT text):
    - For a time range: addJournalRange({ date, start, end, taskId, listType, entryMode: "logged" })
