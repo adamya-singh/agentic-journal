@@ -6,7 +6,7 @@ import { formatTaskTextWithProjects } from '@/lib/projects';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 import { ModalShell } from './ModalShell';
 
-type ModalPhase = 'loading' | 'comparing' | 'reordering' | 'complete' | 'error';
+type ModalPhase = 'admit-choice' | 'loading' | 'comparing' | 'reordering' | 'complete' | 'error';
 
 interface TaskResortModalProps {
   isOpen: boolean;
@@ -107,9 +107,13 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
     setComparisonCount(0);
     setMaxComparisons(0);
     setErrorMessage('');
+    if (mode === 'admit') {
+      setPhase('admit-choice');
+      return;
+    }
     setPhase('loading');
     startComparison();
-  }, [isOpen, startComparison]);
+  }, [isOpen, mode, startComparison]);
 
   const handleComparisonChoice = useCallback((taskIsMoreImportant: boolean) => {
     const mid = Math.floor((low + high) / 2);
@@ -140,10 +144,71 @@ export function TaskResortModal({ isOpen, onClose, onTaskResorted, task, listTyp
 
   return (
     <ModalShell isOpen={isOpen} onClose={onClose} maxWidth="lg">
+        {phase === 'admit-choice' && (
+          <>
+            <ModalShell.Header>
+              <div className="text-center">
+                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">
+                  Add to Current
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400">
+                  Choose how to place this task in your Current priority list.
+                </p>
+              </div>
+            </ModalShell.Header>
+
+            <ModalShell.Body>
+              <div className="rounded-lg bg-gray-50 dark:bg-gray-700/50 p-3 mb-4">
+                <p className="text-sm font-medium text-gray-800 dark:text-gray-100">
+                  {formatTaskTextWithProjects(task)}
+                </p>
+                {task.dueDate && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    Due: {formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)
+                      ? `${task.dueDate} @ ${formatDueTimeRangeForDisplay(task.dueTimeStart, task.dueTimeEnd)}`
+                      : task.dueDate}
+                  </p>
+                )}
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => reorderTask(0)}
+                  className={`rounded-lg px-4 py-4 text-left font-medium text-white transition-colors ${accentClass === 'teal' ? 'bg-teal-500 hover:bg-teal-600 dark:bg-teal-600 dark:hover:bg-teal-500' : 'bg-amber-500 hover:bg-amber-600 dark:bg-amber-600 dark:hover:bg-amber-500'}`}
+                >
+                  <span className="block text-base">Insert at top</span>
+                  <span className="mt-1 block text-xs font-normal text-white/80">Make it the highest Current priority.</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={startComparison}
+                  className="rounded-lg border border-gray-200 bg-white px-4 py-4 text-left font-medium text-gray-800 transition-colors hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 dark:hover:bg-gray-600"
+                >
+                  <span className="block text-base">Compare priority</span>
+                  <span className="mt-1 block text-xs font-normal text-gray-500 dark:text-gray-400">Use binary comparisons to find its place.</span>
+                </button>
+              </div>
+            </ModalShell.Body>
+
+            <ModalShell.Footer className="justify-center border-t-0">
+              <button
+                onClick={onClose}
+                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm"
+              >
+                Cancel
+              </button>
+            </ModalShell.Footer>
+          </>
+        )}
+
         {phase === 'loading' && (
           <ModalShell.Body className="text-center py-8">
             <div className={`inline-block w-12 h-12 border-4 ${spinnerBorderClass} border-t-transparent rounded-full animate-spin mb-4`} />
-            <p className="text-gray-600 dark:text-gray-300 text-lg">Preparing re-sort...</p>
+            <p className="text-gray-600 dark:text-gray-300 text-lg">
+              {mode === 'admit' ? 'Preparing priority comparison...' : 'Preparing re-sort...'}
+            </p>
           </ModalShell.Body>
         )}
 
