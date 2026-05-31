@@ -69,15 +69,20 @@ function getJournalFilePath(date: string): string {
   return path.join(JOURNAL_DIR, `${date}.json`);
 }
 
+function withoutCompletionState(task: Task): Task {
+  const historicalTask = { ...task };
+  delete historicalTask.completed;
+  delete historicalTask.completedAt;
+  return historicalTask;
+}
+
 /**
  * Find a task by ID across completion history, general tasks, and legacy daily files.
+ *
+ * Completion is date-scoped: the global completed index is only a text/detail
+ * recovery path for tasks that have been removed from live lists.
  */
 function findTaskById(taskId: string, listType: ListType, date: string): Task | null {
-  const datedTask = findTaskInDailySnapshot(date, listType, taskId);
-  if (datedTask) {
-    return datedTask;
-  }
-
   // First prefer date-scoped completion snapshots (historical truth for completed tasks).
   const completionSnapshot = readCompletedTaskSnapshots(date, listType).find(
     (snapshot) => snapshot.id === taskId
@@ -86,22 +91,27 @@ function findTaskById(taskId: string, listType: ListType, date: string): Task | 
     return taskFromCompletionSnapshot(completionSnapshot);
   }
 
+  const datedTask = findTaskInDailySnapshot(date, listType, taskId);
+  if (datedTask) {
+    return datedTask;
+  }
+
   // Fall back to general list (source of truth for non-completed task details).
   const generalTask = readGeneralTasks(listType).tasks.find((task) => task.id === taskId);
   if (generalTask) {
-    return generalTask;
+    return withoutCompletionState(generalTask);
   }
 
-  // Global completion index handles cross-date references after one-off tasks are removed from general lists.
+  // Global completion index handles cross-date text recovery after one-off tasks are removed from general lists.
   const indexedTask = getCompletedTaskFromIndex(taskId);
   if (indexedTask) {
-    return indexedTask;
+    return withoutCompletionState(indexedTask);
   }
 
   // Lazy historical backfill from daily-lists if index is stale/missing.
   const rebuiltIndexedTask = ensureCompletedIndexForTask(taskId);
   if (rebuiltIndexedTask) {
-    return rebuiltIndexedTask;
+    return withoutCompletionState(rebuiltIndexedTask);
   }
 
   // Last fallback for historical compatibility with legacy daily-list schema.
