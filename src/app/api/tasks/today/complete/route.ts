@@ -117,6 +117,30 @@ function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
   return task;
 }
 
+function collectOpenDescendants(
+  taskId: string,
+  childrenByParentId: Map<string, Task[]>,
+  completedTodayIds: Set<string>,
+  depth = 1
+): Array<{ id: string; text: string; parentTaskId?: string; depth: number }> {
+  const results: Array<{ id: string; text: string; parentTaskId?: string; depth: number }> = [];
+  const children = childrenByParentId.get(taskId) ?? [];
+
+  for (const child of children) {
+    if (!completedTodayIds.has(child.id)) {
+      results.push({
+        id: child.id,
+        text: child.text,
+        parentTaskId: child.parentTaskId,
+        depth,
+      });
+    }
+    results.push(...collectOpenDescendants(child.id, childrenByParentId, completedTodayIds, depth + 1));
+  }
+
+  return results;
+}
+
 /**
  * POST /api/tasks/today/complete
  * Toggles completion status for a task in a computed today list.
@@ -219,17 +243,16 @@ export async function POST(request: NextRequest) {
     const completedTodayIds = new Set(completedSnapshots.map((snapshot) => snapshot.id));
 
     if (!taskToComplete.parentTaskId) {
-      const openDescendants = getDescendantTaskIds(taskToComplete.id, childrenByParentId).filter(
-        (descendantId) => !completedTodayIds.has(descendantId)
-      );
+      const openSubtasks = collectOpenDescendants(taskToComplete.id, childrenByParentId, completedTodayIds);
 
-      if (openDescendants.length > 0) {
+      if (openSubtasks.length > 0) {
         return NextResponse.json(
           {
             success: false,
             error: 'Task has incomplete subtasks',
             blockedByOpenSubtasks: true,
-            openSubtaskCount: openDescendants.length,
+            openSubtaskCount: openSubtasks.length,
+            openSubtasks,
           },
           { status: 400 }
         );

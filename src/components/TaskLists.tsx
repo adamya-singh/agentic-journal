@@ -58,6 +58,20 @@ interface TaskListsProps {
   refreshTrigger?: number;
 }
 
+interface OpenSubtask {
+  id: string;
+  text: string;
+  parentTaskId?: string;
+  depth: number;
+}
+
+interface PendingSubtaskCompletion {
+  task: Task;
+  listType: ListType;
+  openSubtasks: OpenSubtask[];
+  submitting: boolean;
+}
+
 interface TaskListProps {
   title: string;
   tasks: Task[];
@@ -1078,6 +1092,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const [showResortModal, setShowResortModal] = useState(false);
   const [taskToResort, setTaskToResort] = useState<{ task: Task; listType: ListType } | null>(null);
   const [resortMode, setResortMode] = useState<'admit' | 'reorder'>('reorder');
+  const [pendingSubtaskCompletion, setPendingSubtaskCompletion] = useState<PendingSubtaskCompletion | null>(null);
   
   // General task lists
   const [haveToDo, setHaveToDo] = useState<Task[]>([]);
@@ -1359,81 +1374,118 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     }
   };
 
-  // Handler to toggle task completion status (also logs to journal)
+  const refreshTaskViews = useCallback(() => {
+    fetchTodayTasks();
+    fetchCurrentTasks();
+    fetchGeneralTasks();
+    refreshJournal();
+  }, [fetchTodayTasks, fetchCurrentTasks, fetchGeneralTasks, refreshJournal]);
+
+  const completeTaskRequest = useCallback(async (taskId: string, listType: ListType) => {
+    const response = await fetch('/api/tasks/today/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        taskId,
+        listType,
+        date: currentDate,
+      }),
+    });
+
+    return response.json();
+  }, [currentDate]);
+
+  const logTaskIfNeeded = useCallback(async (taskId: string, listType: ListType) => {
+    const journalRes = await fetch('/api/journal/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dates: [currentDate], resolve: false }),
+    });
+    const journalData = await journalRes.json();
+    const journal = journalData.journals?.[currentDate];
+
+    if (checkIfTaskLogged(journal, taskId)) {
+      return;
+    }
+
+    await fetch('/api/journal/append', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: currentDate,
+        hour: getCurrentHour(),
+        taskId,
+        listType,
+        entryMode: 'logged',
+      }),
+    });
+  }, [currentDate]);
+
+  const promptToCompleteParentIfNeeded = useCallback(async (data: { promptToCompleteParent?: boolean; parentTask?: { id: string; text: string; listType: ListType } }) => {
+    if (!data.promptToCompleteParent || !data.parentTask) {
+      return;
+    }
+
+    const shouldCompleteParent = window.confirm(
+      `That finished the last open subtask for "${data.parentTask.text}". Complete the parent task too?`
+    );
+
+    if (shouldCompleteParent) {
+      await completeTaskRequest(data.parentTask.id, data.parentTask.listType);
+      refreshTaskViews();
+    }
+  }, [completeTaskRequest, refreshTaskViews]);
+
+  // Handler to toggle task completion status (also logs completed tasks to journal)
   const handleCompleteTask = async (task: Task, listType: ListType) => {
     try {
-      // Check if task already has a logged entry in the journal
-      const journalRes = await fetch('/api/journal/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dates: [currentDate], resolve: false }),
-      });
-      const journalData = await journalRes.json();
-      const journal = journalData.journals?.[currentDate];
-      
-      // Check if taskId has already been logged for this day
-      const isAlreadyLogged = checkIfTaskLogged(journal, task.id);
-      
-      // Only append to journal if no logged actual exists yet for this task/day.
-      if (!isAlreadyLogged) {
-        await fetch('/api/journal/append', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date: currentDate,
-            hour: getCurrentHour(),
-            taskId: task.id,
-            listType,
-            entryMode: 'logged',
-          }),
-        });
-      }
-
-      // Mark task as complete (always)
-      const response = await fetch('/api/tasks/today/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskId: task.id,
-          listType,
-          date: currentDate,
-        }),
-      });
-      
-      const data = await response.json();
+      const data = await completeTaskRequest(task.id, listType);
       if (data.success) {
-        // Refresh both today's tasks and general tasks (since completion affects both)
-        fetchTodayTasks();
-        fetchCurrentTasks();
-        fetchGeneralTasks();
-        // Notify WeekView to refresh (journal was modified)
-        refreshJournal();
-        if (data.promptToCompleteParent && data.parentTask) {
-          const shouldCompleteParent = window.confirm(
-            `That finished the last open subtask for "${data.parentTask.text}". Complete the parent task too?`
-          );
-
-          if (shouldCompleteParent) {
-            await fetch('/api/tasks/today/complete', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                taskId: data.parentTask.id,
-                listType: data.parentTask.listType,
-                date: currentDate,
-              }),
-            });
-            fetchTodayTasks();
-            fetchCurrentTasks();
-            fetchGeneralTasks();
-            refreshJournal();
-          }
+        if (!task.completed) {
+          await logTaskIfNeeded(task.id, listType);
         }
+        refreshTaskViews();
+        await promptToCompleteParentIfNeeded(data);
       } else if (data.blockedByOpenSubtasks) {
-        window.alert(`This task still has ${data.openSubtaskCount} incomplete subtask${data.openSubtaskCount === 1 ? '' : 's'}.`);
+        setPendingSubtaskCompletion({
+          task,
+          listType,
+          openSubtasks: Array.isArray(data.openSubtasks) ? data.openSubtasks : [],
+          submitting: false,
+        });
       }
     } catch (error) {
       console.error('Failed to toggle task completion:', error);
+    }
+  };
+
+  const handleCompleteParentWithSubtasks = async () => {
+    if (!pendingSubtaskCompletion) {
+      return;
+    }
+
+    setPendingSubtaskCompletion({ ...pendingSubtaskCompletion, submitting: true });
+    try {
+      const orderedSubtasks = [...pendingSubtaskCompletion.openSubtasks].sort((a, b) => b.depth - a.depth);
+      for (const subtask of orderedSubtasks) {
+        const data = await completeTaskRequest(subtask.id, pendingSubtaskCompletion.listType);
+        if (!data.success && !data.completed) {
+          throw new Error(data.error || `Failed to complete subtask "${subtask.text}"`);
+        }
+      }
+
+      const parentData = await completeTaskRequest(pendingSubtaskCompletion.task.id, pendingSubtaskCompletion.listType);
+      if (!parentData.success) {
+        throw new Error(parentData.error || 'Failed to complete parent task');
+      }
+
+      await logTaskIfNeeded(pendingSubtaskCompletion.task.id, pendingSubtaskCompletion.listType);
+      setPendingSubtaskCompletion(null);
+      refreshTaskViews();
+    } catch (error) {
+      console.error('Failed to complete task with subtasks:', error);
+      window.alert(error instanceof Error ? error.message : 'Failed to complete task with subtasks');
+      setPendingSubtaskCompletion((current) => current ? { ...current, submitting: false } : null);
     }
   };
 
@@ -1800,6 +1852,67 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
                 className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 dark:bg-red-600 dark:hover:bg-red-500 rounded-md transition-colors"
               >
                 Delete
+              </button>
+            </ModalShell.Footer>
+          </>
+        )}
+      </ModalShell>
+
+      {/* Complete Subtasks Confirmation Modal */}
+      <ModalShell
+        isOpen={!!pendingSubtaskCompletion}
+        onClose={() => {
+          if (!pendingSubtaskCompletion?.submitting) {
+            setPendingSubtaskCompletion(null);
+          }
+        }}
+        maxWidth="md"
+      >
+        {pendingSubtaskCompletion && (
+          <>
+            <ModalShell.Header>
+              <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100">Complete Subtasks?</h3>
+            </ModalShell.Header>
+            <ModalShell.Body>
+              <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                This task has incomplete subtasks. Mark all of them complete before completing the parent task?
+              </p>
+              <div className="bg-gray-50 dark:bg-gray-700 rounded p-3 mb-4">
+                <p className="text-sm text-gray-700 dark:text-gray-200 font-medium">
+                  <TaskTextWithProjectBadges
+                    text={pendingSubtaskCompletion.task.text}
+                    projects={pendingSubtaskCompletion.task.projects}
+                  />
+                </p>
+              </div>
+              <div className="max-h-56 overflow-y-auto rounded border border-gray-200 dark:border-gray-700">
+                <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                  {pendingSubtaskCompletion.openSubtasks.map((subtask) => (
+                    <li
+                      key={subtask.id}
+                      className="px-3 py-2 text-sm text-gray-700 dark:text-gray-200"
+                      style={{ paddingLeft: `${12 + Math.max(0, subtask.depth - 1) * 18}px` }}
+                    >
+                      {subtask.text}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </ModalShell.Body>
+            <ModalShell.Footer>
+              <button
+                onClick={() => setPendingSubtaskCompletion(null)}
+                disabled={pendingSubtaskCompletion.submitting}
+                className="px-4 py-2 text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleCompleteParentWithSubtasks()}
+                disabled={pendingSubtaskCompletion.submitting}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-600 dark:hover:bg-green-500 rounded-md transition-colors disabled:opacity-50"
+              >
+                {pendingSubtaskCompletion.submitting ? 'Completing...' : 'Mark All Completed'}
               </button>
             </ModalShell.Footer>
           </>
