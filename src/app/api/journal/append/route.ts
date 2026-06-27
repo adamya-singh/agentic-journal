@@ -10,8 +10,8 @@ import {
   isTextJournalEntry,
 } from '@/lib/types';
 import {
+  completeEarliestActiveTaskPlanInPlace,
   DayJournalWithRanges,
-  linkLoggedEntryToEarliestActivePlan,
   markMissedPlansForDate,
   normalizePlannedEntry,
   normalizePlannedTaskEntry,
@@ -139,6 +139,28 @@ export async function POST(request: NextRequest) {
     let updatedSlot: JournalHourSlot;
 
     if (hasTaskRef) {
+      if (
+        entryMode === 'logged' &&
+        completeEarliestActiveTaskPlanInPlace(
+          journal,
+          date,
+          taskId,
+          { date, hour },
+          nowIso
+        )
+      ) {
+        writeJournalFile(date, journal);
+
+        return NextResponse.json({
+          success: true,
+          date,
+          hour,
+          message: `Marked planned task complete for ${date}`,
+          updatedEntry: journal[hour],
+          planUpdatedInPlace: true,
+        });
+      }
+
       const newTaskEntry: JournalEntry = entryMode === 'planned'
         ? normalizePlannedTaskEntry({ taskId, listType, entryMode }, nowIso)
         : { taskId, listType, entryMode };
@@ -232,15 +254,6 @@ export async function POST(request: NextRequest) {
     }
 
     journal[hour] = updatedSlot;
-    if (hasTaskRef && entryMode === 'logged') {
-      linkLoggedEntryToEarliestActivePlan(
-        journal,
-        date,
-          taskId,
-          { date, hour },
-          nowIso
-        );
-      }
     writeJournalFile(date, journal);
 
     return NextResponse.json({

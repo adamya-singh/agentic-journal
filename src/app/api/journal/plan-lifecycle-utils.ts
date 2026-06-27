@@ -102,6 +102,11 @@ function isActivePlannedEntry(entry: PlannableEntry): boolean {
   return getPlanStatus(entry) === 'active';
 }
 
+function isTaskCompletionReconciliationCandidate(entry: PlannableEntry): boolean {
+  const status = getPlanStatus(entry);
+  return status === 'active' || status === 'missed' || status === 'completed';
+}
+
 function hourTo24(hour: string): number {
   const match = hour.match(/^(\d+)(am|pm)$/);
   if (!match) return -1;
@@ -418,15 +423,56 @@ export function markMissedPlansForDate(
   return changed;
 }
 
-export function linkLoggedEntryToEarliestActivePlan(
+function completeTaskPlanInPlace(
+  journal: DayJournalWithRanges,
+  target: PlanRef,
+  logRef: PlanLogRef,
+  nowIso: string
+): { taskId: string; listType: TaskJournalEntry['listType'] } | null {
+  if (target.entryType !== 'task') {
+    return null;
+  }
+
+  const normalizedTask = normalizePlannedTaskEntry(
+    target.entry as TaskJournalEntry | TaskJournalRangeEntry,
+    nowIso
+  );
+  const nextTaskPlanned: TaskJournalEntry | TaskJournalRangeEntry = target.kind === 'hour'
+    ? {
+        ...(normalizedTask as TaskJournalEntry),
+        planStatus: 'completed',
+        planUpdatedAt: nowIso,
+        completedByLogRef: logRef,
+      }
+    : {
+        ...(normalizedTask as TaskJournalRangeEntry),
+        planStatus: 'completed',
+        planUpdatedAt: nowIso,
+        completedByLogRef: logRef,
+      };
+
+  setPlanRefEntry(journal, target, nextTaskPlanned);
+
+  return {
+    taskId: normalizedTask.taskId,
+    listType: normalizedTask.listType,
+  };
+}
+
+export function completeEarliestActiveTaskPlanInPlace(
   journal: DayJournalWithRanges,
   dateIso: string,
   taskId: string,
   logRef: PlanLogRef,
   nowIso: string = new Date().toISOString()
 ): boolean {
-  const activeRefs = getAllTaskRefs(journal)
-    .filter((ref) => ref.entry.taskId === taskId && isActivePlannedEntry(ref.entry));
+  const activeRefs = getAllPlannedRefs(journal)
+    .filter((ref) =>
+      ref.entryType === 'task' &&
+      isTaskJournalEntry(ref.entry as JournalEntry) &&
+      (ref.entry as TaskJournalEntry).taskId === taskId &&
+      isTaskCompletionReconciliationCandidate(ref.entry)
+    );
 
   if (activeRefs.length === 0) {
     return false;
@@ -441,32 +487,12 @@ export function linkLoggedEntryToEarliestActivePlan(
     return aCreated - bCreated;
   });
 
-  const target = activeRefs[0];
-  if (target.kind === 'hour') {
-    const next = normalizePlannedTaskEntry(target.entry, nowIso);
-    next.planStatus = 'completed';
-    next.completedByLogRef = { ...logRef, date: dateIso };
-    next.planUpdatedAt = nowIso;
-    return updateHourEntry(
-      journal,
-      target.hour,
-      (entry) => isTaskJournalEntry(entry) && entry.taskId === target.entry.taskId && (entry.planId ?? '') === (target.entry.planId ?? ''),
-      () => next
-    );
-  }
-
-  const ranges = journal.ranges ?? [];
-  const current = ranges[target.rangeIndex];
-  if (!current || !isTaskJournalRangeEntry(current)) {
-    return false;
-  }
-  const next = normalizePlannedTaskEntry(target.entry, nowIso);
-  next.planStatus = 'completed';
-  next.completedByLogRef = { ...logRef, date: dateIso };
-  next.planUpdatedAt = nowIso;
-  ranges[target.rangeIndex] = next;
-  journal.ranges = ranges;
-  return true;
+  return completeTaskPlanInPlace(
+    journal,
+    activeRefs[0],
+    { ...logRef, date: dateIso },
+    nowIso
+  ) !== null;
 }
 
 export function completeTextPlanInJournal(
@@ -688,69 +714,11 @@ export function applyPlanActionInJournal(
     target.entry as TaskJournalEntry | TaskJournalRangeEntry,
     nowIso
   );
-  const nextTaskPlanned: TaskJournalEntry | TaskJournalRangeEntry = target.kind === 'hour'
-    ? {
-        ...(normalizedTask as TaskJournalEntry),
-        planStatus: 'completed',
-        planUpdatedAt: nowIso,
-        completedByLogRef: logRef,
-      }
-    : {
-        ...(normalizedTask as TaskJournalRangeEntry),
-        planStatus: 'completed',
-        planUpdatedAt: nowIso,
-        completedByLogRef: logRef,
-      };
-
-  setPlanRefEntry(journal, target, nextTaskPlanned);
-
-  if (target.kind === 'hour') {
-    const slot = journal[target.hour];
-    const entries = isJournalEntryArray(slot) ? slot : slot ? [slot] : [];
-    const exists = entries.some((entry) =>
-      isTaskJournalEntry(entry) &&
-      entry.entryMode === 'logged' &&
-      entry.taskId === normalizedTask.taskId &&
-      samePlanLogRef(entry.completedByLogRef, logRef)
-    );
-
-    if (!exists) {
-      appendEntryToHour(journal, target.hour, {
-        taskId: normalizedTask.taskId,
-        listType: normalizedTask.listType,
-        entryMode: 'logged',
-        completedByLogRef: logRef,
-      });
-      loggedCreated = true;
-    }
-  } else {
-    const ranges = journal.ranges ?? [];
-    const exists = ranges.some((entry) =>
-      isTaskJournalRangeEntry(entry) &&
-      entry.entryMode === 'logged' &&
-      entry.start === target.entry.start &&
-      entry.end === target.entry.end &&
-      entry.taskId === normalizedTask.taskId &&
-      samePlanLogRef(entry.completedByLogRef, logRef)
-    );
-
-    if (!exists) {
-      ranges.push({
-        start: target.entry.start,
-        end: target.entry.end,
-        taskId: normalizedTask.taskId,
-        listType: normalizedTask.listType,
-        entryMode: 'logged',
-        completedByLogRef: logRef,
-      });
-      journal.ranges = ranges;
-      loggedCreated = true;
-    }
-  }
+  completeTaskPlanInPlace(journal, target, logRef, nowIso);
 
   return {
     status: 'applied',
-    loggedCreated,
+    loggedCreated: false,
     entryType: 'task',
     planStatus: 'completed',
     task: {

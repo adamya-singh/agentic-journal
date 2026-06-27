@@ -7,8 +7,8 @@ import {
   StagedTaskEntry,
 } from '@/lib/types';
 import {
+  completeEarliestActiveTaskPlanInPlace,
   DayJournalWithRanges,
-  linkLoggedEntryToEarliestActivePlan,
   markMissedPlansForDate,
   normalizePlannedEntry,
   normalizePlannedTaskEntry,
@@ -219,6 +219,32 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      if (
+        rangeTaskId &&
+        rangeEntryMode === 'logged' &&
+        completeEarliestActiveTaskPlanInPlace(
+          journal,
+          date,
+          rangeTaskId,
+          { date, range: { start, end } },
+          now.toISOString()
+        )
+      ) {
+        if (journal.staged && Array.isArray(journal.staged)) {
+          journal.staged = journal.staged.filter((stagedEntry) => stagedEntry.taskId !== rangeTaskId);
+        }
+
+        writeJournalFile(date, journal);
+
+        return NextResponse.json({
+          success: true,
+          date,
+          message: `Marked planned task complete for ${date}`,
+          newRange,
+          planUpdatedInPlace: true,
+        });
+      }
+
       const duplicateRangeExists = (journal.ranges || []).some((r) => r.start === start && r.end === end);
       if (duplicateRangeExists) {
         return NextResponse.json(
@@ -232,16 +258,6 @@ export async function POST(request: NextRequest) {
 
       journal.ranges = journal.ranges || [];
       journal.ranges.push(newRange);
-
-      if (rangeTaskId && rangeEntryMode === 'logged') {
-        linkLoggedEntryToEarliestActivePlan(
-          journal,
-          date,
-          rangeTaskId,
-          { date, range: { start, end } },
-          now.toISOString()
-        );
-      }
 
       if (rangeTaskId && journal.staged && Array.isArray(journal.staged)) {
         journal.staged = journal.staged.filter((stagedEntry) => stagedEntry.taskId !== rangeTaskId);
