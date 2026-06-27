@@ -1053,8 +1053,14 @@ export default function HomePage() {
         <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
       </div>
 
-      {/* Desktop-only Projects link (top-right, absolute) */}
-      <div className="hidden sm:block absolute top-4 right-4 z-10">
+      {/* Desktop-only utility links (top-right, absolute) */}
+      <div className="hidden sm:flex absolute top-4 right-4 z-10 items-center gap-2">
+        <Link
+          href="/omi-transcripts"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Transcripts
+        </Link>
         <Link
           href="/projects"
           className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
@@ -1066,6 +1072,12 @@ export default function HomePage() {
       {/* Mobile-only top chrome row: flows above WeekView so the absolute desktop
           chrome can keep its current position without touching mobile layout. */}
       <div className="sm:hidden flex items-center justify-end gap-2 px-3 pt-3">
+        <Link
+          href="/omi-transcripts"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Transcripts
+        </Link>
         <Link
           href="/projects"
           className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
