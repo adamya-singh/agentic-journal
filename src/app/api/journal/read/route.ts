@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
   JournalEntry,
+  JournalSourceRef,
   JournalRangeEntry,
   JournalHourSlot,
   ResolvedJournalEntry,
@@ -178,6 +179,27 @@ function formatResolvedTaskText(task: Task, listType: ListType, date: string): s
   return `${baseText} [subtask of ${parentTaskText}]`;
 }
 
+function normalizeSourceRefs(value: unknown): JournalSourceRef[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const refs = value.filter((ref): ref is JournalSourceRef => {
+    return (
+      typeof ref === 'object' &&
+      ref !== null &&
+      (ref as { source?: unknown }).source === 'omi-transcript' &&
+      typeof (ref as { transcriptDate?: unknown }).transcriptDate === 'string' &&
+      typeof (ref as { segmentId?: unknown }).segmentId === 'string' &&
+      typeof (ref as { transcriptHash?: unknown }).transcriptHash === 'string' &&
+      typeof (ref as { confidence?: unknown }).confidence === 'number' &&
+      typeof (ref as { runId?: unknown }).runId === 'string'
+    );
+  });
+
+  return refs.length > 0 ? refs : undefined;
+}
+
 /**
  * Resolve a journal entry to displayable format
  */
@@ -193,6 +215,8 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
         text: formatResolvedTaskText(task, entry.listType, date),
         type: 'task',
         entryMode: entry.entryMode,
+        journalEntryId: entry.journalEntryId,
+        sourceRefs: normalizeSourceRefs(entry.sourceRefs),
         planId: entry.planId,
         planStatus: resolvedPlanStatus,
         replannedToPlanId: entry.replannedToPlanId,
@@ -210,6 +234,8 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       text: '[Task not found]',
       type: 'task',
       entryMode: entry.entryMode,
+      journalEntryId: entry.journalEntryId,
+      sourceRefs: normalizeSourceRefs(entry.sourceRefs),
       planId: entry.planId,
       planStatus: resolvedPlanStatus,
       replannedToPlanId: entry.replannedToPlanId,
@@ -232,6 +258,8 @@ function resolveEntry(hour: string, entry: JournalEntry, date: string): Resolved
       text: entry.text,
       type: 'text',
       entryMode: entry.entryMode,
+      journalEntryId: entry.journalEntryId,
+      sourceRefs: normalizeSourceRefs(entry.sourceRefs),
       planId: entry.planId,
       planStatus: resolvedPlanStatus,
       replannedToPlanId: entry.replannedToPlanId,
@@ -272,6 +300,8 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
         text: formatResolvedTaskText(task, entry.listType, date),
         type: 'task',
         entryMode: entry.entryMode,
+        journalEntryId: entry.journalEntryId,
+        sourceRefs: normalizeSourceRefs(entry.sourceRefs),
         planId: entry.planId,
         planStatus: resolvedPlanStatus,
         replannedToPlanId: entry.replannedToPlanId,
@@ -290,6 +320,8 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
       text: '[Task not found]',
       type: 'task',
       entryMode: entry.entryMode,
+      journalEntryId: entry.journalEntryId,
+      sourceRefs: normalizeSourceRefs(entry.sourceRefs),
       planId: entry.planId,
       planStatus: resolvedPlanStatus,
       replannedToPlanId: entry.replannedToPlanId,
@@ -309,6 +341,8 @@ function resolveRangeEntry(entry: JournalRangeEntry, date: string): ResolvedJour
     text: entry.text,
     type: 'text',
     entryMode: entry.entryMode,
+    journalEntryId: entry.journalEntryId,
+    sourceRefs: normalizeSourceRefs(entry.sourceRefs),
     planId: entry.planId,
     planStatus: resolvedPlanStatus,
     replannedToPlanId: entry.replannedToPlanId,

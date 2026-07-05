@@ -124,6 +124,19 @@ export interface PlanLogRef {
   };
 }
 
+export interface OmiTranscriptSourceRef {
+  source: 'omi-transcript';
+  transcriptDate: string;
+  segmentId: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  transcriptHash: string;
+  confidence: number;
+  runId: string;
+}
+
+export type JournalSourceRef = OmiTranscriptSourceRef;
+
 /**
  * A journal entry that references a task by ID.
  */
@@ -131,6 +144,8 @@ export interface TaskJournalEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   autoPlannedFromDueTime?: true;
   planId?: string;
   planStatus?: PlanStatus;
@@ -148,6 +163,8 @@ export interface TaskJournalEntry {
 export interface TextJournalEntry {
   text: string;
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   planId?: string;
   planStatus?: PlanStatus;
   planCreatedAt?: string;
@@ -188,6 +205,8 @@ export interface ResolvedJournalEntry {
   text: string;
   type: 'task' | 'text';
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   planId?: string;
   planStatus?: PlanStatus;
   replannedToPlanId?: string;
@@ -210,6 +229,8 @@ export interface TextJournalRangeEntry {
   end: string; // e.g., "2pm"
   text: string;
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   planId?: string;
   planStatus?: PlanStatus;
   planCreatedAt?: string;
@@ -229,6 +250,8 @@ export interface TaskJournalRangeEntry {
   taskId: string;
   listType: ListType;
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   autoPlannedFromDueTime?: true;
   planId?: string;
   planStatus?: PlanStatus;
@@ -254,6 +277,8 @@ export interface ResolvedJournalRangeEntry {
   text: string;
   type: 'task' | 'text';
   entryMode: EntryMode;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   planId?: string;
   planStatus?: PlanStatus;
   replannedToPlanId?: string;

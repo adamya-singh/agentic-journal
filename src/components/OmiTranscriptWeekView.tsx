@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useIsMobile } from '@/lib/useIsMobile';
 
 interface DayInfo {
@@ -17,18 +17,76 @@ interface OmiTranscriptSegment {
   endLabel: string;
   durationSeconds: number | null;
   transcript: string;
+  transcriptHash: string;
+  journalLink: OmiTranscriptJournalLink;
+}
+
+type OmiTranscriptJournalLinkStatus = 'unprocessed' | 'logged' | 'skipped' | 'stale';
+
+interface OmiTranscriptJournalLink {
+  status: OmiTranscriptJournalLinkStatus;
+  eligible: boolean;
+  stale: boolean;
+  journalRefs: OmiTranscriptJournalRef[];
+  proposalId: string | null;
+  runId: string | null;
+  skipReason: string | null;
+  updatedAt: string | null;
+  loggedAt: string | null;
+}
+
+interface OmiTranscriptJournalRef {
+  date: string;
+  journalEntryId: string;
+  hour?: string;
+  range?: {
+    start: string;
+    end: string;
+  };
+}
+
+type OmiTranscriptBatchStatus = 'completed' | 'failed' | 'pending' | 'running' | 'missing';
+
+interface OmiTranscriptBatch {
+  id: string;
+  status: OmiTranscriptBatchStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  startLabel: string;
+  endLabel: string;
+  durationSeconds: number | null;
+  chunkCount: number;
+  transcriptChars: number | null;
+  completedAt: string | null;
+  failedAt: string | null;
+  retryAfter: string | null;
+  retryCount: number;
+  lastRetryRequestedAt: string | null;
+  recoverable: boolean;
+  error: string | null;
 }
 
 interface OmiTranscriptDay {
   date: string;
   segments: OmiTranscriptSegment[];
+  batches: OmiTranscriptBatch[];
   omittedSegmentCount: number;
   status: {
     exists: boolean;
     segmentCount: number;
     transcriptCharCount: number;
+    audioChunkCount: number;
+    queueChunkCount: number;
+    completedBatchCount: number;
+    failedBatchCount: number;
+    pendingBatchCount: number;
+    runningBatchCount: number;
+    missingChunkCount: number;
+    recoverableBatchCount: number;
     generatedAt?: string;
     newestTranscriptAt?: string;
+    statusUpdatedAt?: string;
+    queueUpdatedAt?: string;
   };
 }
 
@@ -96,6 +154,17 @@ function getWeekOffsetForDayOffset(dayOffsetFromToday: number): number {
   return Math.floor((todayMonIndex + dayOffsetFromToday) / 7);
 }
 
+function getDayOffsetFromToday(date: string): number {
+  const [year, month, day] = date.split('-').map(Number);
+  if (!year || !month || !day) {
+    return 0;
+  }
+  const target = new Date(year, month - 1, day);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target.getTime() - today.getTime()) / 86_400_000);
+}
+
 function formatDuration(seconds: number | null): string | null {
   if (!seconds || seconds <= 0) {
     return null;
@@ -120,14 +189,62 @@ function formatCharacterCount(count: number): string {
   return `${count} chars`;
 }
 
-export function OmiTranscriptWeekView() {
+function getBatchTimeKey(batch: OmiTranscriptBatch): string {
+  return batch.startedAt ?? batch.id;
+}
+
+function getSegmentTimeKey(segment: OmiTranscriptSegment): string {
+  return segment.startedAt ?? segment.id;
+}
+
+function formatBatchStatus(status: OmiTranscriptBatchStatus): string {
+  if (status === 'failed') return 'Failed';
+  if (status === 'pending') return 'Pending';
+  if (status === 'running') return 'Running';
+  if (status === 'completed') return 'Completed';
+  return 'Missing';
+}
+
+function formatDaySummary(dayTranscript: OmiTranscriptDay | undefined, segmentCount: number): string {
+  if (!dayTranscript?.status.exists) {
+    return 'No file';
+  }
+
+  const status = dayTranscript.status;
+  const parts = [`${segmentCount} segments`, formatCharacterCount(status.transcriptCharCount)];
+  if (status.failedBatchCount > 0) {
+    parts.push(`${status.failedBatchCount} failed`);
+  }
+  if (status.pendingBatchCount + status.runningBatchCount > 0) {
+    parts.push(`${status.pendingBatchCount + status.runningBatchCount} active`);
+  }
+  if (status.missingChunkCount > 0) {
+    parts.push(`${status.missingChunkCount} missing`);
+  }
+  if (status.audioChunkCount > 0) {
+    parts.push(`${status.audioChunkCount} chunks`);
+  }
+  return parts.join(' · ');
+}
+
+export function OmiTranscriptWeekView({
+  initialDate,
+  initialSegmentId,
+}: {
+  initialDate?: string;
+  initialSegmentId?: string;
+}) {
   const isMobile = useIsMobile();
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [weekDates, setWeekDates] = useState<DayInfo[]>(() => getWeekDates(0));
+  const initialDayOffset = initialDate ? getDayOffsetFromToday(initialDate) : 0;
+  const initialWeekOffset = getWeekOffsetForDayOffset(initialDayOffset);
+  const [weekOffset, setWeekOffset] = useState(initialWeekOffset);
+  const [weekDates, setWeekDates] = useState<DayInfo[]>(() => getWeekDates(initialWeekOffset));
   const [transcripts, setTranscripts] = useState<Record<string, OmiTranscriptDay>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mobileDayOffsetFromToday, setMobileDayOffsetFromToday] = useState(0);
+  const [mobileDayOffsetFromToday, setMobileDayOffsetFromToday] = useState(initialDayOffset);
+  const [retryingDates, setRetryingDates] = useState<Record<string, boolean>>({});
+  const scrolledToInitialSegmentRef = useRef(false);
 
   useEffect(() => {
     setWeekDates(getWeekDates(weekOffset));
@@ -169,6 +286,37 @@ export function OmiTranscriptWeekView() {
 
   useEffect(() => {
     fetchTranscripts();
+  }, [fetchTranscripts]);
+
+  useEffect(() => {
+    if (loading || !initialSegmentId || scrolledToInitialSegmentRef.current) return;
+    const target = document.getElementById(`omi-segment-${initialSegmentId}`);
+    if (!target) return;
+    target.scrollIntoView({ block: 'center' });
+    scrolledToInitialSegmentRef.current = true;
+  }, [initialSegmentId, loading, transcripts]);
+
+  const retryTranscriptBatches = useCallback(async (date: string, batchIds?: string[]) => {
+    setRetryingDates((prev) => ({ ...prev, [date]: true }));
+    setError(null);
+
+    try {
+      const response = await fetch('/api/omi/transcripts/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, ...(batchIds ? { batchIds } : {}) }),
+      });
+      const payload = (await response.json()) as { success?: boolean; error?: string };
+      if (!response.ok || !payload.success) {
+        setError(payload.error || 'Failed to mark Omi transcript batches for retry');
+        return;
+      }
+      await fetchTranscripts();
+    } catch {
+      setError('Failed to connect to server');
+    } finally {
+      setRetryingDates((prev) => ({ ...prev, [date]: false }));
+    }
   }, [fetchTranscripts]);
 
   const getWeekTitle = () => {
@@ -277,7 +425,18 @@ export function OmiTranscriptWeekView() {
           const isToday = dayInfo.date === todayDate;
           const hasFile = dayTranscript?.status.exists === true;
           const segments = dayTranscript?.segments ?? [];
+          const batches = dayTranscript?.batches ?? [];
+          const incompleteBatches = batches.filter((batch) => batch.status !== 'completed');
+          const failedBatchIds = batches
+            .filter((batch) => batch.status === 'failed')
+            .map((batch) => batch.id);
           const omittedSegmentCount = dayTranscript?.omittedSegmentCount ?? 0;
+          const missingChunkCount = dayTranscript?.status.missingChunkCount ?? 0;
+          const retrying = retryingDates[dayInfo.date] === true;
+          const renderItems = [
+            ...segments.map((segment) => ({ type: 'segment' as const, key: `segment:${segment.id}`, timeKey: getSegmentTimeKey(segment), segment })),
+            ...incompleteBatches.map((batch) => ({ type: 'batch' as const, key: `batch:${batch.id}`, timeKey: getBatchTimeKey(batch), batch })),
+          ].sort((a, b) => a.timeKey.localeCompare(b.timeKey));
 
           return (
             <div
@@ -300,34 +459,51 @@ export function OmiTranscriptWeekView() {
                   <span className="text-sm opacity-80">{dayInfo.displayDate}</span>
                 </div>
                 <div className="mt-1 text-xs opacity-80">
-                  {hasFile
-                    ? `${segments.length} segments · ${formatCharacterCount(dayTranscript.status.transcriptCharCount)}`
-                    : 'No file'}
+                  {formatDaySummary(dayTranscript, segments.length)}
                 </div>
               </div>
 
               <div className={isMobile ? 'flex-1 p-2 min-h-[260px]' : 'flex-1 p-2 min-h-[260px] max-h-[520px] overflow-y-auto'}>
-                {segments.length > 0 ? (
+                {hasFile && (failedBatchIds.length > 0 || missingChunkCount > 0) && (
+                  <div className="mb-3 space-y-2">
+                    {failedBatchIds.length > 0 && (
+                      <button
+                        onClick={() => retryTranscriptBatches(dayInfo.date, failedBatchIds)}
+                        disabled={retrying}
+                        className="w-full rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-red-900/70 dark:bg-red-950/40 dark:text-red-300 dark:hover:bg-red-950/60"
+                      >
+                        {retrying ? 'Marking retry...' : `Retry ${failedBatchIds.length} failed`}
+                      </button>
+                    )}
+                    {missingChunkCount > 0 && (
+                      <button
+                        onClick={() => retryTranscriptBatches(dayInfo.date)}
+                        disabled={retrying}
+                        className="w-full rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 transition-colors hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950/60"
+                      >
+                        {retrying ? 'Marking retry...' : `Retry day · ${missingChunkCount} missing chunks`}
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                {renderItems.length > 0 ? (
                   <div className="space-y-3 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none">
-                    {segments.map((segment) => {
+                    {renderItems.map((item) => {
+                      if (item.type === 'batch') {
+                        return <BatchStatusCard key={item.key} batch={item.batch} />;
+                      }
+
+                      const segment = item.segment;
                       const duration = formatDuration(segment.durationSeconds);
                       return (
-                        <article
-                          key={segment.id}
-                          className="rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50/70 dark:bg-gray-900/30 px-3 py-2"
-                        >
-                          <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-                            <span className={`font-medium ${isToday ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                              {segment.startLabel}{segment.endLabel ? `-${segment.endLabel}` : ''}
-                            </span>
-                            {duration && (
-                              <span className="shrink-0 text-gray-400 dark:text-gray-500">{duration}</span>
-                            )}
-                          </div>
-                          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">
-                            {segment.transcript}
-                          </p>
-                        </article>
+                        <TranscriptSegmentCard
+                          key={item.key}
+                          segment={segment}
+                          duration={duration}
+                          isToday={isToday}
+                          isHighlighted={segment.id === initialSegmentId}
+                        />
                       );
                     })}
                     {omittedSegmentCount > 0 && (
@@ -341,6 +517,9 @@ export function OmiTranscriptWeekView() {
                     <p className="text-sm italic">{hasFile ? 'No speech transcript' : 'No transcript'}</p>
                     {omittedSegmentCount > 0 && (
                       <p className="text-xs italic">{omittedSegmentCount} background or empty segments omitted</p>
+                    )}
+                    {missingChunkCount > 0 && (
+                      <p className="text-xs italic">{missingChunkCount} audio chunks are not covered by any batch</p>
                     )}
                   </div>
                 )}
@@ -363,6 +542,114 @@ export function OmiTranscriptWeekView() {
         }
       `}</style>
     </div>
+  );
+}
+
+function TranscriptSegmentCard({
+  segment,
+  duration,
+  isToday,
+  isHighlighted,
+}: {
+  segment: OmiTranscriptSegment;
+  duration: string | null;
+  isToday: boolean;
+  isHighlighted: boolean;
+}) {
+  const journalRef = segment.journalLink.journalRefs[0];
+  const journalHref = journalRef
+    ? `/?date=${encodeURIComponent(journalRef.date)}&journalEntry=${encodeURIComponent(journalRef.journalEntryId)}`
+    : null;
+
+  return (
+    <article
+      id={`omi-segment-${segment.id}`}
+      className={`rounded-md border bg-gray-50/70 px-3 py-2 transition-colors dark:bg-gray-900/30 ${
+        isHighlighted
+          ? 'border-amber-300 ring-2 ring-amber-300/70 dark:border-amber-500 dark:ring-amber-500/60'
+          : 'border-gray-200 dark:border-gray-700'
+      }`}
+    >
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+        <span className={`font-medium ${isToday ? 'text-indigo-600 dark:text-indigo-400' : 'text-gray-500 dark:text-gray-400'}`}>
+          {segment.startLabel}{segment.endLabel ? `-${segment.endLabel}` : ''}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {journalHref ? (
+            <a
+              href={journalHref}
+              className="rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 font-medium text-emerald-700 hover:bg-emerald-100 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
+            >
+              journal
+            </a>
+          ) : (
+            <span className={`rounded border px-1.5 py-0.5 font-medium ${journalLinkClassName(segment.journalLink.status)}`}>
+              {journalLinkLabel(segment.journalLink.status)}
+            </span>
+          )}
+          {duration && <span className="text-gray-400 dark:text-gray-500">{duration}</span>}
+        </span>
+      </div>
+      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-300">
+        {segment.transcript}
+      </p>
+      {segment.journalLink.skipReason && (
+        <p className="mt-1 text-xs italic text-gray-400 dark:text-gray-500">{segment.journalLink.skipReason}</p>
+      )}
+    </article>
+  );
+}
+
+function journalLinkLabel(status: OmiTranscriptJournalLinkStatus): string {
+  if (status === 'logged') return 'logged';
+  if (status === 'skipped') return 'skipped';
+  if (status === 'stale') return 'stale';
+  return 'new';
+}
+
+function journalLinkClassName(status: OmiTranscriptJournalLinkStatus): string {
+  if (status === 'logged') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300';
+  }
+  if (status === 'skipped') {
+    return 'border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400';
+  }
+  if (status === 'stale') {
+    return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';
+  }
+  return 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300';
+}
+
+function BatchStatusCard({ batch }: { batch: OmiTranscriptBatch }) {
+  const duration = formatDuration(batch.durationSeconds);
+  const failed = batch.status === 'failed';
+  const active = batch.status === 'pending' || batch.status === 'running';
+  const className = failed
+    ? 'border-red-200 bg-red-50/80 text-red-800 dark:border-red-900/70 dark:bg-red-950/30 dark:text-red-200'
+    : active
+      ? 'border-sky-200 bg-sky-50/80 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/30 dark:text-sky-200'
+      : 'border-amber-200 bg-amber-50/80 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200';
+
+  return (
+    <article className={`rounded-md border px-3 py-2 ${className}`}>
+      <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+        <span className="font-semibold">
+          {batch.startLabel}{batch.endLabel ? `-${batch.endLabel}` : ''}
+        </span>
+        <span className="shrink-0 font-medium">{formatBatchStatus(batch.status)}</span>
+      </div>
+      <div className="flex flex-wrap gap-x-2 gap-y-1 text-xs opacity-80">
+        {duration && <span>{duration}</span>}
+        {batch.chunkCount > 0 && <span>{batch.chunkCount} chunks</span>}
+        {batch.retryCount > 0 && <span>{batch.retryCount} retries</span>}
+      </div>
+      {batch.error && (
+        <p className="mt-2 break-words text-xs leading-relaxed opacity-90">{batch.error}</p>
+      )}
+      {batch.retryAfter && failed && (
+        <p className="mt-1 text-xs opacity-70">Retry after {new Date(batch.retryAfter).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</p>
+      )}
+    </article>
   );
 }
 

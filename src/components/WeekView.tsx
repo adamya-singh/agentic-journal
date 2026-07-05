@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { EntryMode, PlanStatus, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task } from '@/lib/types';
+import { EntryMode, PlanStatus, ResolvedJournalEntry, ResolvedJournalRangeEntry, ResolvedStagedEntry, ListType, Task, JournalSourceRef } from '@/lib/types';
 import { UnscheduledTasksPopover, StagedEntry } from './UnscheduledTasksPopover';
 import { AddToPlanModal } from './AddToPlanModal';
 import { useRefresh } from '@/lib/RefreshContext';
@@ -31,6 +31,8 @@ export interface TypedEntry {
   planId?: string;
   taskId?: string;
   listType?: ListType;
+  journalEntryId?: string;
+  sourceRefs?: JournalSourceRef[];
   planStatus?: PlanStatus;
   completed?: boolean;
   isRange?: boolean;  // True if this is a range entry
@@ -244,6 +246,8 @@ function processResolvedEntry(hour: string, entry: ResolvedJournalEntry): TypedE
     planId: entry.planId,
     taskId: entry.taskId,
     listType: entry.listType,
+    journalEntryId: entry.journalEntryId,
+    sourceRefs: entry.sourceRefs,
     planStatus: entry.planStatus,
     completed: entry.completed,
     startHour: hour,
@@ -295,6 +299,8 @@ function getEntriesFromJournal(journal: ResolvedDayJournalWithRanges | null): Ty
           planId: range.planId,
           taskId: range.taskId,
           listType: range.listType,
+          journalEntryId: range.journalEntryId,
+          sourceRefs: range.sourceRefs,
           planStatus: range.planStatus,
           completed: range.completed,
           isRange: true,
@@ -335,6 +341,15 @@ function getStagedFromJournal(journal: ResolvedDayJournalWithRanges | null): Sta
       listType: entry.listType,
       completed: entry.completed,
     }));
+}
+
+function omiSourceHref(sourceRefs: JournalSourceRef[] | undefined): string {
+  const ref = sourceRefs?.find((sourceRef) => sourceRef.source === 'omi-transcript');
+  if (!ref) {
+    return '/omi-transcripts';
+  }
+
+  return `/omi-transcripts?date=${encodeURIComponent(ref.transcriptDate)}&segment=${encodeURIComponent(ref.segmentId)}`;
 }
 
 function getDefaultDayViewMode(entries: TypedEntry[]): DayViewMode {
@@ -1049,7 +1064,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     className="space-y-2 animate-[weekviewFadeSlide_150ms_ease-out] motion-reduce:animate-none"
                   >
                     {/* Scheduled entries */}
-                    {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, listType, planStatus, completed, isRange, startHour, endHour }, index) => {
+                    {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, listType, planStatus, completed, isRange, startHour, endHour, sourceRefs }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
                       const isCompleted = isTask
                         ? (completed === true || planStatus === 'completed')
@@ -1169,6 +1184,14 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                             }`}>
                               {suffixLabel}
                             </span>
+                          )}
+                          {sourceRefs?.some((ref) => ref.source === 'omi-transcript') && (
+                            <a
+                              href={omiSourceHref(sourceRefs)}
+                              className="ml-2 rounded border border-indigo-200 bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300"
+                            >
+                              Omi
+                            </a>
                           )}
                         </div>
                       );
