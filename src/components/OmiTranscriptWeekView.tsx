@@ -21,7 +21,7 @@ interface OmiTranscriptSegment {
   journalLink: OmiTranscriptJournalLink;
 }
 
-type OmiTranscriptJournalLinkStatus = 'unprocessed' | 'logged' | 'skipped' | 'stale';
+type OmiTranscriptJournalLinkStatus = 'unprocessed' | 'logged' | 'skipped' | 'requested' | 'stale';
 
 interface OmiTranscriptJournalLink {
   status: OmiTranscriptJournalLinkStatus;
@@ -33,6 +33,9 @@ interface OmiTranscriptJournalLink {
   skipReason: string | null;
   updatedAt: string | null;
   loggedAt: string | null;
+  skippedAt: string | null;
+  requestedAt: string | null;
+  requestSource: string | null;
 }
 
 interface OmiTranscriptJournalRef {
@@ -244,6 +247,7 @@ export function OmiTranscriptWeekView({
   const [error, setError] = useState<string | null>(null);
   const [mobileDayOffsetFromToday, setMobileDayOffsetFromToday] = useState(initialDayOffset);
   const [retryingDates, setRetryingDates] = useState<Record<string, boolean>>({});
+  const [requestingSegments, setRequestingSegments] = useState<Record<string, boolean>>({});
   const scrolledToInitialSegmentRef = useRef(false);
 
   useEffect(() => {
@@ -316,6 +320,30 @@ export function OmiTranscriptWeekView({
       setError('Failed to connect to server');
     } finally {
       setRetryingDates((prev) => ({ ...prev, [date]: false }));
+    }
+  }, [fetchTranscripts]);
+
+  const requestJournalProposal = useCallback(async (date: string, segmentId: string) => {
+    const key = `${date}:${segmentId}`;
+    setRequestingSegments((prev) => ({ ...prev, [key]: true }));
+    setError(null);
+
+    try {
+      const response = await fetch('/api/omi/transcripts/journal-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, segmentId }),
+      });
+      const payload = (await response.json()) as { success?: boolean; error?: string };
+      if (!response.ok || !payload.success) {
+        setError(payload.error || 'Failed to request Omi journal proposal');
+        return;
+      }
+      await fetchTranscripts();
+    } catch {
+      setError('Failed to connect to server');
+    } finally {
+      setRequestingSegments((prev) => ({ ...prev, [key]: false }));
     }
   }, [fetchTranscripts]);
 
@@ -503,6 +531,9 @@ export function OmiTranscriptWeekView({
                           duration={duration}
                           isToday={isToday}
                           isHighlighted={segment.id === initialSegmentId}
+                          date={dayInfo.date}
+                          requesting={requestingSegments[`${dayInfo.date}:${segment.id}`] === true}
+                          onRequestJournalProposal={requestJournalProposal}
                         />
                       );
                     })}
@@ -550,11 +581,17 @@ function TranscriptSegmentCard({
   duration,
   isToday,
   isHighlighted,
+  date,
+  requesting,
+  onRequestJournalProposal,
 }: {
   segment: OmiTranscriptSegment;
   duration: string | null;
   isToday: boolean;
   isHighlighted: boolean;
+  date: string;
+  requesting: boolean;
+  onRequestJournalProposal: (date: string, segmentId: string) => void;
 }) {
   const journalRef = segment.journalLink.journalRefs[0];
   const journalHref = journalRef
@@ -596,6 +633,16 @@ function TranscriptSegmentCard({
       {segment.journalLink.skipReason && (
         <p className="mt-1 text-xs italic text-gray-400 dark:text-gray-500">{segment.journalLink.skipReason}</p>
       )}
+      {segment.journalLink.status === 'skipped' && (
+        <button
+          type="button"
+          onClick={() => onRequestJournalProposal(date, segment.id)}
+          disabled={requesting}
+          className="mt-2 rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300 dark:hover:bg-indigo-950/60"
+        >
+          {requesting ? 'Requesting...' : 'Request journal proposal'}
+        </button>
+      )}
     </article>
   );
 }
@@ -603,6 +650,7 @@ function TranscriptSegmentCard({
 function journalLinkLabel(status: OmiTranscriptJournalLinkStatus): string {
   if (status === 'logged') return 'logged';
   if (status === 'skipped') return 'skipped';
+  if (status === 'requested') return 'requested';
   if (status === 'stale') return 'stale';
   return 'new';
 }
@@ -613,6 +661,9 @@ function journalLinkClassName(status: OmiTranscriptJournalLinkStatus): string {
   }
   if (status === 'skipped') {
     return 'border-gray-200 bg-gray-100 text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400';
+  }
+  if (status === 'requested') {
+    return 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/70 dark:bg-indigo-950/40 dark:text-indigo-300';
   }
   if (status === 'stale') {
     return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300';

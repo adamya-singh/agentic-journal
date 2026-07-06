@@ -36,7 +36,7 @@ type OmiTranscriptSegment = {
 };
 
 type OmiTranscriptJournalLink = {
-  status: 'unprocessed' | 'logged' | 'skipped' | 'stale';
+  status: 'unprocessed' | 'logged' | 'skipped' | 'requested' | 'stale';
   eligible: boolean;
   stale: boolean;
   journalRefs: OmiTranscriptJournalRef[];
@@ -45,6 +45,9 @@ type OmiTranscriptJournalLink = {
   skipReason: string | null;
   updatedAt: string | null;
   loggedAt: string | null;
+  skippedAt: string | null;
+  requestedAt: string | null;
+  requestSource: string | null;
 };
 
 type OmiTranscriptJournalRef = {
@@ -164,6 +167,9 @@ type RawJournalLinkSegment = {
   skipReason?: unknown;
   updatedAt?: unknown;
   loggedAt?: unknown;
+  skippedAt?: unknown;
+  requestedAt?: unknown;
+  requestSource?: unknown;
 };
 
 export async function GET(request: NextRequest) {
@@ -382,15 +388,25 @@ function normalizeJournalLink(rawLink: RawJournalLinkSegment | undefined, transc
   const rawStatus = typeof rawLink.status === 'string' ? rawLink.status : 'unprocessed';
   const storedHash = typeof rawLink.transcriptHash === 'string' ? rawLink.transcriptHash : null;
   const stale = Boolean(storedHash && storedHash !== transcriptHash);
-  const status = stale
-    ? 'stale'
-    : rawStatus === 'logged' || rawStatus === 'skipped'
-      ? rawStatus
-      : 'unprocessed';
+  let status: OmiTranscriptJournalLink['status'] = 'unprocessed';
+  if (rawStatus === 'skipped') {
+    status = 'skipped';
+  } else if (rawStatus === 'requested') {
+    status = 'requested';
+  } else if (stale) {
+    status = 'stale';
+  } else if (rawStatus === 'logged') {
+    status = 'logged';
+  }
+  const eligible = rawStatus === 'requested'
+    ? true
+    : rawStatus === 'skipped'
+      ? false
+      : stale || status === 'unprocessed';
 
   return {
     status,
-    eligible: stale || status === 'unprocessed',
+    eligible,
     stale,
     journalRefs: normalizeJournalRefs(rawLink.journalRefs),
     proposalId: stringOrNull(rawLink.proposalId),
@@ -398,6 +414,9 @@ function normalizeJournalLink(rawLink: RawJournalLinkSegment | undefined, transc
     skipReason: stringOrNull(rawLink.skipReason),
     updatedAt: stringOrNull(rawLink.updatedAt),
     loggedAt: stringOrNull(rawLink.loggedAt),
+    skippedAt: stringOrNull(rawLink.skippedAt),
+    requestedAt: stringOrNull(rawLink.requestedAt),
+    requestSource: stringOrNull(rawLink.requestSource),
   };
 }
 
@@ -447,6 +466,9 @@ function emptyJournalLink(eligible: boolean): OmiTranscriptJournalLink {
     skipReason: null,
     updatedAt: null,
     loggedAt: null,
+    skippedAt: null,
+    requestedAt: null,
+    requestSource: null,
   };
 }
 
