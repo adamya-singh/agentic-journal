@@ -389,7 +389,7 @@ function normalizeJournalLink(rawLink: RawJournalLinkSegment | undefined, transc
   const storedHash = typeof rawLink.transcriptHash === 'string' ? rawLink.transcriptHash : null;
   const stale = Boolean(storedHash && storedHash !== transcriptHash);
   let status: OmiTranscriptJournalLink['status'] = 'unprocessed';
-  if (rawStatus === 'skipped') {
+  if (rawStatus === 'skipped' || rawStatus === 'ignored') {
     status = 'skipped';
   } else if (rawStatus === 'requested') {
     status = 'requested';
@@ -400,9 +400,11 @@ function normalizeJournalLink(rawLink: RawJournalLinkSegment | undefined, transc
   }
   const eligible = rawStatus === 'requested'
     ? true
-    : rawStatus === 'skipped'
+    : rawStatus === 'skipped' || rawStatus === 'ignored'
       ? false
-      : stale || status === 'unprocessed';
+      : rawStatus === 'logged'
+        ? stale
+        : rawStatus === 'unprocessed' && status === 'unprocessed';
 
   return {
     status,
@@ -414,7 +416,7 @@ function normalizeJournalLink(rawLink: RawJournalLinkSegment | undefined, transc
     skipReason: stringOrNull(rawLink.skipReason),
     updatedAt: stringOrNull(rawLink.updatedAt),
     loggedAt: stringOrNull(rawLink.loggedAt),
-    skippedAt: stringOrNull(rawLink.skippedAt),
+    skippedAt: stringOrNull(rawLink.skippedAt) ?? (rawStatus === 'ignored' ? stringOrNull(rawLink.updatedAt) : null),
     requestedAt: stringOrNull(rawLink.requestedAt),
     requestSource: stringOrNull(rawLink.requestSource),
   };
