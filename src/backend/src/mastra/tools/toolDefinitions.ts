@@ -8,7 +8,32 @@ import { streamJSONEvent } from '../../utils/streamUtils';
 import { z } from 'zod';
 
 // Valid hours of the day (7am to 6am) - matches frontend
-const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
+const VALID_HOURS = [
+  '7am',
+  '8am',
+  '9am',
+  '10am',
+  '11am',
+  '12pm',
+  '1pm',
+  '2pm',
+  '3pm',
+  '4pm',
+  '5pm',
+  '6pm',
+  '7pm',
+  '8pm',
+  '9pm',
+  '10pm',
+  '11pm',
+  '12am',
+  '1am',
+  '2am',
+  '3am',
+  '4am',
+  '5am',
+  '6am',
+] as const;
 
 // Define the schemas for our tools based on what we registered in page.tsx
 
@@ -38,12 +63,27 @@ export const ErrorResponseSchema = z.object({
 export const AddTaskSchema = z.object({
   text: z.string().min(1).describe('The task text/description'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to add to'),
-  parentTaskId: z.string().optional().describe('Optional parent task ID to create this task as a subtask in the same list'),
+  parentTaskId: z
+    .string()
+    .optional()
+    .describe('Optional parent task ID to create this task as a subtask in the same list'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
-  dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
-  dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range (requires dueTimeStart)'),
-  isDaily: z.boolean().optional().describe('If true, task recurs daily and persists after completion'),
-  projects: z.array(z.string()).optional().describe('Optional list of projects to tag the task with'),
+  dueTimeStart: z
+    .string()
+    .optional()
+    .describe('Optional due time start in HH:mm format (requires dueDate)'),
+  dueTimeEnd: z
+    .string()
+    .optional()
+    .describe('Optional due time end in HH:mm format for a range (requires dueTimeStart)'),
+  isDaily: z
+    .boolean()
+    .optional()
+    .describe('If true, task recurs daily and persists after completion'),
+  projects: z
+    .array(z.string())
+    .optional()
+    .describe('Optional list of projects to tag the task with'),
 });
 
 // Schema for removeTask state setter
@@ -58,11 +98,26 @@ export const UpdateTaskSchema = z.object({
   oldText: z.string().min(1).describe('The current text of the task to update'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
   newText: z.string().optional().describe('The new text for the task'),
-  dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
-  dueTimeStart: z.string().optional().describe('Optional due time start (HH:mm), or empty string to remove due time'),
-  dueTimeEnd: z.string().optional().describe('Optional due time end (HH:mm), or empty string for single-time'),
-  projects: z.array(z.string()).optional().describe('Optional replacement list of projects for the task'),
-  parentTaskId: z.string().optional().describe('Optional parent task ID, or empty string to remove the parent relationship'),
+  dueDate: z
+    .string()
+    .optional()
+    .describe('The new due date (ISO format), or empty string to remove'),
+  dueTimeStart: z
+    .string()
+    .optional()
+    .describe('Optional due time start (HH:mm), or empty string to remove due time'),
+  dueTimeEnd: z
+    .string()
+    .optional()
+    .describe('Optional due time end (HH:mm), or empty string for single-time'),
+  projects: z
+    .array(z.string())
+    .optional()
+    .describe('Optional replacement list of projects for the task'),
+  parentTaskId: z
+    .string()
+    .optional()
+    .describe('Optional parent task ID, or empty string to remove the parent relationship'),
 });
 
 // Schema for Current queue ordering.
@@ -112,14 +167,19 @@ export const AddRoadmapCheckpointSchema = z.object({
   project: z.string().min(1).describe('The normalized project slug or project label'),
   title: z.string().min(1).describe('Checkpoint title'),
   description: z.string().optional().describe('Optional checkpoint description'),
-  status: RoadmapCheckpointStatusSchema.optional().describe('Manual checkpoint status. Defaults to not-started.'),
+  status: RoadmapCheckpointStatusSchema.optional().describe(
+    'Manual checkpoint status. Defaults to not-started.',
+  ),
 });
 
 export const UpdateRoadmapCheckpointSchema = z.object({
   project: z.string().min(1).describe('The normalized project slug or project label'),
   checkpointId: z.string().min(1).describe('The checkpoint ID to update'),
   title: z.string().min(1).optional().describe('Updated checkpoint title'),
-  description: z.string().optional().describe('Updated checkpoint description. Use empty string to clear.'),
+  description: z
+    .string()
+    .optional()
+    .describe('Updated checkpoint description. Use empty string to clear.'),
   status: RoadmapCheckpointStatusSchema.optional().describe('Manual checkpoint status'),
 });
 
@@ -154,7 +214,10 @@ export const CreateRoadmapTaskSchema = z.object({
   text: z.string().min(1).describe('The task text/description'),
   listType: z.enum(['have-to-do', 'want-to-do']).describe('Which task list to add to'),
   dueDate: z.string().optional().describe('Optional due date in ISO format (YYYY-MM-DD)'),
-  dueTimeStart: z.string().optional().describe('Optional due time start in HH:mm format (requires dueDate)'),
+  dueTimeStart: z
+    .string()
+    .optional()
+    .describe('Optional due time start in HH:mm format (requires dueDate)'),
   dueTimeEnd: z.string().optional().describe('Optional due time end in HH:mm format for a range'),
   isDaily: z.boolean().optional().describe('If true, task recurs daily'),
   notesMarkdown: z.string().optional().describe('Optional markdown task notes'),
@@ -164,55 +227,106 @@ export const CreateRoadmapTaskSchema = z.object({
 
 // Schema for createDayJournal state setter
 export const CreateDayJournalSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
 });
 
 // Schema for appendToJournal state setter
 // Supports either text-based entries OR task-referenced entries (taskId + listType)
-export const AppendToJournalSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
-  text: z.string().optional().describe('The text to append (use this for free-form entries, OR use taskId+listType for task references)'),
-  taskId: z.string().optional().describe('The ID of an existing task to reference (use with listType instead of text for task planning)'),
-  listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to (required when using taskId)'),
-  entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
-}).refine(
-  data => {
-    const hasText = data.text !== undefined && data.text.length > 0;
-    const hasTaskRef = data.taskId !== undefined && data.listType !== undefined;
-    return hasText !== hasTaskRef; // XOR: exactly one must be true
-  },
-  { message: 'Provide either text OR (taskId + listType), not both or neither' }
-);
+export const AppendToJournalSchema = z
+  .object({
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .describe('The date in ISO format (YYYY-MM-DD)'),
+    hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
+    text: z
+      .string()
+      .optional()
+      .describe(
+        'The text to append (use this for free-form entries, OR use taskId+listType for task references)',
+      ),
+    taskId: z
+      .string()
+      .optional()
+      .describe(
+        'The ID of an existing task to reference (use with listType instead of text for task planning)',
+      ),
+    listType: z
+      .enum(['have-to-do', 'want-to-do'])
+      .optional()
+      .describe('Which list the task belongs to (required when using taskId)'),
+    entryMode: z
+      .enum(['planned', 'logged'])
+      .describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
+  })
+  .refine(
+    (data) => {
+      const hasText = data.text !== undefined && data.text.length > 0;
+      const hasTaskRef = data.taskId !== undefined && data.listType !== undefined;
+      return hasText !== hasTaskRef; // XOR: exactly one must be true
+    },
+    { message: 'Provide either text OR (taskId + listType), not both or neither' },
+  );
 
 // Schema for deleteJournalEntry state setter
 export const DeleteJournalEntrySchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .describe('The date in ISO format (YYYY-MM-DD)'),
   hour: z.enum(VALID_HOURS).describe('The hour to clear'),
 });
 
 // Schema for addJournalRange state setter
 // Supports either text-based entries OR task-referenced entries (taskId + listType)
-export const AddJournalRangeSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
-  start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
-  end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
-  text: z.string().optional().describe('The text describing the activity (use this for free-form entries, OR use taskId+listType for task references)'),
-  taskId: z.string().optional().describe('The ID of an existing task to reference (use with listType instead of text for task planning)'),
-  listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to (required when using taskId)'),
-  entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
-}).refine(
-  data => {
-    const hasText = data.text !== undefined && data.text.length > 0;
-    const hasTaskRef = data.taskId !== undefined && data.listType !== undefined;
-    return hasText !== hasTaskRef; // XOR: exactly one must be true
-  },
-  { message: 'Provide either text OR (taskId + listType), not both or neither' }
-);
+export const AddJournalRangeSchema = z
+  .object({
+    date: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .describe('The date in ISO format (YYYY-MM-DD)'),
+    start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
+    end: z
+      .enum(VALID_HOURS)
+      .describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
+    text: z
+      .string()
+      .optional()
+      .describe(
+        'The text describing the activity (use this for free-form entries, OR use taskId+listType for task references)',
+      ),
+    taskId: z
+      .string()
+      .optional()
+      .describe(
+        'The ID of an existing task to reference (use with listType instead of text for task planning)',
+      ),
+    listType: z
+      .enum(['have-to-do', 'want-to-do'])
+      .optional()
+      .describe('Which list the task belongs to (required when using taskId)'),
+    entryMode: z
+      .enum(['planned', 'logged'])
+      .describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
+  })
+  .refine(
+    (data) => {
+      const hasText = data.text !== undefined && data.text.length > 0;
+      const hasTaskRef = data.taskId !== undefined && data.listType !== undefined;
+      return hasText !== hasTaskRef; // XOR: exactly one must be true
+    },
+    { message: 'Provide either text OR (taskId + listType), not both or neither' },
+  );
 
 // Schema for removeJournalRange state setter
 export const RemoveJournalRangeSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .describe('The date in ISO format (YYYY-MM-DD)'),
   start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
   end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
 });
@@ -220,45 +334,113 @@ export const RemoveJournalRangeSchema = z.object({
 // ==================== JOB LISTING STATE SETTER SCHEMAS ====================
 
 const JobListingSourceSchema = z.object({
-  name: z.string().min(1).describe('The source where this job was discovered, such as Jobright, SpeedyApply, or a GitHub list name'),
-  link: z.string().url().describe('A link to the source posting or source page where the listing was found'),
+  name: z
+    .string()
+    .min(1)
+    .describe(
+      'The source where this job was discovered, such as Jobright, SpeedyApply, or a GitHub list name',
+    ),
+  link: z
+    .string()
+    .url()
+    .describe('A link to the source posting or source page where the listing was found'),
 });
 
 export const AddJobListingSchema = z.object({
   company: z.string().min(1).describe('The company name'),
-  companySummary: z.string().min(1).describe('A simple-English 1-2 sentence description of what the company does at a high level'),
+  companySummary: z
+    .string()
+    .min(1)
+    .describe('A simple-English 1-2 sentence description of what the company does at a high level'),
   positionTitle: z.string().min(1).describe('The job title or role name'),
   location: z.string().min(1).describe('The job location or remote/hybrid location text'),
-  jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
-  status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
+  applicationCategories: z
+    .array(z.enum(['fall-internship', 'spring-internship', 'summer-internship', 'new-grad']))
+    .min(1)
+    .describe('Every application category explicitly supported by the listing'),
+  status: z
+    .enum(['saved', 'starred', 'applied', 'archived'])
+    .optional()
+    .describe(
+      'The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.',
+    ),
   salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
   link: z.string().url().describe('The application or job posting URL'),
-  source: JobListingSourceSchema.describe('Where this listing was discovered and the page URL for that source'),
-  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
-  postedDateText: z.string().min(1).optional().describe('The raw posted-date wording shown on the job posting, such as "posted today", "posted 30+ days ago", or "posted Apr 12"'),
-  notes: z.string().min(1).refine(
-    (value) => /pros:/i.test(value) && /cons:/i.test(value),
-    { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-  ).describe('Free-form notes with fit rationale and brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
+  source: JobListingSourceSchema.describe(
+    'Where this listing was discovered and the page URL for that source',
+  ),
+  postedDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .describe(
+      'The exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting',
+    ),
+  postedDateText: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'The raw posted-date wording shown on the job posting, such as "posted today", "posted 30+ days ago", or "posted Apr 12"',
+    ),
+  notes: z
+    .string()
+    .min(1)
+    .refine((value) => /pros:/i.test(value) && /cons:/i.test(value), {
+      message:
+        'Notes must include brief Pros: and Cons: sections from the perspective of life goals',
+    })
+    .describe(
+      'Free-form notes with fit rationale and brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.',
+    ),
 });
 
 export const UpdateJobListingSchema = z.object({
   id: z.string().min(1).describe('The job listing ID'),
   company: z.string().min(1).optional().describe('Updated company name'),
-  companySummary: z.string().min(1).optional().describe('Updated simple-English 1-2 sentence description of what the company does at a high level'),
+  companySummary: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Updated simple-English 1-2 sentence description of what the company does at a high level',
+    ),
   positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
   location: z.string().min(1).optional().describe('Updated job location'),
-  jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
-  status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
+  applicationCategories: z
+    .array(z.enum(['fall-internship', 'spring-internship', 'summer-internship', 'new-grad']))
+    .min(1)
+    .optional()
+    .describe('Updated application categories'),
+  status: z
+    .enum(['saved', 'starred', 'applied', 'archived'])
+    .optional()
+    .describe('Updated listing status'),
   salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
   link: z.string().url().optional().describe('Updated application or job posting URL'),
   source: JobListingSourceSchema.optional().describe('Updated source name and source page URL'),
-  postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
-  postedDateText: z.string().min(1).optional().describe('Updated raw posted-date wording shown on the job posting'),
-  notes: z.string().refine(
-    (value) => /pros:/i.test(value) && /cons:/i.test(value),
-    { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-  ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
+  postedDate: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/)
+    .optional()
+    .describe(
+      'Updated exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting',
+    ),
+  postedDateText: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Updated raw posted-date wording shown on the job posting'),
+  notes: z
+    .string()
+    .refine((value) => /pros:/i.test(value) && /cons:/i.test(value), {
+      message:
+        'Notes must include brief Pros: and Cons: sections from the perspective of life goals',
+    })
+    .optional()
+    .describe(
+      'Updated notes with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.',
+    ),
 });
 
 export const RemoveJobListingSchema = z.object({
@@ -306,36 +488,57 @@ export const changeTextTool = createMastraToolForStateSetter(
  */
 export const addTaskTool = createTool({
   id: 'addTask',
-  description: 'Add a new task to an unordered General backlog. Returns the taskId which can later be admitted to Current with addTaskToCurrent. Daily tasks persist after completion and should be added to Today only when explicitly selected.',
+  description:
+    'Add a new task to an unordered General backlog. Returns the taskId which can later be admitted to Current with addTaskToCurrent. Daily tasks persist after completion and should be added to Today only when explicitly selected.',
   inputSchema: AddTaskSchema,
   outputSchema: z.object({
     success: z.boolean(),
     taskId: z.string().optional(),
-    task: z.object({
-      id: z.string(),
-      text: z.string(),
-      listType: z.enum(['have-to-do', 'want-to-do']),
-      position: z.number().optional(),
-      parentTaskId: z.string().optional(),
-      dueDate: z.string().optional(),
-      dueTimeStart: z.string().optional(),
-      dueTimeEnd: z.string().optional(),
-      isDaily: z.boolean().optional(),
-      projects: z.array(z.string()).optional(),
-    }).optional(),
+    task: z
+      .object({
+        id: z.string(),
+        text: z.string(),
+        listType: z.enum(['have-to-do', 'want-to-do']),
+        position: z.number().optional(),
+        parentTaskId: z.string().optional(),
+        dueDate: z.string().optional(),
+        dueTimeStart: z.string().optional(),
+        dueTimeEnd: z.string().optional(),
+        isDaily: z.boolean().optional(),
+        projects: z.array(z.string()).optional(),
+      })
+      .optional(),
     message: z.string(),
   }),
-  execute: async ({ text, listType, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }) => {
+  execute: async ({
+    text,
+    listType,
+    parentTaskId,
+    dueDate,
+    dueTimeStart,
+    dueTimeEnd,
+    isDaily,
+    projects,
+  }) => {
     try {
       // Call the API directly to add the task
       const response = await fetch('http://localhost:3000/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ task: text, listType, parentTaskId, dueDate, dueTimeStart, dueTimeEnd, isDaily, projects }),
+        body: JSON.stringify({
+          task: text,
+          listType,
+          parentTaskId,
+          dueDate,
+          dueTimeStart,
+          dueTimeEnd,
+          isDaily,
+          projects,
+        }),
       });
-      
+
       const result = await response.json();
-      
+
       if (result.success && result.taskId) {
         const createdTask = result.task as
           | {
@@ -367,15 +570,15 @@ export const addTaskTool = createTool({
           message: `Task "${text}" added to ${listType} with ID: ${result.taskId}${isDaily ? ' (daily recurring)' : ''}`,
         };
       }
-      
-      return { 
-        success: false, 
-        message: result.error || 'Failed to add task' 
+
+      return {
+        success: false,
+        message: result.error || 'Failed to add task',
       };
     } catch (error) {
-      return { 
-        success: false, 
-        message: `Error adding task: ${error instanceof Error ? error.message : String(error)}` 
+      return {
+        success: false,
+        message: `Error adding task: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
   },
@@ -398,7 +601,8 @@ export const updateTaskTool = createMastraToolForStateSetter(
   'updateTask',
   UpdateTaskSchema,
   {
-    description: 'Update an existing task\'s text, due date/time, projects, or parent relationship in a general task list.',
+    description:
+      "Update an existing task's text, due date/time, projects, or parent relationship in a general task list.",
     toolId: 'updateTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -446,7 +650,8 @@ export const addCurrentTaskToTodayTool = createMastraToolForStateSetter(
   'addCurrentTaskToToday',
   AddCurrentTaskToTodaySchema,
   {
-    description: 'Select an existing Current task into today\'s dated Today list without changing Current priority.',
+    description:
+      "Select an existing Current task into today's dated Today list without changing Current priority.",
     toolId: 'addCurrentTaskToToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -470,7 +675,8 @@ export const completeTaskTool = createMastraToolForStateSetter(
   'completeTask',
   CompleteTaskSchema,
   {
-    description: 'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general list.',
+    description:
+      'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general list.',
     toolId: 'completeTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -517,7 +723,8 @@ async function executeRoadmapAction(payload: Record<string, unknown>) {
 
 export const setProjectGoalTool = createTool({
   id: 'setProjectGoal',
-  description: 'Set or clear the goal for a project roadmap. Project identity is the normalized project slug used in task projects.',
+  description:
+    'Set or clear the goal for a project roadmap. Project identity is the normalized project slug used in task projects.',
   inputSchema: SetProjectGoalSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, goal }) => executeRoadmapAction({ action: 'set-goal', project, goal }),
@@ -525,7 +732,8 @@ export const setProjectGoalTool = createTool({
 
 export const addRoadmapCheckpointTool = createTool({
   id: 'addRoadmapCheckpoint',
-  description: 'Add an ordered checkpoint to a project roadmap. Checkpoint status is manual and defaults to not-started.',
+  description:
+    'Add an ordered checkpoint to a project roadmap. Checkpoint status is manual and defaults to not-started.',
   inputSchema: AddRoadmapCheckpointSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, title, description, status }) =>
@@ -538,7 +746,14 @@ export const updateRoadmapCheckpointTool = createTool({
   inputSchema: UpdateRoadmapCheckpointSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, checkpointId, title, description, status }) =>
-    executeRoadmapAction({ action: 'update-checkpoint', project, checkpointId, title, description, status }),
+    executeRoadmapAction({
+      action: 'update-checkpoint',
+      project,
+      checkpointId,
+      title,
+      description,
+      status,
+    }),
 });
 
 export const reorderRoadmapCheckpointTool = createTool({
@@ -552,7 +767,8 @@ export const reorderRoadmapCheckpointTool = createTool({
 
 export const removeRoadmapCheckpointTool = createTool({
   id: 'removeRoadmapCheckpoint',
-  description: 'Remove a checkpoint from a project roadmap. Linked tasks remain in the normal task lists.',
+  description:
+    'Remove a checkpoint from a project roadmap. Linked tasks remain in the normal task lists.',
   inputSchema: RemoveRoadmapCheckpointSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, checkpointId }) =>
@@ -561,7 +777,8 @@ export const removeRoadmapCheckpointTool = createTool({
 
 export const linkRoadmapTaskTool = createTool({
   id: 'linkRoadmapTask',
-  description: 'Link an existing normal task into a roadmap checkpoint. A task can appear only once within a project roadmap, so linking moves it from any previous checkpoint in that project.',
+  description:
+    'Link an existing normal task into a roadmap checkpoint. A task can appear only once within a project roadmap, so linking moves it from any previous checkpoint in that project.',
   inputSchema: LinkRoadmapTaskSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, checkpointId, taskId, listType }) =>
@@ -570,7 +787,8 @@ export const linkRoadmapTaskTool = createTool({
 
 export const unlinkRoadmapTaskTool = createTool({
   id: 'unlinkRoadmapTask',
-  description: 'Unlink a task from a roadmap checkpoint without deleting the underlying normal task.',
+  description:
+    'Unlink a task from a roadmap checkpoint without deleting the underlying normal task.',
   inputSchema: UnlinkRoadmapTaskSchema,
   outputSchema: RoadmapToolOutputSchema,
   execute: async ({ project, checkpointId, taskId, listType }) =>
@@ -579,10 +797,21 @@ export const unlinkRoadmapTaskTool = createTool({
 
 export const createRoadmapTaskTool = createTool({
   id: 'createRoadmapTask',
-  description: 'Create a General backlog task tagged with the project and link it into a roadmap checkpoint. The returned taskId can be admitted with addTaskToCurrent or planned through journal tools.',
+  description:
+    'Create a General backlog task tagged with the project and link it into a roadmap checkpoint. The returned taskId can be admitted with addTaskToCurrent or planned through journal tools.',
   inputSchema: CreateRoadmapTaskSchema,
   outputSchema: RoadmapToolOutputSchema,
-  execute: async ({ project, checkpointId, text, listType, dueDate, dueTimeStart, dueTimeEnd, isDaily, notesMarkdown }) =>
+  execute: async ({
+    project,
+    checkpointId,
+    text,
+    listType,
+    dueDate,
+    dueTimeStart,
+    dueTimeEnd,
+    isDaily,
+    notesMarkdown,
+  }) =>
     executeRoadmapAction({
       action: 'create-task',
       project,
@@ -604,7 +833,8 @@ export const createDayJournalTool = createMastraToolForStateSetter(
   'createDayJournal',
   CreateDayJournalSchema,
   {
-    description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten. Use this for both actual journal entries and planned entries.',
+    description:
+      'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten. Use this for both actual journal entries and planned entries.',
     toolId: 'createDayJournal',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -616,7 +846,8 @@ export const appendToJournalTool = createMastraToolForStateSetter(
   'appendToJournal',
   AppendToJournalSchema,
   {
-    description: 'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task. Always pass entryMode: "planned" or "logged".',
+    description:
+      'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task. Always pass entryMode: "planned" or "logged".',
     toolId: 'appendToJournal',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -628,7 +859,7 @@ export const deleteJournalEntryTool = createMastraToolForStateSetter(
   'deleteJournalEntry',
   DeleteJournalEntrySchema,
   {
-    description: 'Delete/clear the content of a specific hour\'s journal entry.',
+    description: "Delete/clear the content of a specific hour's journal entry.",
     toolId: 'deleteJournalEntry',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -640,7 +871,8 @@ export const addJournalRangeTool = createMastraToolForStateSetter(
   'addJournalRange',
   AddJournalRangeSchema,
   {
-    description: 'Add a journal entry spanning multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task. Creates an entry like "12pm-2pm: activity". Always pass entryMode: "planned" or "logged".',
+    description:
+      'Add a journal entry spanning multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task. Creates an entry like "12pm-2pm: activity". Always pass entryMode: "planned" or "logged".',
     toolId: 'addJournalRange',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -666,7 +898,8 @@ export const addJobListingTool = createMastraToolForStateSetter(
   'addJobListing',
   AddJobListingSchema,
   {
-    description: 'Add a job listing to the OpenClaw-maintained job board. Include a simple-English 1-2 sentence companySummary, structured source metadata, postedDateText when the posting shows age/date wording, and postedDate in YYYY-MM-DD format when visible or confidently derivable. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
+    description:
+      'Add a job listing to the OpenClaw-maintained job board. Include a simple-English 1-2 sentence companySummary, structured source metadata, postedDateText when the posting shows age/date wording, and postedDate in YYYY-MM-DD format when visible or confidently derivable. Use status: "saved" by default and salary: "not listed" when pay is unavailable. Notes must include brief Pros: and Cons: sections from the perspective of life goals.',
     toolId: 'addJobListing',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -758,7 +991,7 @@ export const TOOL_REGISTRY = {
 
 // Export all tools as an array for easy registration
 export const ALL_TOOLS = [
-  changeTextTool, 
+  changeTextTool,
   addNewTextLineTool,
   createDayJournalTool,
   appendToJournalTool,

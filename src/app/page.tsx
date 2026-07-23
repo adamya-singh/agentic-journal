@@ -3,33 +3,47 @@
 import React from 'react';
 import Link from 'next/link';
 import { z } from 'zod';
-import {
-  useRegisterState,
-  useRegisterFrontendTool,
-  useCedarStore,
-} from 'cedar-os';
+import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-os';
 
 import { ChatModeSelector } from '@/components/ChatModeSelector';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { JobListings } from '@/components/JobListings';
+import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
 import { DebuggerPanel } from '@/cedar/components/debugger';
 import { useRefresh } from '@/lib/RefreshContext';
 import { useIsMobile } from '@/lib/useIsMobile';
-import { JobListingsData, JobListing } from '@/lib/types';
+import type {
+  JobApplicationCategory,
+  JobApplicationResumeVariant,
+  JobApplicationsViewData,
+  JobListingsData,
+  JobListing,
+} from '@/lib/types';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
-type JobListingInput = Omit<JobListing, 'id' | 'createdAt' | 'updatedAt' | 'savedAt' | 'statusHistory' | 'notes' | 'status'> & {
+type JobListingInput = Omit<
+  JobListing,
+  'id' | 'createdAt' | 'updatedAt' | 'savedAt' | 'statusHistory' | 'notes' | 'status'
+> & {
   notes?: string;
   status?: JobListing['status'];
 };
 
 const JobListingSourceSchema = z.object({
-  name: z.string().min(1).describe('The source where this job was discovered, such as Jobright, SpeedyApply, or a GitHub list name'),
-  link: z.string().url().describe('A link to the source posting or source page where the listing was found'),
+  name: z
+    .string()
+    .min(1)
+    .describe(
+      'The source where this job was discovered, such as Jobright, SpeedyApply, or a GitHub list name',
+    ),
+  link: z
+    .string()
+    .url()
+    .describe('A link to the source posting or source page where the listing was found'),
 });
 
 /**
@@ -58,7 +72,7 @@ function getCurrentTime(): string {
 function usePublishCedarContext(
   key: string,
   value: unknown,
-  options?: { color?: string; showInChat?: boolean }
+  options?: { color?: string; showInChat?: boolean },
 ) {
   const putAdditionalContext = useCedarStore((state) => state.putAdditionalContext);
   const color = options?.color;
@@ -102,6 +116,10 @@ export default function HomePage() {
   const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
   const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
   const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
+  const [jobApplicationsData, setJobApplicationsData] =
+    React.useState<JobApplicationsViewData | null>(null);
+  const [jobApplicationsLoading, setJobApplicationsLoading] = React.useState(true);
+  const [jobApplicationsError, setJobApplicationsError] = React.useState<string | null>(null);
   const [projectRoadmapsData, setProjectRoadmapsData] = React.useState<unknown>(null);
 
   // Get refresh functions from context
@@ -140,7 +158,7 @@ export default function HomePage() {
         toolMessage.payload?.toolCallId
       ) {
         const toolCallId = toolMessage.payload.toolCallId;
-        
+
         // Skip if we've already processed this tool call
         if (processedToolCallIds.current.has(toolCallId)) {
           continue;
@@ -167,7 +185,7 @@ export default function HomePage() {
           if (!currentData) return currentData;
 
           const key = task.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          
+
           // Check if task already exists (by ID)
           if (currentData.generalTasks[key].some((t) => t.id === task.id)) {
             return currentData; // Already exists, no update needed
@@ -187,13 +205,19 @@ export default function HomePage() {
           const currentTasks = [...currentData.generalTasks[key]];
 
           // Insert at position or append to end
-          if (typeof task.position === 'number' && task.position >= 0 && task.position <= currentTasks.length) {
+          if (
+            typeof task.position === 'number' &&
+            task.position >= 0 &&
+            task.position <= currentTasks.length
+          ) {
             currentTasks.splice(task.position, 0, newTask);
           } else {
             currentTasks.push(newTask);
           }
 
-          console.log(`[Stream Processor] Auto-synced addTask result: "${task.text}" to ${task.listType}`);
+          console.log(
+            `[Stream Processor] Auto-synced addTask result: "${task.text}" to ${task.listType}`,
+          );
 
           return {
             ...currentData,
@@ -223,7 +247,7 @@ export default function HomePage() {
       }
 
       setJobListingsData({
-        schemaVersion: 1,
+        schemaVersion: 2,
         listings: Array.isArray(data.listings) ? data.listings : [],
       });
     } catch (error) {
@@ -233,9 +257,38 @@ export default function HomePage() {
     }
   }, []);
 
+  const refreshJobApplications = React.useCallback(async () => {
+    setJobApplicationsLoading(true);
+    setJobApplicationsError(null);
+    try {
+      const response = await fetch('/api/jobs/applications/list', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to load job applications');
+      }
+      setJobApplicationsData({
+        schemaVersion: 1,
+        workerEnabled: data.workerEnabled === true,
+        enabledApplicationCategories: data.enabledApplicationCategories,
+        readiness: data.readiness,
+        counts: data.counts,
+        categoryCounts: data.categoryCounts,
+        eligibleBacklog: data.eligibleBacklog,
+        applications: data.applications,
+      });
+    } catch (error) {
+      setJobApplicationsError(
+        error instanceof Error ? error.message : 'Failed to load job applications',
+      );
+    } finally {
+      setJobApplicationsLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     refreshJobListings();
-  }, [refreshJobListings]);
+    refreshJobApplications();
+  }, [refreshJobApplications, refreshJobListings]);
 
   const refreshProjectRoadmaps = React.useCallback(async () => {
     try {
@@ -350,27 +403,57 @@ export default function HomePage() {
   });
 
   // Valid hours for journal entries
-  const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
-  type HourOfDay = typeof VALID_HOURS[number];
+  const VALID_HOURS = [
+    '7am',
+    '8am',
+    '9am',
+    '10am',
+    '11am',
+    '12pm',
+    '1pm',
+    '2pm',
+    '3pm',
+    '4pm',
+    '5pm',
+    '6pm',
+    '7pm',
+    '8pm',
+    '9pm',
+    '10pm',
+    '11pm',
+    '12am',
+    '1am',
+    '2am',
+    '3am',
+    '4am',
+    '5am',
+    '6am',
+  ] as const;
+  type HourOfDay = (typeof VALID_HOURS)[number];
 
   // Register week view data as Cedar state with setters for journal management
   useRegisterState({
     key: 'weekJournals',
-    description: 'Journal entries for the current week (Monday-Sunday), including planned and logged entry modes by hour.',
+    description:
+      'Journal entries for the current week (Monday-Sunday), including planned and logged entry modes by hour.',
     value: weekViewData,
     setValue: setWeekViewData,
     stateSetters: {
       // ==================== JOURNAL SETTERS ====================
       createDayJournal: {
         name: 'createDayJournal',
-        description: 'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
+        description:
+          'Create a new journal file for a specific date. If a journal already exists, it will not be overwritten.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe('The date in ISO format (YYYY-MM-DD, e.g., 2025-11-25)'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string }
+          args: { date: string },
         ) => {
           // Call API to create journal
           await fetch('/api/journal/create', {
@@ -385,19 +468,35 @@ export default function HomePage() {
       },
       appendToJournal: {
         name: 'appendToJournal',
-        description: 'Append to a specific hour\'s journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
+        description:
+          "Append to a specific hour's journal entry. Use text for free-form entries, OR use taskId+listType to link to an existing task.",
         argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to append to (e.g., "8am", "12pm", "5pm")'),
           text: z.string().optional().describe('The text to append (use this OR taskId+listType)'),
           taskId: z.string().optional().describe('The ID of an existing task to reference'),
-          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
-          entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
+          listType: z
+            .enum(['have-to-do', 'want-to-do'])
+            .optional()
+            .describe('Which list the task belongs to'),
+          entryMode: z
+            .enum(['planned', 'logged'])
+            .describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay; text?: string; taskId?: string; listType?: ListType; entryMode: 'planned' | 'logged' }
+          args: {
+            date: string;
+            hour: HourOfDay;
+            text?: string;
+            taskId?: string;
+            listType?: ListType;
+            entryMode: 'planned' | 'logged';
+          },
         ) => {
           if (!currentData) return;
 
@@ -421,15 +520,18 @@ export default function HomePage() {
       },
       deleteJournalEntry: {
         name: 'deleteJournalEntry',
-        description: 'Delete/clear the content of a specific hour\'s journal entry.',
+        description: "Delete/clear the content of a specific hour's journal entry.",
         argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe('The date in ISO format (YYYY-MM-DD)'),
           hour: z.enum(VALID_HOURS).describe('The hour to clear'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; hour: HourOfDay }
+          args: { date: string; hour: HourOfDay },
         ) => {
           if (!currentData) return;
 
@@ -456,20 +558,42 @@ export default function HomePage() {
       // ==================== JOURNAL RANGE SETTERS ====================
       addJournalRange: {
         name: 'addJournalRange',
-        description: 'Add a journal entry that spans multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
+        description:
+          'Add a journal entry that spans multiple hours. Use text for free-form entries, OR use taskId+listType to link to an existing task.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range (e.g., "12pm")'),
-          end: z.enum(VALID_HOURS).describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
-          text: z.string().optional().describe('The text describing the activity (use this OR taskId+listType)'),
+          end: z
+            .enum(VALID_HOURS)
+            .describe('The end hour of the range (e.g., "2pm"). Must be after start.'),
+          text: z
+            .string()
+            .optional()
+            .describe('The text describing the activity (use this OR taskId+listType)'),
           taskId: z.string().optional().describe('The ID of an existing task to reference'),
-          listType: z.enum(['have-to-do', 'want-to-do']).optional().describe('Which list the task belongs to'),
-          entryMode: z.enum(['planned', 'logged']).describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
+          listType: z
+            .enum(['have-to-do', 'want-to-do'])
+            .optional()
+            .describe('Which list the task belongs to'),
+          entryMode: z
+            .enum(['planned', 'logged'])
+            .describe('Entry mode: "planned" for intentions/schedule, "logged" for actual events'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay; text?: string; taskId?: string; listType?: ListType; entryMode: 'planned' | 'logged' }
+          args: {
+            date: string;
+            start: HourOfDay;
+            end: HourOfDay;
+            text?: string;
+            taskId?: string;
+            listType?: ListType;
+            entryMode: 'planned' | 'logged';
+          },
         ) => {
           if (!currentData) return;
 
@@ -497,14 +621,17 @@ export default function HomePage() {
         name: 'removeJournalRange',
         description: 'Remove a journal range entry by specifying its start and end hours.',
         argsSchema: z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('The date in ISO format (YYYY-MM-DD)'),
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .describe('The date in ISO format (YYYY-MM-DD)'),
           start: z.enum(VALID_HOURS).describe('The start hour of the range to remove'),
           end: z.enum(VALID_HOURS).describe('The end hour of the range to remove'),
         }),
         execute: async (
           currentData: WeekViewData | null,
           setValue: (newValue: WeekViewData | null) => void,
-          args: { date: string; start: HourOfDay; end: HourOfDay }
+          args: { date: string; start: HourOfDay; end: HourOfDay },
         ) => {
           if (!currentData) return;
 
@@ -528,7 +655,8 @@ export default function HomePage() {
   // Register task lists data as Cedar state with setters for task management
   useRegisterState({
     key: 'taskLists',
-    description: 'Task lists containing dated Today selections, ordered running Current queues, and unordered General backlogs. Today contains selected Current tasks plus automatic due-date tasks for the active date.',
+    description:
+      'Task lists containing dated Today selections, ordered running Current queues, and unordered General backlogs. Today contains selected Current tasks plus automatic due-date tasks for the active date.',
     value: taskListsData,
     setValue: setTaskListsData,
     stateSetters: {
@@ -545,12 +673,12 @@ export default function HomePage() {
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const filteredTasks = currentData.generalTasks[key].filter(t => t.id !== args.taskId);
+          const filteredTasks = currentData.generalTasks[key].filter((t) => t.id !== args.taskId);
 
           // Optimistically update state
           setValue({
@@ -577,17 +705,33 @@ export default function HomePage() {
       },
       updateTask: {
         name: 'updateTask',
-        description: 'Update an existing task\'s text, due date/time, or projects in a general task list.',
+        description:
+          "Update an existing task's text, due date/time, or projects in a general task list.",
         argsSchema: z.object({
           taskId: z.string().optional().describe('The ID of the task to update when available'),
           oldText: z.string().min(1).describe('The current text of the task to update'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
           newText: z.string().optional().describe('The new text for the task'),
-          dueDate: z.string().optional().describe('The new due date (ISO format), or empty string to remove'),
-          dueTimeStart: z.string().optional().describe('Optional due time start (HH:mm), or empty string to remove due time'),
-          dueTimeEnd: z.string().optional().describe('Optional due time end (HH:mm) for ranges, or empty string for single-time'),
-          projects: z.array(z.string()).optional().describe('Optional replacement list of projects for this task'),
-          parentTaskId: z.string().optional().describe('Optional parent task ID, or empty string to clear'),
+          dueDate: z
+            .string()
+            .optional()
+            .describe('The new due date (ISO format), or empty string to remove'),
+          dueTimeStart: z
+            .string()
+            .optional()
+            .describe('Optional due time start (HH:mm), or empty string to remove due time'),
+          dueTimeEnd: z
+            .string()
+            .optional()
+            .describe('Optional due time end (HH:mm) for ranges, or empty string for single-time'),
+          projects: z
+            .array(z.string())
+            .optional()
+            .describe('Optional replacement list of projects for this task'),
+          parentTaskId: z
+            .string()
+            .optional()
+            .describe('Optional parent task ID, or empty string to clear'),
         }),
         execute: async (
           currentData: TaskListsData | null,
@@ -602,13 +746,15 @@ export default function HomePage() {
             dueTimeEnd?: string;
             projects?: string[];
             parentTaskId?: string;
-          }
+          },
         ) => {
           if (!currentData) return;
 
           const key = args.listType === 'have-to-do' ? 'haveToDo' : 'wantToDo';
-          const updatedTasks = currentData.generalTasks[key].map(task => {
-            const matchesTask = args.taskId ? task.id === args.taskId : task.text === args.oldText.trim();
+          const updatedTasks = currentData.generalTasks[key].map((task) => {
+            const matchesTask = args.taskId
+              ? task.id === args.taskId
+              : task.text === args.oldText.trim();
             if (matchesTask) {
               const updated: Task = { ...task };
               if (args.newText) updated.text = args.newText.trim();
@@ -687,16 +833,21 @@ export default function HomePage() {
       },
       reorderCurrentTask: {
         name: 'reorderCurrentTask',
-        description: 'Move a ranked Current task to a new priority position. Position 0 is highest priority.',
+        description:
+          'Move a ranked Current task to a new priority position. Position 0 is highest priority.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the Current task to move'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task is in'),
-          newPosition: z.number().int().min(0).describe('The new position index (0 = highest priority)'),
+          newPosition: z
+            .number()
+            .int()
+            .min(0)
+            .describe('The new position index (0 = highest priority)'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType; newPosition: number }
+          args: { taskId: string; listType: ListType; newPosition: number },
         ) => {
           if (!currentData) return;
           await fetch('/api/tasks/current/reorder', {
@@ -718,12 +869,17 @@ export default function HomePage() {
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of an existing task from the general list'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
-          position: z.number().int().min(0).optional().describe('Priority position; omit to append'),
+          position: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe('Priority position; omit to append'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType; position?: number }
+          args: { taskId: string; listType: ListType; position?: number },
         ) => {
           if (!currentData) return;
           await fetch('/api/tasks/current/add', {
@@ -740,7 +896,8 @@ export default function HomePage() {
       },
       removeTaskFromCurrent: {
         name: 'removeTaskFromCurrent',
-        description: 'Remove a ranked task from Current while leaving it in General. This also removes any uncompleted selected copy from active Today.',
+        description:
+          'Remove a ranked task from Current while leaving it in General. This also removes any uncompleted selected copy from active Today.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to remove from Current'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list to remove from'),
@@ -748,7 +905,7 @@ export default function HomePage() {
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
           await fetch('/api/tasks/current/remove', {
@@ -764,7 +921,8 @@ export default function HomePage() {
       },
       addCurrentTaskToToday: {
         name: 'addCurrentTaskToToday',
-        description: 'Select an existing Current task into the active date\'s Today list without changing Current priority.',
+        description:
+          "Select an existing Current task into the active date's Today list without changing Current priority.",
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the Current task to select for Today'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -772,7 +930,7 @@ export default function HomePage() {
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
           await fetch('/api/tasks/today/add', {
@@ -789,7 +947,8 @@ export default function HomePage() {
       },
       removeTaskFromToday: {
         name: 'removeTaskFromToday',
-        description: 'Remove a selected task from the active date\'s Today list without changing Current or General.',
+        description:
+          "Remove a selected task from the active date's Today list without changing Current or General.",
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the selected Today task to remove'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -797,7 +956,7 @@ export default function HomePage() {
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
           await fetch('/api/tasks/today/remove', {
@@ -814,7 +973,8 @@ export default function HomePage() {
       },
       completeTask: {
         name: 'completeTask',
-        description: 'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general task list.',
+        description:
+          'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general task list.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -822,7 +982,7 @@ export default function HomePage() {
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType }
+          args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
 
@@ -846,7 +1006,8 @@ export default function HomePage() {
   // Register job listings as Cedar state with setters for OpenClaw.
   useRegisterState({
     key: 'jobListings',
-    description: 'OpenClaw-maintained job listings with company, simple company summary, position title, location, job type, status, salary, direct application link, structured source metadata, free-form notes, posted date, raw posted-date text, saved timestamp, and status history.',
+    description:
+      'OpenClaw-maintained job listings with company, simple company summary, position title, location, application categories, status, salary, direct application link, structured source metadata, free-form notes, posted date, raw posted-date text, saved timestamp, and status history.',
     value: jobListingsData,
     setValue: setJobListingsData,
     stateSetters: {
@@ -855,25 +1016,63 @@ export default function HomePage() {
         description: 'Add a job listing to the OpenClaw-maintained job board.',
         argsSchema: z.object({
           company: z.string().min(1).describe('The company name'),
-          companySummary: z.string().min(1).describe('A simple-English 1-2 sentence description of what the company does at a high level'),
+          companySummary: z
+            .string()
+            .min(1)
+            .describe(
+              'A simple-English 1-2 sentence description of what the company does at a high level',
+            ),
           positionTitle: z.string().min(1).describe('The job title or role name'),
           location: z.string().min(1).describe('The job location or remote/hybrid location text'),
-          jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).describe('The job category'),
-          status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.'),
-          salary: z.string().min(1).describe('Salary or pay range text. Use "not listed" if unavailable.'),
+          applicationCategories: z
+            .array(
+              z.enum(['fall-internship', 'spring-internship', 'summer-internship', 'new-grad']),
+            )
+            .min(1)
+            .describe('Every application category explicitly supported by the listing'),
+          status: z
+            .enum(['saved', 'starred', 'applied', 'archived'])
+            .optional()
+            .describe(
+              'The listing status. Defaults to saved. Use archived to hide without losing dedupe memory.',
+            ),
+          salary: z
+            .string()
+            .min(1)
+            .describe('Salary or pay range text. Use "not listed" if unavailable.'),
           link: z.string().url().describe('The application or job posting URL'),
-          source: JobListingSourceSchema.describe('Where this listing was discovered and the page URL for that source'),
-          postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('The exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
-          postedDateText: z.string().min(1).optional().describe('The raw posted-date wording shown on the job posting, such as "posted today", "posted 30+ days ago", or "posted Apr 12"'),
-          notes: z.string().min(1).refine(
-            (value) => /pros:/i.test(value) && /cons:/i.test(value),
-            { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-          ).describe('Free-form notes from OpenClaw with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
+          source: JobListingSourceSchema.describe(
+            'Where this listing was discovered and the page URL for that source',
+          ),
+          postedDate: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .optional()
+            .describe(
+              'The exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting',
+            ),
+          postedDateText: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'The raw posted-date wording shown on the job posting, such as "posted today", "posted 30+ days ago", or "posted Apr 12"',
+            ),
+          notes: z
+            .string()
+            .min(1)
+            .refine((value) => /pros:/i.test(value) && /cons:/i.test(value), {
+              message:
+                'Notes must include brief Pros: and Cons: sections from the perspective of life goals',
+            })
+            .describe(
+              'Free-form notes from OpenClaw with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.',
+            ),
         }),
         execute: async (
           currentData: JobListingsData | null,
           setValue: (newValue: JobListingsData | null) => void,
-          args: JobListingInput
+          args: JobListingInput,
         ) => {
           const response = await fetch('/api/jobs/add', {
             method: 'POST',
@@ -887,7 +1086,7 @@ export default function HomePage() {
           }
 
           setValue({
-            schemaVersion: 1,
+            schemaVersion: 2,
             listings: data.listings,
           });
         },
@@ -898,25 +1097,58 @@ export default function HomePage() {
         argsSchema: z.object({
           id: z.string().min(1).describe('The job listing ID'),
           company: z.string().min(1).optional().describe('Updated company name'),
-          companySummary: z.string().min(1).optional().describe('Updated simple-English 1-2 sentence description of what the company does at a high level'),
+          companySummary: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              'Updated simple-English 1-2 sentence description of what the company does at a high level',
+            ),
           positionTitle: z.string().min(1).optional().describe('Updated job title or role name'),
           location: z.string().min(1).optional().describe('Updated job location'),
-          jobType: z.enum(['fall-coop', 'spring-coop', 'new-grad']).optional().describe('Updated job category'),
-          status: z.enum(['saved', 'starred', 'applied', 'archived']).optional().describe('Updated listing status'),
+          applicationCategories: z
+            .array(
+              z.enum(['fall-internship', 'spring-internship', 'summer-internship', 'new-grad']),
+            )
+            .min(1)
+            .optional()
+            .describe('Updated application categories'),
+          status: z
+            .enum(['saved', 'starred', 'applied', 'archived'])
+            .optional()
+            .describe('Updated listing status'),
           salary: z.string().min(1).optional().describe('Updated salary or pay range text'),
           link: z.string().url().optional().describe('Updated application or job posting URL'),
-          source: JobListingSourceSchema.optional().describe('Updated source name and source page URL'),
-          postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe('Updated exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting'),
-          postedDateText: z.string().min(1).optional().describe('Updated raw posted-date wording shown on the job posting'),
-          notes: z.string().refine(
-            (value) => /pros:/i.test(value) && /cons:/i.test(value),
-            { message: 'Notes must include brief Pros: and Cons: sections from the perspective of life goals' }
-          ).optional().describe('Updated notes with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.'),
+          source: JobListingSourceSchema.optional().describe(
+            'Updated source name and source page URL',
+          ),
+          postedDate: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .optional()
+            .describe(
+              'Updated exact date the job was posted in YYYY-MM-DD format, if visible or confidently derivable from the posting',
+            ),
+          postedDateText: z
+            .string()
+            .min(1)
+            .optional()
+            .describe('Updated raw posted-date wording shown on the job posting'),
+          notes: z
+            .string()
+            .refine((value) => /pros:/i.test(value) && /cons:/i.test(value), {
+              message:
+                'Notes must include brief Pros: and Cons: sections from the perspective of life goals',
+            })
+            .optional()
+            .describe(
+              'Updated notes with brief Pros: and Cons: sections from the perspective of life goals. Do not include source metadata here.',
+            ),
         }),
         execute: async (
           currentData: JobListingsData | null,
           setValue: (newValue: JobListingsData | null) => void,
-          args: { id: string } & Partial<JobListingInput>
+          args: { id: string } & Partial<JobListingInput>,
         ) => {
           const response = await fetch('/api/jobs/update', {
             method: 'POST',
@@ -930,7 +1162,7 @@ export default function HomePage() {
           }
 
           setValue({
-            schemaVersion: 1,
+            schemaVersion: 2,
             listings: data.listings,
           });
         },
@@ -944,7 +1176,7 @@ export default function HomePage() {
         execute: async (
           currentData: JobListingsData | null,
           setValue: (newValue: JobListingsData | null) => void,
-          args: { id: string }
+          args: { id: string },
         ) => {
           const response = await fetch('/api/jobs/remove', {
             method: 'POST',
@@ -958,7 +1190,7 @@ export default function HomePage() {
           }
 
           setValue({
-            schemaVersion: 1,
+            schemaVersion: 2,
             listings: data.listings,
           });
         },
@@ -974,23 +1206,79 @@ export default function HomePage() {
     },
   });
 
-  const updateJobListingStatus = React.useCallback(async (id: string, status: JobListing['status']) => {
-    const response = await fetch('/api/jobs/update', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, status }),
-    });
-    const data = await response.json();
+  const updateJobListingStatus = React.useCallback(
+    async (id: string, status: JobListing['status']) => {
+      const response = await fetch('/api/jobs/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status }),
+      });
+      const data = await response.json();
 
-    if (!response.ok || !data.success) {
-      throw new Error(data.error || 'Failed to update job listing status');
-    }
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update job listing status');
+      }
 
-    setJobListingsData({
-      schemaVersion: 1,
-      listings: data.listings,
-    });
-  }, []);
+      setJobListingsData({
+        schemaVersion: 2,
+        listings: data.listings,
+      });
+      await refreshJobApplications();
+    },
+    [refreshJobApplications],
+  );
+
+  const controlJobApplications = React.useCallback(
+    async (action: 'start' | 'pause') => {
+      const response = await fetch('/api/jobs/applications/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || `Failed to ${action} job applications`);
+      }
+      await refreshJobApplications();
+    },
+    [refreshJobApplications],
+  );
+
+  const saveJobApplicationCategories = React.useCallback(
+    async (enabledApplicationCategories: JobApplicationCategory[]) => {
+      const response = await fetch('/api/jobs/applications/preferences', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabledApplicationCategories }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update application categories');
+      }
+      await refreshJobApplications();
+    },
+    [refreshJobApplications],
+  );
+
+  const saveJobApplicationAnswers = React.useCallback(
+    async (
+      listingId: string,
+      resumeVariant: JobApplicationResumeVariant,
+      responses: JobApplicationResponseInput[],
+    ) => {
+      const response = await fetch('/api/jobs/applications/answers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ listingId, resumeVariant, responses }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to save application answers');
+      }
+      await Promise.all([refreshJobApplications(), refreshJobListings()]);
+    },
+    [refreshJobApplications, refreshJobListings],
+  );
 
   // Publish React state to Cedar context after render to avoid first-render registration races.
   usePublishCedarContext('mainText', mainText, {
@@ -1015,6 +1303,10 @@ export default function HomePage() {
   });
 
   usePublishCedarContext('jobListings', jobListingsData, {
+    showInChat: false,
+  });
+
+  usePublishCedarContext('jobApplications', jobApplicationsData, {
     showInChat: false,
   });
 
@@ -1101,7 +1393,9 @@ export default function HomePage() {
         {/* Display dynamically added text lines */}
         {textLines.length > 0 && (
           <div className="w-full max-w-2xl">
-            <h3 className="text-xl font-medium text-gray-700 dark:text-gray-200 mb-4 text-center">Added by Cedar:</h3>
+            <h3 className="text-xl font-medium text-gray-700 dark:text-gray-200 mb-4 text-center">
+              Added by Cedar:
+            </h3>
             <div className="space-y-2">
               {textLines.map((line, index) => (
                 <div
@@ -1109,11 +1403,15 @@ export default function HomePage() {
                   className="p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg text-center"
                 >
                   {line.startsWith('**') && line.endsWith('**') ? (
-                    <strong className="text-blue-800 dark:text-blue-200">{line.slice(2, -2)}</strong>
+                    <strong className="text-blue-800 dark:text-blue-200">
+                      {line.slice(2, -2)}
+                    </strong>
                   ) : line.startsWith('*') && line.endsWith('*') ? (
                     <em className="text-blue-700 dark:text-blue-300">{line.slice(1, -1)}</em>
                   ) : line.startsWith('🌟') ? (
-                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">{line}</span>
+                    <span className="text-yellow-600 dark:text-yellow-400 font-semibold">
+                      {line}
+                    </span>
                   ) : (
                     <span className="text-blue-800 dark:text-blue-200">{line}</span>
                   )}
@@ -1129,6 +1427,12 @@ export default function HomePage() {
         loading={jobListingsLoading}
         error={jobListingsError}
         onStatusChange={updateJobListingStatus}
+        applications={jobApplicationsData}
+        applicationsLoading={jobApplicationsLoading}
+        applicationsError={jobApplicationsError}
+        onApplicationControl={controlJobApplications}
+        onApplicationCategoriesChange={saveJobApplicationCategories}
+        onApplicationSave={saveJobApplicationAnswers}
       />
 
       {effectiveChatMode === 'caption' && <CedarCaptionChat />}

@@ -68,7 +68,12 @@ export interface ProjectPreferencesData {
 
 // ============ Job Listing Types ============
 
-export type JobType = 'fall-coop' | 'spring-coop' | 'new-grad';
+export type JobApplicationCategory =
+  | 'fall-internship'
+  | 'spring-internship'
+  | 'summer-internship'
+  | 'new-grad';
+export type LegacyJobType = 'fall-coop' | 'spring-coop' | 'new-grad';
 export type JobListingStatus = 'saved' | 'starred' | 'applied' | 'archived';
 
 export interface JobListingSource {
@@ -87,7 +92,7 @@ export interface JobListing {
   companySummary: string;
   positionTitle: string;
   location: string;
-  jobType: JobType;
+  applicationCategories: JobApplicationCategory[];
   status: JobListingStatus;
   salary: string;
   link: string;
@@ -102,8 +107,148 @@ export interface JobListing {
 }
 
 export interface JobListingsData {
-  schemaVersion: 1;
+  schemaVersion: 2;
   listings: JobListing[];
+}
+
+// ============ Job Application Types ============
+
+export type JobApplicationStatus =
+  | 'unstarted'
+  | 'in-progress'
+  | 'awaiting-user-input'
+  | 'submitted'
+  | 'closed';
+
+export type JobApplicationResumeVariant = 'swe' | 'mle';
+export type JobApplicationQuestionKind =
+  | 'text'
+  | 'single-select'
+  | 'multi-select'
+  | 'file'
+  | 'action';
+export type JobApplicationQuestionResolution = 'pending' | 'answered' | 'skipped' | 'auto-resolved';
+export type JobApplicationAnswer = string | string[];
+
+export interface JobApplicationQuestionOption {
+  value: string;
+  label: string;
+}
+
+export interface JobApplicationQuestionSuggestion {
+  answer: JobApplicationAnswer;
+  sourceAnswerId: string;
+  confidence: number;
+  category?: 'standard' | 'legal' | 'certification' | 'demographic';
+}
+
+export interface JobApplicationQuestion {
+  id: string;
+  prompt: string;
+  kind: JobApplicationQuestionKind;
+  required: boolean;
+  helpText?: string;
+  pageUrl?: string;
+  section?: string;
+  options?: JobApplicationQuestionOption[];
+  multiline?: boolean;
+  answer?: JobApplicationAnswer;
+  suggestion?: JobApplicationQuestionSuggestion;
+  resolution: JobApplicationQuestionResolution;
+  discoveredAt: string;
+  answeredAt?: string;
+}
+
+export interface JobApplicationStatusHistoryEntry {
+  status: JobApplicationStatus;
+  changedAt: string;
+}
+
+export interface JobApplicationLease {
+  token: string;
+  claimedAt: string;
+  expiresAt: string;
+}
+
+export interface JobApplicationError {
+  code: string;
+  message: string;
+  occurredAt: string;
+  retryable: boolean;
+}
+
+export interface JobApplicationSubmissionEvidence {
+  url?: string;
+  message?: string;
+}
+
+export interface JobApplicationRecord {
+  listingId: string;
+  status: JobApplicationStatus;
+  resumeVariant: JobApplicationResumeVariant;
+  resumeOverride?: JobApplicationResumeVariant;
+  canonicalApplicationUrl?: string;
+  attemptCount: number;
+  statusHistory: JobApplicationStatusHistoryEntry[];
+  questions: JobApplicationQuestion[];
+  lease?: JobApplicationLease;
+  nextRetryAt?: string;
+  resumeRequestedAt?: string;
+  lastAttemptAt?: string;
+  lastError?: JobApplicationError;
+  submissionAttemptedAt?: string;
+  submittedAt?: string;
+  closedAt?: string;
+  closedReason?: string;
+  submissionEvidence?: JobApplicationSubmissionEvidence;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobApplicationAnswerBankEntry {
+  id: string;
+  normalizedPrompt: string;
+  prompt: string;
+  kind: JobApplicationQuestionKind;
+  optionsFingerprint?: string;
+  answer: JobApplicationAnswer;
+  confirmedAt: string;
+  sourceListingId: string;
+}
+
+export interface JobApplicationsStoreData {
+  schemaVersion: 1;
+  workerEnabled: boolean;
+  enabledApplicationCategories: JobApplicationCategory[];
+  applications: Record<string, JobApplicationRecord>;
+  answerBank: JobApplicationAnswerBankEntry[];
+}
+
+export interface JobApplicationReadiness {
+  ready: boolean;
+  resumeDirectory: string;
+  missingFiles: string[];
+}
+
+export interface JobApplicationCounts {
+  unstarted: number;
+  inProgress: number;
+  awaitingInput: number;
+  submitted: number;
+  closed: number;
+}
+
+export type JobApplicationCategoryCounts = Record<JobApplicationCategory, number>;
+
+export interface JobApplicationsViewData {
+  schemaVersion: 1;
+  workerEnabled: boolean;
+  enabledApplicationCategories: JobApplicationCategory[];
+  readiness: JobApplicationReadiness;
+  counts: JobApplicationCounts;
+  categoryCounts: JobApplicationCategoryCounts;
+  eligibleBacklog: number;
+  applications: Record<string, JobApplicationRecord>;
 }
 
 // ============ Journal Entry Types ============
@@ -337,12 +482,20 @@ export function isTextJournalRangeEntry(entry: JournalRangeEntry): entry is Text
 }
 
 export function isStagedTaskEntry(entry: StagedTaskEntry): entry is StagedTaskEntry {
-  return typeof entry === 'object' && entry !== null && 'taskId' in entry && 'listType' in entry && !('start' in entry);
+  return (
+    typeof entry === 'object' &&
+    entry !== null &&
+    'taskId' in entry &&
+    'listType' in entry &&
+    !('start' in entry)
+  );
 }
 
 /**
  * Check if an hour slot contains multiple entries (is an array).
  */
-export function isJournalEntryArray(slot: JournalHourSlot | null | undefined): slot is JournalEntry[] {
+export function isJournalEntryArray(
+  slot: JournalHourSlot | null | undefined,
+): slot is JournalEntry[] {
   return Array.isArray(slot);
 }

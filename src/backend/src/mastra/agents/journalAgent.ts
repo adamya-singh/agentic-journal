@@ -107,7 +107,7 @@ Job listings are managed through Cedar state and are visible in your context as 
 - companySummary: simple-English 1-2 sentence description of what the company does at a high level
 - positionTitle
 - location
-- jobType: one of "fall-coop", "spring-coop", or "new-grad"
+- applicationCategories: one or more of "fall-internship", "spring-internship", "summer-internship", or "new-grad"
 - status: one of "saved", "starred", "applied", or "archived"
 - salary
 - link: direct application or job posting URL

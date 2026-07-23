@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
-import { JobListing } from '@/lib/types';
+import type { JobListing } from '@/lib/types';
 import { readJobListings, writeJobListings } from '../job-store-utils';
 import { isRecord, JobListingFieldsSchema, normalizeJobListingFields } from '../route-utils';
+import { wakeJobApplicationWorkerIfEnabled } from '../application-worker-utils';
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,7 +11,7 @@ export async function POST(request: NextRequest) {
     if (!isRecord(rawBody)) {
       return NextResponse.json(
         { success: false, error: 'Request body must be an object' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -20,7 +21,7 @@ export async function POST(request: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json(
         { success: false, error: parsed.error.errors[0]?.message ?? 'Invalid job listing' },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
       companySummary: parsed.data.companySummary,
       positionTitle: parsed.data.positionTitle,
       location: parsed.data.location,
-      jobType: parsed.data.jobType,
+      applicationCategories: parsed.data.applicationCategories,
       status: parsed.data.status,
       salary: parsed.data.salary,
       link: parsed.data.link,
@@ -48,17 +49,19 @@ export async function POST(request: NextRequest) {
     const data = readJobListings();
     data.listings.unshift(listing);
     writeJobListings(data);
+    const worker =
+      listing.status === 'saved' || listing.status === 'starred'
+        ? await wakeJobApplicationWorkerIfEnabled()
+        : null;
 
     return NextResponse.json({
       success: true,
       listing,
       listings: data.listings,
+      ...(worker ? { applicationWorker: worker } : {}),
     });
   } catch (error) {
     console.error('Error adding job listing:', error);
-    return NextResponse.json(
-      { success: false, error: 'Internal server error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }
