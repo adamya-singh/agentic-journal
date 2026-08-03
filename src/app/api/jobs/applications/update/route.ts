@@ -4,12 +4,17 @@ import type { JobApplicationQuestion } from '@/lib/types';
 import {
   createActionQuestion,
   createApplicationQuestionId,
+  completeApplicationScreenshotCapture,
+  deleteApplicationScreenshotCaptureFiles,
+  failApplicationScreenshotCapture,
+  hasCurrentCompleteScreenshotCapture,
   JOB_APPLICATION_RETRY_DELAYS_MS,
   mergeApplicationQuestions,
   mutateJobApplicationsStore,
   releaseApplicationLease,
   requireApplicationLease,
   setApplicationStatus,
+  startApplicationScreenshotCapture,
   updateJobListingLeadStatus,
 } from '../../application-store-utils';
 
@@ -56,6 +61,17 @@ const UpdateSchema = z.discriminatedUnion('action', [
     url: z.string().url(),
   }),
   BaseSchema.extend({ action: z.literal('submission-attempted') }),
+  BaseSchema.extend({ action: z.literal('start-screenshot-capture') }),
+  BaseSchema.extend({
+    action: z.literal('complete-screenshot-capture'),
+    captureId: z.string().uuid(),
+  }),
+  BaseSchema.extend({
+    action: z.literal('screenshot-capture-failed'),
+    captureId: z.string().uuid(),
+    error: z.string().min(1),
+    pageUrl: z.string().url().optional(),
+  }),
   BaseSchema.extend({
     action: z.literal('submitted'),
     url: z.string().url().optional(),
@@ -93,6 +109,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const cleanupCaptureIds: string[] = [];
     const result = await mutateJobApplicationsStore((store) => {
       const application = requireApplicationLease(
         store.applications[parsed.data.listingId],
@@ -132,8 +149,56 @@ export async function POST(request: NextRequest) {
         if (application.submissionAttemptedAt) {
           throw new Error('Submission has already been attempted for this application');
         }
+        if (!hasCurrentCompleteScreenshotCapture(application)) {
+          throw new Error(
+            'A complete screenshot capture from the current attempt is required before submission',
+          );
+        }
         application.submissionAttemptedAt = now;
         application.updatedAt = now;
+      }
+
+      if (parsed.data.action === 'start-screenshot-capture') {
+        const started = startApplicationScreenshotCapture(application, now);
+        if (started.supersededCaptureId) cleanupCaptureIds.push(started.supersededCaptureId);
+      }
+
+      if (parsed.data.action === 'complete-screenshot-capture') {
+        const completed = completeApplicationScreenshotCapture(
+          application,
+          parsed.data.captureId,
+          now,
+        );
+        if (
+          completed.supersededCaptureId &&
+          completed.supersededCaptureId !== completed.capture.id
+        ) {
+          cleanupCaptureIds.push(completed.supersededCaptureId);
+        }
+      }
+
+      if (parsed.data.action === 'screenshot-capture-failed') {
+        failApplicationScreenshotCapture(
+          application,
+          parsed.data.captureId,
+          parsed.data.error,
+          now,
+        );
+        application.questions = mergeApplicationQuestions(
+          application.questions.filter(
+            (question) => question.prompt !== 'Screenshot capture needs help',
+          ),
+          [
+            createActionQuestion({
+              prompt: 'Screenshot capture needs help',
+              helpText: `Submission was not attempted because the worker could not save every filled application page after three attempts. ${parsed.data.error}`,
+              pageUrl: parsed.data.pageUrl,
+              now,
+            }),
+          ],
+        );
+        setApplicationStatus(application, 'awaiting-user-input', now);
+        releaseApplicationLease(application);
       }
 
       if (parsed.data.action === 'submitted') {
@@ -226,10 +291,13 @@ export async function POST(request: NextRequest) {
       return application;
     });
 
+    cleanupCaptureIds.forEach(deleteApplicationScreenshotCaptureFiles);
     return NextResponse.json({ success: true, application: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update job application';
-    const status = /lease|already|not found|submission-attempted/i.test(message) ? 409 : 500;
+    const status = /lease|already|not found|submission-attempted|screenshot/i.test(message)
+      ? 409
+      : 500;
     console.error('Error updating job application:', error);
     return NextResponse.json({ success: false, error: message }, { status });
   }

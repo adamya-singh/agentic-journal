@@ -182,6 +182,27 @@ export interface JobApplicationSubmissionEvidence {
   message?: string;
 }
 
+export interface JobApplicationScreenshot {
+  id: string;
+  pageNumber: number;
+  segmentNumber: number;
+  label: string;
+  pageUrl?: string;
+  capturedAt: string;
+  contentType: 'image/png';
+  byteSize: number;
+}
+
+export interface JobApplicationScreenshotCapture {
+  id: string;
+  attemptCount: number;
+  startedAt: string;
+  completedAt?: string;
+  failedAt?: string;
+  error?: string;
+  screenshots: JobApplicationScreenshot[];
+}
+
 export interface JobApplicationRecord {
   listingId: string;
   status: JobApplicationStatus;
@@ -201,6 +222,8 @@ export interface JobApplicationRecord {
   closedAt?: string;
   closedReason?: string;
   submissionEvidence?: JobApplicationSubmissionEvidence;
+  screenshotCapture?: JobApplicationScreenshotCapture;
+  incompleteScreenshotCapture?: JobApplicationScreenshotCapture;
   createdAt: string;
   updatedAt: string;
 }

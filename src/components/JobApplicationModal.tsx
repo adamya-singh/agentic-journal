@@ -1,12 +1,24 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element -- screenshots use private dynamic URLs and must retain original resolution */
+
 import React from 'react';
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, X } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Images,
+  Loader2,
+  X,
+} from 'lucide-react';
 import type {
   JobApplicationAnswer,
   JobApplicationQuestion,
   JobApplicationRecord,
   JobApplicationResumeVariant,
+  JobApplicationScreenshotCapture,
   JobListing,
 } from '@/lib/types';
 
@@ -240,6 +252,8 @@ export function JobApplicationModal({
             )}
           </section>
 
+          <ApplicationScreenshotGallery listingId={listing.id} application={application} />
+
           {application.statusHistory.length > 0 && (
             <details className="rounded-lg border border-slate-200 p-4 text-sm dark:border-slate-700">
               <summary className="cursor-pointer font-semibold text-slate-800 dark:text-slate-200">
@@ -276,6 +290,279 @@ export function JobApplicationModal({
       </div>
     </div>
   );
+}
+
+function ApplicationScreenshotGallery({
+  listingId,
+  application,
+}: {
+  listingId: string;
+  application: JobApplicationRecord;
+}) {
+  const captures = [
+    ...(application.screenshotCapture
+      ? [{ capture: application.screenshotCapture, complete: true }]
+      : []),
+    ...(application.incompleteScreenshotCapture
+      ? [{ capture: application.incompleteScreenshotCapture, complete: false }]
+      : []),
+  ];
+  const images = captures.flatMap(({ capture, complete }) =>
+    capture.screenshots.map((screenshot) => ({ capture, complete, screenshot })),
+  );
+  const [selectedIndex, setSelectedIndex] = React.useState<number | null>(null);
+  const [failedImages, setFailedImages] = React.useState<Set<string>>(new Set());
+  const selected = selectedIndex === null ? undefined : images[selectedIndex];
+
+  React.useEffect(() => {
+    if (!selected) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopImmediatePropagation();
+        setSelectedIndex(null);
+      }
+      if (event.key === 'ArrowLeft')
+        setSelectedIndex((current) =>
+          current === null ? null : (current - 1 + images.length) % images.length,
+        );
+      if (event.key === 'ArrowRight')
+        setSelectedIndex((current) => (current === null ? null : (current + 1) % images.length));
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [images.length, selected]);
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="font-semibold text-slate-900 dark:text-slate-100">
+            Application screenshots
+          </h3>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Filled application pages captured before submission.
+          </p>
+        </div>
+        {application.incompleteScreenshotCapture ? (
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 ring-1 ring-inset ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800">
+            Incomplete
+          </span>
+        ) : application.screenshotCapture ? (
+          <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-800">
+            Complete
+          </span>
+        ) : null}
+      </div>
+
+      {captures.length === 0 ? (
+        <div className="mt-3 flex gap-3 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          <Images className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>
+            {application.status === 'submitted'
+              ? 'This application was submitted before screenshot capture was available.'
+              : 'Screenshots will appear here after the automation fills the application.'}
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-5">
+          {captures.map(({ capture, complete }) => (
+            <ScreenshotCaptureSection
+              key={capture.id}
+              listingId={listingId}
+              capture={capture}
+              complete={complete}
+              failedImages={failedImages}
+              onImageError={(url) => setFailedImages((current) => new Set(current).add(url))}
+              onSelect={(screenshotId) =>
+                setSelectedIndex(images.findIndex((item) => item.screenshot.id === screenshotId))
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {selected && (
+        <div
+          className="fixed inset-0 z-[70] flex flex-col bg-slate-950/95 p-3 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Application screenshot ${selectedIndex! + 1} of ${images.length}`}
+          onMouseDown={(event) => {
+            event.stopPropagation();
+            if (event.target === event.currentTarget) setSelectedIndex(null);
+          }}
+        >
+          <div className="mb-3 flex items-center justify-between gap-3 text-white">
+            <div className="min-w-0">
+              <p className="truncate font-semibold">{selected.screenshot.label}</p>
+              <p className="text-xs text-slate-300">
+                Page {selected.screenshot.pageNumber}
+                {pageSegmentCount(selected.capture, selected.screenshot.pageNumber) > 1
+                  ? ` · Segment ${selected.screenshot.segmentNumber}`
+                  : ''}{' '}
+                · {selectedIndex! + 1} of {images.length}
+              </p>
+            </div>
+            <div className="flex items-center gap-1">
+              <a
+                href={screenshotUrl(listingId, selected.screenshot.id)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10"
+                aria-label="Open full-resolution screenshot in a new tab"
+              >
+                <ExternalLink className="h-5 w-5" />
+              </a>
+              <button
+                type="button"
+                onClick={() => setSelectedIndex(null)}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-md hover:bg-white/10"
+                aria-label="Close screenshot viewer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+          <div className="relative flex min-h-0 flex-1 items-center justify-center">
+            <img
+              src={screenshotUrl(listingId, selected.screenshot.id)}
+              alt={`${selected.screenshot.label}, page ${selected.screenshot.pageNumber}`}
+              className="max-h-full max-w-full rounded-md object-contain"
+            />
+            {images.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSelectedIndex((selectedIndex! - 1 + images.length) % images.length)
+                  }
+                  className="absolute left-0 inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950/70 text-white hover:bg-slate-900"
+                  aria-label="Previous screenshot"
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedIndex((selectedIndex! + 1) % images.length)}
+                  className="absolute right-0 inline-flex h-11 w-11 items-center justify-center rounded-full bg-slate-950/70 text-white hover:bg-slate-900"
+                  aria-label="Next screenshot"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ScreenshotCaptureSection({
+  listingId,
+  capture,
+  complete,
+  failedImages,
+  onImageError,
+  onSelect,
+}: {
+  listingId: string;
+  capture: JobApplicationScreenshotCapture;
+  complete: boolean;
+  failedImages: Set<string>;
+  onImageError: (url: string) => void;
+  onSelect: (screenshotId: string) => void;
+}) {
+  const pages = capture.screenshots.reduce((grouped, screenshot) => {
+    const page = grouped.get(screenshot.pageNumber) ?? [];
+    page.push(screenshot);
+    grouped.set(screenshot.pageNumber, page);
+    return grouped;
+  }, new Map<number, JobApplicationScreenshotCapture['screenshots']>());
+  return (
+    <div
+      className={`rounded-xl border p-4 ${
+        complete
+          ? 'border-slate-200 dark:border-slate-700'
+          : 'border-amber-300 bg-amber-50/50 dark:border-amber-800 dark:bg-amber-950/20'
+      }`}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <p className="font-semibold text-slate-800 dark:text-slate-200">
+          {complete ? 'Latest complete capture' : 'Incomplete capture'}
+        </p>
+        <time className="text-xs text-slate-500 dark:text-slate-400">
+          {formatDateTime(capture.completedAt ?? capture.failedAt ?? capture.startedAt)}
+        </time>
+      </div>
+      {!complete && capture.error && (
+        <div className="mt-3 flex gap-2 text-sm text-amber-800 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <p>{capture.error}</p>
+        </div>
+      )}
+      {capture.screenshots.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          No application pages were saved before capture stopped.
+        </p>
+      ) : (
+        <div className="mt-4 space-y-4">
+          {[...pages.entries()]
+            .sort(([first], [second]) => first - second)
+            .map(([pageNumber, screenshots]) => (
+              <div key={pageNumber}>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Page {pageNumber} · {screenshots[0]?.label}
+                </p>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {screenshots
+                    .slice()
+                    .sort((first, second) => first.segmentNumber - second.segmentNumber)
+                    .map((screenshot) => {
+                      const url = screenshotUrl(listingId, screenshot.id);
+                      return (
+                        <button
+                          key={screenshot.id}
+                          type="button"
+                          onClick={() => onSelect(screenshot.id)}
+                          className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100 text-left transition hover:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:border-slate-700 dark:bg-slate-950"
+                        >
+                          {failedImages.has(url) ? (
+                            <span className="flex aspect-[4/3] items-center justify-center p-3 text-center text-xs text-red-600 dark:text-red-300">
+                              Screenshot could not be loaded
+                            </span>
+                          ) : (
+                            <img
+                              src={url}
+                              alt={`${screenshot.label}, page ${pageNumber}, segment ${screenshot.segmentNumber}`}
+                              loading="lazy"
+                              onError={() => onImageError(url)}
+                              className="aspect-[4/3] w-full object-cover object-top"
+                            />
+                          )}
+                          <span className="block truncate px-2 py-1.5 text-xs text-slate-600 dark:text-slate-300">
+                            {screenshots.length > 1
+                              ? `Segment ${screenshot.segmentNumber}`
+                              : screenshot.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                </div>
+              </div>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function screenshotUrl(listingId: string, screenshotId: string): string {
+  return `/api/jobs/applications/screenshots/${encodeURIComponent(listingId)}/${encodeURIComponent(screenshotId)}`;
+}
+
+function pageSegmentCount(capture: JobApplicationScreenshotCapture, pageNumber: number): number {
+  return capture.screenshots.filter((screenshot) => screenshot.pageNumber === pageNumber).length;
 }
 
 function QuestionField({

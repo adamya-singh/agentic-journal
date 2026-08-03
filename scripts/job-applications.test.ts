@@ -18,6 +18,8 @@ let answersRoute: typeof import('../src/app/api/jobs/applications/answers/route'
 let preferencesRoute: typeof import('../src/app/api/jobs/applications/preferences/route');
 let controlRoute: typeof import('../src/app/api/jobs/applications/control/route');
 let updateRoute: typeof import('../src/app/api/jobs/applications/update/route');
+let screenshotsRoute: typeof import('../src/app/api/jobs/applications/screenshots/route');
+let screenshotReadRoute: typeof import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
 const now = '2026-07-20T12:00:00.000Z';
 const listings = [
   listing('saved-old', 'Software Engineer', 'saved', '2026-07-01T12:00:00.000Z'),
@@ -34,6 +36,9 @@ before(async () => {
   preferencesRoute = await import('../src/app/api/jobs/applications/preferences/route');
   controlRoute = await import('../src/app/api/jobs/applications/control/route');
   updateRoute = await import('../src/app/api/jobs/applications/update/route');
+  screenshotsRoute = await import('../src/app/api/jobs/applications/screenshots/route');
+  screenshotReadRoute =
+    await import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
   mkdirSync(jobsDir, { recursive: true });
   mkdirSync(resumeDir, { recursive: true });
   writeFileSync(path.join(resumeDir, 'Adamya_Singh_Resume_SWE.pdf'), '%PDF-test');
@@ -301,6 +306,79 @@ describe('job application state', () => {
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
       };
     });
+    const missingCapture = await postUpdate({
+      action: 'submission-attempted',
+      listingId: 'saved-old',
+      leaseToken,
+    });
+    assert.equal(missingCapture.status, 409);
+    const started = await postUpdate({
+      action: 'start-screenshot-capture',
+      listingId: 'saved-old',
+      leaseToken,
+    });
+    const startedBody = await started.json();
+    const captureId = startedBody.application.incompleteScreenshotCapture.id as string;
+    const invalidLeaseUpload = await postScreenshot({
+      listingId: 'saved-old',
+      leaseToken: 'wrong-lease',
+      captureId,
+      pageNumber: 1,
+      segmentNumber: 1,
+      label: 'Application',
+      bytes: pngFixture(),
+    });
+    assert.equal(invalidLeaseUpload.status, 409);
+    const invalidImage = await postScreenshot({
+      listingId: 'saved-old',
+      leaseToken,
+      captureId,
+      pageNumber: 1,
+      segmentNumber: 1,
+      label: 'Application',
+      bytes: Buffer.from('not a png'),
+    });
+    assert.equal(invalidImage.status, 400);
+    const uploaded = await postScreenshot({
+      listingId: 'saved-old',
+      leaseToken,
+      captureId,
+      pageNumber: 1,
+      segmentNumber: 1,
+      label: 'Application',
+      bytes: pngFixture(),
+    });
+    assert.equal(uploaded.status, 201);
+    const uploadedBody = await uploaded.json();
+    const screenshotResponse = await screenshotReadRoute.GET(
+      new Request('http://localhost/screenshot'),
+      {
+        params: Promise.resolve({
+          listingId: 'saved-old',
+          screenshotId: uploadedBody.screenshot.id,
+        }),
+      },
+    );
+    assert.equal(screenshotResponse.status, 200);
+    assert.equal(screenshotResponse.headers.get('cache-control'), 'private, no-store, max-age=0');
+    assert.deepEqual(Buffer.from(await screenshotResponse.arrayBuffer()), pngFixture());
+    const duplicate = await postScreenshot({
+      listingId: 'saved-old',
+      leaseToken,
+      captureId,
+      pageNumber: 1,
+      segmentNumber: 1,
+      label: 'Duplicate',
+      bytes: pngFixture(),
+    });
+    assert.equal(duplicate.status, 409);
+    const completed = await postUpdate({
+      action: 'complete-screenshot-capture',
+      listingId: 'saved-old',
+      leaseToken,
+      captureId,
+    });
+    assert.equal(completed.status, 200);
     const premature = await postUpdate({
       action: 'submitted',
       listingId: 'saved-old',
@@ -330,12 +408,78 @@ describe('job application state', () => {
     );
     const saved = store.readJobApplicationsStore().applications['saved-old'];
     assert.equal(saved.status, 'submitted');
+    assert.equal(saved.screenshotCapture?.screenshots.length, 1);
+    assert.equal(saved.incompleteScreenshotCapture, undefined);
     assert.equal(saved.submissionEvidence?.message, 'Thank you for applying');
     assert.equal(
       JSON.parse(readFileSync(path.join(jobsDir, 'listings.json'), 'utf8')).listings.find(
         (candidate: { id: string }) => candidate.id === 'saved-old',
       ).status,
       'applied',
+    );
+  });
+
+  test('retains partial screenshots and blocks submission after capture failure', async () => {
+    const leaseToken = 'failed-capture-lease';
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications.starred = {
+        listingId: 'starred',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lease: {
+          token: leaseToken,
+          claimedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+    const started = await postUpdate({
+      action: 'start-screenshot-capture',
+      listingId: 'starred',
+      leaseToken,
+    });
+    const captureId = (await started.json()).application.incompleteScreenshotCapture.id as string;
+    assert.throws(() =>
+      store.getApplicationScreenshotFilePath('../unsafe', '00000000-0000-4000-8000-000000000000'),
+    );
+    assert.equal(
+      (
+        await postScreenshot({
+          listingId: 'starred',
+          leaseToken,
+          captureId,
+          pageNumber: 1,
+          segmentNumber: 1,
+          label: 'Contact information',
+          bytes: pngFixture(),
+        })
+      ).status,
+      201,
+    );
+    assert.equal(
+      (
+        await postUpdate({
+          action: 'screenshot-capture-failed',
+          listingId: 'starred',
+          leaseToken,
+          captureId,
+          error: 'The review page remained blank after three capture attempts.',
+        })
+      ).status,
+      200,
+    );
+    const application = store.readJobApplicationsStore().applications.starred;
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.lease, undefined);
+    assert.equal(application.incompleteScreenshotCapture?.screenshots.length, 1);
+    assert.match(application.incompleteScreenshotCapture?.error ?? '', /three capture attempts/);
+    assert.ok(
+      application.questions.some((question) => question.prompt === 'Screenshot capture needs help'),
     );
   });
 
@@ -369,6 +513,38 @@ function postUpdate(body: unknown) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  );
+}
+
+function postScreenshot(params: {
+  listingId: string;
+  leaseToken: string;
+  captureId: string;
+  pageNumber: number;
+  segmentNumber: number;
+  label: string;
+  bytes: Buffer;
+}) {
+  const form = new FormData();
+  form.set('listingId', params.listingId);
+  form.set('leaseToken', params.leaseToken);
+  form.set('captureId', params.captureId);
+  form.set('pageNumber', String(params.pageNumber));
+  form.set('segmentNumber', String(params.segmentNumber));
+  form.set('label', params.label);
+  form.set('image', new Blob([params.bytes], { type: 'image/png' }), 'application.png');
+  return screenshotsRoute.POST(
+    new NextRequest('http://localhost/api/jobs/applications/screenshots', {
+      method: 'POST',
+      body: form,
+    }),
+  );
+}
+
+function pngFixture(): Buffer {
+  return Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+    'base64',
   );
 }
 

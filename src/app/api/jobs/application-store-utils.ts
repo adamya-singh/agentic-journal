@@ -11,6 +11,7 @@ import type {
   JobApplicationQuestionKind,
   JobApplicationReadiness,
   JobApplicationRecord,
+  JobApplicationScreenshotCapture,
   JobApplicationsStoreData,
   JobApplicationsViewData,
   JobApplicationStatus,
@@ -22,6 +23,8 @@ const JOBS_DIR =
   process.env.JOB_APPLICATION_JOBS_DIR || path.join(process.cwd(), 'src/backend/data/jobs');
 const APPLICATIONS_FILE = path.join(JOBS_DIR, 'applications.json');
 const APPLICATIONS_LOCK_FILE = path.join(JOBS_DIR, '.applications.lock');
+const SCREENSHOTS_DIR =
+  process.env.JOB_APPLICATION_SCREENSHOTS_DIR || path.join(JOBS_DIR, 'application-screenshots');
 const DEFAULT_RESUME_DIR = '/home/rpi5/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
@@ -48,6 +51,10 @@ export const JOB_APPLICATION_RETRY_DELAYS_MS = [
   30 * 60 * 1000,
   120 * 60 * 1000,
 ] as const;
+
+export const JOB_APPLICATION_SCREENSHOT_MAX_BYTES = 25 * 1024 * 1024;
+const OPAQUE_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ClaimedJobApplication {
   listing: JobListing;
@@ -326,6 +333,104 @@ export function setApplicationStatus(
 
 export function releaseApplicationLease(application: JobApplicationRecord): void {
   delete application.lease;
+}
+
+export function startApplicationScreenshotCapture(
+  application: JobApplicationRecord,
+  startedAt = new Date().toISOString(),
+): { capture: JobApplicationScreenshotCapture; supersededCaptureId?: string } {
+  const supersededCaptureId = application.incompleteScreenshotCapture?.id;
+  const capture: JobApplicationScreenshotCapture = {
+    id: randomUUID(),
+    attemptCount: application.attemptCount,
+    startedAt,
+    screenshots: [],
+  };
+  application.incompleteScreenshotCapture = capture;
+  application.updatedAt = startedAt;
+  return { capture, supersededCaptureId };
+}
+
+export function completeApplicationScreenshotCapture(
+  application: JobApplicationRecord,
+  captureId: string,
+  completedAt = new Date().toISOString(),
+): { capture: JobApplicationScreenshotCapture; supersededCaptureId?: string } {
+  const capture = application.incompleteScreenshotCapture;
+  if (!capture || capture.id !== captureId) {
+    throw new Error('Screenshot capture is missing or no longer current');
+  }
+  if (capture.attemptCount !== application.attemptCount) {
+    throw new Error('Screenshot capture belongs to a stale application attempt');
+  }
+  validateCompleteScreenshotOrdering(capture);
+  capture.screenshots.sort(
+    (first, second) =>
+      first.pageNumber - second.pageNumber || first.segmentNumber - second.segmentNumber,
+  );
+  capture.completedAt = completedAt;
+  delete capture.failedAt;
+  delete capture.error;
+  const supersededCaptureId = application.screenshotCapture?.id;
+  application.screenshotCapture = capture;
+  delete application.incompleteScreenshotCapture;
+  application.updatedAt = completedAt;
+  return { capture, supersededCaptureId };
+}
+
+export function failApplicationScreenshotCapture(
+  application: JobApplicationRecord,
+  captureId: string,
+  error: string,
+  failedAt = new Date().toISOString(),
+): JobApplicationScreenshotCapture {
+  const capture = application.incompleteScreenshotCapture;
+  if (!capture || capture.id !== captureId) {
+    throw new Error('Screenshot capture is missing or no longer current');
+  }
+  capture.failedAt = failedAt;
+  capture.error = error;
+  application.updatedAt = failedAt;
+  return capture;
+}
+
+export function hasCurrentCompleteScreenshotCapture(application: JobApplicationRecord): boolean {
+  return Boolean(
+    application.screenshotCapture?.completedAt &&
+    application.screenshotCapture.attemptCount === application.attemptCount &&
+    application.screenshotCapture.screenshots.length > 0,
+  );
+}
+
+export function getApplicationScreenshotFilePath(captureId: string, screenshotId: string): string {
+  if (!OPAQUE_ID_PATTERN.test(captureId) || !OPAQUE_ID_PATTERN.test(screenshotId)) {
+    throw new Error('Invalid screenshot identifier');
+  }
+  return path.join(SCREENSHOTS_DIR, captureId, `${screenshotId}.png`);
+}
+
+export function deleteApplicationScreenshotCaptureFiles(captureId: string | undefined): void {
+  if (!captureId || !OPAQUE_ID_PATTERN.test(captureId)) return;
+  try {
+    fs.rmSync(path.join(SCREENSHOTS_DIR, captureId), { recursive: true, force: true });
+  } catch (error) {
+    console.error(`Unable to remove superseded screenshot capture ${captureId}:`, error);
+  }
+}
+
+export function isPng(buffer: Buffer): boolean {
+  return (
+    buffer.length >= 45 &&
+    buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) &&
+    buffer.subarray(12, 16).toString('ascii') === 'IHDR' &&
+    buffer.readUInt32BE(16) > 0 &&
+    buffer.readUInt32BE(20) > 0 &&
+    buffer.subarray(buffer.length - 8, buffer.length - 4).toString('ascii') === 'IEND'
+  );
+}
+
+export function createApplicationScreenshotId(): string {
+  return randomUUID();
 }
 
 export function materializeJobApplication(
@@ -620,7 +725,98 @@ function normalizeApplicationRecord(
         : {}),
     };
   }
+  const screenshotCapture = normalizeScreenshotCapture(value.screenshotCapture, true);
+  if (screenshotCapture) record.screenshotCapture = screenshotCapture;
+  const incompleteScreenshotCapture = normalizeScreenshotCapture(
+    value.incompleteScreenshotCapture,
+    false,
+  );
+  if (incompleteScreenshotCapture) record.incompleteScreenshotCapture = incompleteScreenshotCapture;
   return record;
+}
+
+function normalizeScreenshotCapture(
+  value: unknown,
+  requireComplete: boolean,
+): JobApplicationScreenshotCapture | undefined {
+  if (!isRecord(value)) return undefined;
+  const id = normalizeString(value.id);
+  const startedAt = normalizeString(value.startedAt);
+  const attemptCount = normalizeNonNegativeInteger(value.attemptCount);
+  if (!OPAQUE_ID_PATTERN.test(id) || !startedAt || attemptCount < 1) return undefined;
+  const screenshots = Array.isArray(value.screenshots)
+    ? value.screenshots.flatMap((screenshot) => {
+        if (!isRecord(screenshot)) return [];
+        const screenshotId = normalizeString(screenshot.id);
+        const pageNumber = normalizePositiveInteger(screenshot.pageNumber);
+        const segmentNumber = normalizePositiveInteger(screenshot.segmentNumber);
+        const label = normalizeString(screenshot.label);
+        const capturedAt = normalizeString(screenshot.capturedAt);
+        const byteSize = normalizePositiveInteger(screenshot.byteSize);
+        if (
+          !OPAQUE_ID_PATTERN.test(screenshotId) ||
+          !pageNumber ||
+          !segmentNumber ||
+          !label ||
+          !capturedAt ||
+          !byteSize ||
+          screenshot.contentType !== 'image/png'
+        ) {
+          return [];
+        }
+        return [
+          {
+            id: screenshotId,
+            pageNumber,
+            segmentNumber,
+            label,
+            ...(normalizeString(screenshot.pageUrl)
+              ? { pageUrl: normalizeString(screenshot.pageUrl) }
+              : {}),
+            capturedAt,
+            contentType: 'image/png' as const,
+            byteSize,
+          },
+        ];
+      })
+    : [];
+  const completedAt = normalizeString(value.completedAt);
+  if (requireComplete && (!completedAt || screenshots.length === 0)) return undefined;
+  return {
+    id,
+    attemptCount,
+    startedAt,
+    ...(completedAt ? { completedAt } : {}),
+    ...(normalizeString(value.failedAt) ? { failedAt: normalizeString(value.failedAt) } : {}),
+    ...(normalizeString(value.error) ? { error: normalizeString(value.error) } : {}),
+    screenshots,
+  };
+}
+
+function validateCompleteScreenshotOrdering(capture: JobApplicationScreenshotCapture): void {
+  if (capture.screenshots.length === 0) {
+    throw new Error('At least one application screenshot is required');
+  }
+  const keys = new Set<string>();
+  const segmentsByPage = new Map<number, number[]>();
+  for (const screenshot of capture.screenshots) {
+    const key = `${screenshot.pageNumber}:${screenshot.segmentNumber}`;
+    if (keys.has(key)) throw new Error('Screenshot page and segment ordering must be unique');
+    keys.add(key);
+    const segments = segmentsByPage.get(screenshot.pageNumber) ?? [];
+    segments.push(screenshot.segmentNumber);
+    segmentsByPage.set(screenshot.pageNumber, segments);
+  }
+  const pages = [...segmentsByPage.keys()].sort((first, second) => first - second);
+  if (pages.some((page, index) => page !== index + 1)) {
+    throw new Error('Screenshot page numbering must be contiguous and start at one');
+  }
+  for (const segments of segmentsByPage.values()) {
+    segments.sort((first, second) => first - second);
+    if (segments.some((segment, index) => segment !== index + 1)) {
+      throw new Error('Screenshot segment numbering must be contiguous and start at one');
+    }
+  }
 }
 
 function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
@@ -778,6 +974,10 @@ function normalizeString(value: unknown): string {
 
 function normalizeNonNegativeInteger(value: unknown): number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function normalizePositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
