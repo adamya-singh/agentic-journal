@@ -6,6 +6,8 @@ const DEFAULT_TIMEZONE = 'America/New_York';
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SAMPLE_RATES = new Set([8000, 16000]);
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const TRANSCRIPTION_QUEUE_DIR = 'src/backend/data/omi-transcription-queue';
+const TRANSCRIPT_DIR = 'src/backend/data/omi-transcripts';
 
 export type OmiAudioChunkMetadata = {
   chunkId: string;
@@ -28,6 +30,18 @@ export type OmiAudioStatus = {
   approximateCapturedSeconds: number;
   newestChunkReceivedAt: string | null;
   lastChunks: OmiAudioChunkMetadata[];
+  transcription: OmiTranscriptionStatus;
+};
+
+export type OmiTranscriptionStatus = {
+  enabled: boolean;
+  queuedChunks: number;
+  pendingBatches: number;
+  runningBatches: number;
+  completedBatches: number;
+  failedBatches: number;
+  newestTranscriptAt: string | null;
+  lastError: string | null;
 };
 
 export function getConfiguredMaxBytes(): number {
@@ -130,6 +144,7 @@ export function saveOmiAudioChunk(params: {
     `${JSON.stringify(metadata)}\n`,
     'utf-8'
   );
+  enqueueOmiAudioChunk(metadata);
 
   return metadata;
 }
@@ -144,6 +159,7 @@ export function readOmiAudioStatus(date: string): OmiAudioStatus {
       approximateCapturedSeconds: 0,
       newestChunkReceivedAt: null,
       lastChunks: [],
+      transcription: readOmiTranscriptionStatus(date),
     };
   }
 
@@ -173,7 +189,132 @@ export function readOmiAudioStatus(date: string): OmiAudioStatus {
     approximateCapturedSeconds,
     newestChunkReceivedAt,
     lastChunks: entries.slice(-20),
+    transcription: readOmiTranscriptionStatus(date),
   };
+}
+
+export function readOmiTranscriptionStatus(date: string): OmiTranscriptionStatus {
+  const queue = readTranscriptionQueue(date);
+  const statusPath = path.join(process.cwd(), TRANSCRIPT_DIR, `${date}.status.json`);
+  if (!fs.existsSync(statusPath)) {
+    return {
+      enabled: process.env.OMI_TRANSCRIBE_ENABLED !== 'false',
+      queuedChunks: queue.chunks.length,
+      pendingBatches: 0,
+      runningBatches: 0,
+      completedBatches: 0,
+      failedBatches: 0,
+      newestTranscriptAt: null,
+      lastError: null,
+    };
+  }
+
+  try {
+    const status = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+    const segments = Object.values(status.segments || {}) as Array<{
+      status?: string;
+      completedAt?: string;
+      failedAt?: string;
+      error?: string | null;
+    }>;
+    const newestTranscriptAt = segments
+      .map((segment) => segment.completedAt)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .at(-1) ?? null;
+    const failedSegments = segments
+      .filter((segment) => segment.status === 'failed')
+      .sort((a, b) => String(a.failedAt || '').localeCompare(String(b.failedAt || '')));
+    return {
+      enabled: process.env.OMI_TRANSCRIBE_ENABLED !== 'false',
+      queuedChunks: queue.chunks.length,
+      pendingBatches: segments.filter((segment) => segment.status === 'pending').length,
+      runningBatches: segments.filter((segment) => segment.status === 'running').length,
+      completedBatches: segments.filter((segment) => segment.status === 'completed').length,
+      failedBatches: failedSegments.length,
+      newestTranscriptAt,
+      lastError: failedSegments.at(-1)?.error ?? null,
+    };
+  } catch {
+    return {
+      enabled: process.env.OMI_TRANSCRIBE_ENABLED !== 'false',
+      queuedChunks: queue.chunks.length,
+      pendingBatches: 0,
+      runningBatches: 0,
+      completedBatches: 0,
+      failedBatches: 0,
+      newestTranscriptAt: null,
+      lastError: 'Unable to read Omi transcription status',
+    };
+  }
+}
+
+function enqueueOmiAudioChunk(metadata: OmiAudioChunkMetadata): void {
+  const queue = readTranscriptionQueue(metadata.localDate);
+  if (!queue.chunks.some((chunk) => chunk.chunkId === metadata.chunkId)) {
+    queue.chunks.push({
+      chunkId: metadata.chunkId,
+      receivedAt: metadata.receivedAt,
+      wavPath: metadata.wavPath,
+      durationSeconds: metadata.durationSeconds,
+      sampleRate: metadata.sampleRate,
+      status: 'queued',
+      queuedAt: new Date().toISOString(),
+    });
+  }
+  queue.updatedAt = new Date().toISOString();
+  writeTranscriptionQueue(metadata.localDate, queue);
+}
+
+function readTranscriptionQueue(date: string): {
+  date: string;
+  createdAt: string;
+  updatedAt: string;
+  chunks: Array<{
+    chunkId: string;
+    receivedAt: string;
+    wavPath: string;
+    durationSeconds: number;
+    sampleRate: number;
+    status: 'queued';
+    queuedAt: string;
+  }>;
+} {
+  const queuePath = transcriptionQueuePath(date);
+  if (!fs.existsSync(queuePath)) {
+    const now = new Date().toISOString();
+    return {
+      date,
+      createdAt: now,
+      updatedAt: now,
+      chunks: [],
+    };
+  }
+
+  try {
+    const queue = JSON.parse(fs.readFileSync(queuePath, 'utf-8'));
+    queue.chunks ||= [];
+    return queue;
+  } catch {
+    const now = new Date().toISOString();
+    return {
+      date,
+      createdAt: now,
+      updatedAt: now,
+      chunks: [],
+    };
+  }
+}
+
+function writeTranscriptionQueue(date: string, queue: ReturnType<typeof readTranscriptionQueue>): void {
+  writeFileAtomically(
+    transcriptionQueuePath(date),
+    Buffer.from(JSON.stringify(queue, null, 2), 'utf-8')
+  );
+}
+
+function transcriptionQueuePath(date: string): string {
+  return path.join(process.cwd(), TRANSCRIPTION_QUEUE_DIR, `${date}.json`);
 }
 
 function createPcm16MonoWav(audioBytes: Buffer, sampleRate: number): Buffer {
@@ -201,6 +342,7 @@ function createPcm16MonoWav(audioBytes: Buffer, sampleRate: number): Buffer {
 }
 
 function writeFileAtomically(filePath: string, data: Buffer): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tempPath, data);
   fs.renameSync(tempPath, filePath);

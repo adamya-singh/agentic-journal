@@ -6,6 +6,7 @@ BACKEND_DIR="${ROOT_DIR}/src/backend"
 MASTRA_OUTPUT_DIR="${BACKEND_DIR}/.mastra/output"
 PROD_SERVICE="agentic-journal.service"
 DEV_SERVICE="agentic-journal-dev.service"
+OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
@@ -68,12 +69,15 @@ cd "$ROOT_DIR"
 echo "Installing Agentic Journal service units..."
 install_unit_if_changed "$PROD_SERVICE"
 install_unit_if_changed "$DEV_SERVICE"
+install_unit_if_changed "$OMI_WORKER_SERVICE"
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$PROD_SERVICE" >/dev/null
+systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."
 systemctl_cmd stop "$DEV_SERVICE" || true
+systemctl_cmd stop "$OMI_WORKER_SERVICE" || true
 systemctl_cmd stop "$PROD_SERVICE" || true
 
 echo
@@ -103,6 +107,7 @@ pnpm --dir "$MASTRA_OUTPUT_DIR" install --prod
 echo
 echo "Starting Agentic Journal service..."
 systemctl_cmd start "$PROD_SERVICE"
+systemctl_cmd start "$OMI_WORKER_SERVICE"
 
 echo
 echo "Verifying local endpoints..."
@@ -114,3 +119,4 @@ wait_for_http "Mastra proxy" "http://127.0.0.1:3000/mastra"
 echo
 echo "Service status:"
 systemctl --no-pager --full status "$PROD_SERVICE"
+systemctl --no-pager --full status "$OMI_WORKER_SERVICE"

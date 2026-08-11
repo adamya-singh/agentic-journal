@@ -101,6 +101,23 @@ GOOGLE_VERTEX_LOCATION=your-vertex-location
 
 The backend agent currently imports `vertex` from `@ai-sdk/google-vertex` and uses `vertex('gemini-2.5-flash')`.
 
+Omi audio ingestion and transcription additionally use these optional values:
+
+```env
+OMI_AUDIO_INGEST_TOKEN=your-private-webhook-token
+OMI_AUDIO_TIMEZONE=America/New_York
+OMI_AUDIO_MAX_BYTES=10485760
+OMI_TRANSCRIBE_ENABLED=true
+OMI_TRANSCRIBE_POLL_SECONDS=15
+OMI_TRANSCRIBE_BATCH_SECONDS=90
+OMI_TRANSCRIBE_BATCH_MAX_SECONDS=120
+OMI_TRANSCRIBE_STALE_SECONDS=30
+OMI_STT_LOCATION=us
+OMI_STT_MODEL=chirp_3
+OMI_STT_LANGUAGE_CODE=en-US
+OMI_STT_GCS_BUCKET=your-gcs-bucket
+```
+
 ## Data Storage
 
 Local app data lives under `src/backend/data`.
@@ -139,6 +156,12 @@ npm run status:local-access
 
 # Rebuild and restart production on the Pi
 npm run deploy:production
+
+# Dry-run one Omi worker cycle
+npm run omi:worker -- --once --dry-run
+
+# Follow Omi worker logs
+bash scripts/journal-mode.sh logs worker
 ```
 
 ## Raspberry Pi / Tailscale Operations

@@ -1,0 +1,21 @@
+[Unit]
+Description=Agentic Journal Omi transcription worker
+After=network-online.target agentic-journal.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rpi5
+Group=rpi5
+WorkingDirectory=/home/rpi5/projects/agentic-journal
+Environment=NODE_ENV=production
+EnvironmentFile=-/home/rpi5/projects/agentic-journal/.env
+ExecStartPre=/usr/bin/test -s /home/rpi5/projects/agentic-journal/scripts/omi-transcribe-worker.mjs
+ExecStart=/usr/bin/env npm run omi:worker
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

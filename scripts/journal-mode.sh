@@ -5,6 +5,7 @@ ROOT_DIR="/home/rpi5/projects/agentic-journal"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 PROD_SERVICE="agentic-journal.service"
 DEV_SERVICE="agentic-journal-dev.service"
+OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
 
 systemctl_cmd() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -45,8 +46,10 @@ install_unit_if_changed() {
 install_units() {
   install_unit_if_changed "$PROD_SERVICE"
   install_unit_if_changed "$DEV_SERVICE"
+  install_unit_if_changed "$OMI_WORKER_SERVICE"
   systemctl_cmd daemon-reload
   systemctl_cmd enable "$PROD_SERVICE" >/dev/null
+  systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
   systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 }
 
@@ -106,6 +109,7 @@ print_status() {
   echo
   service_state "$PROD_SERVICE"
   service_state "$DEV_SERVICE"
+  service_state "$OMI_WORKER_SERVICE"
   echo
   echo "Endpoint probes"
   echo "---------------"
@@ -135,6 +139,7 @@ switch_to_prod() {
   echo "Switching Agentic Journal to production mode..."
   systemctl_cmd stop "$DEV_SERVICE" || true
   systemctl_cmd start "$PROD_SERVICE"
+  systemctl_cmd start "$OMI_WORKER_SERVICE"
   echo
   echo "Verifying production endpoints..."
   wait_for_http "Next root" "http://127.0.0.1:3000/"
@@ -146,6 +151,11 @@ switch_to_prod() {
 }
 
 follow_logs() {
+  if [[ "${1:-}" == "worker" || "${1:-}" == "omi" ]]; then
+    journalctl_cmd -u "$OMI_WORKER_SERVICE" -f
+    return
+  fi
+
   local dev_active
   dev_active="$(systemctl is-active "$DEV_SERVICE" 2>/dev/null || true)"
 
@@ -158,7 +168,7 @@ follow_logs() {
 
 usage() {
   echo "Usage: npm run journal:dev|journal:prod|journal:status|journal:logs"
-  echo "       bash scripts/journal-mode.sh dev|prod|status|logs"
+  echo "       bash scripts/journal-mode.sh dev|prod|status|logs [worker]"
 }
 
 require_command systemctl
@@ -177,7 +187,7 @@ case "${1:-}" in
     ;;
   logs)
     install_units
-    follow_logs
+    follow_logs "${2:-}"
     ;;
   *)
     usage >&2
