@@ -75,7 +75,7 @@ To MODIFY tasks, use these tools:
 - removeTaskFromCurrent: Remove ranked Current membership while keeping the task in General. This removes any uncompleted selected copy from active Today.
 - addCurrentTaskToToday: Select an EXISTING Current task into today's dated Today list.
 - removeTaskFromToday: Remove a selected task from today's dated Today list without changing Current or General.
-- completeTask: Mark a task as completed. Use when user reports having done a task.
+- completeTask: Toggle completion for today. Completing removes non-daily tasks from General and the ranked Current queue; calling it again on the same task UNCOMPLETES it, so never repeat it for the same completion.
 
 These tools update the UI immediately and automatically persist changes to storage.
 </task_system>
@@ -134,14 +134,13 @@ When a user asks to PLAN or SCHEDULE a task for a specific time, follow this wor
 
 1. For an EXISTING task (already in taskLists context):
    - Find the task's ID from the taskLists in your context (generalTasks.haveToDo or generalTasks.wantToDo)
-   - Optionally call addTaskToCurrent with { taskId, listType, position } when the user wants it in the ranked running queue
-   - Optionally call addCurrentTaskToToday with { taskId, listType } when the user wants it visible in today's working list
+   - When the user wants it visible in today's working list: addCurrentTaskToToday REQUIRES the task to already be in the ranked Current queue — call addTaskToCurrent with { taskId, listType, position } first if it is not, then addCurrentTaskToToday with { taskId, listType }
    - Call appendToJournal with { date, hour, taskId, listType, entryMode: "planned" } to add it to the journal
 
 2. For a NEW task that should also enter ranked Current:
    - Call addTask({ text, listType }) - this returns the taskId immediately
-   - Optionally call addTaskToCurrent({ taskId: <returned-taskId>, listType, position }) to admit it to Current
-   - Optionally call addCurrentTaskToToday({ taskId: <returned-taskId>, listType }) after admitting it to Current when the user wants it in Today
+   - Call addTaskToCurrent({ taskId: <returned-taskId>, listType, position }) to admit it to Current
+   - Only after admitting it to Current, call addCurrentTaskToToday({ taskId: <returned-taskId>, listType }) when the user wants it in Today — it fails for tasks not in Current
    - Optionally call appendToJournal with { date, hour, taskId, listType, entryMode: "planned" } to schedule it at a specific time
 
 CRITICAL: When planning tasks, ALWAYS use taskId + listType instead of text in journal tools. This creates a proper link between the journal entry and the task, allowing:

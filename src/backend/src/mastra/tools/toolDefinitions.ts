@@ -651,7 +651,7 @@ export const addCurrentTaskToTodayTool = createMastraToolForStateSetter(
   AddCurrentTaskToTodaySchema,
   {
     description:
-      "Select an existing Current task into today's dated Today list without changing Current priority.",
+      "Select a Current task into today's dated Today list without changing Current priority. The task MUST already be in the Current queue — admit it with addTaskToCurrent first, or this fails.",
     toolId: 'addCurrentTaskToToday',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,
@@ -676,7 +676,7 @@ export const completeTaskTool = createMastraToolForStateSetter(
   CompleteTaskSchema,
   {
     description:
-      'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general list.',
+      'Toggle task completion for today: completing stores date-scoped history and removes non-daily tasks from both General and the ranked Current queue; calling it on an already-completed task UNCOMPLETES it (restoring General and Current membership). Do not call it twice for the same completion.',
     toolId: 'completeTask',
     streamEventFn: streamJSONEvent,
     errorSchema: ErrorResponseSchema,

@@ -16,6 +16,7 @@ import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelC
 import { DebuggerPanel } from '@/cedar/components/debugger';
 import { useRefresh } from '@/lib/RefreshContext';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { getCurrentDateISO, scheduleMidnightRollover } from '@/lib/current-date';
 import type {
   JobApplicationCategory,
   JobApplicationResumeVariant,
@@ -45,17 +46,6 @@ const JobListingSourceSchema = z.object({
     .url()
     .describe('A link to the source posting or source page where the listing was found'),
 });
-
-/**
- * Get current date in ISO format (YYYY-MM-DD)
- */
-function getCurrentDateISO(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
 
 /**
  * Get current time in 12-hour format (e.g., 3:45 PM)
@@ -105,6 +95,17 @@ export default function HomePage() {
 
   // Cedar state for current time
   const [currentTime, setCurrentTime] = React.useState(getCurrentTime());
+
+  // Roll the active date (and clock) forward at local midnight so a tab left
+  // open overnight stops writing completions to yesterday.
+  React.useEffect(
+    () =>
+      scheduleMidnightRollover(() => {
+        setCurrentDate(getCurrentDateISO());
+        setCurrentTime(getCurrentTime());
+      }),
+    [],
+  );
 
   // Cedar state for week view data (journals for the week)
   const [weekViewData, setWeekViewData] = React.useState<WeekViewData | null>(null);
@@ -690,7 +691,7 @@ export default function HomePage() {
           });
 
           // Persist to JSON via API
-          await fetch('/api/tasks/remove', {
+          const response = await fetch('/api/tasks/remove', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -698,6 +699,10 @@ export default function HomePage() {
               listType: args.listType,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to remove task');
+          }
 
           // Trigger TaskLists to refresh via context
           refreshTasks();
@@ -811,7 +816,7 @@ export default function HomePage() {
           });
 
           // Persist to JSON via API
-          await fetch('/api/tasks/update', {
+          const response = await fetch('/api/tasks/update', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -826,6 +831,10 @@ export default function HomePage() {
               listType: args.listType,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to update task');
+          }
 
           // Trigger TaskLists to refresh via context
           refreshTasks();
@@ -850,7 +859,7 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType; newPosition: number },
         ) => {
           if (!currentData) return;
-          await fetch('/api/tasks/current/reorder', {
+          const response = await fetch('/api/tasks/current/reorder', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -859,6 +868,10 @@ export default function HomePage() {
               listType: args.listType,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to reorder Current task');
+          }
           refreshTasks();
         },
       },
@@ -882,7 +895,7 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType; position?: number },
         ) => {
           if (!currentData) return;
-          await fetch('/api/tasks/current/add', {
+          const response = await fetch('/api/tasks/current/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -891,6 +904,10 @@ export default function HomePage() {
               position: args.position,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to add task to Current');
+          }
           refreshTasks();
         },
       },
@@ -908,7 +925,7 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
-          await fetch('/api/tasks/current/remove', {
+          const response = await fetch('/api/tasks/current/remove', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -916,13 +933,17 @@ export default function HomePage() {
               listType: args.listType,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to remove task from Current');
+          }
           refreshTasks();
         },
       },
       addCurrentTaskToToday: {
         name: 'addCurrentTaskToToday',
         description:
-          "Select an existing Current task into the active date's Today list without changing Current priority.",
+          "Select a Current task into the active date's Today list without changing Current priority. The task must already be in Current — admit it with addTaskToCurrent first.",
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the Current task to select for Today'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -933,7 +954,7 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
-          await fetch('/api/tasks/today/add', {
+          const response = await fetch('/api/tasks/today/add', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -942,6 +963,10 @@ export default function HomePage() {
               date: currentData.currentDate,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to select task for Today — it must be in Current first');
+          }
           refreshAll();
         },
       },
@@ -959,7 +984,7 @@ export default function HomePage() {
           args: { taskId: string; listType: ListType },
         ) => {
           if (!currentData) return;
-          await fetch('/api/tasks/today/remove', {
+          const response = await fetch('/api/tasks/today/remove', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -968,13 +993,17 @@ export default function HomePage() {
               date: currentData.currentDate,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to remove task from Today');
+          }
           refreshAll();
         },
       },
       completeTask: {
         name: 'completeTask',
         description:
-          'Mark a task as completed. This stores date-scoped completion history and removes non-daily tasks from the general task list.',
+          'Toggle task completion for the active date: completing removes non-daily tasks from General and Current; calling it on an already-completed task uncompletes it.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
@@ -986,7 +1015,7 @@ export default function HomePage() {
         ) => {
           if (!currentData) return;
 
-          await fetch('/api/tasks/today/complete', {
+          const response = await fetch('/api/tasks/today/complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -995,6 +1024,10 @@ export default function HomePage() {
               date: currentData.currentDate,
             }),
           });
+          const data = await response.json();
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Failed to toggle task completion');
+          }
 
           // Trigger both TaskLists and WeekView to refresh via context
           refreshAll();
