@@ -136,3 +136,98 @@ describe('Current queue integrity', () => {
     assert.equal(existsSync(path.join(currentDir, 'have-to-do.json')), true);
   });
 });
+
+describe('Completion lifecycle', () => {
+  let completeRoute: typeof import('../src/app/api/tasks/today/complete/route');
+  let nextServer: typeof import('next/server');
+
+  before(async () => {
+    completeRoute = await import('../src/app/api/tasks/today/complete/route');
+    nextServer = await import('next/server');
+  });
+
+  async function postComplete(taskId: string, date: string): Promise<Record<string, unknown>> {
+    const request = new nextServer.NextRequest('http://localhost/api/tasks/today/complete', {
+      method: 'POST',
+      body: JSON.stringify({ taskId, listType: 'have-to-do', date }),
+      headers: { 'content-type': 'application/json' },
+    });
+    const response = await completeRoute.POST(request);
+    return (await response.json()) as Record<string, unknown>;
+  }
+
+  test('complete then uncomplete restores General, Current, and Today visibility', async () => {
+    seedBaseData();
+    const today = todayISO();
+
+    const completed = await postComplete('t1', today);
+    assert.equal(completed.success, true);
+    assert.equal(completed.completed, true);
+
+    let general = readJson(path.join(tasksDir, 'have-to-do.json'));
+    assert.equal((general.tasks as Array<{ id: string }>).some((t) => t.id === 't1'), false);
+    let queue = readJson(path.join(currentDir, 'have-to-do.json'));
+    assert.equal((queue.taskIds as string[]).includes('t1'), false);
+    let daily = readJson(path.join(dailyListsDir, `${today}-have-to-do.json`));
+    assert.equal(daily.schemaVersion, 3);
+    const allEntries = [
+      ...(daily.selectedTasks as Array<Record<string, unknown>>),
+      ...(daily.automaticTasks as Array<Record<string, unknown>>),
+    ];
+    assert.equal(allEntries.some((t) => t.id === 't1' && t.completed === true), true);
+
+    const uncompleted = await postComplete('t1', today);
+    assert.equal(uncompleted.success, true);
+    assert.equal(uncompleted.completed, false);
+
+    general = readJson(path.join(tasksDir, 'have-to-do.json'));
+    assert.equal((general.tasks as Array<{ id: string }>).some((t) => t.id === 't1'), true);
+    // Restored at the end of the ranked queue (original rank is not recorded).
+    queue = readJson(path.join(currentDir, 'have-to-do.json'));
+    assert.deepEqual(queue.taskIds, ['t2', 't1']);
+    // Still visible in Today, no longer completed.
+    daily = readJson(path.join(dailyListsDir, `${today}-have-to-do.json`));
+    const selected = daily.selectedTasks as Array<Record<string, unknown>>;
+    const entry = selected.find((t) => t.id === 't1');
+    assert.ok(entry, 'uncompleted task must stay visible in the Today snapshot');
+    assert.notEqual(entry.completed, true);
+  });
+
+  test('daily task completed today renders completed in Current and toggles correctly', async () => {
+    seedBaseData();
+    const today = todayISO();
+    writeJson(path.join(tasksDir, 'have-to-do.json'), {
+      _comment: '',
+      tasks: [
+        { id: 't-daily', text: 'Daily habit', isDaily: true },
+        { id: 't1', text: 'Task one' },
+        { id: 't2', text: 'Task two' },
+      ],
+    });
+    writeJson(path.join(currentDir, 'have-to-do.json'), {
+      _comment: '',
+      schemaVersion: 1,
+      taskIds: ['t-daily', 't1', 't2'],
+    });
+
+    const completed = await postComplete('t-daily', today);
+    assert.equal(completed.success, true);
+
+    // Daily tasks stay in General and in Current after completion.
+    const queue = readJson(path.join(currentDir, 'have-to-do.json'));
+    assert.equal((queue.taskIds as string[]).includes('t-daily'), true);
+    const currentTasks = store.getCurrentTasks('have-to-do');
+    const daily = currentTasks.find((t) => t.id === 't-daily');
+    assert.ok(daily);
+    assert.equal(daily.completed, true, 'completed daily must render checked in the Current section');
+
+    // Second toggle uncompletes — previously it looked unchecked and clicking
+    // silently wiped the completion record.
+    const uncompleted = await postComplete('t-daily', today);
+    assert.equal(uncompleted.success, true);
+    assert.equal(uncompleted.completed, false);
+    const after = store.getCurrentTasks('have-to-do').find((t) => t.id === 't-daily');
+    assert.ok(after);
+    assert.notEqual(after.completed, true);
+  });
+});

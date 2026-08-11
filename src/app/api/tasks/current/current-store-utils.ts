@@ -472,10 +472,37 @@ export function findTaskInDailySnapshot(date: string, listType: ListType, taskId
 export function getCurrentTasks(listType: ListType): Task[] {
   ensureCurrentSystemThroughToday();
   const byId = new Map(readGeneralTasks(listType).tasks.map((task) => [task.id, task]));
+  // Overlay today's completions: daily tasks stay in General after completion,
+  // and an unmarked checkbox here would toggle them back to incomplete.
+  const completions = completionMap(currentDateISO(), listType);
   return getValidatedCurrentTaskIds(listType)
     .map((taskId) => byId.get(taskId))
     .filter((task): task is Task => task !== undefined)
-    .map(cloneTask);
+    .map((task) => withCompletion(task, completions));
+}
+
+// Uncomplete restore: completion evicted a non-daily task from the ranked
+// queue; bring it back (at the end — the original rank is not recorded) and
+// keep it visible in the date's Today snapshot, which would otherwise drop a
+// task that is neither Current-selected nor due that day.
+export function restoreUncompletedTask(date: string, listType: ListType, taskId: string): void {
+  if (date <= currentDateISO()) {
+    ensureCurrentSystemThroughToday();
+  }
+  const task = readGeneralTasks(listType).tasks.find((entry) => entry.id === taskId);
+  if (task && task.isDaily !== true) {
+    const current = getValidatedCurrentTaskIds(listType);
+    if (!current.includes(taskId)) {
+      writeCurrentTaskIds(listType, [...current, taskId]);
+    }
+  }
+  const snapshot = readDailyCurrentSnapshot(date, listType) ?? buildSnapshot(date, listType, []);
+  const selectedIds = snapshot.selectedTasks.map((entry) => entry.id);
+  if (!selectedIds.includes(taskId) && task?.dueDate !== date) {
+    selectedIds.push(taskId);
+  }
+  writeDailyCurrentSnapshot(buildSnapshot(date, listType, selectedIds));
+  syncStagedJournalFromSnapshots(date);
 }
 
 export function addCurrentTaskToToday(date: string, listType: ListType, taskId: string): boolean {

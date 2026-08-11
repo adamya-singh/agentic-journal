@@ -1,4 +1,4 @@
-import {
+import type {
   DayJournal,
   JournalEntry,
   JournalRangeEntry,
@@ -8,6 +8,8 @@ import {
   TaskJournalRangeEntry,
   TextJournalEntry,
   TextJournalRangeEntry,
+} from '@/lib/types';
+import {
   isJournalEntryArray,
   isTaskJournalEntry,
   isTaskJournalRangeEntry,

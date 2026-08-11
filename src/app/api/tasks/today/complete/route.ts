@@ -1,34 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ListType, Task } from '@/lib/types';
+import type { ListType, Task } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
-import { computeTodayTasks } from '../today-compute-utils';
-import { DayJournalWithRanges, markMissedPlansForDate } from '../../../journal/plan-lifecycle-utils';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
+import type { DayJournalWithRanges } from '../../../journal/plan-lifecycle-utils';
+import { markMissedPlansForDate } from '../../../journal/plan-lifecycle-utils';
+import type { TaskCompletionSnapshot } from '../today-store-utils';
 import {
   findLegacyDailyTaskById,
   refreshCompletedTaskIndexForTask,
   removeCompletedTaskIndexSnapshot,
   readCompletedTaskSnapshots,
   readGeneralTasks,
-  readTodayOverrides,
   removeCompletedTaskSnapshot,
-  upsertCompletedTaskIndexSnapshot,
-  upsertCompletedTaskSnapshot,
   writeGeneralTasks,
-  TaskCompletionSnapshot,
 } from '../today-store-utils';
-import { buildChildrenByParentId, getDescendantTaskIds } from '@/lib/tasks';
+import { getDescendantTaskIds } from '@/lib/tasks';
 import {
   ensureCurrentSystemThroughToday,
-  findTaskInDailySnapshot,
-  removeTaskFromCurrent,
+  restoreUncompletedTask,
 } from '../../current/current-store-utils';
-
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
+import { completeTaskForDate } from '../completion-utils';
 
 function markMissedPlansIfJournalExists(date: string): void {
-  const journalFilePath = path.join(JOURNAL_DIR, `${date}.json`);
+  const journalFilePath = path.join(journalDataDir(), `${date}.json`);
   if (!fs.existsSync(journalFilePath)) {
     return;
   }
@@ -37,49 +33,11 @@ function markMissedPlansIfJournalExists(date: string): void {
     const journal = JSON.parse(content) as DayJournalWithRanges;
     const changed = markMissedPlansForDate(journal, date, new Date());
     if (changed) {
-      fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+      writeJsonFileAtomic(journalFilePath, journal);
     }
   } catch {
     // Non-critical best-effort sync.
   }
-}
-
-function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletionSnapshot {
-  const snapshot: TaskCompletionSnapshot = {
-    id: task.id,
-    text: task.text,
-    completed: true,
-    completedAt: new Date().toISOString(),
-    listType,
-  };
-
-  if (task.dueDate) {
-    snapshot.dueDate = task.dueDate;
-  }
-  if (task.dueTimeStart) {
-    snapshot.dueTimeStart = task.dueTimeStart;
-  }
-  if (task.dueTimeEnd) {
-    snapshot.dueTimeEnd = task.dueTimeEnd;
-  }
-
-  if (task.projects && task.projects.length > 0) {
-    snapshot.projects = normalizeProjectList(task.projects);
-  }
-
-  if (task.parentTaskId && task.parentTaskId.trim().length > 0) {
-    snapshot.parentTaskId = task.parentTaskId.trim();
-  }
-
-  if (task.notesMarkdown && task.notesMarkdown.trim().length > 0) {
-    snapshot.notesMarkdown = task.notesMarkdown.trim();
-  }
-
-  if (task.isDaily) {
-    snapshot.isDaily = true;
-  }
-
-  return snapshot;
 }
 
 function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
@@ -115,30 +73,6 @@ function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
   }
 
   return task;
-}
-
-function collectOpenDescendants(
-  taskId: string,
-  childrenByParentId: Map<string, Task[]>,
-  completedTodayIds: Set<string>,
-  depth = 1
-): Array<{ id: string; text: string; parentTaskId?: string; depth: number }> {
-  const results: Array<{ id: string; text: string; parentTaskId?: string; depth: number }> = [];
-  const children = childrenByParentId.get(taskId) ?? [];
-
-  for (const child of children) {
-    if (!completedTodayIds.has(child.id)) {
-      results.push({
-        id: child.id,
-        text: child.text,
-        parentTaskId: child.parentTaskId,
-        depth,
-      });
-    }
-    results.push(...collectOpenDescendants(child.id, childrenByParentId, completedTodayIds, depth + 1));
-  }
-
-  return results;
 }
 
 /**
@@ -205,6 +139,7 @@ export async function POST(request: NextRequest) {
           writeGeneralTasks(generalData, typedListType);
         }
       }
+      restoreUncompletedTask(date, typedListType, taskId);
 
       return NextResponse.json({
         success: true,
@@ -216,61 +151,36 @@ export async function POST(request: NextRequest) {
     }
 
     // COMPLETE
-    const overrides = readTodayOverrides(date, typedListType);
-    const computedTodayTasks = computeTodayTasks({
-      date,
-      generalTasks: generalData.tasks,
-      overrides,
-      completedSnapshots,
-    });
+    const result = completeTaskForDate(date, typedListType, taskId);
 
-    const taskFromToday = findTaskInDailySnapshot(date, typedListType, taskId)
-      ?? computedTodayTasks.find((task) => task.id === taskId)
-      ?? null;
-    const taskFromGeneral = generalData.tasks.find((task) => task.id === taskId) ?? null;
-    const taskFromLegacyDaily = findLegacyDailyTaskById(date, typedListType, taskId);
-
-    const taskToComplete = taskFromToday ?? taskFromGeneral ?? taskFromLegacyDaily;
-
-    if (!taskToComplete) {
+    if (result.status === 'not-found') {
       return NextResponse.json({
         success: false,
         error: 'Task not found in today\'s list',
       });
     }
 
-    const childrenByParentId = buildChildrenByParentId(generalData.tasks);
-    const completedTodayIds = new Set(completedSnapshots.map((snapshot) => snapshot.id));
-
-    if (!taskToComplete.parentTaskId) {
-      const openSubtasks = collectOpenDescendants(taskToComplete.id, childrenByParentId, completedTodayIds);
-
-      if (openSubtasks.length > 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: 'Task has incomplete subtasks',
-            blockedByOpenSubtasks: true,
-            openSubtaskCount: openSubtasks.length,
-            openSubtasks,
-          },
-          { status: 400 }
-        );
-      }
+    if (result.status === 'blocked') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Task has incomplete subtasks',
+          blockedByOpenSubtasks: true,
+          openSubtaskCount: result.openSubtasks.length,
+          openSubtasks: result.openSubtasks,
+        },
+        { status: 400 }
+      );
     }
 
-    const completionSnapshot = buildCompletionSnapshot(taskToComplete, typedListType);
-    upsertCompletedTaskSnapshot(date, typedListType, completionSnapshot);
-    upsertCompletedTaskIndexSnapshot(taskId, completionSnapshot, date);
-
-    if (!taskToComplete.isDaily) {
-      const initialLength = generalData.tasks.length;
-      generalData.tasks = generalData.tasks.filter((task) => task.id !== taskId);
-      if (generalData.tasks.length !== initialLength) {
-        writeGeneralTasks(generalData, typedListType);
-      }
-      removeTaskFromCurrent(typedListType, taskId);
+    if (result.status === 'already-completed') {
+      return NextResponse.json({
+        success: false,
+        error: 'Task is already completed for this date',
+      });
     }
+
+    const { task: taskToComplete, generalTasks, computedTodayTasks, childrenByParentId, completedTodayIds } = result;
 
     let promptToCompleteParent = false;
     let parentTask: { id: string; text: string; listType: ListType } | null = null;
@@ -284,7 +194,7 @@ export async function POST(request: NextRequest) {
       );
 
       if (openSiblingDescendants.length === 0) {
-        const parentFromGeneral = generalData.tasks.find((task) => task.id === parentId) ?? null;
+        const parentFromGeneral = generalTasks.find((task) => task.id === parentId) ?? null;
         const parentFromToday = computedTodayTasks.find((task) => task.id === parentId) ?? null;
         const parentFromLegacy = findLegacyDailyTaskById(date, typedListType, parentId);
         const resolvedParent = parentFromGeneral ?? parentFromToday ?? parentFromLegacy ?? null;

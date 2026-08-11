@@ -1,29 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { ListType, Task } from '@/lib/types';
-import { normalizeProjectList } from '@/lib/projects';
-import {
-  applyPlanActionInJournal,
-  DayJournalWithRanges,
-  markMissedPlansForDate,
-  PlanAction,
-  TextPlanSource,
-} from '../plan-lifecycle-utils';
-import { computeTodayTasks } from '../../tasks/today/today-compute-utils';
-import {
-  findLegacyDailyTaskById,
-  readCompletedTaskSnapshots,
-  readGeneralTasks,
-  readTodayOverrides,
-  TaskCompletionSnapshot,
-  upsertCompletedTaskIndexSnapshot,
-  upsertCompletedTaskSnapshot,
-  writeGeneralTasks,
-} from '../../tasks/today/today-store-utils';
-import { ensureCurrentSystemThroughToday, findTaskInDailySnapshot, removeTaskFromCurrent } from '../../tasks/current/current-store-utils';
+import type { ListType } from '@/lib/types';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
+import type { DayJournalWithRanges, PlanAction, TextPlanSource } from '../plan-lifecycle-utils';
+import { applyPlanActionInJournal, markMissedPlansForDate } from '../plan-lifecycle-utils';
+import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
+import { completeTaskForDate } from '../../tasks/today/completion-utils';
 
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const VALID_HOURS = [
   '7am', '8am', '9am', '10am', '11am', '12pm',
@@ -75,7 +59,7 @@ function parseSource(source: unknown): TextPlanSource | null {
 }
 
 function getJournalFilePath(date: string): string {
-  return path.join(JOURNAL_DIR, `${date}.json`);
+  return path.join(journalDataDir(), `${date}.json`);
 }
 
 function journalFileExists(date: string): boolean {
@@ -92,85 +76,15 @@ function readJournalFile(date: string): DayJournalWithRanges {
 }
 
 function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
-  fs.writeFileSync(getJournalFilePath(date), JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(getJournalFilePath(date), journal);
 }
 
-function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletionSnapshot {
-  const snapshot: TaskCompletionSnapshot = {
-    id: task.id,
-    text: task.text,
-    completed: true,
-    completedAt: new Date().toISOString(),
-    listType,
-  };
-
-  if (task.dueDate) {
-    snapshot.dueDate = task.dueDate;
-  }
-  if (task.dueTimeStart) {
-    snapshot.dueTimeStart = task.dueTimeStart;
-  }
-  if (task.dueTimeEnd) {
-    snapshot.dueTimeEnd = task.dueTimeEnd;
-  }
-
-  if (task.projects && task.projects.length > 0) {
-    snapshot.projects = normalizeProjectList(task.projects);
-  }
-
-  if (task.notesMarkdown && task.notesMarkdown.trim().length > 0) {
-    snapshot.notesMarkdown = task.notesMarkdown.trim();
-  }
-
-  if (task.isDaily) {
-    snapshot.isDaily = true;
-  }
-
-  return snapshot;
-}
-
+// Completing a task from a plan action shares the same core (and open-subtask
+// guard) as the Today checkbox; a blocked or missing task simply leaves the
+// task uncompleted while the journal plan action still applies.
 function ensureTaskCompletedForDate(date: string, taskId: string, listType: ListType): boolean {
   ensureCurrentSystemThroughToday();
-  const completedSnapshots = readCompletedTaskSnapshots(date, listType);
-  const alreadyCompleted = completedSnapshots.some((snapshot) => snapshot.id === taskId);
-  if (alreadyCompleted) {
-    return false;
-  }
-
-  const generalData = readGeneralTasks(listType);
-  const overrides = readTodayOverrides(date, listType);
-  const computedTodayTasks = computeTodayTasks({
-    date,
-    generalTasks: generalData.tasks,
-    overrides,
-    completedSnapshots,
-  });
-
-  const taskFromToday = findTaskInDailySnapshot(date, listType, taskId)
-    ?? computedTodayTasks.find((task) => task.id === taskId)
-    ?? null;
-  const taskFromGeneral = generalData.tasks.find((task) => task.id === taskId) ?? null;
-  const taskFromLegacyDaily = findLegacyDailyTaskById(date, listType, taskId);
-  const taskToComplete = taskFromToday ?? taskFromGeneral ?? taskFromLegacyDaily;
-
-  if (!taskToComplete) {
-    return false;
-  }
-
-  const completionSnapshot = buildCompletionSnapshot(taskToComplete, listType);
-  upsertCompletedTaskSnapshot(date, listType, completionSnapshot);
-  upsertCompletedTaskIndexSnapshot(taskId, completionSnapshot, date);
-
-  if (!taskToComplete.isDaily) {
-    const initialLength = generalData.tasks.length;
-    generalData.tasks = generalData.tasks.filter((task) => task.id !== taskId);
-    if (generalData.tasks.length !== initialLength) {
-      writeGeneralTasks(generalData, listType);
-    }
-    removeTaskFromCurrent(listType, taskId);
-  }
-
-  return true;
+  return completeTaskForDate(date, listType, taskId).status === 'completed';
 }
 
 export async function POST(request: NextRequest) {
