@@ -386,10 +386,6 @@ export function removeCompletedTaskSnapshot(
   return { snapshots: current, removed: true, removedSnapshot };
 }
 
-export function getCompletedTaskIdSet(date: string, listType: ListType): Set<string> {
-  return new Set(readCompletedTaskSnapshots(date, listType).map((task) => task.id));
-}
-
 export function readCompletedTaskIndex(): CompletedTaskIndexData {
   if (!fs.existsSync(completedIndexPath())) {
     return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
@@ -433,28 +429,6 @@ export function removeCompletedTaskIndexSnapshot(taskId: string): void {
 
   delete index.tasks[taskId];
   writeCompletedTaskIndex(index);
-}
-
-export function removeCompletedTaskIndexSnapshots(taskIds: string[]): boolean {
-  if (taskIds.length === 0) {
-    return false;
-  }
-
-  const index = readCompletedTaskIndex();
-  let changed = false;
-
-  for (const taskId of taskIds) {
-    if (taskId in index.tasks) {
-      delete index.tasks[taskId];
-      changed = true;
-    }
-  }
-
-  if (changed) {
-    writeCompletedTaskIndex(index);
-  }
-
-  return changed;
 }
 
 function parseDailyListFilename(fileName: string): { date: string; listType: ListType } | null {
@@ -650,77 +624,6 @@ export function removeTaskIdsFromTodayOverrides(taskIds: string[], listType: Lis
   }
 
   return changedFiles;
-}
-
-export function removeTaskIdsFromCompletedSnapshots(taskIds: string[], listType: ListType): number {
-  if (taskIds.length === 0 || !fs.existsSync(dailyListsDir())) {
-    return 0;
-  }
-
-  const idSet = new Set(taskIds);
-  let changedFiles = 0;
-
-  for (const fileName of fs.readdirSync(dailyListsDir())) {
-    const parsed = parseDailyListFilename(fileName);
-    if (!parsed || parsed.listType !== listType) {
-      continue;
-    }
-
-    const snapshots = readCompletedTaskSnapshots(parsed.date, parsed.listType);
-    const nextSnapshots = snapshots.filter((snapshot) => !idSet.has(snapshot.id));
-    if (nextSnapshots.length !== snapshots.length) {
-      writeCompletedTaskSnapshots(parsed.date, parsed.listType, nextSnapshots);
-      changedFiles += 1;
-    }
-  }
-
-  return changedFiles;
-}
-
-export function includeTaskInTodayOverrides(
-  date: string,
-  listType: ListType,
-  taskId: string
-): { overrides: TodayOverridesData; changed: boolean } {
-  const overrides = readTodayOverrides(date, listType);
-
-  const prevIncluded = overrides.includedTaskIds.length;
-  const prevExcluded = overrides.excludedTaskIds.length;
-
-  overrides.excludedTaskIds = overrides.excludedTaskIds.filter((id) => id !== taskId);
-  if (!overrides.includedTaskIds.includes(taskId)) {
-    overrides.includedTaskIds.push(taskId);
-  }
-
-  const changed = prevIncluded !== overrides.includedTaskIds.length || prevExcluded !== overrides.excludedTaskIds.length;
-  if (changed) {
-    writeTodayOverrides(date, listType, overrides);
-  }
-
-  return { overrides, changed };
-}
-
-export function excludeTaskInTodayOverrides(
-  date: string,
-  listType: ListType,
-  taskId: string
-): { overrides: TodayOverridesData; changed: boolean } {
-  const overrides = readTodayOverrides(date, listType);
-
-  const prevIncluded = overrides.includedTaskIds.length;
-  const prevExcluded = overrides.excludedTaskIds.length;
-
-  overrides.includedTaskIds = overrides.includedTaskIds.filter((id) => id !== taskId);
-  if (!overrides.excludedTaskIds.includes(taskId)) {
-    overrides.excludedTaskIds.push(taskId);
-  }
-
-  const changed = prevIncluded !== overrides.includedTaskIds.length || prevExcluded !== overrides.excludedTaskIds.length;
-  if (changed) {
-    writeTodayOverrides(date, listType, overrides);
-  }
-
-  return { overrides, changed };
 }
 
 export function taskFromCompletionSnapshot(snapshot: TaskCompletionSnapshot): Task {

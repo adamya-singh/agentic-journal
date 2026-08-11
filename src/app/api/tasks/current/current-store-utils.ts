@@ -563,22 +563,33 @@ export function addTaskToCurrent(listType: ListType, taskId: string, position?: 
 }
 
 export function removeTaskFromCurrent(listType: ListType, taskId: string): boolean {
-  ensureCurrentSystemThroughToday();
-  const current = getValidatedCurrentTaskIds(listType);
-  const next = current.filter((id) => id !== taskId);
-  if (next.length === current.length) return false;
-  writeCurrentTaskIds(listType, next);
+  return removeTaskIdsFromCurrent(listType, [taskId]);
+}
+
+// A selection created via addCurrentTaskToToday can live in a snapshot dated
+// after today; scrub those too or the removed task resurfaces on that date.
+function removeSelectedIdsFromFutureSnapshots(listType: ListType, removed: Set<string>): void {
+  const dailyListsDir = path.join(tasksDataDir(), 'daily-lists');
+  if (!fs.existsSync(dailyListsDir)) {
+    return;
+  }
   const today = currentDateISO();
-  if (!completionMap(today, listType).has(taskId)) {
-    const snapshot = readDailyCurrentSnapshot(today, listType);
-    if (snapshot) {
-      const selectedIds = snapshot.selectedTasks.map((task) => task.id).filter((id) => id !== taskId);
-      writeDailyCurrentSnapshot(buildSnapshot(today, listType, selectedIds));
-      syncStagedJournalFromSnapshots(today);
+  for (const name of fs.readdirSync(dailyListsDir)) {
+    const match = /^(\d{4}-\d{2}-\d{2})-(have-to-do|want-to-do)\.json$/.exec(name);
+    if (!match || match[2] !== listType || match[1] <= today) {
+      continue;
+    }
+    const snapshot = readDailyCurrentSnapshot(match[1], listType);
+    if (!snapshot) {
+      continue;
+    }
+    const selectedIds = snapshot.selectedTasks.map((task) => task.id);
+    const keptIds = selectedIds.filter((id) => !removed.has(id));
+    if (keptIds.length !== selectedIds.length) {
+      writeDailyCurrentSnapshot(buildSnapshot(match[1], listType, keptIds));
+      syncStagedJournalFromSnapshots(match[1], { createJournalIfMissing: false });
     }
   }
-  refreshActiveDailySnapshots();
-  return true;
 }
 
 export function removeTaskIdsFromCurrent(listType: ListType, taskIds: string[]): boolean {
@@ -592,39 +603,18 @@ export function removeTaskIdsFromCurrent(listType: ListType, taskIds: string[]):
   const completedToday = completionMap(today, listType);
   const snapshot = readDailyCurrentSnapshot(today, listType);
   if (snapshot) {
+    // Ids completed today keep their dated historical copy in the snapshot.
     const selectedIds = snapshot.selectedTasks
       .map((task) => task.id)
       .filter((id) => !removed.has(id) || completedToday.has(id));
     writeDailyCurrentSnapshot(buildSnapshot(today, listType, selectedIds));
     syncStagedJournalFromSnapshots(today);
   }
+  removeSelectedIdsFromFutureSnapshots(listType, removed);
   refreshActiveDailySnapshots();
   return true;
 }
 
 export function reorderCurrentTask(listType: ListType, taskId: string, position: number): boolean {
   return addTaskToCurrent(listType, taskId, position);
-}
-
-export function writeTaskCompletionToDailySnapshot(
-  date: string,
-  listType: ListType,
-  completedTask: Task,
-  completed: boolean
-): void {
-  if (date <= currentDateISO()) {
-    ensureCurrentSystemThroughToday();
-  }
-  const snapshot = readDailyCurrentSnapshot(date, listType) ?? buildSnapshot(date, listType);
-  const update = (tasks: Task[]): boolean => {
-    const index = tasks.findIndex((task) => task.id === completedTask.id);
-    if (index === -1) return false;
-    tasks[index] = completed ? cloneTask(completedTask) : { ...cloneTask(completedTask), completed: false };
-    if (!completed) delete tasks[index].completedAt;
-    return true;
-  };
-  if (!update(snapshot.selectedTasks) && !update(snapshot.automaticTasks)) {
-    snapshot.automaticTasks.push(completed ? cloneTask(completedTask) : { ...cloneTask(completedTask), completed: false });
-  }
-  writeDailyCurrentSnapshot(snapshot);
 }

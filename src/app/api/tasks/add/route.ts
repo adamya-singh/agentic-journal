@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { handleDueDateSetup } from '../due-date-utils';
-import { Task, TasksData } from '@/lib/types';
+import type { Task, TasksData } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
 import { getDescendantTaskIds, validateParentTaskAssignment, buildChildrenByParentId } from '@/lib/tasks';
@@ -12,11 +12,11 @@ const NOTES_MAX_LENGTH = 20000;
 
 /**
  * POST /api/tasks/add
- * Adds a new task to the list at the specified position (or appends to end if no position given)
- * 
- * Body: { task: string, position?: number, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, parentTaskId?: string }
+ * Appends a new task to the General backlog (subtasks insert after their parent's subtree).
+ * General is unordered; ranking happens via Current admission.
+ *
+ * Body: { task: string, listType?: 'have-to-do' | 'want-to-do', dueDate?: string, dueTimeStart?: string, dueTimeEnd?: string, isDaily?: boolean, projects?: string[], notesMarkdown?: string, parentTaskId?: string }
  * - task: The task text to add
- * - position: Optional index where to insert the task (0 = highest priority)
  * - listType: Which task list to add to (defaults to 'have-to-do')
  * - dueDate: Optional due date in ISO format (YYYY-MM-DD)
  * - isDaily: Optional flag to mark task as recurring daily
@@ -188,7 +188,6 @@ export async function POST(request: NextRequest) {
       taskId: newTask.id,
       task: newTask,
       taskCount: data.tasks.length,
-      insertedAt: data.tasks.length - 1,
     });
   } catch (error) {
     console.error('Error adding task:', error);

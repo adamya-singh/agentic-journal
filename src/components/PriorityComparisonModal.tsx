@@ -1,13 +1,12 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { Task, ListType } from '@/lib/types';
-import { formatTaskTextWithProjects, normalizeProjectList } from '@/lib/projects';
+import type { Task, ListType } from '@/lib/types';
+import { normalizeProjectList } from '@/lib/projects';
 import { TaskNotesEditor } from './TaskNotesEditor';
-import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 import { ModalShell } from './ModalShell';
 
-type ModalPhase = 'entering-task' | 'loading' | 'comparing' | 'inserting' | 'complete' | 'error';
+type ModalPhase = 'entering-task' | 'inserting' | 'complete' | 'error';
 
 interface PriorityComparisonModalProps {
   isOpen: boolean;
@@ -43,14 +42,7 @@ export function PriorityComparisonModal({
   const [isDaily, setIsDaily] = useState(false);
   const [projectsInput, setProjectsInput] = useState('');
   const [notesMarkdown, setNotesMarkdown] = useState('');
-  const [existingTasks, setExistingTasks] = useState<Task[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  
-  // Binary search state
-  const [low, setLow] = useState(0);
-  const [high, setHigh] = useState(0);
-  const [comparisonCount, setComparisonCount] = useState(0);
-  const [maxComparisons, setMaxComparisons] = useState(0);
 
   // Reset state when modal opens/closes
   useEffect(() => {
@@ -64,26 +56,20 @@ export function PriorityComparisonModal({
       setIsDaily(false);
       setProjectsInput('');
       setNotesMarkdown('');
-      setExistingTasks([]);
       setErrorMessage('');
-      setLow(0);
-      setHigh(0);
-      setComparisonCount(0);
-      setMaxComparisons(0);
     }
   }, [isOpen]);
 
-  // Insert task at the determined position
-  const insertTask = useCallback(async (position: number) => {
+  const submitTask = useCallback(async () => {
+    if (!taskInput.trim()) return;
     setPhase('inserting');
-    
+
     try {
       const response = await fetch('/api/tasks/add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          task: taskInput.trim(), 
-          position, 
+        body: JSON.stringify({
+          task: taskInput.trim(),
           listType,
           parentTaskId: parentTask?.id,
           dueDate: dueDate || undefined,
@@ -113,49 +99,6 @@ export function PriorityComparisonModal({
     }
   }, [taskInput, onTaskAdded, onClose, listType, parentTask?.id, dueDate, dueTimeStart, dueTimeEnd, useDueTimeRange, isDaily, projectsInput, notesMarkdown]);
 
-  // General is an unordered backlog; creation does not establish priority.
-  const startComparison = useCallback(async () => {
-    if (!taskInput.trim()) return;
-
-    if (parentTask) {
-      await insertTask(0);
-      return;
-    }
-    
-    await insertTask(Number.MAX_SAFE_INTEGER);
-  }, [taskInput, insertTask, parentTask]);
-
-  // Handle user's comparison choice
-  const handleComparisonChoice = useCallback((newTaskIsMoreImportant: boolean) => {
-    const mid = Math.floor((low + high) / 2);
-    
-    let newLow = low;
-    let newHigh = high;
-    
-    if (newTaskIsMoreImportant) {
-      // New task is more important, search in higher-priority half (lower indices)
-      newHigh = mid;
-    } else {
-      // New task is less important, search in lower-priority half (higher indices)
-      newLow = mid + 1;
-    }
-    
-    setLow(newLow);
-    setHigh(newHigh);
-    setComparisonCount(prev => prev + 1);
-    
-    // Check if search is complete
-    if (newLow >= newHigh) {
-      insertTask(newLow);
-    }
-  }, [low, high, insertTask]);
-
-  // Get the current task to compare against
-  const getCurrentComparisonTask = useCallback((): Task | undefined => {
-    const mid = Math.floor((low + high) / 2);
-    return existingTasks[mid];
-  }, [low, high, existingTasks]);
-
   return (
     <ModalShell isOpen={isOpen} onClose={onClose} maxWidth="lg">
         {/* Phase: Entering Task */}
@@ -179,7 +122,7 @@ export function PriorityComparisonModal({
               type="text"
               value={taskInput}
               onChange={(e) => setTaskInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && taskInput.trim() && startComparison()}
+              onKeyDown={(e) => e.key === 'Enter' && taskInput.trim() && submitTask()}
               placeholder="What do you need to do?"
               className="w-full px-4 py-3 text-lg border-2 border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent mb-4 transition-all placeholder-gray-400 dark:placeholder-gray-500"
               autoFocus
@@ -312,7 +255,7 @@ export function PriorityComparisonModal({
                 Cancel
               </button>
               <button
-                onClick={startComparison}
+                onClick={submitTask}
                 disabled={!taskInput.trim()}
                 className={`px-5 py-2.5 rounded-xl font-semibold transition-all ${
                   taskInput.trim()
@@ -320,110 +263,7 @@ export function PriorityComparisonModal({
                     : 'bg-gray-200 dark:bg-gray-700 text-gray-400 dark:text-gray-500 cursor-not-allowed'
                 }`}
               >
-                Next →
-              </button>
-            </ModalShell.Footer>
-          </>
-        )}
-
-        {/* Phase: Loading */}
-        {phase === 'loading' && (
-          <ModalShell.Body className="text-center py-8">
-            <div className="inline-block w-12 h-12 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
-            <p className="text-gray-600 dark:text-gray-300 text-lg">Loading tasks...</p>
-          </ModalShell.Body>
-        )}
-
-        {/* Phase: Comparing */}
-        {phase === 'comparing' && (
-          <>
-            <ModalShell.Header>
-              <div className="text-center mb-4">
-                <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-1">Which is more important?</h2>
-                <p className="text-sm text-gray-500 dark:text-gray-400">
-                  Comparison {comparisonCount + 1} of ~{maxComparisons}
-                </p>
-              </div>
-
-              {/* Progress bar */}
-              <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-400 to-amber-500 transition-all duration-300"
-                  style={{ width: `${((comparisonCount + 1) / maxComparisons) * 100}%` }}
-                />
-              </div>
-            </ModalShell.Header>
-
-            <ModalShell.Body>
-            {/* Comparison buttons */}
-            <div className="space-y-4 py-4">
-              <button
-                onClick={() => handleComparisonChoice(true)}
-                className="w-full p-5 text-left rounded-xl border-2 border-amber-200 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 hover:bg-amber-100 dark:hover:bg-amber-900/50 hover:border-amber-400 dark:hover:border-amber-600 transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex-shrink-0 w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center font-bold text-sm">
-                    NEW
-                  </span>
-                  <div className="flex flex-col">
-                    <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
-                      {formatTaskTextWithProjects({
-                        text: taskInput,
-                        projects: parseProjectsFromInput(projectsInput),
-                      })}
-                      {isDaily && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">
-                          Daily
-                        </span>
-                      )}
-                    </span>
-                    {dueDate && (
-                      <span className="text-amber-600 dark:text-amber-400 text-sm">
-                        Due: {formatDueTimeRangeForDisplay(dueTimeStart || undefined, useDueTimeRange ? dueTimeEnd || undefined : undefined)
-                          ? `${dueDate} @ ${formatDueTimeRangeForDisplay(dueTimeStart || undefined, useDueTimeRange ? dueTimeEnd || undefined : undefined)}`
-                          : dueDate}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
-              
-              <div className="text-center text-gray-400 dark:text-gray-500 font-medium">or</div>
-              
-              <button
-                onClick={() => handleComparisonChoice(false)}
-                className="w-full p-5 text-left rounded-xl border-2 border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 hover:border-gray-400 dark:hover:border-gray-500 transition-all group"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="flex-shrink-0 w-8 h-8 rounded-full bg-gray-400 dark:bg-gray-500 text-white flex items-center justify-center font-bold text-sm">
-                    #{Math.floor((low + high) / 2) + 1}
-                  </span>
-                  <div className="flex flex-col">
-                    <span className="text-gray-800 dark:text-gray-100 font-medium text-lg">
-                      {(() => {
-                        const comparisonTask = getCurrentComparisonTask();
-                        return comparisonTask ? formatTaskTextWithProjects(comparisonTask) : '';
-                      })()}
-                    </span>
-                    {getCurrentComparisonTask()?.dueDate && (
-                      <span className="text-gray-500 dark:text-gray-400 text-sm">
-                        Due: {formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)
-                          ? `${getCurrentComparisonTask()?.dueDate} @ ${formatDueTimeRangeForDisplay(getCurrentComparisonTask()?.dueTimeStart, getCurrentComparisonTask()?.dueTimeEnd)}`
-                          : getCurrentComparisonTask()?.dueDate}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </button>
-            </div>
-            </ModalShell.Body>
-
-            <ModalShell.Footer className="justify-center border-t-0">
-              <button
-                onClick={onClose}
-                className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 text-sm"
-              >
-                Cancel
+                Add Task
               </button>
             </ModalShell.Footer>
           </>
@@ -446,7 +286,7 @@ export function PriorityComparisonModal({
               </svg>
             </div>
             <p className="text-gray-800 dark:text-gray-100 text-xl font-semibold">Task added!</p>
-            <p className="text-gray-500 dark:text-gray-400 mt-1">Priority position: #{low + 1}</p>
+            <p className="text-gray-500 dark:text-gray-400 mt-1">Added to the General backlog</p>
           </ModalShell.Body>
         )}
 

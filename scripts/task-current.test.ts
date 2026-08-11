@@ -193,6 +193,26 @@ describe('Completion lifecycle', () => {
     assert.notEqual(entry.completed, true);
   });
 
+  test('removing from Current scrubs future-dated snapshot selections', () => {
+    seedBaseData();
+    const future = '2099-01-01';
+    store.addCurrentTaskToToday(future, 'have-to-do', 't1');
+    let futureSnapshot = readJson(path.join(dailyListsDir, `${future}-have-to-do.json`));
+    assert.equal(
+      (futureSnapshot.selectedTasks as Array<{ id: string }>).some((t) => t.id === 't1'),
+      true
+    );
+
+    store.removeTaskFromCurrent('have-to-do', 't1');
+
+    futureSnapshot = readJson(path.join(dailyListsDir, `${future}-have-to-do.json`));
+    assert.equal(
+      (futureSnapshot.selectedTasks as Array<{ id: string }>).some((t) => t.id === 't1'),
+      false,
+      'future-dated selection must not survive removal from Current'
+    );
+  });
+
   test('completion removes the task from journal staged without flapping', async () => {
     seedBaseData();
     const today = todayISO();
