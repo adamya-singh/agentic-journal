@@ -137,9 +137,13 @@ export async function POST(request: NextRequest) {
     const nowIso = now.toISOString();
 
     let updatedSlot: JournalHourSlot;
+    let planUpdatedInPlace = false;
 
     if (hasTaskRef) {
-      if (
+      // Logging completes the earliest active plan for the task AND still
+      // appends a distinct logged entry at the actual hour (same behavior as
+      // the CLI): the plan records intent, the logged entry records reality.
+      planUpdatedInPlace =
         entryMode === 'logged' &&
         completeEarliestActiveTaskPlanInPlace(
           journal,
@@ -147,19 +151,7 @@ export async function POST(request: NextRequest) {
           taskId,
           { date, hour },
           nowIso
-        )
-      ) {
-        writeJournalFile(date, journal);
-
-        return NextResponse.json({
-          success: true,
-          date,
-          hour,
-          message: `Marked planned task complete for ${date}`,
-          updatedEntry: journal[hour],
-          planUpdatedInPlace: true,
-        });
-      }
+        );
 
       const newTaskEntry: JournalEntry = entryMode === 'planned'
         ? normalizePlannedTaskEntry({ taskId, listType, entryMode }, nowIso)
@@ -171,18 +163,28 @@ export async function POST(request: NextRequest) {
         );
       };
 
+      const skipDuplicateLogged = (): NextResponse => {
+        // The append is a duplicate, but a plan may just have been marked
+        // completed in memory — persist that before returning.
+        if (planUpdatedInPlace) {
+          writeJournalFile(date, journal);
+        }
+        return NextResponse.json({
+          success: true,
+          date,
+          hour,
+          message: `Logged task already exists at ${hour} on ${date}`,
+          updatedEntry: journal[hour],
+          skipped: true,
+          ...(planUpdatedInPlace ? { planUpdatedInPlace: true } : {}),
+        });
+      };
+
       if (!currentSlot || (typeof currentSlot === 'string' && currentSlot.trim() === '')) {
         updatedSlot = newTaskEntry;
       } else if (isJournalEntryArray(currentSlot)) {
         if (entryMode === 'logged' && taskAlreadyExists(currentSlot, 'logged')) {
-          return NextResponse.json({
-            success: true,
-            date,
-            hour,
-            message: `Logged task already exists at ${hour} on ${date}`,
-            updatedEntry: currentSlot,
-            skipped: true,
-          });
+          return skipDuplicateLogged();
         }
         updatedSlot = [...currentSlot, newTaskEntry];
       } else {
@@ -192,14 +194,7 @@ export async function POST(request: NextRequest) {
           currentSlot.taskId === taskId &&
           currentSlot.entryMode === 'logged'
         ) {
-          return NextResponse.json({
-            success: true,
-            date,
-            hour,
-            message: `Logged task already exists at ${hour} on ${date}`,
-            updatedEntry: currentSlot,
-            skipped: true,
-          });
+          return skipDuplicateLogged();
         }
         updatedSlot = [currentSlot, newTaskEntry];
       }
@@ -262,6 +257,7 @@ export async function POST(request: NextRequest) {
       hour,
       message: `Successfully appended to ${hour} on ${date}`,
       updatedEntry: journal[hour],
+      ...(planUpdatedInPlace ? { planUpdatedInPlace: true } : {}),
     });
   } catch (error) {
     console.error('Error appending to journal:', error);
