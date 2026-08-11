@@ -157,12 +157,7 @@ export function readDailyCurrentSnapshot(date: string, listType: ListType): Dail
     if (!isRecord(parsed) || parsed.schemaVersion !== 3) {
       return null;
     }
-    const rawSelectedTasks = Array.isArray(parsed.selectedTasks)
-      ? parsed.selectedTasks
-      : Array.isArray(parsed.rankedTasks)
-        ? parsed.rankedTasks
-        : [];
-    const selectedTasks = rawSelectedTasks
+    const selectedTasks = (Array.isArray(parsed.selectedTasks) ? parsed.selectedTasks : [])
       .map(toTask)
       .filter((task): task is Task => task !== null);
     const automaticTasks = Array.isArray(parsed.automaticTasks)

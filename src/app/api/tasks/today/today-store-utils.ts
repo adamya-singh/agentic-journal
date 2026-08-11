@@ -268,11 +268,7 @@ export function readCompletedTaskSnapshots(date: string, listType: ListType): Ta
 
   if (parsed.schemaVersion === 3) {
     const snapshotTasks = [
-      ...(Array.isArray(parsed.selectedTasks)
-        ? parsed.selectedTasks
-        : Array.isArray(parsed.rankedTasks)
-          ? parsed.rankedTasks
-          : []),
+      ...(Array.isArray(parsed.selectedTasks) ? parsed.selectedTasks : []),
       ...(Array.isArray(parsed.automaticTasks) ? parsed.automaticTasks : []),
     ];
     return snapshotTasks
@@ -322,9 +318,7 @@ export function writeCompletedTaskSnapshots(date: string, listType: ListType, co
           return next;
         });
     };
-    const selectedTasks = updateTasks(
-      Array.isArray(existing.selectedTasks) ? existing.selectedTasks : existing.rankedTasks
-    );
+    const selectedTasks = updateTasks(existing.selectedTasks);
     const automaticTasks = updateTasks(existing.automaticTasks);
     for (const completion of completedTasks) {
       if (!seen.has(completion.id)) {
@@ -336,7 +330,6 @@ export function writeCompletedTaskSnapshots(date: string, listType: ListType, co
       selectedTasks,
       automaticTasks,
     };
-    delete data.rankedTasks;
     writeJsonFileAtomic(filePath, data);
     return;
   }

@@ -323,6 +323,7 @@ With clear foreign key relationships (plan entries and journal entries can refer
 ## Appendix: Current Data Structures
 
 ### Task File Format (have-to-do.json, want-to-do.json)
+General lists are unordered backlogs; ranking lives only in the Current queue.
 ```json
 {
   "_comment": "Queue structure - first element is highest priority",
@@ -334,6 +335,43 @@ With clear foreign key relationships (plan entries and journal entries can refer
       "isDaily": true
     }
   ]
+}
+```
+
+### Current Queue Format (tasks/current/have-to-do.json, want-to-do.json)
+The only priority-ordered store; taskIds[0] is the highest rank. Every id must
+reference a live General task (readers self-heal orphans).
+```json
+{
+  "_comment": "Running Current queue - first task ID is highest ranked priority",
+  "schemaVersion": 1,
+  "taskIds": ["uuid-highest-rank", "uuid-next"]
+}
+```
+
+### Current Rollover Metadata (tasks/current/metadata.json)
+```json
+{
+  "_comment": "Running Current queues and dated full-snapshot rollover metadata",
+  "schemaVersion": 1,
+  "initializedDate": "2026-05-26",
+  "lastMaterializedDate": "2026-08-11"
+}
+```
+
+### Daily Today Snapshot (tasks/daily-lists/YYYY-MM-DD-<list>.json, schemaVersion 3)
+The dated record of Today: selectedTasks are explicit selections in Current
+rank order; automaticTasks are tasks due that date. Completion is recorded in
+place (completed/completedAt on the embedded task). Pre-2026-05-26 files keep
+their legacy v2 completedTasks / tasks shapes and are read-only history.
+```json
+{
+  "_comment": "Daily Today snapshot - selected Current tasks plus automatic due-date attention",
+  "schemaVersion": 3,
+  "date": "2026-08-11",
+  "listType": "have-to-do",
+  "selectedTasks": [{ "id": "uuid", "text": "task", "completed": true, "completedAt": "..." }],
+  "automaticTasks": [{ "id": "uuid", "text": "due today", "dueDate": "2026-08-11" }]
 }
 ```
 
