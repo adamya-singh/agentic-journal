@@ -24,7 +24,8 @@
     "start:production:next": "next start -H 127.0.0.1 -p 3000",
     "start:production:mastra": "cd src/backend/.mastra/output && HOST=127.0.0.1 PORT=4111 node ./index.mjs",
     "lint": "next lint",
-    "pretty": "npx prettier --write ."
+    "pretty": "npx prettier --write .",
+    "test": "node --test --import ./scripts/test-register.mjs scripts/*.test.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",

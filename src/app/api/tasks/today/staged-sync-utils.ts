@@ -1,16 +1,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureDailyJournalExists } from '../due-date-utils';
-import {
+import type {
   ListType,
   Task,
   StagedTaskEntry,
   TaskJournalRangeEntry,
   JournalHourSlot,
-  isJournalEntryArray,
-  isTaskJournalEntry,
 } from '@/lib/types';
+import { isJournalEntryArray, isTaskJournalEntry } from '@/lib/types';
 import { getEffectiveDailySnapshot } from '../current/current-store-utils';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 
 interface DayJournal {
   [key: string]: unknown;
@@ -18,7 +18,7 @@ interface DayJournal {
   ranges?: TaskJournalRangeEntry[];
 }
 
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
+
 const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'] as const;
 
 type TodayTasksByList = {
@@ -76,7 +76,7 @@ export function syncComputedTodayTasksToJournalStaged(
     ensureDailyJournalExists(date);
   }
 
-  const journalFilePath = path.join(JOURNAL_DIR, `${date}.json`);
+  const journalFilePath = path.join(journalDataDir(), `${date}.json`);
   if (!fs.existsSync(journalFilePath)) {
     return false;
   }
@@ -112,6 +112,6 @@ export function syncComputedTodayTasksToJournalStaged(
   }
 
   journal.staged = desired;
-  fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(journalFilePath, journal);
   return true;
 }

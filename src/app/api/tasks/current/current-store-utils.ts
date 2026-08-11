@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ListType, Task } from '@/lib/types';
+import type { ListType, Task } from '@/lib/types';
+import { journalDataDir, tasksDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import {
   readCompletedTaskSnapshots,
   readGeneralTasks,
@@ -33,14 +34,14 @@ export interface DailyCurrentSnapshot {
   automaticTasks: Task[];
 }
 
-const TASKS_DIR = path.join(process.cwd(), 'src/backend/data/tasks');
-const CURRENT_DIR = path.join(TASKS_DIR, 'current');
-const CURRENT_METADATA_PATH = path.join(CURRENT_DIR, 'metadata.json');
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const JOURNAL_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
 
-function ensureDir(filePath: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+function currentDir(): string {
+  return path.join(tasksDataDir(), 'current');
+}
+
+function currentMetadataPath(): string {
+  return path.join(currentDir(), 'metadata.json');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -64,7 +65,7 @@ function nextDate(date: string): string {
 }
 
 function getCurrentQueuePath(listType: ListType): string {
-  return path.join(CURRENT_DIR, `${listType}.json`);
+  return path.join(currentDir(), `${listType}.json`);
 }
 
 function cloneTask(task: Task): Task {
@@ -72,11 +73,11 @@ function cloneTask(task: Task): Task {
 }
 
 function readMetadata(): CurrentMetadata | null {
-  if (!fs.existsSync(CURRENT_METADATA_PATH)) {
+  if (!fs.existsSync(currentMetadataPath())) {
     return null;
   }
   try {
-    const parsed = JSON.parse(fs.readFileSync(CURRENT_METADATA_PATH, 'utf-8')) as unknown;
+    const parsed = JSON.parse(fs.readFileSync(currentMetadataPath(), 'utf-8')) as unknown;
     if (
       !isRecord(parsed) ||
       typeof parsed.initializedDate !== 'string' ||
@@ -96,8 +97,7 @@ function readMetadata(): CurrentMetadata | null {
 }
 
 function writeMetadata(metadata: CurrentMetadata): void {
-  ensureDir(CURRENT_METADATA_PATH);
-  fs.writeFileSync(CURRENT_METADATA_PATH, JSON.stringify(metadata, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(currentMetadataPath(), metadata);
 }
 
 export function readCurrentTaskIds(listType: ListType): string[] {
@@ -117,15 +117,27 @@ export function readCurrentTaskIds(listType: ListType): string[] {
 }
 
 function writeCurrentTaskIds(listType: ListType, taskIds: string[]): void {
-  const filePath = getCurrentQueuePath(listType);
-  ensureDir(filePath);
   const uniqueIds = Array.from(new Set(taskIds));
   const data: CurrentQueueData = {
     _comment: 'Running Current queue - first task ID is highest ranked priority',
     schemaVersion: 1,
     taskIds: uniqueIds,
   };
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(getCurrentQueuePath(listType), data);
+}
+
+// Read + self-heal: ids whose task left General (external writers, historical
+// bugs) are pruned from the queue file, not just filtered from the view.
+// Every ranking/position computation must use this list — positions computed
+// against a filtered view but applied to a raw array land at the wrong rank.
+function getValidatedCurrentTaskIds(listType: ListType): string[] {
+  const rawIds = readCurrentTaskIds(listType);
+  const generalIds = new Set(readGeneralTasks(listType).tasks.map((task) => task.id));
+  const validIds = rawIds.filter((id) => generalIds.has(id));
+  if (validIds.length !== rawIds.length) {
+    writeCurrentTaskIds(listType, validIds);
+  }
+  return validIds;
 }
 
 function toTask(value: unknown): Task | null {
@@ -171,8 +183,13 @@ export function readDailyCurrentSnapshot(date: string, listType: ListType): Dail
 
 function writeDailyCurrentSnapshot(snapshot: DailyCurrentSnapshot): void {
   const filePath = getDailyTasksFilePath(snapshot.date, snapshot.listType);
-  ensureDir(filePath);
-  fs.writeFileSync(filePath, JSON.stringify(snapshot, null, 2) + '\n', 'utf-8');
+  // Skip byte-identical rewrites: this runs on read paths (GET today/list),
+  // which must not churn files the CLI peer also watches.
+  const rendered = JSON.stringify(snapshot, null, 2) + '\n';
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === rendered) {
+    return;
+  }
+  writeJsonFileAtomic(filePath, snapshot);
 }
 
 function collectScheduledTaskIds(journal: Record<string, unknown>): Set<string> {
@@ -200,7 +217,7 @@ function collectScheduledTaskIds(journal: Record<string, unknown>): Set<string> 
 }
 
 function syncStagedJournalFromSnapshots(date: string): void {
-  const journalPath = path.join(JOURNAL_DIR, `${date}.json`);
+  const journalPath = path.join(journalDataDir(), `${date}.json`);
   ensureDailyJournalExists(date);
   if (!fs.existsSync(journalPath)) {
     return;
@@ -225,8 +242,11 @@ function syncStagedJournalFromSnapshots(date: string): void {
       }
     }
   }
+  if (JSON.stringify(Array.isArray(journal.staged) ? journal.staged : []) === JSON.stringify(staged)) {
+    return;
+  }
   journal.staged = staged;
-  fs.writeFileSync(journalPath, JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(journalPath, journal);
 }
 
 function completionMap(date: string, listType: ListType): Map<string, Task> {
@@ -244,7 +264,7 @@ function withCompletion(task: Task, completions: Map<string, Task>): Task {
 }
 
 function sortSelectedIdsByCurrentOrder(listType: ListType, selectedIds: string[]): string[] {
-  const currentIds = readCurrentTaskIds(listType);
+  const currentIds = getValidatedCurrentTaskIds(listType);
   const selected = new Set(selectedIds);
   const ordered = currentIds.filter((id) => selected.has(id));
   for (const id of selectedIds) {
@@ -260,7 +280,7 @@ function buildSnapshot(date: string, listType: ListType, selectedIdsOverride?: s
   const generalTasks = readGeneralTasks(listType).tasks;
   const byId = new Map(generalTasks.map((task) => [task.id, task]));
   const completions = completionMap(date, listType);
-  const currentIds = new Set(readCurrentTaskIds(listType));
+  const currentIds = new Set(getValidatedCurrentTaskIds(listType));
   const selectedIds = sortSelectedIdsByCurrentOrder(
     listType,
     selectedIdsOverride ?? previous?.selectedTasks.map((task) => task.id) ?? []
@@ -332,18 +352,60 @@ function seedCurrentQueues(date: string): Record<ListType, string[]> {
   return seededByList;
 }
 
+function latestMaterializedSnapshotDate(): string | null {
+  const dailyListsDir = path.join(tasksDataDir(), 'daily-lists');
+  if (!fs.existsSync(dailyListsDir)) {
+    return null;
+  }
+  const dates = Array.from(
+    new Set(
+      fs
+        .readdirSync(dailyListsDir)
+        .map((name) => /^(\d{4}-\d{2}-\d{2})-(?:have|want)-to-do\.json$/.exec(name)?.[1])
+        .filter((date): date is string => typeof date === 'string')
+    )
+  ).sort();
+  for (let i = dates.length - 1; i >= 0; i--) {
+    for (const listType of ['have-to-do', 'want-to-do'] as const) {
+      if (readDailyCurrentSnapshot(dates[i], listType)) {
+        return dates[i];
+      }
+    }
+  }
+  return null;
+}
+
 export function ensureCurrentSystemThroughToday(): CurrentMetadata {
   const today = currentDateISO();
-  let metadata = readMetadata();
+  const stored = readMetadata();
+  if (stored && stored.lastMaterializedDate === today) {
+    return stored;
+  }
+
+  let metadata = stored;
   let initialSelectedByList: Record<ListType, string[]> | null = null;
   if (!metadata) {
-    initialSelectedByList = seedCurrentQueues(today);
-    metadata = {
-      _comment: 'Running Current queues and dated full-snapshot rollover metadata',
-      schemaVersion: 1,
-      initializedDate: today,
-      lastMaterializedDate: '',
-    };
+    const queueFilesExist = (['have-to-do', 'want-to-do'] as const).some((listType) =>
+      fs.existsSync(getCurrentQueuePath(listType))
+    );
+    if (queueFilesExist) {
+      // Metadata loss must not reseed: seeding overwrites the user's ranking.
+      // Reconstruct rollover state from the newest materialized snapshot.
+      metadata = {
+        _comment: 'Running Current queues and dated full-snapshot rollover metadata',
+        schemaVersion: 1,
+        initializedDate: today,
+        lastMaterializedDate: latestMaterializedSnapshotDate() ?? '',
+      };
+    } else {
+      initialSelectedByList = seedCurrentQueues(today);
+      metadata = {
+        _comment: 'Running Current queues and dated full-snapshot rollover metadata',
+        schemaVersion: 1,
+        initializedDate: today,
+        lastMaterializedDate: '',
+      };
+    }
   }
 
   let date = metadata.lastMaterializedDate ? nextDate(metadata.lastMaterializedDate) : metadata.initializedDate;
@@ -358,7 +420,13 @@ export function ensureCurrentSystemThroughToday(): CurrentMetadata {
     metadata.lastMaterializedDate = date;
     date = nextDate(date);
   }
-  writeMetadata(metadata);
+  if (
+    !stored ||
+    stored.initializedDate !== metadata.initializedDate ||
+    stored.lastMaterializedDate !== metadata.lastMaterializedDate
+  ) {
+    writeMetadata(metadata);
+  }
   return metadata;
 }
 
@@ -404,7 +472,7 @@ export function findTaskInDailySnapshot(date: string, listType: ListType, taskId
 export function getCurrentTasks(listType: ListType): Task[] {
   ensureCurrentSystemThroughToday();
   const byId = new Map(readGeneralTasks(listType).tasks.map((task) => [task.id, task]));
-  return readCurrentTaskIds(listType)
+  return getValidatedCurrentTaskIds(listType)
     .map((taskId) => byId.get(taskId))
     .filter((task): task is Task => task !== undefined)
     .map(cloneTask);
@@ -414,7 +482,7 @@ export function addCurrentTaskToToday(date: string, listType: ListType, taskId: 
   if (date <= currentDateISO()) {
     ensureCurrentSystemThroughToday();
   }
-  if (!readCurrentTaskIds(listType).includes(taskId)) {
+  if (!getValidatedCurrentTaskIds(listType).includes(taskId)) {
     return false;
   }
   if (!readGeneralTasks(listType).tasks.some((task) => task.id === taskId)) {
@@ -450,7 +518,7 @@ export function addTaskToCurrent(listType: ListType, taskId: string, position?: 
   if (!readGeneralTasks(listType).tasks.some((task) => task.id === taskId)) {
     return false;
   }
-  const current = readCurrentTaskIds(listType).filter((id) => id !== taskId);
+  const current = getValidatedCurrentTaskIds(listType).filter((id) => id !== taskId);
   const insertion = typeof position === 'number' ? Math.max(0, Math.min(position, current.length)) : current.length;
   current.splice(insertion, 0, taskId);
   writeCurrentTaskIds(listType, current);
@@ -460,7 +528,7 @@ export function addTaskToCurrent(listType: ListType, taskId: string, position?: 
 
 export function removeTaskFromCurrent(listType: ListType, taskId: string): boolean {
   ensureCurrentSystemThroughToday();
-  const current = readCurrentTaskIds(listType);
+  const current = getValidatedCurrentTaskIds(listType);
   const next = current.filter((id) => id !== taskId);
   if (next.length === current.length) return false;
   writeCurrentTaskIds(listType, next);
@@ -480,7 +548,7 @@ export function removeTaskFromCurrent(listType: ListType, taskId: string): boole
 export function removeTaskIdsFromCurrent(listType: ListType, taskIds: string[]): boolean {
   ensureCurrentSystemThroughToday();
   const removed = new Set(taskIds);
-  const current = readCurrentTaskIds(listType);
+  const current = getValidatedCurrentTaskIds(listType);
   const next = current.filter((id) => !removed.has(id));
   if (next.length === current.length) return false;
   writeCurrentTaskIds(listType, next);

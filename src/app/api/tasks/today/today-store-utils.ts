@@ -1,7 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { ListType, Task, TasksData } from '@/lib/types';
+import type { ListType, Task, TasksData } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
+import { tasksDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 
 export interface TaskCompletionSnapshot {
   id: string;
@@ -46,10 +47,17 @@ interface CompletedTaskIndexData {
   updatedAt: string;
 }
 
-const TASKS_DIR = path.join(process.cwd(), 'src/backend/data/tasks');
-const DAILY_LISTS_DIR = path.join(TASKS_DIR, 'daily-lists');
-const TODAY_OVERRIDES_DIR = path.join(TASKS_DIR, 'today-overrides');
-const COMPLETED_INDEX_PATH = path.join(TASKS_DIR, 'completed-index.json');
+function dailyListsDir(): string {
+  return path.join(tasksDataDir(), 'daily-lists');
+}
+
+function todayOverridesDir(): string {
+  return path.join(tasksDataDir(), 'today-overrides');
+}
+
+function completedIndexPath(): string {
+  return path.join(tasksDataDir(), 'completed-index.json');
+}
 
 const DEFAULT_COMPLETED_INDEX: CompletedTaskIndexData = {
   _comment: 'Global index for completed task snapshots by taskId',
@@ -205,15 +213,15 @@ function readRawDailyFile(date: string, listType: ListType): unknown {
 }
 
 export function getDailyTasksFilePath(date: string, listType: ListType): string {
-  return path.join(DAILY_LISTS_DIR, `${date}-${listType}.json`);
+  return path.join(dailyListsDir(), `${date}-${listType}.json`);
 }
 
 export function getTodayOverridesFilePath(date: string, listType: ListType): string {
-  return path.join(TODAY_OVERRIDES_DIR, `${date}-${listType}.json`);
+  return path.join(todayOverridesDir(), `${date}-${listType}.json`);
 }
 
 export function getGeneralTasksFilePath(listType: ListType): string {
-  return path.join(TASKS_DIR, `${listType}.json`);
+  return path.join(tasksDataDir(), `${listType}.json`);
 }
 
 export function readGeneralTasks(listType: ListType): TasksData {
@@ -232,7 +240,7 @@ export function readGeneralTasks(listType: ListType): TasksData {
 export function writeGeneralTasks(data: TasksData, listType: ListType): void {
   const tasksFile = getGeneralTasksFilePath(listType);
   ensureDirExists(tasksFile);
-  fs.writeFileSync(tasksFile, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(tasksFile, data);
 }
 
 export function readLegacyDailyTasks(date: string, listType: ListType): Task[] {
@@ -329,7 +337,7 @@ export function writeCompletedTaskSnapshots(date: string, listType: ListType, co
       automaticTasks,
     };
     delete data.rankedTasks;
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+    writeJsonFileAtomic(filePath, data);
     return;
   }
 
@@ -339,7 +347,7 @@ export function writeCompletedTaskSnapshots(date: string, listType: ListType, co
     completedTasks,
   };
 
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(filePath, data);
 }
 
 export function upsertCompletedTaskSnapshot(
@@ -383,12 +391,12 @@ export function getCompletedTaskIdSet(date: string, listType: ListType): Set<str
 }
 
 export function readCompletedTaskIndex(): CompletedTaskIndexData {
-  if (!fs.existsSync(COMPLETED_INDEX_PATH)) {
+  if (!fs.existsSync(completedIndexPath())) {
     return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
   }
 
   try {
-    const raw = JSON.parse(fs.readFileSync(COMPLETED_INDEX_PATH, 'utf-8')) as unknown;
+    const raw = JSON.parse(fs.readFileSync(completedIndexPath(), 'utf-8')) as unknown;
     return toIndexData(raw);
   } catch {
     return { ...DEFAULT_COMPLETED_INDEX, tasks: {} };
@@ -396,14 +404,14 @@ export function readCompletedTaskIndex(): CompletedTaskIndexData {
 }
 
 export function writeCompletedTaskIndex(index: CompletedTaskIndexData): void {
-  ensureDirExists(COMPLETED_INDEX_PATH);
+  ensureDirExists(completedIndexPath());
   const payload: CompletedTaskIndexData = {
     _comment: DEFAULT_COMPLETED_INDEX._comment,
     schemaVersion: 1,
     tasks: index.tasks,
     updatedAt: new Date().toISOString(),
   };
-  fs.writeFileSync(COMPLETED_INDEX_PATH, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(completedIndexPath(), payload);
 }
 
 export function upsertCompletedTaskIndexSnapshot(taskId: string, snapshot: TaskCompletionSnapshot, sourceDate: string): void {
@@ -462,11 +470,11 @@ function parseDailyListFilename(fileName: string): { date: string; listType: Lis
 }
 
 function findLatestCompletedSnapshotForTaskFromDailyLists(taskId: string): IndexedTaskCompletionSnapshot | null {
-  if (!fs.existsSync(DAILY_LISTS_DIR)) {
+  if (!fs.existsSync(dailyListsDir())) {
     return null;
   }
 
-  const files = fs.readdirSync(DAILY_LISTS_DIR).sort();
+  const files = fs.readdirSync(dailyListsDir()).sort();
   let best: IndexedTaskCompletionSnapshot | null = null;
 
   for (const fileName of files) {
@@ -497,12 +505,12 @@ export function rebuildCompletedTaskIndexFromDailyLists(): CompletedTaskIndexDat
     updatedAt: new Date().toISOString(),
   };
 
-  if (!fs.existsSync(DAILY_LISTS_DIR)) {
+  if (!fs.existsSync(dailyListsDir())) {
     writeCompletedTaskIndex(index);
     return index;
   }
 
-  const files = fs.readdirSync(DAILY_LISTS_DIR).sort();
+  const files = fs.readdirSync(dailyListsDir()).sort();
 
   for (const fileName of files) {
     const parsed = parseDailyListFilename(fileName);
@@ -609,18 +617,18 @@ export function writeTodayOverrides(date: string, listType: ListType, overrides:
     excludedTaskIds: overrides.excludedTaskIds,
   };
 
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + '\n', 'utf-8');
+  writeJsonFileAtomic(filePath, data);
 }
 
 export function removeTaskIdsFromTodayOverrides(taskIds: string[], listType: ListType): number {
-  if (taskIds.length === 0 || !fs.existsSync(TODAY_OVERRIDES_DIR)) {
+  if (taskIds.length === 0 || !fs.existsSync(todayOverridesDir())) {
     return 0;
   }
 
   const idSet = new Set(taskIds);
   let changedFiles = 0;
 
-  for (const fileName of fs.readdirSync(TODAY_OVERRIDES_DIR)) {
+  for (const fileName of fs.readdirSync(todayOverridesDir())) {
     const parsed = parseDailyListFilename(fileName);
     if (!parsed || parsed.listType !== listType) {
       continue;
@@ -645,14 +653,14 @@ export function removeTaskIdsFromTodayOverrides(taskIds: string[], listType: Lis
 }
 
 export function removeTaskIdsFromCompletedSnapshots(taskIds: string[], listType: ListType): number {
-  if (taskIds.length === 0 || !fs.existsSync(DAILY_LISTS_DIR)) {
+  if (taskIds.length === 0 || !fs.existsSync(dailyListsDir())) {
     return 0;
   }
 
   const idSet = new Set(taskIds);
   let changedFiles = 0;
 
-  for (const fileName of fs.readdirSync(DAILY_LISTS_DIR)) {
+  for (const fileName of fs.readdirSync(dailyListsDir())) {
     const parsed = parseDailyListFilename(fileName);
     if (!parsed || parsed.listType !== listType) {
       continue;

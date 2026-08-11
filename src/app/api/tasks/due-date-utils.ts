@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Task, ListType, JournalRangeEntry, StagedTaskEntry, JournalHourSlot } from '@/lib/types';
+import type { Task, ListType, JournalRangeEntry, StagedTaskEntry, JournalHourSlot } from '@/lib/types';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 
 interface DayJournalFile {
   [key: string]: JournalHourSlot | JournalRangeEntry[] | StagedTaskEntry[] | undefined;
@@ -8,7 +9,6 @@ interface DayJournalFile {
   staged?: StagedTaskEntry[];
 }
 
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const VALID_HOURS = [
   '7am',
   '8am',
@@ -55,7 +55,7 @@ type AutoPlannedTaskRangeEntry = {
 };
 
 function getJournalFilePath(dateIso: string): string {
-  return path.join(JOURNAL_DIR, `${dateIso}.json`);
+  return path.join(journalDataDir(), `${dateIso}.json`);
 }
 
 function getEmptyJournalTemplate(): DayJournalFile {
@@ -100,7 +100,7 @@ function readJournal(dateIso: string): DayJournalFile | null {
 
 function writeJournal(dateIso: string, journal: DayJournalFile): void {
   const journalFilePath = getJournalFilePath(dateIso);
-  fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(journalFilePath, journal);
 }
 
 function ensureStructuredJournalShape(journal: DayJournalFile): void {
@@ -287,12 +287,9 @@ export function ensureDailyJournalExists(dateIso: string): void {
   const journalFilePath = getJournalFilePath(dateIso);
 
   if (!fs.existsSync(journalFilePath)) {
-    if (!fs.existsSync(JOURNAL_DIR)) {
-      fs.mkdirSync(JOURNAL_DIR, { recursive: true });
-    }
 
     const template = getEmptyJournalTemplate();
-    fs.writeFileSync(journalFilePath, JSON.stringify(template, null, 2), 'utf-8');
+    writeJsonFileAtomic(journalFilePath, template);
   }
 }
 
@@ -315,7 +312,7 @@ export function addTaskToStaged(dateIso: string, taskId: string, listType: ListT
       taskId,
       listType,
     });
-    fs.writeFileSync(journalFilePath, JSON.stringify(journal, null, 2), 'utf-8');
+    writeJsonFileAtomic(journalFilePath, journal);
   }
 }
 

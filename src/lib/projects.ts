@@ -1,4 +1,4 @@
-import { Task } from '@/lib/types';
+import type { Task } from '@/lib/types';
 
 export function normalizeProjectSlug(input: string): string {
   return input

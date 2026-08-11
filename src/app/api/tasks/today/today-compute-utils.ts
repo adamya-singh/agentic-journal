@@ -1,5 +1,6 @@
-import { Task } from '@/lib/types';
-import { TaskCompletionSnapshot, TodayOverridesData, taskFromCompletionSnapshot } from './today-store-utils';
+import type { Task } from '@/lib/types';
+import type { TaskCompletionSnapshot, TodayOverridesData } from './today-store-utils';
+import { taskFromCompletionSnapshot } from './today-store-utils';
 
 interface ComputeTodayTasksParams {
   date: string;
