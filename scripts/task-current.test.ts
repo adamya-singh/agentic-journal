@@ -193,6 +193,35 @@ describe('Completion lifecycle', () => {
     assert.notEqual(entry.completed, true);
   });
 
+  test('completion removes the task from journal staged without flapping', async () => {
+    seedBaseData();
+    const today = todayISO();
+    store.addCurrentTaskToToday(today, 'have-to-do', 't1');
+
+    const journalPath = path.join(journalDir, `${today}.json`);
+    let journal = readJson(journalPath);
+    assert.equal(
+      (journal.staged as Array<{ taskId: string }>).some((e) => e.taskId === 't1'),
+      true,
+      'selected task must be staged'
+    );
+
+    const completed = await postComplete('t1', today);
+    assert.equal(completed.success, true);
+    journal = readJson(journalPath);
+    assert.equal(
+      (journal.staged as Array<{ taskId: string }>).some((e) => e.taskId === 't1'),
+      false,
+      'completed task must leave staged'
+    );
+
+    // A read-path sync must not re-stage it (the old dual-writer flap).
+    const settled = readFileSync(journalPath, 'utf-8');
+    store.getEffectiveDailySnapshot(today, 'have-to-do');
+    store.syncStagedJournalFromSnapshots(today);
+    assert.equal(readFileSync(journalPath, 'utf-8'), settled);
+  });
+
   test('daily task completed today renders completed in Current and toggles correctly', async () => {
     seedBaseData();
     const today = todayISO();

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ListType } from '@/lib/types';
-import { computeTodayTasksForList, computeTodayTasksByList, syncComputedTodayTasksToJournalStaged } from '../staged-sync-utils';
+import { computeTodayTasksForList, computeTodayTasksByList } from '../staged-sync-utils';
+import { syncStagedJournalFromSnapshots } from '../../current/current-store-utils';
 import { getEffectiveDailySnapshot } from '../../current/current-store-utils';
 
 /**
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest) {
     }
 
     const todayByList = computeTodayTasksByList(date);
-    syncComputedTodayTasksToJournalStaged(date, todayByList);
+    syncStagedJournalFromSnapshots(date);
     const todayTasks = todayByList[listType] ?? computeTodayTasksForList(date, listType);
     const snapshot = getEffectiveDailySnapshot(date, listType as ListType);
 

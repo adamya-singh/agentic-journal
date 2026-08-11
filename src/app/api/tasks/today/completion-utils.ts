@@ -11,7 +11,11 @@ import {
   upsertCompletedTaskSnapshot,
   writeGeneralTasks,
 } from './today-store-utils';
-import { findTaskInDailySnapshot, removeTaskFromCurrent } from '../current/current-store-utils';
+import {
+  findTaskInDailySnapshot,
+  removeTaskFromCurrent,
+  syncStagedJournalFromSnapshots,
+} from '../current/current-store-utils';
 import { buildChildrenByParentId } from '@/lib/tasks';
 
 export interface OpenSubtask {
@@ -147,6 +151,10 @@ export function completeTaskForDate(date: string, listType: ListType, taskId: st
     }
     removeTaskFromCurrent(listType, taskId);
   }
+  // Drop the completed task from the journal's staged list for this date;
+  // without this, the next today/list read re-staged it and the next rollover
+  // removed it again (visible flapping).
+  syncStagedJournalFromSnapshots(date);
 
   return {
     status: 'completed',

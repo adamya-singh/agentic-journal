@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ListType } from '@/lib/types';
+import type { ListType } from '@/lib/types';
 import { addCurrentTaskToToday } from '../../current/current-store-utils';
-import { syncComputedTodayTasksToJournalStaged } from '../staged-sync-utils';
 
 /**
  * POST /api/tasks/today/add
@@ -42,7 +41,6 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
-    syncComputedTodayTasksToJournalStaged(date);
 
     return NextResponse.json({
       success: true,

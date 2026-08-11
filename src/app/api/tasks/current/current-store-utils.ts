@@ -216,9 +216,18 @@ function collectScheduledTaskIds(journal: Record<string, unknown>): Set<string> 
   return scheduled;
 }
 
-function syncStagedJournalFromSnapshots(date: string): void {
+// The single journal `staged` writer: membership is derived from the date's
+// Today snapshots (selected + automatic, completed and scheduled excluded).
+// Existing entries are preserved by (taskId, listType) key so richer entries
+// written by the CLI peer survive app-side rewrites.
+export function syncStagedJournalFromSnapshots(
+  date: string,
+  options?: { createJournalIfMissing?: boolean }
+): void {
   const journalPath = path.join(journalDataDir(), `${date}.json`);
-  ensureDailyJournalExists(date);
+  if (options?.createJournalIfMissing !== false) {
+    ensureDailyJournalExists(date);
+  }
   if (!fs.existsSync(journalPath)) {
     return;
   }

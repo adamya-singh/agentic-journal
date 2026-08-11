@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ListType } from '@/lib/types';
+import type { ListType } from '@/lib/types';
 import { removeTaskFromTodaySelection } from '../../current/current-store-utils';
-import { syncComputedTodayTasksToJournalStaged } from '../staged-sync-utils';
 
 /**
  * POST /api/tasks/today/remove
@@ -36,13 +35,11 @@ export async function POST(request: NextRequest) {
     }
 
     const changed = removeTaskFromTodaySelection(date, listType as ListType, taskId);
-    syncComputedTodayTasksToJournalStaged(date);
 
     return NextResponse.json({
       success: true,
       removed: changed,
-      message: 'Task removed from today\'s list',
-      journalCleaned: false,
+      message: changed ? 'Task removed from today\'s list' : 'Task was not selected for this date',
     });
   } catch (error) {
     console.error('Error removing task from computed today list:', error);
