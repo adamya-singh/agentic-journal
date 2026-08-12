@@ -1,10 +1,10 @@
 'use client';
 
 import React from 'react';
-import Link from 'next/link';
 import { z } from 'zod';
 import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-os';
 
+import { AppHeader } from '@/components/AppHeader';
 import { SettingsPopover } from '@/components/SettingsPopover';
 import { MiscNotesSection } from '@/components/MiscNotesSection';
 import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
@@ -1258,55 +1258,12 @@ export default function HomePage() {
 
   const renderContent = () => (
     <div className="relative min-h-screen w-full bg-white pb-40 dark:bg-gray-900">
-      {/* Desktop-only utility links (top-right, absolute) */}
-      <div className="hidden sm:flex absolute top-4 right-4 z-10 items-center gap-2">
-        <Link
-          href="/omi-transcripts"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Transcripts
-        </Link>
-        <Link
-          href="/projects"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Projects View
-        </Link>
-        <Link
-          href="/jobs"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Jobs
-        </Link>
-        <SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />
-      </div>
-
-      {/* Mobile-only top chrome row: flows above WeekView so the absolute desktop
-          chrome can keep its current position without touching mobile layout. */}
-      <div className="sm:hidden flex items-center justify-end gap-2 px-3 pt-3">
-        <Link
-          href="/omi-transcripts"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Transcripts
-        </Link>
-        <Link
-          href="/projects"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Projects
-        </Link>
-        <Link
-          href="/jobs"
-          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
-        >
-          Jobs
-        </Link>
-        <SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />
-      </div>
+      <AppHeader
+        settings={<SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />}
+      />
 
       {/* Quick capture bar */}
-      <div className="max-w-2xl mx-auto px-3 pt-3 sm:pt-16">
+      <div className="max-w-2xl mx-auto px-3 pt-3">
         <QuickCaptureInput variant="inline" />
       </div>
 

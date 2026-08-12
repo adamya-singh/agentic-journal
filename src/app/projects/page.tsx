@@ -1,8 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import React from 'react';
 import { AddToPlanModal } from '@/components/AddToPlanModal';
+import { AppHeader } from '@/components/AppHeader';
 import { TaskTextWithProjectBadges } from '@/components/TaskTextWithProjectBadges';
 import { formatDueTimeRangeForDisplay } from '@/lib/due-time';
 import type { ListType, ProjectPreferencesData, RoadmapCheckpointStatus, Task } from '@/lib/types';
@@ -1513,38 +1513,28 @@ export default function ProjectsPage() {
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
-        <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="text-xl sm:text-2xl font-semibold text-gray-800 dark:text-gray-100">Projects</h2>
-            <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-              Project-specific overview built for high-level context, not daily accounting
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2">
-              <label
-                htmlFor="projects-date"
-                className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400"
-              >
-                Context Date
-              </label>
-              <input
-                id="projects-date"
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-100"
-              />
-            </div>
-            <Link
-              href="/"
-              className="text-sm text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-100 underline-offset-4 hover:underline"
+      <AppHeader
+        title="Projects"
+        subtitle="Project-specific overview built for high-level context, not daily accounting"
+        actions={
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor="projects-date"
+              className="text-[11px] uppercase tracking-wide text-gray-500 dark:text-gray-400"
             >
-              Back to Journal
-            </Link>
+              Context Date
+            </label>
+            <input
+              id="projects-date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-100"
+            />
           </div>
-        </div>
+        }
+      />
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
 
         {loading && (
           <div className="space-y-4">

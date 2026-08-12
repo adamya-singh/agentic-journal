@@ -1,5 +1,26 @@
 # Cursor-Inspired Redesign Plan
 
+## Status (updated 2026-08-12)
+
+- **Phase 1 — shipped** (frictions #6, #7): polish fixes (settings gear popover, dev-only
+  debugger, spacer removed) and the job board moved to `/jobs`. Main page went from
+  ~37,000px to ~1,800px tall.
+- **Phase 2 — shipped** (friction #1): quick capture. Inline bar + global ⌘K overlay on
+  every route; `POST /api/capture` classifies with Gemini 2.5 Flash (list, project slugs,
+  due dates, cleaned text with the original in notes) then writes; Misc Notes fallback
+  list with triage UI; undoable toast stack. Extended with autonomous OpenClaw agent
+  prioritization into the Current queue (capture-priority ledger + cron flow), for both
+  ⌘K captures and Omi-transcript task proposals (the latter still Telegram-confirmed).
+- **Phase 3 — shipped** (friction #2): the Library at `/library`. One search over all
+  tasks (open, misc, and the completed archive) plus every journal entry across all
+  days, with status/project/date filters, full row actions, and Omi transcript
+  deep-links. Navigation consolidated into a shared `AppHeader` on all five pages
+  (friction #7's nav debt fully retired).
+- **Phase 4 — remaining** (frictions #3, #4, #5): collapse the six task lists into one
+  Today-focused view with stage badges; de-emphasize rank numbers; de-noise rows
+  (actions on hover). Also queued: make the Library UI more tactile (owner feedback,
+  2026-08-12) and proactive resurfacing from the redesign direction below.
+
 A design review of the main page (`/`) conducted 2026-08-11, with the mindset of a
 design-led product team (Cursor/Linear school). Goal: diagnose why the frontend adds
 enough friction that using the app as a second brain does not feel effortless, and lay
