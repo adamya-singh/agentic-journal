@@ -1,19 +1,20 @@
-import { execFile } from 'child_process';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { promisify } from 'util';
 import { NextRequest, NextResponse } from 'next/server';
+import {
+  findOpenClawCronJob,
+  isOpenClawCliAvailable,
+  parseJsonObjectOutput,
+  runOpenClawCli,
+} from '@/lib/openclaw-cron';
 
 export const runtime = 'nodejs';
 
-const execFileAsync = promisify(execFile);
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const TRANSCRIPT_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcripts');
 const JOURNAL_LINK_DIR = path.join(process.cwd(), 'src/backend/data/omi-journal-links');
 const OPENCLAW_CRON_JOB_NAME = 'Omi Transcript Journal Ingestion';
-const OPENCLAW_CLI_PATH = process.env.OPENCLAW_CLI_PATH || '/home/rpi5/projects/openclaw/openclaw.mjs';
-const OPENCLAW_CRON_JOBS_PATH = process.env.OPENCLAW_CRON_JOBS_PATH || '/home/rpi5/.openclaw/cron/jobs.json';
 const NON_CONTENT_TRANSCRIPTS = new Set([
   '[background]',
   '[background].',
@@ -61,14 +62,6 @@ type RawJournalLinkSegment = {
   updatedAt?: unknown;
   startedAt?: unknown;
   endedAt?: unknown;
-};
-
-type CronJobsFile = {
-  jobs?: Array<{
-    id?: unknown;
-    name?: unknown;
-    enabled?: unknown;
-  }>;
 };
 
 export async function POST(request: NextRequest) {
@@ -222,28 +215,23 @@ function writeJsonAtomically(filePath: string, data: unknown): void {
 
 async function queueOmiIngestionCron(): Promise<{ queued: boolean; runId?: string; error?: string }> {
   try {
-    const jobs = JSON.parse(fs.readFileSync(OPENCLAW_CRON_JOBS_PATH, 'utf-8')) as CronJobsFile;
-    const job = jobs.jobs?.find((candidate) => candidate.name === OPENCLAW_CRON_JOB_NAME);
-    const jobId = typeof job?.id === 'string' ? job.id : null;
-    if (!jobId) {
-      return { queued: false, error: 'OpenClaw Omi ingestion cron job not found' };
-    }
-    if (job?.enabled === false) {
-      return { queued: false, error: 'OpenClaw Omi ingestion cron job is disabled' };
-    }
-    if (!fs.existsSync(OPENCLAW_CLI_PATH)) {
+    if (!isOpenClawCliAvailable()) {
       return { queued: false, error: 'OpenClaw CLI not found' };
     }
+    const job = await findOpenClawCronJob({
+      jobId: process.env.OPENCLAW_OMI_INGEST_CRON_ID,
+      jobName: OPENCLAW_CRON_JOB_NAME,
+      timeoutMs: 30_000,
+    });
+    if (!job) {
+      return { queued: false, error: 'OpenClaw Omi ingestion cron job not found' };
+    }
+    if (!job.enabled) {
+      return { queued: false, error: 'OpenClaw Omi ingestion cron job is disabled' };
+    }
 
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      [OPENCLAW_CLI_PATH, 'cron', 'run', jobId, '--json'],
-      {
-        timeout: 30_000,
-        maxBuffer: 1024 * 1024,
-      }
-    );
-    const parsed = parseLastJsonObject(stdout);
+    const stdout = await runOpenClawCli(['cron', 'run', job.id, '--json'], 30_000);
+    const parsed = parseJsonObjectOutput(stdout);
     const runId = typeof parsed?.runId === 'string' ? parsed.runId : undefined;
     return { queued: true, runId };
   } catch (error) {
@@ -251,17 +239,5 @@ async function queueOmiIngestionCron(): Promise<{ queued: boolean; runId?: strin
       queued: false,
       error: error instanceof Error ? error.message : 'Unable to queue OpenClaw cron job',
     };
-  }
-}
-
-function parseLastJsonObject(output: string): Record<string, unknown> | null {
-  const start = output.lastIndexOf('{');
-  if (start < 0) {
-    return null;
-  }
-  try {
-    return JSON.parse(output.slice(start)) as Record<string, unknown>;
-  } catch {
-    return null;
   }
 }

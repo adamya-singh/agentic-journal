@@ -10,7 +10,7 @@ const jobsDir = path.join(testRoot, 'jobs');
 const resumeDir = path.join(testRoot, 'resumes');
 process.env.JOB_APPLICATION_JOBS_DIR = jobsDir;
 process.env.JOB_APPLICATION_RESUME_DIR = resumeDir;
-process.env.OPENCLAW_CRON_JOBS_PATH = path.join(testRoot, 'cron-jobs.json');
+process.env.OPENCLAW_CLI_PATH = path.join(testRoot, 'missing-openclaw-cli.mjs');
 
 let store: typeof import('../src/app/api/jobs/application-store-utils');
 let jobStore: typeof import('../src/app/api/jobs/job-store-utils');
