@@ -230,7 +230,9 @@ async function queueOmiIngestionCron(): Promise<{ queued: boolean; runId?: strin
       return { queued: false, error: 'OpenClaw Omi ingestion cron job is disabled' };
     }
 
-    const stdout = await runOpenClawCli(['cron', 'run', job.id, '--json'], 30_000);
+    // Note: `cron run` takes no --json flag in current OpenClaw; runId is
+    // best-effort parsed from whatever the CLI prints.
+    const stdout = await runOpenClawCli(['cron', 'run', job.id], 30_000);
     const parsed = parseJsonObjectOutput(stdout);
     const runId = typeof parsed?.runId === 'string' ? parsed.runId : undefined;
     return { queued: true, runId };
