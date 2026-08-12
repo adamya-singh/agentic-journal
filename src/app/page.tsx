@@ -6,6 +6,8 @@ import { z } from 'zod';
 import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-os';
 
 import { SettingsPopover } from '@/components/SettingsPopover';
+import { MiscNotesSection } from '@/components/MiscNotesSection';
+import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
@@ -1303,13 +1305,21 @@ export default function HomePage() {
         <SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />
       </div>
 
+      {/* Quick capture bar */}
+      <div className="max-w-2xl mx-auto px-3 pt-3 sm:pt-16">
+        <QuickCaptureInput variant="inline" />
+      </div>
+
       {/* Week View */}
-      <div className="pt-2 sm:pt-16 pb-4">
+      <div className="pt-2 sm:pt-4 pb-4">
         <WeekView onDataChange={setWeekViewData} />
       </div>
 
       {/* Task Lists */}
       <TaskLists onDataChange={setTaskListsData} />
+
+      {/* Unclassified captures awaiting triage */}
+      <MiscNotesSection />
 
       {/* Text lines added by the agent's changeText/addNewTextLine tools */}
       {textLines.length > 0 && (
