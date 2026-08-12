@@ -5,25 +5,18 @@ import Link from 'next/link';
 import { z } from 'zod';
 import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-os';
 
-import { ChatModeSelector } from '@/components/ChatModeSelector';
+import { SettingsPopover } from '@/components/SettingsPopover';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
-import { JobListings } from '@/components/JobListings';
-import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
 import { FloatingCedarChat } from '@/cedar/components/chatComponents/FloatingCedarChat';
 import { SidePanelCedarChat } from '@/cedar/components/chatComponents/SidePanelCedarChat';
 import { DebuggerPanel } from '@/cedar/components/debugger';
 import { useRefresh } from '@/lib/RefreshContext';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { useJobBoardState } from '@/lib/useJobBoardState';
 import { getCurrentDateISO, scheduleMidnightRollover } from '@/lib/current-date';
-import type {
-  JobApplicationCategory,
-  JobApplicationResumeVariant,
-  JobApplicationsViewData,
-  JobListingsData,
-  JobListing,
-} from '@/lib/types';
+import type { JobListingsData, JobListing } from '@/lib/types';
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
 type JobListingInput = Omit<
@@ -80,6 +73,23 @@ export default function HomePage() {
   // Choose between caption, floating, or side panel chat modes
   const [chatMode, setChatMode] = React.useState<ChatMode>('sidepanel');
 
+  // Restore the persisted chat mode after mount (localStorage is unavailable during SSR).
+  React.useEffect(() => {
+    const stored = window.localStorage.getItem('chatMode');
+    if (stored === 'caption' || stored === 'floating' || stored === 'sidepanel') {
+      setChatMode(stored);
+    }
+  }, []);
+
+  const handleChatModeChange = React.useCallback((mode: ChatMode) => {
+    setChatMode(mode);
+    try {
+      window.localStorage.setItem('chatMode', mode);
+    } catch {
+      // Persistence is best-effort; mode switching still works for the session.
+    }
+  }, []);
+
   // On mobile, only the sidepanel layout makes sense (it already goes full-width).
   // The selector is hidden, so guarantee the selected mode is sidepanel there.
   const effectiveChatMode: ChatMode = isMobile ? 'sidepanel' : chatMode;
@@ -113,14 +123,16 @@ export default function HomePage() {
   // Cedar state for Today selections, ordered Current queues, and unordered General backlogs.
   const [taskListsData, setTaskListsData] = React.useState<TaskListsData | null>(null);
 
-  // Cedar state for OpenClaw-maintained job listings
-  const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
-  const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
-  const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
-  const [jobApplicationsData, setJobApplicationsData] =
-    React.useState<JobApplicationsViewData | null>(null);
-  const [jobApplicationsLoading, setJobApplicationsLoading] = React.useState(true);
-  const [jobApplicationsError, setJobApplicationsError] = React.useState<string | null>(null);
+  // OpenClaw-maintained job board state; the board renders on /jobs, but the
+  // state stays mounted here so the Cedar jobListings registration below keeps
+  // the agent's job tools working (the chat only mounts on this page).
+  const {
+    jobListingsData,
+    setJobListingsData,
+    jobApplicationsData,
+    refreshJobListings,
+    refreshJobApplications,
+  } = useJobBoardState();
   const [projectRoadmapsData, setProjectRoadmapsData] = React.useState<unknown>(null);
 
   // Get refresh functions from context
@@ -235,61 +247,6 @@ export default function HomePage() {
   // System message to pre-fill in chat input when page loads
   const systemMessage = `[System] The user has opened the journal page. Current date: ${currentDate}, Current time: ${currentTime}. Read today's journal using the readJournal tool and ask the user terse, efficient questions to help fill in the journal entries for the day. If any entries already exist for today, don't try to fill in any gaps before the latest entry.`;
 
-  const refreshJobListings = React.useCallback(async () => {
-    setJobListingsLoading(true);
-    setJobListingsError(null);
-
-    try {
-      const response = await fetch('/api/jobs/list');
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to load job listings');
-      }
-
-      setJobListingsData({
-        schemaVersion: 2,
-        listings: Array.isArray(data.listings) ? data.listings : [],
-      });
-    } catch (error) {
-      setJobListingsError(error instanceof Error ? error.message : 'Failed to load job listings');
-    } finally {
-      setJobListingsLoading(false);
-    }
-  }, []);
-
-  const refreshJobApplications = React.useCallback(async () => {
-    setJobApplicationsLoading(true);
-    setJobApplicationsError(null);
-    try {
-      const response = await fetch('/api/jobs/applications/list', { cache: 'no-store' });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to load job applications');
-      }
-      setJobApplicationsData({
-        schemaVersion: 1,
-        workerEnabled: data.workerEnabled === true,
-        enabledApplicationCategories: data.enabledApplicationCategories,
-        readiness: data.readiness,
-        counts: data.counts,
-        categoryCounts: data.categoryCounts,
-        eligibleBacklog: data.eligibleBacklog,
-        applications: data.applications,
-      });
-    } catch (error) {
-      setJobApplicationsError(
-        error instanceof Error ? error.message : 'Failed to load job applications',
-      );
-    } finally {
-      setJobApplicationsLoading(false);
-    }
-  }, []);
-
-  React.useEffect(() => {
-    refreshJobListings();
-    refreshJobApplications();
-  }, [refreshJobApplications, refreshJobListings]);
 
   const refreshProjectRoadmaps = React.useCallback(async () => {
     try {
@@ -1239,80 +1196,6 @@ export default function HomePage() {
     },
   });
 
-  const updateJobListingStatus = React.useCallback(
-    async (id: string, status: JobListing['status']) => {
-      const response = await fetch('/api/jobs/update', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, status }),
-      });
-      const data = await response.json();
-
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to update job listing status');
-      }
-
-      setJobListingsData({
-        schemaVersion: 2,
-        listings: data.listings,
-      });
-      await refreshJobApplications();
-    },
-    [refreshJobApplications],
-  );
-
-  const controlJobApplications = React.useCallback(
-    async (action: 'start' | 'pause') => {
-      const response = await fetch('/api/jobs/applications/control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || `Failed to ${action} job applications`);
-      }
-      await refreshJobApplications();
-    },
-    [refreshJobApplications],
-  );
-
-  const saveJobApplicationCategories = React.useCallback(
-    async (enabledApplicationCategories: JobApplicationCategory[]) => {
-      const response = await fetch('/api/jobs/applications/preferences', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabledApplicationCategories }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to update application categories');
-      }
-      await refreshJobApplications();
-    },
-    [refreshJobApplications],
-  );
-
-  const saveJobApplicationAnswers = React.useCallback(
-    async (
-      listingId: string,
-      resumeVariant: JobApplicationResumeVariant,
-      responses: JobApplicationResponseInput[],
-    ) => {
-      const response = await fetch('/api/jobs/applications/answers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, resumeVariant, responses }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'Failed to save application answers');
-      }
-      await Promise.all([refreshJobApplications(), refreshJobListings()]);
-    },
-    [refreshJobApplications, refreshJobListings],
-  );
-
   // Publish React state to Cedar context after render to avoid first-render registration races.
   usePublishCedarContext('mainText', mainText, {
     showInChat: true,
@@ -1373,11 +1256,6 @@ export default function HomePage() {
 
   const renderContent = () => (
     <div className="relative min-h-screen w-full bg-white pb-40 dark:bg-gray-900">
-      {/* Desktop-only chat mode selector (top-left, absolute) */}
-      <div className="hidden sm:block">
-        <ChatModeSelector currentMode={chatMode} onModeChange={setChatMode} />
-      </div>
-
       {/* Desktop-only utility links (top-right, absolute) */}
       <div className="hidden sm:flex absolute top-4 right-4 z-10 items-center gap-2">
         <Link
@@ -1392,6 +1270,13 @@ export default function HomePage() {
         >
           Projects View
         </Link>
+        <Link
+          href="/jobs"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Jobs
+        </Link>
+        <SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />
       </div>
 
       {/* Mobile-only top chrome row: flows above WeekView so the absolute desktop
@@ -1409,6 +1294,13 @@ export default function HomePage() {
         >
           Projects
         </Link>
+        <Link
+          href="/jobs"
+          className="px-3 py-1.5 rounded-md text-sm font-medium bg-indigo-500 hover:bg-indigo-600 text-white shadow-sm transition-colors"
+        >
+          Jobs
+        </Link>
+        <SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />
       </div>
 
       {/* Week View */}
@@ -1419,12 +1311,9 @@ export default function HomePage() {
       {/* Task Lists */}
       <TaskLists onDataChange={setTaskListsData} />
 
-      {/* Main interactive content area */}
-      <div className="flex flex-col items-center justify-center p-8 space-y-8">
-        <div className="h-[23rem]" aria-hidden="true" />
-
-        {/* Display dynamically added text lines */}
-        {textLines.length > 0 && (
+      {/* Text lines added by the agent's changeText/addNewTextLine tools */}
+      {textLines.length > 0 && (
+        <div className="flex flex-col items-center justify-center p-8 space-y-8">
           <div className="w-full max-w-2xl">
             <h3 className="text-xl font-medium text-gray-700 dark:text-gray-200 mb-4 text-center">
               Added by Cedar:
@@ -1452,21 +1341,8 @@ export default function HomePage() {
               ))}
             </div>
           </div>
-        )}
-      </div>
-
-      <JobListings
-        data={jobListingsData}
-        loading={jobListingsLoading}
-        error={jobListingsError}
-        onStatusChange={updateJobListingStatus}
-        applications={jobApplicationsData}
-        applicationsLoading={jobApplicationsLoading}
-        applicationsError={jobApplicationsError}
-        onApplicationControl={controlJobApplications}
-        onApplicationCategoriesChange={saveJobApplicationCategories}
-        onApplicationSave={saveJobApplicationAnswers}
-      />
+        </div>
+      )}
 
       {effectiveChatMode === 'caption' && <CedarCaptionChat />}
 
@@ -1485,7 +1361,7 @@ export default function HomePage() {
         showCollapsedButton={true}
         initialMessage={systemMessage}
       >
-        <DebuggerPanel />
+        {process.env.NODE_ENV === 'development' && <DebuggerPanel />}
         {renderContent()}
       </SidePanelCedarChat>
     );

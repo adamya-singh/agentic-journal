@@ -4,7 +4,7 @@ import React from 'react';
 import { MessageCircle, PanelRight, Type, Sun, Moon, Monitor } from 'lucide-react';
 import { useTheme } from '@/components/ThemeProvider';
 
-type ChatMode = 'floating' | 'sidepanel' | 'caption';
+export type ChatMode = 'floating' | 'sidepanel' | 'caption';
 
 interface ChatModeSelectorProps {
   currentMode: ChatMode;
@@ -54,9 +54,10 @@ export function ChatModeSelector({ currentMode, onModeChange }: ChatModeSelector
   };
 
   return (
-    <div className="absolute top-4 left-4 bg-white/90 dark:bg-gray-800/90 backdrop-blur rounded-lg p-2 shadow-lg border border-gray-200 dark:border-gray-700 z-10">
+    <div>
       <div className="flex items-center justify-between gap-4">
-        <div>
+        {/* Chat modes only matter on desktop; mobile always uses the side panel */}
+        <div className="hidden sm:block">
           <div className="text-xs font-semibold mb-2 text-gray-600 dark:text-gray-300">Chat Modes</div>
           <div className="flex gap-1">
             {modes.map((mode) => (
