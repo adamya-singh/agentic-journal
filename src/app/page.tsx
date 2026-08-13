@@ -7,6 +7,7 @@ import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-
 import { AppHeader } from '@/components/AppHeader';
 import { SettingsPopover } from '@/components/SettingsPopover';
 import { MiscNotesSection } from '@/components/MiscNotesSection';
+import { TodayFocus } from '@/components/TodayFocus';
 import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
@@ -1272,11 +1273,21 @@ export default function HomePage() {
         <WeekView onDataChange={setWeekViewData} />
       </div>
 
-      {/* Task Lists */}
-      <TaskLists onDataChange={setTaskListsData} />
+      {/* Today-focused task view (Phase 4) */}
+      <TodayFocus data={taskListsData} />
 
       {/* Unclassified captures awaiting triage */}
       <MiscNotesSection />
+
+      {/* Legacy layout kept for A/B comparison — remove after the new view wins.
+          TaskLists is also the data source feeding taskListsData for both views
+          and the Cedar agent context, so it must stay mounted either way. */}
+      <div className="mt-[75vh] border-t border-dashed border-gray-300 dark:border-gray-700 pt-6">
+        <p className="text-center text-xs uppercase tracking-wide text-gray-400 dark:text-gray-500 mb-2">
+          Classic view (temporary)
+        </p>
+        <TaskLists onDataChange={setTaskListsData} />
+      </div>
 
       {/* Text lines added by the agent's changeText/addNewTextLine tools */}
       {textLines.length > 0 && (

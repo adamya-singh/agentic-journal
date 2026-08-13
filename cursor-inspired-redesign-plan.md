@@ -16,10 +16,14 @@
   days, with status/project/date filters, full row actions, and Omi transcript
   deep-links. Navigation consolidated into a shared `AppHeader` on all five pages
   (friction #7's nav debt fully retired).
-- **Phase 4 — remaining** (frictions #3, #4, #5): collapse the six task lists into one
-  Today-focused view with stage badges; de-emphasize rank numbers; de-noise rows
-  (actions on hover). Also queued: make the Library UI more tactile (owner feedback,
-  2026-08-12) and proactive resurfacing from the redesign direction below.
+- **Phase 4 — shipped as an A/B** (frictions #3, #4, #5): new `TodayFocus` view on the
+  main page — two have/want columns, Today slice + due-today + Current slices with bold
+  dividers, no rank numbers (drag = priority), hover-revealed row actions. The legacy
+  six-list layout is preserved below a "Classic view (temporary)" divider for
+  comparison; it also remains the data source feeding both views and the Cedar agent
+  context. Verdict pending — whichever view loses gets removed in a follow-up.
+- **Still queued**: make the Library UI more tactile (owner feedback, 2026-08-12) and
+  proactive resurfacing from the redesign direction below.
 
 A design review of the main page (`/`) conducted 2026-08-11, with the mindset of a
 design-led product team (Cursor/Linear school). Goal: diagnose why the frontend adds
