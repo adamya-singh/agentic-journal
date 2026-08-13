@@ -1,5 +1,18 @@
 # Jobs Application Pipeline — UX Review
 
+## Status (updated 2026-08-13)
+
+- **Items 1–3 shipped** (the "unblock flow"): Needs-you queue (oldest-first, above the
+  stats row, clickable awaiting-input stat), answer-entry safety (dirty-check on all
+  close paths, localStorage drafts with restore + pruning, progress header,
+  next-unanswered jump, honest partial-save banner, dynamic save button, modal `key`),
+  and answer-bank reuse (server-side tiered `bankMatch` enrichment, "use previous
+  answer" chips, saved-answers browser with edit/delete via the new
+  `/api/jobs/applications/answer-bank` route). Plus the item-6 freebie: submitted
+  applications no longer show the save CTA. Page silently refetches on tab focus.
+- **Remaining**: item 4 (file questions), item 5 (screenshot-capture debugging,
+  worker-side), rest of item 6 (render submission evidence, closed-applications view).
+
 A design review of the `/jobs` page conducted 2026-08-13, focused on (a) the flows for
 entering information needed by pending applications and (b) the flows for viewing
 applications and their screenshots. Findings combine a live walkthrough with a full

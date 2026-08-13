@@ -6,6 +6,7 @@ import type {
   JobApplicationCategoryCounts,
   JobApplicationAnswer,
   JobApplicationAnswerBankEntry,
+  JobApplicationAnswerBankMatch,
   JobApplicationCounts,
   JobApplicationQuestion,
   JobApplicationQuestionKind,
@@ -167,7 +168,9 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     if (!application) {
       continue;
     }
-    applications[listing.id] = application;
+    // resolveApplicationForListing returns store records by reference; clone
+    // before attaching view-only bankMatch enrichment so it never persists.
+    applications[listing.id] = enrichApplicationWithBankMatches(application, store.answerBank);
     incrementStatusCount(counts, application.status);
     if (listing.status === 'saved' || listing.status === 'starred') {
       for (const category of listing.applicationCategories) {
@@ -191,6 +194,26 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     categoryCounts,
     eligibleBacklog,
     applications,
+    answerBank: store.answerBank,
+  };
+}
+
+function enrichApplicationWithBankMatches(
+  application: JobApplicationRecord,
+  bank: JobApplicationAnswerBankEntry[],
+): JobApplicationRecord {
+  if (bank.length === 0 || !application.questions.some((q) => q.resolution === 'pending')) {
+    return application;
+  }
+  return {
+    ...application,
+    questions: application.questions.map((question) => {
+      if (question.resolution !== 'pending') {
+        return question;
+      }
+      const bankMatch = findAnswerBankMatch(question, bank);
+      return bankMatch ? { ...question, bankMatch } : question;
+    }),
   };
 }
 
@@ -488,6 +511,60 @@ export function optionsFingerprint(
     )
     .digest('hex')
     .slice(0, 16);
+}
+
+/**
+ * Finds the best saved answer for a question. Tiered: an exact
+ * (normalizedPrompt, kind, optionsFingerprint) match wins; otherwise a
+ * (normalizedPrompt, kind) match ignoring options. Select-kind matches at the
+ * relaxed tier are only "usable" when every stored value appears among the new
+ * question's options — otherwise the match is reference-only.
+ */
+export function findAnswerBankMatch(
+  question: JobApplicationQuestion,
+  bank: JobApplicationAnswerBankEntry[],
+): JobApplicationAnswerBankMatch | null {
+  const normalizedPrompt = normalizePrompt(question.prompt);
+  const fingerprint = optionsFingerprint(question.options);
+  let best: { entry: JobApplicationAnswerBankEntry; tier: 'exact' | 'kind' } | null = null;
+  for (const entry of bank) {
+    if (entry.normalizedPrompt !== normalizedPrompt || entry.kind !== question.kind) {
+      continue;
+    }
+    if (entry.optionsFingerprint === fingerprint) {
+      best = { entry, tier: 'exact' };
+      break;
+    }
+    if (!best) {
+      best = { entry, tier: 'kind' };
+    }
+  }
+  if (!best) {
+    return null;
+  }
+
+  let usable = true;
+  if (
+    best.tier === 'kind' &&
+    (question.kind === 'single-select' || question.kind === 'multi-select')
+  ) {
+    const optionValues = new Set(
+      (question.options ?? []).flatMap((option) => [
+        option.value.trim().toLowerCase(),
+        option.label.trim().toLowerCase(),
+      ]),
+    );
+    const answers = Array.isArray(best.entry.answer) ? best.entry.answer : [best.entry.answer];
+    usable = answers.every((answer) => optionValues.has(answer.trim().toLowerCase()));
+  }
+
+  return {
+    entryId: best.entry.id,
+    answer: best.entry.answer,
+    prompt: best.entry.prompt,
+    tier: best.tier,
+    usable,
+  };
 }
 
 export function upsertConfirmedAnswer(params: {

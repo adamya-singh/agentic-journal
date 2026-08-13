@@ -13,6 +13,8 @@ import type {
 } from '@/lib/types';
 import { JobApplicationModal } from './JobApplicationModal';
 import type { JobApplicationResponseInput } from './JobApplicationModal';
+import { AnswerBankPanel } from './AnswerBankPanel';
+import { NeedsYouQueue } from './NeedsYouQueue';
 
 interface JobListingsProps {
   data: JobListingsData | null;
@@ -28,7 +30,11 @@ interface JobListingsProps {
     listingId: string,
     resumeVariant: JobApplicationResumeVariant,
     responses: JobApplicationResponseInput[],
-  ) => Promise<void>;
+  ) => Promise<{
+    success: boolean;
+    application?: JobApplicationRecord;
+    worker?: { queued?: boolean; enabled?: boolean };
+  } | void>;
 }
 
 const APPLICATION_CATEGORY_LABELS: Record<JobApplicationCategory, string> = {
@@ -251,6 +257,12 @@ export function JobListings({
             </div>
           )}
 
+          <NeedsYouQueue
+            listings={data?.listings ?? []}
+            applications={applications ?? null}
+            onOpen={(listingId) => setSelectedApplicationId(listingId)}
+          />
+
           <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-3 dark:border-slate-700 dark:bg-slate-950/30">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
@@ -267,9 +279,17 @@ export function JobListings({
                     <span>
                       <strong>{applications.counts.inProgress}</strong> in progress
                     </span>
-                    <span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        document
+                          .getElementById('needs-you-queue')
+                          ?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                      }
+                      className="text-amber-700 hover:underline dark:text-amber-300"
+                    >
                       <strong>{applications.counts.awaitingInput}</strong> awaiting input
-                    </span>
+                    </button>
                     <span>
                       <strong>{applications.counts.submitted}</strong> submitted
                     </span>
@@ -336,6 +356,8 @@ export function JobListings({
               </div>
             </fieldset>
           </div>
+
+          <AnswerBankPanel />
 
           {listings.length === 0 ? (
             <div className="px-5 py-12 text-center">
@@ -691,6 +713,7 @@ export function JobListings({
       </section>
       {selectedListing && selectedApplication && onApplicationSave && (
         <JobApplicationModal
+          key={selectedListing.id}
           listing={selectedListing}
           application={selectedApplication}
           onClose={() => setSelectedApplicationId(null)}

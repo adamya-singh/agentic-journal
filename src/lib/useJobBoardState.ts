@@ -4,6 +4,7 @@ import React from 'react';
 import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import type {
   JobApplicationCategory,
+  JobApplicationRecord,
   JobApplicationResumeVariant,
   JobApplicationsViewData,
   JobListing,
@@ -19,7 +20,8 @@ import type {
  * so any useRegisterState here would also run on /jobs and fight the main
  * page's registration. Cedar wiring lives only in src/app/page.tsx.
  */
-export function useJobBoardState() {
+export function useJobBoardState(options: { refetchOnFocus?: boolean } = {}) {
+  const { refetchOnFocus = false } = options;
   const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
   const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
   const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
@@ -27,10 +29,13 @@ export function useJobBoardState() {
     React.useState<JobApplicationsViewData | null>(null);
   const [jobApplicationsLoading, setJobApplicationsLoading] = React.useState(true);
   const [jobApplicationsError, setJobApplicationsError] = React.useState<string | null>(null);
+  const silentRefreshInFlight = React.useRef(false);
 
-  const refreshJobListings = React.useCallback(async () => {
-    setJobListingsLoading(true);
-    setJobListingsError(null);
+  const refreshJobListings = React.useCallback(async (opts: { silent?: boolean } = {}) => {
+    if (!opts.silent) {
+      setJobListingsLoading(true);
+      setJobListingsError(null);
+    }
 
     try {
       const response = await fetch('/api/jobs/list');
@@ -45,15 +50,21 @@ export function useJobBoardState() {
         listings: Array.isArray(data.listings) ? data.listings : [],
       });
     } catch (error) {
-      setJobListingsError(error instanceof Error ? error.message : 'Failed to load job listings');
+      if (!opts.silent) {
+        setJobListingsError(error instanceof Error ? error.message : 'Failed to load job listings');
+      }
     } finally {
-      setJobListingsLoading(false);
+      if (!opts.silent) {
+        setJobListingsLoading(false);
+      }
     }
   }, []);
 
-  const refreshJobApplications = React.useCallback(async () => {
-    setJobApplicationsLoading(true);
-    setJobApplicationsError(null);
+  const refreshJobApplications = React.useCallback(async (opts: { silent?: boolean } = {}) => {
+    if (!opts.silent) {
+      setJobApplicationsLoading(true);
+      setJobApplicationsError(null);
+    }
     try {
       const response = await fetch('/api/jobs/applications/list', { cache: 'no-store' });
       const data = await response.json();
@@ -69,13 +80,18 @@ export function useJobBoardState() {
         categoryCounts: data.categoryCounts,
         eligibleBacklog: data.eligibleBacklog,
         applications: data.applications,
+        answerBank: Array.isArray(data.answerBank) ? data.answerBank : [],
       });
     } catch (error) {
-      setJobApplicationsError(
-        error instanceof Error ? error.message : 'Failed to load job applications',
-      );
+      if (!opts.silent) {
+        setJobApplicationsError(
+          error instanceof Error ? error.message : 'Failed to load job applications',
+        );
+      }
     } finally {
-      setJobApplicationsLoading(false);
+      if (!opts.silent) {
+        setJobApplicationsLoading(false);
+      }
     }
   }, []);
 
@@ -83,6 +99,32 @@ export function useJobBoardState() {
     refreshJobListings();
     refreshJobApplications();
   }, [refreshJobApplications, refreshJobListings]);
+
+  // Silent refetch when the tab regains focus, so blocked applications never
+  // pile up invisibly while the page sits open. Only the /jobs page opts in.
+  React.useEffect(() => {
+    if (!refetchOnFocus) {
+      return;
+    }
+    const refetch = () => {
+      if (document.visibilityState !== 'visible' || silentRefreshInFlight.current) {
+        return;
+      }
+      silentRefreshInFlight.current = true;
+      Promise.all([
+        refreshJobApplications({ silent: true }),
+        refreshJobListings({ silent: true }),
+      ]).finally(() => {
+        silentRefreshInFlight.current = false;
+      });
+    };
+    window.addEventListener('focus', refetch);
+    document.addEventListener('visibilitychange', refetch);
+    return () => {
+      window.removeEventListener('focus', refetch);
+      document.removeEventListener('visibilitychange', refetch);
+    };
+  }, [refetchOnFocus, refreshJobApplications, refreshJobListings]);
 
   const updateJobListingStatus = React.useCallback(
     async (id: string, status: JobListing['status']) => {
@@ -154,6 +196,11 @@ export function useJobBoardState() {
         throw new Error(data.error || 'Failed to save application answers');
       }
       await Promise.all([refreshJobApplications(), refreshJobListings()]);
+      return data as {
+        success: boolean;
+        application?: JobApplicationRecord;
+        worker?: { queued?: boolean; enabled?: boolean };
+      };
     },
     [refreshJobApplications, refreshJobListings],
   );

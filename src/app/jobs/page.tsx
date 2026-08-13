@@ -17,7 +17,28 @@ export default function JobsPage() {
     controlJobApplications,
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
-  } = useJobBoardState();
+  } = useJobBoardState({ refetchOnFocus: true });
+
+  // Prune local answer drafts for applications that are no longer awaiting input.
+  React.useEffect(() => {
+    if (!jobApplicationsData) return;
+    try {
+      const keys: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const key = window.localStorage.key(i);
+        if (key?.startsWith('job-app-draft:')) keys.push(key);
+      }
+      for (const key of keys) {
+        const listingId = key.slice('job-app-draft:'.length);
+        const application = jobApplicationsData.applications[listingId];
+        if (!application || application.status !== 'awaiting-user-input') {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // Best-effort cleanup.
+    }
+  }, [jobApplicationsData]);
 
   return (
     <div className="min-h-screen bg-white dark:bg-gray-900">

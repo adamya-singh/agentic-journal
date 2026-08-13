@@ -157,6 +157,17 @@ export interface JobApplicationQuestion {
   resolution: JobApplicationQuestionResolution;
   discoveredAt: string;
   answeredAt?: string;
+  /** View-time enrichment (never persisted): a matching saved answer from the bank. */
+  bankMatch?: JobApplicationAnswerBankMatch;
+}
+
+export interface JobApplicationAnswerBankMatch {
+  entryId: string;
+  answer: JobApplicationAnswer;
+  prompt: string;
+  tier: 'exact' | 'kind';
+  /** false when a select-kind match's stored answer isn't among the new question's options. */
+  usable: boolean;
 }
 
 export interface JobApplicationStatusHistoryEntry {
@@ -272,6 +283,7 @@ export interface JobApplicationsViewData {
   categoryCounts: JobApplicationCategoryCounts;
   eligibleBacklog: number;
   applications: Record<string, JobApplicationRecord>;
+  answerBank: JobApplicationAnswerBankEntry[];
 }
 
 // ============ Journal Entry Types ============

@@ -36,7 +36,21 @@ interface JobApplicationModalProps {
     listingId: string,
     resumeVariant: JobApplicationResumeVariant,
     responses: JobApplicationResponseInput[],
-  ) => Promise<void>;
+  ) => Promise<{
+    success: boolean;
+    application?: JobApplicationRecord;
+    worker?: { queued?: boolean; enabled?: boolean };
+  } | void>;
+}
+
+interface AnswerDraft {
+  answers: Record<string, JobApplicationAnswer>;
+  skipped: string[];
+  savedAt: string;
+}
+
+function draftKey(listingId: string): string {
+  return `job-app-draft:${listingId}`;
 }
 
 const STATUS_LABELS: Record<JobApplicationRecord['status'], string> = {
@@ -70,14 +84,126 @@ export function JobApplicationModal({
   const [skipped, setSkipped] = React.useState<Set<string>>(new Set());
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = React.useState<string | null>(null);
+
+  const backdropArmedRef = React.useRef(false);
+
+  // Dirty tracking: the seeded initial state, snapshotted once. A restored
+  // draft intentionally counts as dirty (it differs from the seed).
+  const initialStateRef = React.useRef<string | null>(null);
+  const serializeState = React.useCallback(
+    (a: Record<string, JobApplicationAnswer>, s: Set<string>) =>
+      JSON.stringify([a, [...s].sort()]),
+    [],
+  );
+  if (initialStateRef.current === null) {
+    initialStateRef.current = serializeState(answers, skipped);
+  }
+  const isDirty = serializeState(answers, skipped) !== initialStateRef.current;
+  const isDirtyRef = React.useRef(isDirty);
+  isDirtyRef.current = isDirty;
+
+  // Restore a local draft for still-pending questions (drafts win over seeds).
+  React.useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(draftKey(listing.id));
+      if (!raw) return;
+      const draft = JSON.parse(raw) as AnswerDraft;
+      const pendingIds = new Set(
+        application.questions
+          .filter((question) => question.resolution === 'pending')
+          .map((question) => question.id),
+      );
+      setAnswers((current) => {
+        const next = { ...current };
+        for (const [id, value] of Object.entries(draft.answers ?? {})) {
+          if (pendingIds.has(id)) next[id] = value;
+        }
+        return next;
+      });
+      setSkipped(
+        (current) =>
+          new Set([...current, ...(draft.skipped ?? []).filter((id) => pendingIds.has(id))]),
+      );
+    } catch {
+      // Corrupt draft — ignore.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- restore once per mount
+  }, []);
+
+  // Persist a draft (debounced) whenever local edits exist.
+  React.useEffect(() => {
+    if (!isDirty) return;
+    const timer = setTimeout(() => {
+      try {
+        const draft: AnswerDraft = {
+          answers,
+          skipped: [...skipped],
+          savedAt: new Date().toISOString(),
+        };
+        window.localStorage.setItem(draftKey(listing.id), JSON.stringify(draft));
+      } catch {
+        // Best-effort persistence.
+      }
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [answers, skipped, isDirty, listing.id]);
+
+  const clearDraft = React.useCallback(() => {
+    try {
+      window.localStorage.removeItem(draftKey(listing.id));
+    } catch {
+      // ignore
+    }
+  }, [listing.id]);
+
+  const requestClose = React.useCallback(() => {
+    if (isDirtyRef.current) {
+      const discard = window.confirm(
+        'You have unsaved answers. Close anyway? (They are kept as a local draft and will be restored next time.)',
+      );
+      if (!discard) return;
+    }
+    onClose();
+  }, [onClose]);
 
   React.useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') requestClose();
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [onClose]);
+  }, [requestClose]);
+
+  const unresolvedQuestions = pendingQuestions.filter(
+    (question) => !skipped.has(question.id) && !hasAnswer(answers[question.id]),
+  );
+  const answeredCount = pendingQuestions.length - unresolvedQuestions.length;
+  const requiredRemaining = unresolvedQuestions.filter((question) => question.required).length;
+
+  const focusQuestion = React.useCallback((questionId: string, scroll: boolean) => {
+    const element = document.querySelector(`[data-question-id="${questionId}"]`);
+    if (!element) return;
+    if (scroll) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    const input = element.querySelector('input, textarea, select') as HTMLElement | null;
+    input?.focus?.({ preventScroll: true });
+  }, []);
+
+  const jumpToNextUnanswered = () => {
+    const target = unresolvedQuestions[0];
+    if (target) focusQuestion(target.id, true);
+  };
+
+  // Focus the first unanswered field on open (no scroll — the modal opens at top).
+  React.useEffect(() => {
+    const first = pendingQuestions.find(
+      (question) => !skipped.has(question.id) && !hasAnswer(answers[question.id]),
+    );
+    if (first) focusQuestion(first.id, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
+  }, []);
 
   const acceptSuggestions = () => {
     setAnswers((current) => {
@@ -99,6 +225,7 @@ export function JobApplicationModal({
   const save = async () => {
     setSaving(true);
     setError(null);
+    setSaveNotice(null);
     try {
       const responses = pendingQuestions.flatMap<JobApplicationResponseInput>((question) => {
         if (skipped.has(question.id)) {
@@ -108,8 +235,33 @@ export function JobApplicationModal({
         if (!hasAnswer(answer)) return [];
         return [{ questionId: question.id, answer }];
       });
-      await onSave(listing.id, resumeVariant, responses);
-      onClose();
+      const result = await onSave(listing.id, resumeVariant, responses);
+      const updated = result && 'application' in result ? result.application : undefined;
+      const remaining = updated
+        ? updated.questions.filter((question) => question.resolution === 'pending').length
+        : 0;
+
+      if (remaining === 0) {
+        clearDraft();
+        onClose();
+        return;
+      }
+
+      // Partial save: stay open, prune resolved ids from local state, and say
+      // plainly that the worker only resumes when everything is answered.
+      const stillPending = new Set(
+        updated!.questions
+          .filter((question) => question.resolution === 'pending')
+          .map((question) => question.id),
+      );
+      setAnswers((current) =>
+        Object.fromEntries(Object.entries(current).filter(([id]) => stillPending.has(id))),
+      );
+      setSkipped((current) => new Set([...current].filter((id) => stillPending.has(id))));
+      initialStateRef.current = null; // re-snapshot on next render against pruned state
+      setSaveNotice(
+        `Saved ${responses.length} — ${remaining} question${remaining === 1 ? '' : 's'} remaining. The worker resumes only when all questions are answered or skipped.`,
+      );
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save answers');
     } finally {
@@ -124,7 +276,15 @@ export function JobApplicationModal({
       aria-modal="true"
       aria-labelledby="job-application-title"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
+        // Only arm backdrop-close when the press STARTED on the backdrop, so a
+        // text-selection drag that ends outside the panel can't close the modal.
+        backdropArmedRef.current = event.target === event.currentTarget;
+      }}
+      onMouseUp={(event) => {
+        if (backdropArmedRef.current && event.target === event.currentTarget) {
+          requestClose();
+        }
+        backdropArmedRef.current = false;
       }}
     >
       <div className="max-h-[96vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:max-w-3xl sm:rounded-2xl">
@@ -140,10 +300,31 @@ export function JobApplicationModal({
               {listing.positionTitle}
             </h2>
             <p className="truncate text-sm text-slate-500 dark:text-slate-400">{listing.company}</p>
+            {pendingQuestions.length > 0 && (
+              <p className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-medium">
+                  {answeredCount} of {pendingQuestions.length} answered
+                </span>
+                {requiredRemaining > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400">
+                    · {requiredRemaining} required remaining
+                  </span>
+                )}
+                {unresolvedQuestions.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={jumpToNextUnanswered}
+                    className="font-medium text-indigo-600 hover:underline dark:text-indigo-300"
+                  >
+                    Next unanswered ↓
+                  </button>
+                )}
+              </p>
+            )}
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
             aria-label="Close application"
           >
@@ -225,9 +406,9 @@ export function JobApplicationModal({
             ) : (
               <div className="mt-4 space-y-4">
                 {pendingQuestions.map((question) => (
-                  <QuestionField
-                    key={question.id}
-                    question={question}
+                  <div key={question.id} data-question-id={question.id}>
+                    <QuestionField
+                      question={question}
                     value={answers[question.id]}
                     skipped={skipped.has(question.id)}
                     onChange={(value) => {
@@ -238,15 +419,16 @@ export function JobApplicationModal({
                         return next;
                       });
                     }}
-                    onSkip={(skip) => {
-                      setSkipped((current) => {
-                        const next = new Set(current);
-                        if (skip) next.add(question.id);
-                        else next.delete(question.id);
-                        return next;
-                      });
-                    }}
-                  />
+                      onSkip={(skip) => {
+                        setSkipped((current) => {
+                          const next = new Set(current);
+                          if (skip) next.add(question.id);
+                          else next.delete(question.id);
+                          return next;
+                        });
+                      }}
+                    />
+                  </div>
                 ))}
               </div>
             )}
@@ -273,20 +455,36 @@ export function JobApplicationModal({
             </details>
           )}
 
+          {saveNotice && (
+            <div className="flex items-center gap-2 rounded-lg bg-emerald-50 p-3 text-sm text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" /> {saveNotice}
+            </div>
+          )}
           {error && <p className="text-sm font-medium text-red-600 dark:text-red-300">{error}</p>}
         </div>
 
-        <div className="sticky bottom-0 flex justify-end border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
-          <button
-            type="button"
-            onClick={save}
-            disabled={saving}
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
-          >
-            {saving && <Loader2 className="h-4 w-4 animate-spin" />}
-            Save and resume application
-          </button>
-        </div>
+        {application.status !== 'submitted' && (
+          <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {unresolvedQuestions.length > 0
+                ? `${unresolvedQuestions.length} question${unresolvedQuestions.length === 1 ? '' : 's'} still unanswered`
+                : pendingQuestions.length > 0
+                  ? 'All questions answered — saving resumes the worker'
+                  : ''}
+            </p>
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+            >
+              {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+              {unresolvedQuestions.length > 0
+                ? `Save answers (${unresolvedQuestions.length} remaining)`
+                : 'Save & resume application'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -596,6 +794,21 @@ function QuestionField({
           Autofilled suggestion · {Math.round(question.suggestion.confidence * 100)}%
         </p>
       )}
+      {question.bankMatch && question.bankMatch.usable && (
+        <button
+          type="button"
+          onClick={() => onChange(question.bankMatch!.answer)}
+          className="mb-2 block max-w-full truncate rounded-full border border-teal-200 bg-teal-50 px-2.5 py-0.5 text-left text-xs font-medium text-teal-700 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/50"
+          title="Fill with your previously saved answer"
+        >
+          Use previous answer: “{formatAnswerPreview(question.bankMatch.answer)}”
+        </button>
+      )}
+      {question.bankMatch && !question.bankMatch.usable && (
+        <p className="mb-2 text-xs italic text-slate-400 dark:text-slate-500">
+          You previously answered a similar question: “{formatAnswerPreview(question.bankMatch.answer)}” (options differ here)
+        </p>
+      )}
       {question.kind === 'single-select' && question.options ? (
         <div className="space-y-2">
           {question.options.map((option) => (
@@ -686,6 +899,11 @@ function hasAnswer(answer: JobApplicationAnswer | undefined): answer is JobAppli
   return typeof answer === 'string'
     ? answer.trim().length > 0
     : Array.isArray(answer) && answer.length > 0;
+}
+
+function formatAnswerPreview(answer: JobApplicationAnswer): string {
+  const text = Array.isArray(answer) ? answer.join(', ') : answer;
+  return text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 
 function formatDateTime(value: string): string {
