@@ -26,6 +26,8 @@ const APPLICATIONS_FILE = path.join(JOBS_DIR, 'applications.json');
 const APPLICATIONS_LOCK_FILE = path.join(JOBS_DIR, '.applications.lock');
 const SCREENSHOTS_DIR =
   process.env.JOB_APPLICATION_SCREENSHOTS_DIR || path.join(JOBS_DIR, 'application-screenshots');
+const APPLICATION_FILES_DIR =
+  process.env.JOB_APPLICATION_FILES_DIR || path.join(JOBS_DIR, 'application-files');
 const DEFAULT_RESUME_DIR = '/home/rpi5/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
@@ -456,6 +458,87 @@ export function createApplicationScreenshotId(): string {
   return randomUUID();
 }
 
+// ============ User-uploaded answer files (kind: "file" questions) ============
+
+export const JOB_APPLICATION_FILE_MAX_BYTES = 25 * 1024 * 1024;
+
+const SAFE_FILE_NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/;
+const FILE_ANSWER_PATTERN =
+  /^file:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([A-Za-z0-9._-]{1,100})$/i;
+
+export const JOB_APPLICATION_FILE_EXTENSIONS: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+export function sanitizeUploadFileName(name: string): string {
+  const base = path.basename(name).replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^[.-]+/, '');
+  const capped = base.slice(0, 100);
+  return capped.length > 0 ? capped : 'upload';
+}
+
+export function getApplicationFilePath(uploadId: string, fileName: string): string {
+  if (!OPAQUE_ID_PATTERN.test(uploadId) || !SAFE_FILE_NAME_PATTERN.test(fileName)) {
+    throw new Error('Invalid file identifier');
+  }
+  return path.join(APPLICATION_FILES_DIR, uploadId, fileName);
+}
+
+export function buildFileAnswer(uploadId: string, fileName: string): string {
+  return `file:${uploadId}/${fileName}`;
+}
+
+export function parseFileAnswer(
+  answer: unknown,
+): { uploadId: string; fileName: string } | null {
+  if (typeof answer !== 'string') return null;
+  const match = FILE_ANSWER_PATTERN.exec(answer);
+  return match ? { uploadId: match[1], fileName: match[2] } : null;
+}
+
+export function applicationFileExists(answer: unknown): boolean {
+  const parsed = parseFileAnswer(answer);
+  if (!parsed) return false;
+  try {
+    return fs.existsSync(getApplicationFilePath(parsed.uploadId, parsed.fileName));
+  } catch {
+    return false;
+  }
+}
+
+export function isPdf(buffer: Buffer): boolean {
+  return buffer.length >= 5 && buffer.subarray(0, 5).toString('ascii') === '%PDF-';
+}
+
+export function isJpeg(buffer: Buffer): boolean {
+  return buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+}
+
+export function isZipBased(buffer: Buffer): boolean {
+  return buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+}
+
+/** Validates that the file's magic bytes agree with its extension. */
+export function validateUploadBytes(fileName: string, bytes: Buffer): boolean {
+  const ext = path.extname(fileName).toLowerCase();
+  switch (ext) {
+    case '.pdf':
+      return isPdf(bytes);
+    case '.png':
+      return isPng(bytes);
+    case '.jpg':
+    case '.jpeg':
+      return isJpeg(bytes);
+    case '.docx':
+      return isZipBased(bytes);
+    default:
+      return false;
+  }
+}
+
 export function materializeJobApplication(
   store: JobApplicationsStoreData,
   listingId: string,
@@ -544,7 +627,10 @@ export function findAnswerBankMatch(
   }
 
   let usable = true;
-  if (
+  if (question.kind === 'file') {
+    // A saved file answer is only offerable while the file still exists.
+    usable = applicationFileExists(best.entry.answer);
+  } else if (
     best.tier === 'kind' &&
     (question.kind === 'single-select' || question.kind === 'multi-select')
   ) {

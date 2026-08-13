@@ -4,6 +4,15 @@ import React from 'react';
 import { Check, Loader2, Pencil, Trash2, X } from 'lucide-react';
 import type { JobApplicationAnswerBankEntry } from '@/lib/types';
 
+const FILE_ANSWER_PATTERN =
+  /^file:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([A-Za-z0-9._-]{1,100})$/i;
+
+function fileRef(answer: string | string[]): { uploadId: string; fileName: string } | null {
+  if (typeof answer !== 'string') return null;
+  const match = FILE_ANSWER_PATTERN.exec(answer);
+  return match ? { uploadId: match[1], fileName: match[2] } : null;
+}
+
 // Self-contained browser for the saved-answer bank. Fetches lazily on first
 // expand; mutations go through /api/jobs/applications/answer-bank.
 export function AnswerBankPanel() {
@@ -122,6 +131,18 @@ export function AnswerBankPanel() {
                         className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-950"
                         autoFocus
                       />
+                    ) : entry.kind === 'file' && fileRef(entry.answer) ? (
+                      <p className="mt-0.5 text-sm font-medium text-teal-700 dark:text-teal-300">
+                        {fileRef(entry.answer)!.fileName}{' '}
+                        <a
+                          href={`/api/jobs/applications/files/${encodeURIComponent(fileRef(entry.answer)!.uploadId)}/${encodeURIComponent(fileRef(entry.answer)!.fileName)}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs font-normal text-indigo-600 hover:underline dark:text-indigo-300"
+                        >
+                          view
+                        </a>
+                      </p>
                     ) : (
                       <p className="mt-0.5 text-sm font-medium text-teal-700 dark:text-teal-300">
                         {Array.isArray(entry.answer) ? entry.answer.join(', ') : entry.answer}
@@ -152,13 +173,15 @@ export function AnswerBankPanel() {
                       </>
                     ) : (
                       <>
-                        <button
-                          onClick={() => startEdit(entry)}
-                          className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded dark:hover:text-slate-200 dark:hover:bg-slate-800"
-                          title="Edit answer"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
+                        {entry.kind !== 'file' && (
+                          <button
+                            onClick={() => startEdit(entry)}
+                            className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded dark:hover:text-slate-200 dark:hover:bg-slate-800"
+                            title="Edit answer"
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => deleteEntry(entry)}
                           disabled={busyId === entry.id}

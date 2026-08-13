@@ -57,6 +57,15 @@ export async function POST(request: NextRequest) {
           { status: 400 },
         );
       }
+      // Hand-editing a file reference would bypass upload validation.
+      const existing = readJobApplicationsStore().answerBank.find((entry) => entry.id === id);
+      if (existing?.kind === 'file') {
+        return NextResponse.json(
+          { success: false, error: 'File answers can only be replaced by uploading in an application' },
+          { status: 400 },
+        );
+      }
+
       const updated = await mutateJobApplicationsStore((store) => {
         const entry = store.answerBank.find((candidate) => candidate.id === id);
         if (!entry) {

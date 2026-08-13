@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import type { JobApplicationAnswer, JobApplicationQuestion } from '@/lib/types';
 import {
+  applicationFileExists,
   getJobApplicationReadiness,
   materializeJobApplication,
   mutateJobApplicationsStore,
+  parseFileAnswer,
   releaseApplicationLease,
   setApplicationStatus,
   updateJobListingLeadStatus,
@@ -77,7 +79,7 @@ export async function POST(request: NextRequest) {
         question.answer = answer;
         question.resolution = 'answered';
         question.answeredAt = now;
-        if (question.kind !== 'action' && question.kind !== 'file') {
+        if (question.kind !== 'action') {
           upsertConfirmedAnswer({
             store,
             listingId: parsed.data.listingId,
@@ -167,6 +169,12 @@ function validateAnswer(
   }
   if (Array.isArray(answer) || answer.trim().length === 0) {
     throw new Error(`Answer is required: ${question.prompt}`);
+  }
+  if (question.kind === 'file') {
+    if (!parseFileAnswer(answer.trim()) || !applicationFileExists(answer.trim())) {
+      throw new Error(`Upload a file for this question: ${question.prompt}`);
+    }
+    return answer.trim();
   }
   if (question.kind === 'single-select') {
     validateChoices(question, [answer]);

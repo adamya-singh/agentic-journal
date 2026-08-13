@@ -409,6 +409,7 @@ export function JobApplicationModal({
                   <div key={question.id} data-question-id={question.id}>
                     <QuestionField
                       question={question}
+                      listingId={listing.id}
                     value={answers[question.id]}
                     skipped={skipped.has(question.id)}
                     onChange={(value) => {
@@ -765,12 +766,14 @@ function pageSegmentCount(capture: JobApplicationScreenshotCapture, pageNumber: 
 
 function QuestionField({
   question,
+  listingId,
   value,
   skipped,
   onChange,
   onSkip,
 }: {
   question: JobApplicationQuestion;
+  listingId: string;
   value?: JobApplicationAnswer;
   skipped: boolean;
   onChange: (answer: JobApplicationAnswer) => void;
@@ -864,7 +867,15 @@ function QuestionField({
           <option value="submitted">It was submitted</option>
           <option value="retry">It was not submitted; retry</option>
         </select>
-      ) : question.multiline || question.kind === 'action' || question.kind === 'file' ? (
+      ) : question.kind === 'file' ? (
+        <FileAnswerField
+          listingId={listingId}
+          questionId={question.id}
+          value={typeof value === 'string' ? value : undefined}
+          onChange={onChange}
+          onClear={() => onChange('')}
+        />
+      ) : question.multiline || question.kind === 'action' ? (
         <textarea
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
@@ -895,6 +906,121 @@ function QuestionField({
   );
 }
 
+const FILE_ANSWER_PATTERN =
+  /^file:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([A-Za-z0-9._-]{1,100})$/i;
+
+function parseFileAnswerClient(answer: unknown): { uploadId: string; fileName: string } | null {
+  if (typeof answer !== 'string') return null;
+  const match = FILE_ANSWER_PATTERN.exec(answer);
+  return match ? { uploadId: match[1], fileName: match[2] } : null;
+}
+
+function FileAnswerField({
+  listingId,
+  questionId,
+  value,
+  onChange,
+  onClear,
+}: {
+  listingId: string;
+  questionId: string;
+  value?: string;
+  onChange: (answer: string) => void;
+  onClear: () => void;
+}) {
+  const [uploading, setUploading] = React.useState(false);
+  const [uploadError, setUploadError] = React.useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  const parsed = parseFileAnswerClient(value);
+
+  const handleFile = async (file: File) => {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const formData = new FormData();
+      formData.append('listingId', listingId);
+      formData.append('questionId', questionId);
+      formData.append('file', file);
+      const response = await fetch('/api/jobs/applications/files', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Upload failed');
+      }
+      onChange(data.reference);
+    } catch (error) {
+      setUploadError(error instanceof Error ? error.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.png,.jpg,.jpeg,.docx"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) handleFile(file);
+        }}
+      />
+      {parsed ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950/40">
+          <Images className="h-4 w-4 shrink-0 text-slate-400" />
+          <span className="min-w-0 truncate font-medium text-slate-800 dark:text-slate-100">
+            {parsed.fileName}
+          </span>
+          <a
+            href={`/api/jobs/applications/files/${encodeURIComponent(parsed.uploadId)}/${encodeURIComponent(parsed.fileName)}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-xs font-medium text-indigo-600 hover:underline dark:text-indigo-300"
+          >
+            view
+          </a>
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            disabled={uploading}
+            className="text-xs font-medium text-slate-500 hover:underline dark:text-slate-300"
+          >
+            Replace
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={uploading}
+            className="ml-auto text-slate-400 hover:text-red-500"
+            title="Remove file"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={uploading}
+          className="inline-flex h-10 items-center gap-2 rounded-md border border-dashed border-slate-300 bg-white px-3 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-600 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-900"
+        >
+          {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Images className="h-4 w-4" />}
+          {uploading ? 'Uploading…' : 'Choose a file… (PDF, image, or docx · max 25 MB)'}
+        </button>
+      )}
+      {uploadError && (
+        <p className="mt-1.5 text-xs font-medium text-red-600 dark:text-red-300">{uploadError}</p>
+      )}
+    </div>
+  );
+}
+
 function hasAnswer(answer: JobApplicationAnswer | undefined): answer is JobApplicationAnswer {
   return typeof answer === 'string'
     ? answer.trim().length > 0
@@ -902,7 +1028,8 @@ function hasAnswer(answer: JobApplicationAnswer | undefined): answer is JobAppli
 }
 
 function formatAnswerPreview(answer: JobApplicationAnswer): string {
-  const text = Array.isArray(answer) ? answer.join(', ') : answer;
+  const fileRef = parseFileAnswerClient(answer);
+  const text = fileRef ? fileRef.fileName : Array.isArray(answer) ? answer.join(', ') : answer;
   return text.length > 80 ? `${text.slice(0, 77)}…` : text;
 }
 

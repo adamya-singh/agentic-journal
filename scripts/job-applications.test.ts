@@ -216,6 +216,50 @@ describe('job application state', () => {
     assert.equal(store.readJobApplicationsStore().answerBank.length, 1);
   });
 
+  test('file answers: sanitize, parse, magic bytes, existence-gated bank matches', () => {
+    assert.equal(store.sanitizeUploadFileName('../..//weird name!.pdf'), 'weird-name-.pdf');
+
+    const uploadId = '12345678-1234-4123-8123-123456789abc';
+    const ref = store.buildFileAnswer(uploadId, 'transcript.pdf');
+    assert.deepEqual(store.parseFileAnswer(ref), { uploadId, fileName: 'transcript.pdf' });
+    assert.equal(store.parseFileAnswer('file:not-a-uuid/x.pdf'), null);
+    assert.equal(store.parseFileAnswer('file:12345678-1234-4123-8123-123456789abc/../x'), null);
+
+    assert.equal(store.validateUploadBytes('a.pdf', Buffer.from('%PDF-1.4')), true);
+    assert.equal(store.validateUploadBytes('a.pdf', Buffer.from('nope')), false);
+    assert.equal(store.validateUploadBytes('a.jpg', Buffer.from([0xff, 0xd8, 0xff, 0x00])), true);
+    assert.equal(store.validateUploadBytes('a.exe', Buffer.from('MZ')), false);
+
+    assert.equal(store.applicationFileExists(ref), false);
+    const filePath = store.getApplicationFilePath(uploadId, 'transcript.pdf');
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, '%PDF-1.4');
+    assert.equal(store.applicationFileExists(ref), true);
+
+    const question = {
+      id: 'file-q1',
+      prompt: 'Transcript',
+      kind: 'file' as const,
+      required: true,
+      resolution: 'pending' as const,
+      discoveredAt: now,
+    };
+    const bank = [
+      {
+        id: 'bank-file-1',
+        normalizedPrompt: 'transcript',
+        prompt: 'Transcript',
+        kind: 'file' as const,
+        answer: ref,
+        confirmedAt: now,
+        sourceListingId: 'saved-new',
+      },
+    ];
+    assert.equal(store.findAnswerBankMatch(question, bank)?.usable, true);
+    rmSync(path.dirname(filePath), { recursive: true, force: true });
+    assert.equal(store.findAnswerBankMatch(question, bank)?.usable, false);
+  });
+
   test('uses retry delays and validates both resume PDFs', () => {
     assert.deepEqual(store.JOB_APPLICATION_RETRY_DELAYS_MS, [
       5 * 60 * 1000,

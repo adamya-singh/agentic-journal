@@ -10,8 +10,15 @@
   answer" chips, saved-answers browser with edit/delete via the new
   `/api/jobs/applications/answer-bank` route). Plus the item-6 freebie: submitted
   applications no longer show the save CTA. Page silently refetches on tab focus.
-- **Remaining**: item 4 (file questions), item 5 (screenshot-capture debugging,
-  worker-side), rest of item 6 (render submission evidence, closed-applications view).
+- **Item 4 shipped** (2026-08-13): file-kind questions have a real upload flow —
+  multipart POST + magic-byte validation to `application-files/`, `file:<uploadId>/
+  <name>` answer references validated by the answers route, chips with
+  view/replace/remove in the modal, bank reuse with existence-gated matches, and a
+  `stage-answer-file` command + amended skill contract so the worker attaches the
+  file via its verified upload procedure. Verified end-to-end by unblocking the
+  stuck Strada transcript application with a real upload.
+- **Remaining**: item 5 (screenshot-capture debugging, worker-side), rest of item 6
+  (render submission evidence, closed-applications view).
 
 A design review of the `/jobs` page conducted 2026-08-13, focused on (a) the flows for
 entering information needed by pending applications and (b) the flows for viewing
