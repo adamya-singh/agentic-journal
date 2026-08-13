@@ -24,7 +24,7 @@ const ClassificationSchema = z.object({
   projects: z.array(z.string()),
   dueDate: z.string().nullable(),
   isDaily: z.boolean().nullable(),
-  cleanedText: z.string().nullable(),
+  cleanedText: z.string(),
 });
 
 export async function POST(request: NextRequest) {
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
         projects: classification.projects,
         dueDate: classification.dueDate,
         isDaily: classification.isDaily,
-        notesMarkdown: classification.cleanedText ? `Captured: "${text}"` : undefined,
+        notesMarkdown: `Captured: "${text}"`,
       }),
     });
     const addData = await addResponse.json();
@@ -150,7 +150,7 @@ async function classifyCapture(text: string): Promise<CaptureClassification> {
   const dueDate =
     object.dueDate && DATE_REGEX.test(object.dueDate) ? object.dueDate : undefined;
   const cleanedText =
-    object.cleanedText && object.cleanedText.trim().length >= 3 && object.cleanedText.trim() !== text
+    object.cleanedText && object.cleanedText.trim().length >= 3
       ? object.cleanedText.trim()
       : undefined;
 
@@ -203,13 +203,14 @@ Rules:
 - projects: only use slugs from this list; return [] if none clearly apply: ${knownSlugs.join(', ')}
 - dueDate: resolve relative dates ("by friday", "tomorrow") to a concrete YYYY-MM-DD using today's date; null if no date is mentioned.
 - isDaily: true only for explicit recurrence phrasing ("every day", "daily"); otherwise null.
-- cleanedText: the fragment with metadata phrases (project mentions, date phrases, recurrence phrasing) removed, keeping the core action readable; null if nothing to remove. Never drop meaning.
+- cleanedText: rewrite the fragment as a concise task title in standard technical English — correct spelling and grammar, sentence case, proper technical terminology — with metadata phrases (project mentions, date phrases, recurrence phrasing) removed. Always provide it. Never drop meaning or invent details.
 
 Examples:
-- "do laundry" -> listType "have-to-do", projects [], dueDate null, isDaily null, cleanedText null
-- "try polymarket" -> listType "want-to-do", projects [], dueDate null, isDaily null, cleanedText null
-- "buy drone parts for aviro by friday" -> listType "have-to-do", projects ["aviro"], dueDate <the upcoming Friday>, isDaily null, cleanedText "buy drone parts"
-- "meditate every day" -> listType "want-to-do", projects [], dueDate null, isDaily true, cleanedText "meditate"
+- "do laundry" -> listType "have-to-do", projects [], dueDate null, isDaily null, cleanedText "Do laundry"
+- "try polymarket" -> listType "want-to-do", projects [], dueDate null, isDaily null, cleanedText "Try Polymarket"
+- "buy drone parts for aviro by friday" -> listType "have-to-do", projects ["aviro"], dueDate <the upcoming Friday>, isDaily null, cleanedText "Buy drone parts"
+- "meditate every day" -> listType "want-to-do", projects [], dueDate null, isDaily true, cleanedText "Meditate"
+- "fix the thing where the page jumps around when u scroll" -> listType "have-to-do", projects [], dueDate null, isDaily null, cleanedText "Fix page jump on scroll"
 
 Fragment: "${text}"`;
 }
