@@ -339,6 +339,101 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
   });
 }
 
+export interface StaleLeaseReconcileResult {
+  reconciled: Array<{ listingId: string; nextRetryAt?: string }>;
+}
+
+/**
+ * Self-heal for worker runs that died without recording an outcome (LLM
+ * provider failure, gateway crash): once their lease expires, synthesize the
+ * same bookkeeping the `retry` update action would have written, so the
+ * application re-enters the retry ladder instead of silently burning attempts.
+ * Fires only on hard lease expiry — it can never touch a live run.
+ */
+export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseReconcileResult> {
+  const hasStaleLease = (application: JobApplicationRecord, nowMs: number): boolean =>
+    application.status === 'in-progress' &&
+    Boolean(application.lease) &&
+    Date.parse(application.lease!.expiresAt) <= nowMs;
+
+  // Lock-free pre-check so the every-5-minutes caller costs one file read.
+  const preCheck = readJobApplicationsStore();
+  if (!Object.values(preCheck.applications).some((app) => hasStaleLease(app, Date.now()))) {
+    return { reconciled: [] };
+  }
+
+  return mutateJobApplicationsStore((store) => {
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const reconciled: StaleLeaseReconcileResult['reconciled'] = [];
+
+    for (const application of Object.values(store.applications)) {
+      if (!hasStaleLease(application, now.getTime())) {
+        continue;
+      }
+      application.lastError = {
+        code: 'run-interrupted',
+        message:
+          'Worker run ended without recording an outcome (provider failure or crash); recovered automatically.',
+        occurredAt: nowIso,
+        retryable: application.attemptCount < 3,
+      };
+      const capture = application.incompleteScreenshotCapture;
+      if (capture && !capture.error) {
+        failApplicationScreenshotCapture(
+          application,
+          capture.id,
+          'Run interrupted before capture finished',
+          nowIso,
+        );
+      }
+      releaseApplicationLease(application);
+      delete application.progress;
+
+      if (application.submissionAttemptedAt && !application.submittedAt) {
+        // The run died after submission-attempted: the final click may or may
+        // not have landed. Never retry automatically — hand the user the same
+        // confirm question the ambiguous-submission action produces (prompt
+        // text is load-bearing: the modal string-matches it for its
+        // submitted/retry dropdown).
+        application.questions = mergeApplicationQuestions(application.questions, [
+          createActionQuestion({
+            prompt: 'Confirm whether this application was submitted',
+            helpText:
+              'Open the application and answer “submitted” or “retry”. The worker will not click Submit again until you resolve this.',
+            now: nowIso,
+          }),
+        ]);
+        setApplicationStatus(application, 'awaiting-user-input', nowIso);
+        reconciled.push({ listingId: application.listingId });
+      } else if (application.attemptCount >= 3) {
+        application.questions = mergeApplicationQuestions(application.questions, [
+          createActionQuestion({
+            prompt: 'Automation needs help with this application',
+            helpText: application.lastError.message,
+            required: true,
+            now: nowIso,
+          }),
+        ]);
+        setApplicationStatus(application, 'awaiting-user-input', nowIso);
+        reconciled.push({ listingId: application.listingId });
+      } else {
+        const retryIndex = Math.min(
+          Math.max(application.attemptCount - 1, 0),
+          JOB_APPLICATION_RETRY_DELAYS_MS.length - 1,
+        );
+        application.nextRetryAt = new Date(
+          now.getTime() + JOB_APPLICATION_RETRY_DELAYS_MS[retryIndex],
+        ).toISOString();
+        setApplicationStatus(application, 'in-progress', nowIso);
+        reconciled.push({ listingId: application.listingId, nextRetryAt: application.nextRetryAt });
+      }
+    }
+
+    return { reconciled };
+  });
+}
+
 export function hasActionableJobApplications(): boolean {
   const store = readJobApplicationsStore();
   if (!store.workerEnabled || store.enabledApplicationCategories.length === 0) {

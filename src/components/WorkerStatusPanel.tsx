@@ -123,6 +123,15 @@ export function WorkerStatusPanel({
     }
   };
 
+  // Earliest scheduled retry, shown while idle so a recovered-but-backing-off
+  // run doesn't read as "nothing is happening".
+  const nextRetryAt = !running
+    ? Object.values(applications.applications)
+        .map((application) => application.nextRetryAt)
+        .filter((value): value is string => Boolean(value && Date.parse(value) > now))
+        .sort()[0]
+    : undefined;
+
   const currentListing = currentApplication ? listingById.get(currentApplication.listingId) : null;
   const progress = currentApplication?.progress;
   const queue = applications.queuePreview
@@ -151,7 +160,9 @@ export function WorkerStatusPanel({
                 ? 'Paused — no new applications are claimed.'
                 : running
                   ? 'Live · updates every 5s'
-                  : 'Waiting for the next scheduled run.'}
+                  : nextRetryAt
+                    ? `Retry scheduled for ${new Date(nextRetryAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+                    : 'Idle — wakes when there’s work (answers, new leads, retries).'}
             </p>
           </div>
         </div>

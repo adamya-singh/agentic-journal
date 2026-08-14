@@ -635,6 +635,125 @@ describe('job application state', () => {
     assert.equal(reclaimed?.application.progress, undefined);
   });
 
+  test('reconciles stale leases into the retry ladder without touching live runs', async () => {
+    const staleLease = (expiresAt: string) => ({
+      token: 'stale-token',
+      claimedAt: '2026-07-20T11:00:00.000Z',
+      expiresAt,
+    });
+    await store.mutateJobApplicationsStore((data) => {
+      data.workerEnabled = true;
+      // First-attempt dead run -> synthesized retry with backoff.
+      data.applications['saved-new'] = {
+        listingId: 'saved-new',
+        status: 'in-progress',
+        resumeVariant: 'mle',
+        attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lease: staleLease('2020-01-01T00:00:00.000Z'),
+        progress: { step: 'navigate', label: 'Navigating', updatedAt: now },
+        incompleteScreenshotCapture: {
+          id: '00000000-0000-4000-8000-00000000aaaa',
+          attemptCount: 1,
+          startedAt: now,
+          screenshots: [],
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Third-attempt dead run -> escalates to the user.
+      data.applications.starred = {
+        listingId: 'starred',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 3,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lease: staleLease('2020-01-01T00:00:00.000Z'),
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Died after submission-attempted -> ambiguous, never auto-retried.
+      data.applications.applied = {
+        listingId: 'applied',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        submissionAttemptedAt: now,
+        lease: staleLease('2020-01-01T00:00:00.000Z'),
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Live run -> untouched.
+      data.applications['saved-old'] = {
+        listingId: 'saved-old',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lease: staleLease('2100-01-01T00:00:00.000Z'),
+        progress: { step: 'capture', label: 'Capturing', updatedAt: now },
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+
+    const result = await store.reconcileStaleJobApplicationLeases();
+    assert.deepEqual(result.reconciled.map((entry) => entry.listingId).sort(), [
+      'applied',
+      'saved-new',
+      'starred',
+    ]);
+
+    const data = store.readJobApplicationsStore();
+    const retried = data.applications['saved-new'];
+    assert.equal(retried.status, 'in-progress');
+    assert.equal(retried.lastError?.code, 'run-interrupted');
+    assert.equal(retried.lastError?.retryable, true);
+    assert.equal(retried.lease, undefined);
+    assert.equal(retried.progress, undefined);
+    assert.ok(retried.nextRetryAt && Date.parse(retried.nextRetryAt) > Date.now());
+    assert.match(retried.incompleteScreenshotCapture?.error ?? '', /Run interrupted/);
+
+    const escalated = data.applications.starred;
+    assert.equal(escalated.status, 'awaiting-user-input');
+    assert.equal(escalated.lastError?.code, 'run-interrupted');
+    assert.equal(escalated.lastError?.retryable, false);
+    assert.equal(escalated.lease, undefined);
+    assert.equal(escalated.nextRetryAt, undefined);
+    assert.ok(
+      escalated.questions.some(
+        (question) => question.prompt === 'Automation needs help with this application',
+      ),
+    );
+
+    const ambiguous = data.applications.applied;
+    assert.equal(ambiguous.status, 'awaiting-user-input');
+    assert.equal(ambiguous.lease, undefined);
+    assert.equal(ambiguous.nextRetryAt, undefined);
+    assert.ok(
+      ambiguous.questions.some(
+        (question) => question.prompt === 'Confirm whether this application was submitted',
+      ),
+    );
+
+    const live = data.applications['saved-old'];
+    assert.equal(live.status, 'in-progress');
+    assert.equal(live.lease?.token, 'stale-token');
+    assert.equal(live.lastError, undefined);
+    assert.equal(live.progress?.step, 'capture');
+
+    // With no stale leases left, the reconcile is a byte-identical no-op.
+    const before = readFileSync(path.join(jobsDir, 'applications.json'), 'utf8');
+    const second = await store.reconcileStaleJobApplicationLeases();
+    assert.deepEqual(second.reconciled, []);
+    assert.equal(readFileSync(path.join(jobsDir, 'applications.json'), 'utf8'), before);
+  });
+
   test('queue preview mirrors claim ordering and exclusions', () => {
     const futureIso = '2100-01-01T00:00:00.000Z';
     const record = (
