@@ -17,8 +17,18 @@
   `stage-answer-file` command + amended skill contract so the worker attaches the
   file via its verified upload procedure. Verified end-to-end by unblocking the
   stuck Strada transcript application with a real upload.
-- **Remaining**: item 5 (screenshot-capture debugging, worker-side), rest of item 6
-  (render submission evidence, closed-applications view).
+- **Item 5 shipped** (2026-08-13): root cause was OpenClaw's browser tool normalizing
+  every screenshot to max-side 2000px — full-page captures of long forms became
+  380px-wide unreadable slivers (and oversized captures re-encoded to JPEG, which
+  the PNG validator rejected). Fix: segmented viewport capture (~1900×1800, scrolled
+  in 1700px steps) is now the mandated procedure in the skill contract; the upload
+  route and skill CLI both enforce dimension gates (≤2200px tall, ≥1000px wide);
+  `start-capture` moved after authentication and any run stopping with an unfinished
+  capture must record `fail-capture` (ending silent dangles). Verified live: the
+  OpenAI Agent Infrastructure submission produced a complete 4-segment capture at
+  exactly 1900×1800 each — the first readable long-form capture in the system.
+- **Remaining**: rest of item 6 (render submission evidence, closed-applications
+  view).
 
 A design review of the `/jobs` page conducted 2026-08-13, focused on (a) the flows for
 entering information needed by pending applications and (b) the flows for viewing

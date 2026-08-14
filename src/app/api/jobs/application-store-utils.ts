@@ -56,6 +56,12 @@ export const JOB_APPLICATION_RETRY_DELAYS_MS = [
 ] as const;
 
 export const JOB_APPLICATION_SCREENSHOT_MAX_BYTES = 25 * 1024 * 1024;
+// Per-screenshot dimension gates: long pages must be uploaded as viewport
+// segments (the OpenClaw browser tool downscales anything over 2000px on its
+// longest side into an unreadable sliver, so over-tall or suspiciously narrow
+// images are rejected outright).
+export const JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX = 2200;
+export const JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX = 1000;
 const OPAQUE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -456,6 +462,11 @@ export function isPng(buffer: Buffer): boolean {
 
 export function createApplicationScreenshotId(): string {
   return randomUUID();
+}
+
+/** Reads IHDR dimensions; callers must have validated the buffer with isPng first. */
+export function getPngDimensions(bytes: Buffer): { width: number; height: number } {
+  return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
 }
 
 // ============ User-uploaded answer files (kind: "file" questions) ============

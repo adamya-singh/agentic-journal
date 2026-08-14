@@ -5,8 +5,11 @@ import { z } from 'zod';
 import {
   createApplicationScreenshotId,
   getApplicationScreenshotFilePath,
+  getPngDimensions,
   isPng,
   JOB_APPLICATION_SCREENSHOT_MAX_BYTES,
+  JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX,
+  JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX,
   mutateJobApplicationsStore,
   requireApplicationLease,
 } from '../../application-store-utils';
@@ -70,6 +73,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, error: 'Screenshot does not contain a valid PNG image' },
         { status: 400 },
+      );
+    }
+    const { width, height } = getPngDimensions(bytes);
+    if (height > JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Screenshot is too tall (${height}px > ${JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX}px) — split the page into viewport segments`,
+        },
+        { status: 413 },
+      );
+    }
+    if (width < JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Screenshot is too narrow (${width}px) — capture at full viewport width; do not upload downscaled full-page captures`,
+        },
+        { status: 413 },
       );
     }
 

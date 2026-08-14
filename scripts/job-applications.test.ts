@@ -260,6 +260,31 @@ describe('job application state', () => {
     assert.equal(store.findAnswerBankMatch(question, bank)?.usable, false);
   });
 
+  test('screenshot dimension gates reject over-tall and too-narrow images', () => {
+    const syntheticPng = (width: number, height: number): Buffer => {
+      const buffer = Buffer.alloc(60);
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buffer, 0);
+      buffer.write('IHDR', 12, 'ascii');
+      buffer.writeUInt32BE(width, 16);
+      buffer.writeUInt32BE(height, 20);
+      buffer.write('IEND', buffer.length - 8, 'ascii');
+      return buffer;
+    };
+
+    const good = syntheticPng(1900, 1800);
+    assert.equal(store.isPng(good), true);
+    assert.deepEqual(store.getPngDimensions(good), { width: 1900, height: 1800 });
+    assert.equal(1800 <= store.JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX, true);
+    assert.equal(1900 >= store.JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX, true);
+
+    const tall = store.getPngDimensions(syntheticPng(1900, 9800));
+    assert.equal(tall.height > store.JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX, true);
+
+    // The downscaled-sliver signature the OpenClaw tool produces for long pages.
+    const sliver = store.getPngDimensions(syntheticPng(380, 2000));
+    assert.equal(sliver.width < store.JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX, true);
+  });
+
   test('uses retry delays and validates both resume PDFs', () => {
     assert.deepEqual(store.JOB_APPLICATION_RETRY_DELAYS_MS, [
       5 * 60 * 1000,
@@ -586,10 +611,15 @@ function postScreenshot(params: {
 }
 
 function pngFixture(): Buffer {
-  return Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
-    'base64',
-  );
+  // Synthetic PNG header/trailer with viewport-plausible dimensions (the
+  // upload route validates structure + dimensions, not decodability).
+  const buffer = Buffer.alloc(60);
+  Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buffer, 0);
+  buffer.write('IHDR', 12, 'ascii');
+  buffer.writeUInt32BE(1900, 16);
+  buffer.writeUInt32BE(1600, 20);
+  buffer.write('IEND', buffer.length - 8, 'ascii');
+  return buffer;
 }
 
 function postPreferences(body: unknown) {
