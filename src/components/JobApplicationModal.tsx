@@ -368,6 +368,43 @@ export function JobApplicationModal({
             </div>
           </section>
 
+          {application.status === 'submitted' && (
+            <div className="flex gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+              <div className="min-w-0">
+                <strong>
+                  Submitted
+                  {application.submittedAt ? ` ${formatDateTime(application.submittedAt)}` : ''}
+                </strong>
+                {application.submissionEvidence?.message && (
+                  <p className="mt-0.5 break-words">{application.submissionEvidence.message}</p>
+                )}
+                {application.submissionEvidence?.url && (
+                  <a
+                    href={application.submissionEvidence.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 font-medium text-emerald-700 hover:underline dark:text-emerald-300"
+                  >
+                    View confirmation <ExternalLink className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            </div>
+          )}
+
+          {application.status === 'closed' && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300">
+              <strong className="text-slate-700 dark:text-slate-200">
+                Closed
+                {application.closedAt ? ` ${formatDateTime(application.closedAt)}` : ''}
+              </strong>
+              {application.closedReason && (
+                <p className="mt-0.5 break-words">{application.closedReason}</p>
+              )}
+            </div>
+          )}
+
           {application.lastError && (
             <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -464,7 +501,7 @@ export function JobApplicationModal({
           {error && <p className="text-sm font-medium text-red-600 dark:text-red-300">{error}</p>}
         </div>
 
-        {application.status !== 'submitted' && (
+        {application.status !== 'submitted' && application.status !== 'closed' && (
           <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {unresolvedQuestions.length > 0

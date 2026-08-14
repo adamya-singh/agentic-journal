@@ -17,7 +17,7 @@ export default function JobsPage() {
     controlJobApplications,
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
-  } = useJobBoardState({ refetchOnFocus: true });
+  } = useJobBoardState({ refetchOnFocus: true, pollWhileActive: true });
 
   // Prune local answer drafts for applications that are no longer awaiting input.
   React.useEffect(() => {

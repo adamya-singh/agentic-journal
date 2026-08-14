@@ -10,6 +10,7 @@ import type {
   JobApplicationCounts,
   JobApplicationQuestion,
   JobApplicationQuestionKind,
+  JobApplicationQueuePreviewEntry,
   JobApplicationReadiness,
   JobApplicationRecord,
   JobApplicationScreenshotCapture,
@@ -203,6 +204,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     eligibleBacklog,
     applications,
     answerBank: store.answerBank,
+    queuePreview: buildClaimQueuePreview(store, listings),
   };
 }
 
@@ -223,6 +225,42 @@ function enrichApplicationWithBankMatches(
       return bankMatch ? { ...question, bankMatch } : question;
     }),
   };
+}
+
+/**
+ * Read-only mirror of claimNextJobApplication's candidate selection: the
+ * ordered list of what the worker would claim next. Zero store mutations —
+ * keep the gates and sort in lockstep with the claim path below.
+ */
+export function buildClaimQueuePreview(
+  store: JobApplicationsStoreData,
+  listings: JobListing[],
+  limit = 10,
+): JobApplicationQueuePreviewEntry[] {
+  const now = new Date();
+  return listings
+    .filter(
+      (listing) =>
+        (listing.status === 'saved' || listing.status === 'starred') &&
+        hasEnabledCategory(listing, store.enabledApplicationCategories),
+    )
+    .flatMap((listing) => {
+      const application = store.applications[listing.id] ?? createVirtualApplication(listing);
+      if (!isApplicationClaimable(application, now)) {
+        return [];
+      }
+      const priority = application.resumeRequestedAt ? 0 : listing.status === 'starred' ? 1 : 2;
+      const dateValue = Date.parse(listing.postedDate ?? listing.savedAt ?? listing.createdAt);
+      return [{ listing, priority, dateValue: Number.isNaN(dateValue) ? 0 : dateValue }];
+    })
+    .sort((first, second) => first.priority - second.priority || second.dateValue - first.dateValue)
+    .slice(0, limit)
+    .map((candidate, index) => ({
+      listingId: candidate.listing.id,
+      rank: index + 1,
+      reason:
+        candidate.priority === 0 ? 'resume-requested' : candidate.priority === 1 ? 'starred' : 'saved',
+    }));
 }
 
 export async function claimNextJobApplication(): Promise<ClaimedJobApplication | null> {
@@ -283,6 +321,7 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
       },
     };
     delete application.nextRetryAt;
+    delete application.progress;
     if (selected.application.status !== 'in-progress') {
       application.statusHistory = [
         ...selected.application.statusHistory,
@@ -898,6 +937,21 @@ function normalizeApplicationRecord(
         ? { message: normalizeString(value.submissionEvidence.message) }
         : {}),
     };
+  }
+  if (isRecord(value.progress)) {
+    const step = normalizeString(value.progress.step);
+    const label = normalizeString(value.progress.label);
+    const updatedAt = normalizeString(value.progress.updatedAt);
+    if (step && label && updatedAt) {
+      record.progress = {
+        step,
+        label,
+        updatedAt,
+        ...(normalizeString(value.progress.detail)
+          ? { detail: normalizeString(value.progress.detail) }
+          : {}),
+      };
+    }
   }
   const screenshotCapture = normalizeScreenshotCapture(value.screenshotCapture, true);
   if (screenshotCapture) record.screenshotCapture = screenshotCapture;

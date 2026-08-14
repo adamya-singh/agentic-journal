@@ -233,6 +233,8 @@ export interface JobApplicationRecord {
   closedAt?: string;
   closedReason?: string;
   submissionEvidence?: JobApplicationSubmissionEvidence;
+  /** Live worker progress report; only meaningful while a lease is active. */
+  progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;
   incompleteScreenshotCapture?: JobApplicationScreenshotCapture;
   createdAt: string;
@@ -274,6 +276,19 @@ export interface JobApplicationCounts {
 
 export type JobApplicationCategoryCounts = Record<JobApplicationCategory, number>;
 
+export interface JobApplicationProgress {
+  step: string;
+  label: string;
+  detail?: string;
+  updatedAt: string;
+}
+
+export interface JobApplicationQueuePreviewEntry {
+  listingId: string;
+  rank: number;
+  reason: 'resume-requested' | 'starred' | 'saved';
+}
+
 export interface JobApplicationsViewData {
   schemaVersion: 1;
   workerEnabled: boolean;
@@ -284,6 +299,7 @@ export interface JobApplicationsViewData {
   eligibleBacklog: number;
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
+  queuePreview: JobApplicationQueuePreviewEntry[];
 }
 
 // ============ Journal Entry Types ============

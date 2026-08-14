@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { after } from 'next/server';
 import { z } from 'zod';
 import {
   getJobApplicationReadiness,
@@ -47,15 +48,35 @@ export async function POST(request: NextRequest) {
       await mutateJobApplicationsStore((store) => {
         store.workerEnabled = true;
       });
-      const worker = await triggerJobApplicationWorker();
-      return NextResponse.json({ success: true, workerEnabled: true, readiness, worker });
+      // The flag flip above is the source of truth for claim gating; the slow
+      // OpenClaw CLI round-trips (2-5s cold start each) run after the response.
+      after(async () => {
+        try {
+          const worker = await triggerJobApplicationWorker();
+          if (!worker.success) {
+            console.error('Deferred worker trigger failed:', worker.error);
+          }
+        } catch (error) {
+          console.error('Deferred worker trigger failed:', error);
+        }
+      });
+      return NextResponse.json({ success: true, workerEnabled: true, readiness, deferred: true });
     }
 
     await mutateJobApplicationsStore((store) => {
       store.workerEnabled = false;
     });
-    const worker = await disableJobApplicationWorker();
-    return NextResponse.json({ success: true, workerEnabled: false, worker });
+    after(async () => {
+      try {
+        const worker = await disableJobApplicationWorker();
+        if (!worker.success) {
+          console.error('Deferred worker disable failed:', worker.error);
+        }
+      } catch (error) {
+        console.error('Deferred worker disable failed:', error);
+      }
+    });
+    return NextResponse.json({ success: true, workerEnabled: false, deferred: true });
   } catch (error) {
     console.error('Error controlling job application worker:', error);
     return NextResponse.json(

@@ -563,6 +563,138 @@ describe('job application state', () => {
     );
     assert.equal(store.readJobApplicationsStore().applications.starred.attemptCount, 13);
   });
+
+  test('progress heartbeats persist, require the lease, and clear on the next claim', async () => {
+    const leaseToken = 'progress-lease';
+    // The submission test above moved saved-old's lead to 'applied'; bring it
+    // back into the claimable pool for this scenario.
+    const listingsPath = path.join(jobsDir, 'listings.json');
+    const storedListings = JSON.parse(readFileSync(listingsPath, 'utf8'));
+    storedListings.listings.find(
+      (candidate: { id: string; status: string }) => candidate.id === 'saved-old',
+    ).status = 'saved';
+    writeFileSync(listingsPath, `${JSON.stringify(storedListings)}\n`, 'utf8');
+    await store.mutateJobApplicationsStore((data) => {
+      data.workerEnabled = true;
+      data.enabledApplicationCategories = ['spring-internship', 'new-grad'];
+      for (const [id, application] of Object.entries(data.applications)) {
+        store.releaseApplicationLease(application);
+        if (id !== 'saved-old' && application.status !== 'submitted') {
+          store.setApplicationStatus(application, 'awaiting-user-input', now);
+        }
+      }
+      data.applications['saved-old'] = {
+        listingId: 'saved-old',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lease: {
+          token: leaseToken,
+          claimedAt: new Date().toISOString(),
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        },
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+
+    const posted = await postUpdate({
+      action: 'progress',
+      listingId: 'saved-old',
+      leaseToken,
+      step: 'answer-questions',
+      label: 'Answering questions',
+      detail: 'question 5 of 12',
+    });
+    assert.equal(posted.status, 200);
+    // Round-trips the normalization whitelist (a dropped field would vanish here).
+    const persisted = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(persisted.progress?.step, 'answer-questions');
+    assert.equal(persisted.progress?.label, 'Answering questions');
+    assert.equal(persisted.progress?.detail, 'question 5 of 12');
+    assert.ok(persisted.progress?.updatedAt);
+
+    const rejected = await postUpdate({
+      action: 'progress',
+      listingId: 'saved-old',
+      leaseToken: 'wrong-token',
+      step: 'submit',
+      label: 'Submitting',
+    });
+    assert.equal(rejected.status, 409);
+
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-old'];
+      if (!application.lease) throw new Error('expected active lease');
+      application.lease.expiresAt = '2020-01-01T00:00:00.000Z';
+    });
+    const reclaimed = await store.claimNextJobApplication();
+    assert.equal(reclaimed?.listing.id, 'saved-old');
+    assert.equal(reclaimed?.application.progress, undefined);
+  });
+
+  test('queue preview mirrors claim ordering and exclusions', () => {
+    const futureIso = '2100-01-01T00:00:00.000Z';
+    const record = (
+      listingId: string,
+      overrides: Partial<import('../src/lib/types').JobApplicationRecord> = {},
+    ) => ({
+      listingId,
+      status: 'unstarted' as const,
+      resumeVariant: 'swe' as const,
+      attemptCount: 0,
+      statusHistory: [],
+      questions: [],
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    });
+    const previewListing = (id: string, status: string, savedAt: string) => ({
+      ...listing(id, 'Software Engineer', status, savedAt),
+      applicationCategories: ['new-grad' as const],
+    });
+    const preview = store.buildClaimQueuePreview(
+      {
+        schemaVersion: 1,
+        workerEnabled: true,
+        enabledApplicationCategories: ['new-grad'],
+        applications: {
+          'resume-req': record('resume-req', { resumeRequestedAt: now }),
+          'blocked-awaiting': record('blocked-awaiting', { status: 'awaiting-user-input' }),
+          'blocked-lease': record('blocked-lease', {
+            status: 'in-progress',
+            lease: { token: 'live', claimedAt: now, expiresAt: futureIso },
+          }),
+          'blocked-backoff': record('blocked-backoff', {
+            status: 'in-progress',
+            nextRetryAt: futureIso,
+          }),
+        },
+        answerBank: [],
+      } as never,
+      [
+        previewListing('saved-older', 'saved', '2026-07-01T12:00:00.000Z'),
+        previewListing('blocked-awaiting', 'saved', '2026-07-18T12:00:00.000Z'),
+        previewListing('blocked-lease', 'saved', '2026-07-18T12:00:00.000Z'),
+        previewListing('blocked-backoff', 'saved', '2026-07-18T12:00:00.000Z'),
+        previewListing('saved-newer', 'saved', '2026-07-19T12:00:00.000Z'),
+        previewListing('starred-a', 'starred', '2026-06-01T12:00:00.000Z'),
+        previewListing('resume-req', 'saved', '2026-07-05T12:00:00.000Z'),
+        previewListing('archived-x', 'archived', '2026-07-18T12:00:00.000Z'),
+      ] as never,
+    );
+    assert.deepEqual(
+      preview.map((entry) => [entry.listingId, entry.rank, entry.reason]),
+      [
+        ['resume-req', 1, 'resume-requested'],
+        ['starred-a', 2, 'starred'],
+        ['saved-newer', 3, 'saved'],
+        ['saved-older', 4, 'saved'],
+      ],
+    );
+  });
 });
 
 function postAnswers(body: unknown) {

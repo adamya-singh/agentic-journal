@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BriefcaseBusiness, ExternalLink, Loader2, Pause, Play, Star, Trash2 } from 'lucide-react';
+import { BriefcaseBusiness, ExternalLink, Star, Trash2 } from 'lucide-react';
 import type {
   JobApplicationCategory,
   JobApplicationRecord,
@@ -15,6 +15,7 @@ import { JobApplicationModal } from './JobApplicationModal';
 import type { JobApplicationResponseInput } from './JobApplicationModal';
 import { AnswerBankPanel } from './AnswerBankPanel';
 import { NeedsYouQueue } from './NeedsYouQueue';
+import { WorkerStatusPanel } from './WorkerStatusPanel';
 
 interface JobListingsProps {
   data: JobListingsData | null;
@@ -123,17 +124,14 @@ export function JobListings({
 }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [showAppliedOnly, setShowAppliedOnly] = React.useState(false);
+  const [viewMode, setViewMode] = React.useState<'active' | 'applied' | 'closed'>('active');
   const [selectedApplicationId, setSelectedApplicationId] = React.useState<string | null>(null);
-  const [workerAction, setWorkerAction] = React.useState<'start' | 'pause' | null>(null);
   const [categoryAction, setCategoryAction] = React.useState<JobApplicationCategory | null>(null);
   const nonArchivedListings = (data?.listings ?? []).filter(
     (listing) => getStatus(listing) !== 'archived',
   );
-  const activeListings = nonArchivedListings.filter((listing) => getStatus(listing) !== 'applied');
-  const appliedListings = nonArchivedListings.filter((listing) => getStatus(listing) === 'applied');
-  const listings = (showAppliedOnly ? appliedListings : activeListings)
-    .filter((listing) => getStatus(listing) !== 'archived')
+  const activeListings = nonArchivedListings
+    .filter((listing) => getStatus(listing) !== 'applied')
     .sort((first, second) => {
       const firstStarred = getStatus(first) === 'starred';
       const secondStarred = getStatus(second) === 'starred';
@@ -144,6 +142,23 @@ export function JobListings({
 
       return firstStarred ? -1 : 1;
     });
+  const appliedListings = nonArchivedListings.filter((listing) => getStatus(listing) === 'applied');
+  // Closing an application archives its listing, so the closed view is the
+  // join of archived listings with a recorded closed application.
+  const closedListings = (data?.listings ?? [])
+    .filter(
+      (listing) =>
+        getStatus(listing) === 'archived' &&
+        applications?.applications[listing.id]?.status === 'closed',
+    )
+    .sort(
+      (first, second) =>
+        Date.parse(applications?.applications[second.id]?.closedAt ?? '') -
+        Date.parse(applications?.applications[first.id]?.closedAt ?? ''),
+    );
+  const listings =
+    viewMode === 'active' ? activeListings : viewMode === 'applied' ? appliedListings : closedListings;
+  const closedMode = viewMode === 'closed';
 
   const setStatus = async (listing: JobListing, status: JobListingStatus) => {
     if (!onStatusChange || pendingListingId) {
@@ -170,21 +185,6 @@ export function JobListings({
     }
 
     await setStatus(listing, status === 'starred' ? 'saved' : 'starred');
-  };
-
-  const controlWorker = async (action: 'start' | 'pause') => {
-    if (!onApplicationControl || workerAction) return;
-    setWorkerAction(action);
-    setActionError(null);
-    try {
-      await onApplicationControl(action);
-    } catch (controlError) {
-      setActionError(
-        controlError instanceof Error ? controlError.message : 'Failed to control worker',
-      );
-    } finally {
-      setWorkerAction(null);
-    }
   };
 
   const toggleApplicationCategory = async (category: JobApplicationCategory) => {
@@ -235,18 +235,37 @@ export function JobListings({
               </div>
             </div>
             <div className="flex flex-col gap-2 sm:items-end">
-              <button
-                type="button"
-                onClick={() => setShowAppliedOnly((current) => !current)}
-                className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800 dark:focus:ring-indigo-900/60"
-                aria-pressed={showAppliedOnly}
+              <div
+                role="group"
+                aria-label="Listing view"
+                className="inline-flex overflow-hidden rounded-md border border-slate-300 shadow-sm dark:border-slate-700"
               >
-                {showAppliedOnly ? 'Show Active' : 'Show Applied'}
-              </button>
+                {(
+                  [
+                    { value: 'active', label: `Active · ${activeListings.length}` },
+                    { value: 'applied', label: `Applied · ${appliedListings.length}` },
+                    { value: 'closed', label: `Closed · ${closedListings.length}` },
+                  ] as const
+                ).map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setViewMode(option.value)}
+                    aria-pressed={viewMode === option.value}
+                    className={`h-9 px-3 text-sm font-medium transition focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-200 dark:focus:ring-indigo-900/60 ${
+                      viewMode === option.value
+                        ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200'
+                        : 'bg-white text-slate-600 hover:bg-slate-50 dark:bg-slate-950 dark:text-slate-300 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
               <div className="text-sm font-medium text-slate-600 dark:text-slate-300">
                 {loading
                   ? 'Loading...'
-                  : `${listings.length} ${showAppliedOnly ? 'applied ' : ''}listing${listings.length === 1 ? '' : 's'}`}
+                  : `${listings.length} ${viewMode === 'active' ? '' : `${viewMode} `}listing${listings.length === 1 ? '' : 's'}`}
               </div>
             </div>
           </div>
@@ -261,6 +280,14 @@ export function JobListings({
             listings={data?.listings ?? []}
             applications={applications ?? null}
             onOpen={(listingId) => setSelectedApplicationId(listingId)}
+          />
+
+          <WorkerStatusPanel
+            listings={data?.listings ?? []}
+            applications={applications ?? null}
+            onControl={onApplicationControl}
+            onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
+            onError={setActionError}
           />
 
           <div className="flex flex-col gap-3 border-b border-slate-200 bg-slate-50/70 px-5 py-3 dark:border-slate-700 dark:bg-slate-950/30">
@@ -301,28 +328,6 @@ export function JobListings({
                   </>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={() => controlWorker(applications?.workerEnabled ? 'pause' : 'start')}
-                disabled={
-                  !applications ||
-                  !onApplicationControl ||
-                  workerAction !== null ||
-                  (!applications.workerEnabled &&
-                    (!applications.readiness.ready ||
-                      applications.enabledApplicationCategories.length === 0))
-                }
-                className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-              >
-                {workerAction ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : applications?.workerEnabled ? (
-                  <Pause className="h-4 w-4" />
-                ) : (
-                  <Play className="h-4 w-4" />
-                )}
-                {applications?.workerEnabled ? 'Pause applications' : 'Start applications'}
-              </button>
             </div>
             <fieldset
               disabled={!applications || !onApplicationCategoriesChange || categoryAction !== null}
@@ -362,12 +367,18 @@ export function JobListings({
           {listings.length === 0 ? (
             <div className="px-5 py-12 text-center">
               <p className="text-base font-medium text-slate-700 dark:text-slate-200">
-                {showAppliedOnly ? 'No applied job listings yet.' : 'No active job listings yet.'}
+                {viewMode === 'applied'
+                  ? 'No applied job listings yet.'
+                  : viewMode === 'closed'
+                    ? 'No closed applications yet.'
+                    : 'No active job listings yet.'}
               </p>
               <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                {showAppliedOnly
+                {viewMode === 'applied'
                   ? 'Jobs marked applied will appear here.'
-                  : 'OpenClaw can add opportunities here as it finds them.'}
+                  : viewMode === 'closed'
+                    ? 'Applications the worker closes (posting gone, role filled) land here.'
+                    : 'OpenClaw can add opportunities here as it finds them.'}
               </p>
             </div>
           ) : (
@@ -490,26 +501,36 @@ export function JobListings({
                         </div>
                       </dl>
 
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
-                          Status
-                        </label>
-                        <select
-                          value={status === 'archived' ? 'saved' : status}
-                          disabled={!onStatusChange || pending}
-                          onChange={(event) =>
-                            setStatus(listing, event.target.value as JobListingStatus)
-                          }
-                          className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-900/60"
-                          aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
-                        >
-                          {ACTIVE_STATUS_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      {closedMode ? (
+                        <div className="text-xs text-slate-600 dark:text-slate-300">
+                          <span className="font-semibold text-slate-700 dark:text-slate-200">
+                            Closed:{' '}
+                          </span>
+                          {formatDate(application?.closedAt)}
+                          {application?.closedReason ? ` — ${application.closedReason}` : ''}
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-xs font-semibold text-slate-700 dark:text-slate-200 mb-1">
+                            Status
+                          </label>
+                          <select
+                            value={status === 'archived' ? 'saved' : status}
+                            disabled={!onStatusChange || pending}
+                            onChange={(event) =>
+                              setStatus(listing, event.target.value as JobListingStatus)
+                            }
+                            className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-900/60"
+                            aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
+                          >
+                            {ACTIVE_STATUS_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
                     </li>
                   );
                 })}
@@ -685,21 +706,34 @@ export function JobListings({
                             </dl>
                           </td>
                           <td className="px-5 py-4 text-sm">
-                            <select
-                              value={status === 'archived' ? 'saved' : status}
-                              disabled={!onStatusChange || pending}
-                              onChange={(event) =>
-                                setStatus(listing, event.target.value as JobListingStatus)
-                              }
-                              className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-900/60"
-                              aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
-                            >
-                              {ACTIVE_STATUS_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
+                            {closedMode ? (
+                              <div className="min-w-40 text-xs text-slate-600 dark:text-slate-300">
+                                <div className="font-semibold text-slate-700 dark:text-slate-200">
+                                  Closed {formatDate(application?.closedAt)}
+                                </div>
+                                {application?.closedReason && (
+                                  <div className="mt-0.5 break-words">
+                                    {application.closedReason}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              <select
+                                value={status === 'archived' ? 'saved' : status}
+                                disabled={!onStatusChange || pending}
+                                onChange={(event) =>
+                                  setStatus(listing, event.target.value as JobListingStatus)
+                                }
+                                className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm font-medium text-slate-700 shadow-sm outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-200 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:focus:border-indigo-400 dark:focus:ring-indigo-900/60"
+                                aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
+                              >
+                                {ACTIVE_STATUS_OPTIONS.map((option) => (
+                                  <option key={option.value} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
                           </td>
                         </tr>
                       );

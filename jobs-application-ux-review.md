@@ -27,8 +27,18 @@
   capture must record `fail-capture` (ending silent dangles). Verified live: the
   OpenAI Agent Infrastructure submission produced a complete 4-segment capture at
   exactly 1900×1800 each — the first readable long-form capture in the system.
-- **Remaining**: rest of item 6 (render submission evidence, closed-applications
-  view).
+- **Item 6 shipped** (2026-08-14) — review complete: submitted modals render an
+  emerald evidence block (submittedAt + confirmation message/link), closed
+  applications got a real view (three-state Active/Applied/Closed segmented
+  control; closed table joins archived listings to closed records, sorted by
+  closedAt, reason inline) and a slate closed block in the modal with the save
+  CTA hidden. Shipped alongside live worker visibility: a WorkerStatusPanel
+  (Running/Idle/Paused status line, current-application card fed by a new
+  lease-gated `progress` heartbeat action the worker posts at every step
+  ("Answering questions — question 5 of 12"), elapsed timer, claim-order
+  "Up next" queue preview served by the API), optimistic Start/Pause with the
+  slow OpenClaw CLI calls deferred via `after()` (~2s response vs 5-15s), and
+  a 5s silent poll that runs only while a run is live and the tab visible.
 
 A design review of the `/jobs` page conducted 2026-08-13, focused on (a) the flows for
 entering information needed by pending applications and (b) the flows for viewing

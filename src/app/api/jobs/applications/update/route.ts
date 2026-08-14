@@ -96,6 +96,12 @@ const UpdateSchema = z.discriminatedUnion('action', [
     action: z.literal('ambiguous-submission'),
     pageUrl: z.string().url().optional(),
   }),
+  BaseSchema.extend({
+    action: z.literal('progress'),
+    step: z.string().min(1),
+    label: z.string().min(1),
+    detail: z.string().optional(),
+  }),
   BaseSchema.extend({ action: z.literal('release') }),
 ]);
 
@@ -213,6 +219,7 @@ export async function POST(request: NextRequest) {
         };
         delete application.resumeRequestedAt;
         delete application.lastError;
+        delete application.progress;
         releaseApplicationLease(application);
         updateJobListingLeadStatus(parsed.data.listingId, 'applied');
       }
@@ -222,6 +229,7 @@ export async function POST(request: NextRequest) {
         application.closedAt = now;
         application.closedReason = parsed.data.reason;
         delete application.resumeRequestedAt;
+        delete application.progress;
         releaseApplicationLease(application);
         updateJobListingLeadStatus(parsed.data.listingId, 'archived');
       }
@@ -281,6 +289,17 @@ export async function POST(request: NextRequest) {
         ]);
         setApplicationStatus(application, 'awaiting-user-input', now);
         releaseApplicationLease(application);
+      }
+
+      if (parsed.data.action === 'progress') {
+        application.progress = {
+          step: parsed.data.step,
+          label: parsed.data.label,
+          ...(parsed.data.detail ? { detail: parsed.data.detail } : {}),
+          updatedAt: now,
+        };
+        // Deliberately no status change and no history entry — progress is a
+        // cheap heartbeat, not a lifecycle transition.
       }
 
       if (parsed.data.action === 'release') {

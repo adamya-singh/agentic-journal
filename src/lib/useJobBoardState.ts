@@ -20,8 +20,10 @@ import type {
  * so any useRegisterState here would also run on /jobs and fight the main
  * page's registration. Cedar wiring lives only in src/app/page.tsx.
  */
-export function useJobBoardState(options: { refetchOnFocus?: boolean } = {}) {
-  const { refetchOnFocus = false } = options;
+export function useJobBoardState(
+  options: { refetchOnFocus?: boolean; pollWhileActive?: boolean } = {},
+) {
+  const { refetchOnFocus = false, pollWhileActive = false } = options;
   const [jobListingsData, setJobListingsData] = React.useState<JobListingsData | null>(null);
   const [jobListingsLoading, setJobListingsLoading] = React.useState(true);
   const [jobListingsError, setJobListingsError] = React.useState<string | null>(null);
@@ -81,6 +83,7 @@ export function useJobBoardState(options: { refetchOnFocus?: boolean } = {}) {
         eligibleBacklog: data.eligibleBacklog,
         applications: data.applications,
         answerBank: Array.isArray(data.answerBank) ? data.answerBank : [],
+        queuePreview: Array.isArray(data.queuePreview) ? data.queuePreview : [],
       });
     } catch (error) {
       if (!opts.silent) {
@@ -126,6 +129,31 @@ export function useJobBoardState(options: { refetchOnFocus?: boolean } = {}) {
     };
   }, [refetchOnFocus, refreshJobApplications, refreshJobListings]);
 
+  // Silent 5s poll, but only while a worker run is live (an application holds
+  // an in-progress claim and the worker is enabled) and the tab is visible —
+  // this is what makes the WorkerStatusPanel's progress feel real-time without
+  // hammering the Pi when nothing is happening.
+  const runActive = Boolean(
+    jobApplicationsData && jobApplicationsData.workerEnabled && jobApplicationsData.counts.inProgress > 0,
+  );
+  React.useEffect(() => {
+    if (!pollWhileActive || !runActive) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      if (document.visibilityState !== 'visible' || silentRefreshInFlight.current) {
+        return;
+      }
+      silentRefreshInFlight.current = true;
+      refreshJobApplications({ silent: true }).finally(() => {
+        silentRefreshInFlight.current = false;
+      });
+    }, 5000);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [pollWhileActive, runActive, refreshJobApplications]);
+
   const updateJobListingStatus = React.useCallback(
     async (id: string, status: JobListing['status']) => {
       const response = await fetch('/api/jobs/update', {
@@ -150,16 +178,27 @@ export function useJobBoardState(options: { refetchOnFocus?: boolean } = {}) {
 
   const controlJobApplications = React.useCallback(
     async (action: 'start' | 'pause') => {
-      const response = await fetch('/api/jobs/applications/control', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || `Failed to ${action} job applications`);
+      // Optimistic: flip workerEnabled immediately; the route flips the store
+      // flag synchronously and defers the slow cron trigger, so the next
+      // silent refresh reconciles against the same value.
+      setJobApplicationsData((current) =>
+        current ? { ...current, workerEnabled: action === 'start' } : current,
+      );
+      try {
+        const response = await fetch('/api/jobs/applications/control', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || `Failed to ${action} job applications`);
+        }
+      } catch (error) {
+        await refreshJobApplications({ silent: true });
+        throw error;
       }
-      await refreshJobApplications();
+      await refreshJobApplications({ silent: true });
     },
     [refreshJobApplications],
   );
