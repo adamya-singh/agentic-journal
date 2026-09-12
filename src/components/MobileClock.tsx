@@ -131,7 +131,7 @@ export function MobileClock() {
               </button>
             </div>
 
-            <div className="flex flex-1 flex-col items-center justify-center px-4 pb-[max(4rem,env(safe-area-inset-bottom))]">
+            <div className="flex flex-1 -translate-y-[15dvh] flex-col items-center justify-center px-4 pb-[max(4rem,env(safe-area-inset-bottom))]">
               <div className="flex items-baseline justify-center font-mono font-medium leading-none tracking-[-0.075em] tabular-nums">
                 <span className="text-[clamp(5.25rem,27vw,10rem)]">
                   {clock.hours}:{clock.minutes}
