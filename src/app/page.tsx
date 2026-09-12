@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useRegisterState, useRegisterFrontendTool, useCedarStore } from 'cedar-os';
 
 import { AppHeader } from '@/components/AppHeader';
+import { MobileClock } from '@/components/MobileClock';
 import { SettingsPopover } from '@/components/SettingsPopover';
 import { MiscNotesSection } from '@/components/MiscNotesSection';
 import { TodayFocus } from '@/components/TodayFocus';
@@ -1260,6 +1261,7 @@ export default function HomePage() {
   const renderContent = () => (
     <div className="relative min-h-screen w-full bg-white pb-40 dark:bg-gray-900">
       <AppHeader
+        actions={<MobileClock />}
         settings={<SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />}
       />
 
