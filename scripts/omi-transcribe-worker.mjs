@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   AUDIO_ROOT,
   DEFAULT_TIMEZONE,
@@ -20,14 +21,19 @@ const DEFAULT_POLL_SECONDS = 15;
 const DEFAULT_BATCH_SECONDS = 90;
 const DEFAULT_BATCH_MAX_SECONDS = 120;
 const DEFAULT_STALE_SECONDS = 30;
+const DEFAULT_MAX_RETRIES = 5;
 
-main().catch((error) => {
-  console.error(`Omi transcription worker failed: ${error.message}`);
-  if (process.env.OMI_STT_DEBUG === 'true') {
-    console.error(error);
-  }
-  process.exitCode = 1;
-});
+const __filename = fileURLToPath(import.meta.url);
+
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  main().catch((error) => {
+    console.error(`Omi transcription worker failed: ${error.message}`);
+    if (process.env.OMI_STT_DEBUG === 'true') {
+      console.error(error);
+    }
+    process.exitCode = 1;
+  });
+}
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -73,7 +79,7 @@ async function runWorkerCycle({ args, workerConfig }) {
         dryRun: args.dryRun,
         limit: null,
       },
-      workerConfig.timezone
+      workerConfig.timezone,
     );
     const completedChunkIds = collectCompletedChunkIds(date, manifestEntries);
     const rollingSegments = buildRollingSegments(manifestEntries, transcribeConfig, {
@@ -82,13 +88,15 @@ async function runWorkerCycle({ args, workerConfig }) {
       maxBatchSeconds: workerConfig.batchMaxSeconds,
       staleSeconds: workerConfig.staleSeconds,
     });
-    const retryableSegments = rollingSegments.filter((segment) => isRetryable(date, segment));
+    const retryableSegments = rollingSegments.filter((segment) =>
+      isRetryable(date, segment, workerConfig.maxRetries),
+    );
     const selectedSegments = retryableSegments.slice(0, 1);
 
     if (args.dryRun || selectedSegments.length > 0) {
       console.log(
         `Omi worker ${date}: chunks=${manifestEntries.length} completedChunks=${completedChunkIds.size} ` +
-          `eligibleBatches=${rollingSegments.length} readyBatches=${retryableSegments.length}`
+          `eligibleBatches=${rollingSegments.length} readyBatches=${retryableSegments.length}`,
       );
     }
 
@@ -96,23 +104,30 @@ async function runWorkerCycle({ args, workerConfig }) {
       continue;
     }
 
-    await runTranscribeDay(
-      {
-        date,
-        today: false,
-        finalize: true,
-        force: false,
-        dryRun: args.dryRun,
-        limit: null,
-      },
-      {
-        manifestEntries,
-        segments: selectedSegments,
-        allowMissingManifest: true,
-        logPlan: args.dryRun,
+    try {
+      await runTranscribeDay(
+        {
+          date,
+          today: false,
+          finalize: true,
+          force: false,
+          dryRun: args.dryRun,
+          limit: null,
+        },
+        {
+          manifestEntries,
+          segments: selectedSegments,
+          allowMissingManifest: true,
+          logPlan: args.dryRun,
+        },
+      );
+      processed += selectedSegments.length;
+    } catch (error) {
+      console.error(`Omi worker ${date} batch failed: ${error.message}`);
+      if (process.env.OMI_STT_DEBUG === 'true') {
+        console.error(error);
       }
-    );
-    processed += selectedSegments.length;
+    }
   }
 
   if (args.dryRun) {
@@ -164,13 +179,16 @@ function addChunkIdsFromCompletedRange(chunkIds, manifestEntries, segment) {
   }
 }
 
-function isRetryable(date, segment) {
+function isRetryable(date, segment, maxRetries = DEFAULT_MAX_RETRIES) {
   const status = readStatus(date);
   const existing = status.segments?.[segment.id];
   if (!existing || existing.hash !== segment.hash) {
     return true;
   }
   if (existing.status === 'completed') {
+    return false;
+  }
+  if (Number(existing.retryCount || 0) >= maxRetries) {
     return false;
   }
   if (existing.status === 'running') {
@@ -197,16 +215,25 @@ function resolveDates(args, timezone) {
       if (entry.isDirectory() && DATE_REGEX.test(entry.name)) {
         const status = readStatus(entry.name);
         const hasUnfinished = Object.values(status.segments || {}).some((segment) =>
-          ['failed', 'pending', 'running'].includes(segment.status)
+          ['failed', 'pending', 'running'].includes(segment.status),
         );
         const hasNoStatus = Object.keys(status.segments || {}).length === 0;
-        if (entry.name < today && (hasUnfinished || hasNoStatus || hasUnprocessedChunks(entry.name))) {
+        if (
+          entry.name < today &&
+          (hasUnfinished || hasNoStatus || hasUnprocessedChunks(entry.name))
+        ) {
           dates.add(entry.name);
         }
       }
     }
   }
-  return [...dates].sort();
+  return [
+    today,
+    ...[...dates]
+      .filter((date) => date !== today)
+      .sort()
+      .reverse(),
+  ];
 }
 
 function hasUnprocessedChunks(date) {
@@ -222,13 +249,23 @@ function resolveWorkerConfig() {
   const timezone = getValidTimezone(process.env.OMI_AUDIO_TIMEZONE || DEFAULT_TIMEZONE);
   return {
     enabled: process.env.OMI_TRANSCRIBE_ENABLED !== 'false',
-    pollSeconds: parsePositiveInteger(process.env.OMI_TRANSCRIBE_POLL_SECONDS, DEFAULT_POLL_SECONDS),
-    batchSeconds: parsePositiveInteger(process.env.OMI_TRANSCRIBE_BATCH_SECONDS, DEFAULT_BATCH_SECONDS),
+    pollSeconds: parsePositiveInteger(
+      process.env.OMI_TRANSCRIBE_POLL_SECONDS,
+      DEFAULT_POLL_SECONDS,
+    ),
+    batchSeconds: parsePositiveInteger(
+      process.env.OMI_TRANSCRIBE_BATCH_SECONDS,
+      DEFAULT_BATCH_SECONDS,
+    ),
     batchMaxSeconds: parsePositiveInteger(
       process.env.OMI_TRANSCRIBE_BATCH_MAX_SECONDS,
-      DEFAULT_BATCH_MAX_SECONDS
+      DEFAULT_BATCH_MAX_SECONDS,
     ),
-    staleSeconds: parsePositiveInteger(process.env.OMI_TRANSCRIBE_STALE_SECONDS, DEFAULT_STALE_SECONDS),
+    staleSeconds: parsePositiveInteger(
+      process.env.OMI_TRANSCRIBE_STALE_SECONDS,
+      DEFAULT_STALE_SECONDS,
+    ),
+    maxRetries: parsePositiveInteger(process.env.OMI_TRANSCRIBE_MAX_RETRIES, DEFAULT_MAX_RETRIES),
     timezone,
   };
 }
@@ -282,3 +319,5 @@ function sleep(milliseconds) {
     setTimeout(resolve, milliseconds);
   });
 }
+
+export { isRetryable, resolveDates, resolveWorkerConfig, runWorkerCycle };

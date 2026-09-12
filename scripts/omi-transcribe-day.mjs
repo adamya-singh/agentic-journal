@@ -20,6 +20,7 @@ const DEFAULT_TIMEZONE = 'America/New_York';
 const DEFAULT_SEGMENT_MINUTES = 10;
 const DEFAULT_STALENESS_SECONDS = 120;
 const DEFAULT_OPERATION_POLL_SECONDS = 15;
+const DEFAULT_OPERATION_TIMEOUT_SECONDS = 300;
 const DEFAULT_MODEL = 'chirp_3';
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 const DEFAULT_LOCATION = 'us';
@@ -49,9 +50,11 @@ async function runTranscribeDay(args, options = {}) {
   const timezone = getValidTimezone(process.env.OMI_AUDIO_TIMEZONE || DEFAULT_TIMEZONE);
   const date = resolveDate(args, timezone);
   const config = resolveConfig(args, timezone);
-  const manifestEntries = options.manifestEntries ?? readManifestMaybe(date, {
-    allowMissing: Boolean(options.allowMissingManifest),
-  });
+  const manifestEntries =
+    options.manifestEntries ??
+    readManifestMaybe(date, {
+      allowMissing: Boolean(options.allowMissingManifest),
+    });
   const allSegments = options.segments ?? buildSegments(manifestEntries, config);
   const selectedSegments = options.segments ?? selectSegments(allSegments, config);
   const status = readStatus(date);
@@ -65,7 +68,15 @@ async function runTranscribeDay(args, options = {}) {
   });
 
   if (options.logPlan !== false) {
-    printPlan({ date, config, manifestEntries, allSegments, selectedSegments, pendingSegments, status });
+    printPlan({
+      date,
+      config,
+      manifestEntries,
+      allSegments,
+      selectedSegments,
+      pendingSegments,
+      status,
+    });
   }
 
   if (config.dryRun) {
@@ -104,22 +115,29 @@ async function runTranscribeDay(args, options = {}) {
 
   for (const segment of pendingSegments) {
     const existingSegmentStatus = status.segments[segment.id];
-    if (existingSegmentStatus?.status === 'completed' && existingSegmentStatus.hash === segment.hash) {
+    if (
+      existingSegmentStatus?.status === 'completed' &&
+      existingSegmentStatus.hash === segment.hash
+    ) {
       continue;
     }
-    if (existingSegmentStatus?.status === 'running' && existingSegmentStatus.hash === segment.hash) {
+    if (
+      existingSegmentStatus?.status === 'running' &&
+      existingSegmentStatus.hash === segment.hash
+    ) {
       continue;
     }
-    const freshRetryFields = existingSegmentStatus?.status === 'failed'
-      ? {
-          operationName: null,
-          gcsUri: null,
-          uploadedAt: null,
-          failedAt: null,
-          error: null,
-          retryAfter: null,
-        }
-      : {};
+    const freshRetryFields =
+      existingSegmentStatus?.status === 'failed'
+        ? {
+            operationName: null,
+            gcsUri: null,
+            uploadedAt: null,
+            failedAt: null,
+            error: null,
+            retryAfter: null,
+          }
+        : {};
     status.segments[segment.id] = {
       ...existingSegmentStatus,
       ...freshRetryFields,
@@ -138,7 +156,11 @@ async function runTranscribeDay(args, options = {}) {
 
   const storage = new Storage({ projectId: config.projectId });
   const bucket = storage.bucket(config.bucketName);
-  await maybeCreateBucket({ storage, bucketName: config.bucketName, location: config.bucketLocation });
+  await maybeCreateBucket({
+    storage,
+    bucketName: config.bucketName,
+    location: config.bucketLocation,
+  });
 
   const speechClient = new speechV2.SpeechClient({
     projectId: config.projectId,
@@ -153,7 +175,9 @@ async function runTranscribeDay(args, options = {}) {
   const completed = [];
 
   for (const segment of pendingSegments) {
-    console.log(`\nTranscribing ${segment.id} (${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)})`);
+    console.log(
+      `\nTranscribing ${segment.id} (${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)})`,
+    );
     const existingSegmentStatus = status.segments[segment.id];
     const shouldResumeOperation =
       existingSegmentStatus?.status === 'running' &&
@@ -165,9 +189,10 @@ async function runTranscribeDay(args, options = {}) {
     const localSegmentPath = path.join(WORK_ROOT, date, `${segment.id}.wav`);
     const listPath = path.join(WORK_ROOT, date, `${segment.id}.ffconcat`);
     const gcsObjectName = `omi-audio-segments/${date}/${segment.id}-${segment.hash.slice(0, 12)}.wav`;
-    const gcsUri = shouldResumeOperation && existingSegmentStatus.gcsUri
-      ? existingSegmentStatus.gcsUri
-      : `gs://${config.bucketName}/${gcsObjectName}`;
+    const gcsUri =
+      shouldResumeOperation && existingSegmentStatus.gcsUri
+        ? existingSegmentStatus.gcsUri
+        : `gs://${config.bucketName}/${gcsObjectName}`;
     let operationName = shouldResumeOperation ? existingSegmentStatus.operationName : null;
 
     status.segments[segment.id] = {
@@ -184,7 +209,9 @@ async function runTranscribeDay(args, options = {}) {
       failedAt: null,
       error: null,
       retryAfter: null,
-      ...(shouldResumeOperation ? { operationName, gcsUri } : { operationName: null, gcsUri, uploadedAt: null }),
+      ...(shouldResumeOperation
+        ? { operationName, gcsUri }
+        : { operationName: null, gcsUri, uploadedAt: null }),
     };
     writeStatus(date, status);
 
@@ -217,11 +244,17 @@ async function runTranscribeDay(args, options = {}) {
         writeStatus(date, status);
       }
 
-      const response = await waitForBatchRecognizeOperation(speechClient, operationName);
+      const response = await waitForBatchRecognizeOperation(
+        speechClient,
+        operationName,
+        config.operationTimeoutSeconds,
+      );
       const responseJson = toJsonSafe(response);
       const fileResult = getFileResult(responseJson, gcsUri);
       if (fileResult?.error) {
-        throw new Error(`Speech API returned an error for ${segment.id}: ${JSON.stringify(fileResult.error)}`);
+        throw new Error(
+          `Speech API returned an error for ${segment.id}: ${JSON.stringify(fileResult.error)}`,
+        );
       }
 
       const transcript = extractTranscript(fileResult);
@@ -298,21 +331,29 @@ async function runTranscribeDay(args, options = {}) {
   };
 }
 
-async function waitForBatchRecognizeOperation(speechClient, operationName) {
+async function waitForBatchRecognizeOperation(speechClient, operationName, timeoutSeconds) {
   if (!operationName) {
     throw new Error('Speech API did not return an operation name.');
   }
 
+  const deadline = Date.now() + secondsToMillis(timeoutSeconds);
   while (true) {
     const operation = await speechClient.checkBatchRecognizeProgress(operationName);
     if (operation.done) {
       if (operation.latestResponse?.error) {
-        throw new Error(`Speech operation failed: ${JSON.stringify(operation.latestResponse.error)}`);
+        throw new Error(
+          `Speech operation failed: ${JSON.stringify(operation.latestResponse.error)}`,
+        );
       }
       if (!operation.result) {
         throw new Error('Speech operation completed without a result.');
       }
       return operation.result;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `Speech operation ${operationName} did not complete within ${timeoutSeconds} seconds.`,
+      );
     }
     await sleep(DEFAULT_OPERATION_POLL_SECONDS * 1000);
   }
@@ -386,15 +427,15 @@ function resolveConfig(args, timezone) {
     process.env.GOOGLE_CLOUD_PROJECT,
     process.env.GOOGLE_VERTEX_PROJECT,
     process.env.GCP_PROJECT_ID,
-    readProjectIdFromCredentialFile()
+    readProjectIdFromCredentialFile(),
   );
   const location = process.env.OMI_STT_LOCATION || DEFAULT_LOCATION;
   const bucketName = normalizeBucketName(
-    process.env.OMI_STT_GCS_BUCKET || (projectId ? `${projectId}-omi-stt` : '')
+    process.env.OMI_STT_GCS_BUCKET || (projectId ? `${projectId}-omi-stt` : ''),
   );
   const segmentMinutes = parsePositiveInteger(
     process.env.OMI_STT_SEGMENT_MINUTES,
-    DEFAULT_SEGMENT_MINUTES
+    DEFAULT_SEGMENT_MINUTES,
   );
 
   return {
@@ -407,10 +448,14 @@ function resolveConfig(args, timezone) {
     segmentMinutes,
     staleAfterSeconds: parsePositiveInteger(
       process.env.OMI_STT_STALE_AFTER_SECONDS,
-      DEFAULT_STALENESS_SECONDS
+      DEFAULT_STALENESS_SECONDS,
     ),
     deleteGcsAfterSuccess: process.env.OMI_STT_DELETE_GCS_AFTER_SUCCESS !== 'false',
     keepLocalSegments: process.env.OMI_STT_KEEP_LOCAL_SEGMENTS === 'true',
+    operationTimeoutSeconds: parsePositiveInteger(
+      process.env.OMI_STT_OPERATION_TIMEOUT_SECONDS,
+      DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    ),
     timezone,
     finalize: args.finalize,
     force: args.force,
@@ -439,16 +484,23 @@ function readProjectIdFromCredentialFile() {
 
 function assertRuntimeConfig(config) {
   if (!config.projectId) {
-    throw new Error('Set GOOGLE_CLOUD_PROJECT, GOOGLE_VERTEX_PROJECT, or GCP_PROJECT_ID before transcribing.');
+    throw new Error(
+      'Set GOOGLE_CLOUD_PROJECT, GOOGLE_VERTEX_PROJECT, or GCP_PROJECT_ID before transcribing.',
+    );
   }
   if (!config.bucketName) {
-    throw new Error('Set OMI_STT_GCS_BUCKET or configure a project id so the default bucket can be derived.');
+    throw new Error(
+      'Set OMI_STT_GCS_BUCKET or configure a project id so the default bucket can be derived.',
+    );
   }
   const credentialPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
   if (!credentialPath) {
     throw new Error('Set GOOGLE_APPLICATION_CREDENTIALS to the service-account JSON key path.');
   }
-  if (!fs.existsSync(credentialPath) && !fs.existsSync(path.resolve(PROJECT_ROOT, credentialPath))) {
+  if (
+    !fs.existsSync(credentialPath) &&
+    !fs.existsSync(path.resolve(PROJECT_ROOT, credentialPath))
+  ) {
     throw new Error(`GOOGLE_APPLICATION_CREDENTIALS points to a missing file: ${credentialPath}`);
   }
 }
@@ -492,7 +544,8 @@ function buildSegments(entries, config) {
   for (const entry of entries) {
     const receivedAt = new Date(entry.receivedAt);
     const local = getLocalParts(receivedAt, config.timezone);
-    const segmentMinute = Math.floor(local.minuteOfDay / config.segmentMinutes) * config.segmentMinutes;
+    const segmentMinute =
+      Math.floor(local.minuteOfDay / config.segmentMinutes) * config.segmentMinutes;
     const id = `${minutesToTimeLabel(segmentMinute)}--${minutesToTimeLabel(segmentMinute + config.segmentMinutes)}`;
     if (!byId.has(id)) {
       byId.set(id, {
@@ -543,7 +596,10 @@ function buildRollingSegments(entries, config, options = {}) {
 
   if (current.length > 0) {
     const endedAtMs = Math.max(
-      ...current.map((entry) => new Date(entry.receivedAt).getTime() + secondsToMillis(entry.durationSeconds || 0))
+      ...current.map(
+        (entry) =>
+          new Date(entry.receivedAt).getTime() + secondsToMillis(entry.durationSeconds || 0),
+      ),
     );
     if (endedAtMs <= nowMs - secondsToMillis(staleSeconds)) {
       segments.push(createRollingSegment(current, config));
@@ -568,13 +624,20 @@ function createRollingSegment(entries, config) {
 }
 
 function finalizeSegment(segment) {
-  const startedAtMs = Math.min(...segment.entries.map((entry) => new Date(entry.receivedAt).getTime()));
+  const startedAtMs = Math.min(
+    ...segment.entries.map((entry) => new Date(entry.receivedAt).getTime()),
+  );
   const endedAtMs = Math.max(
-    ...segment.entries.map((entry) => new Date(entry.receivedAt).getTime() + secondsToMillis(entry.durationSeconds || 0))
+    ...segment.entries.map(
+      (entry) => new Date(entry.receivedAt).getTime() + secondsToMillis(entry.durationSeconds || 0),
+    ),
   );
   const sampleRates = new Set(segment.entries.map((entry) => Number(entry.sampleRate || 16000)));
   const sampleRate = sampleRates.size === 1 ? [...sampleRates][0] : 16000;
-  const durationSeconds = segment.entries.reduce((total, entry) => total + Number(entry.durationSeconds || 0), 0);
+  const durationSeconds = segment.entries.reduce(
+    (total, entry) => total + Number(entry.durationSeconds || 0),
+    0,
+  );
   const hash = crypto
     .createHash('sha256')
     .update(
@@ -585,8 +648,8 @@ function finalizeSegment(segment) {
           bytes: entry.bytes,
           durationSeconds: entry.durationSeconds,
           wavPath: entry.wavPath,
-        }))
-      )
+        })),
+      ),
     )
     .digest('hex');
 
@@ -605,7 +668,9 @@ function selectSegments(segments, config) {
   const now = Date.now();
   const eligible = config.finalize
     ? segments
-    : segments.filter((segment) => segment.endedAtMs <= now - secondsToMillis(config.staleAfterSeconds));
+    : segments.filter(
+        (segment) => segment.endedAtMs <= now - secondsToMillis(config.staleAfterSeconds),
+      );
   return config.limit ? eligible.slice(0, config.limit) : eligible;
 }
 
@@ -746,19 +811,34 @@ function writeMarkdown(date, rawState) {
 
   for (const segment of completedSegments) {
     lines.push(`## ${segment.id.replace('--', ' - ')}`, '');
-    lines.push(`Source: ${segment.chunkCount} chunks, ${formatSeconds(segment.durationSeconds)}`, '');
+    lines.push(
+      `Source: ${segment.chunkCount} chunks, ${formatSeconds(segment.durationSeconds)}`,
+      '',
+    );
     lines.push(segment.transcript?.trim() || '_No transcript text returned._', '');
   }
 
   writeTextAtomically(markdownPathForDate(date), `${lines.join('\n').trimEnd()}\n`);
 }
 
-function printPlan({ date, config, manifestEntries, allSegments, selectedSegments, pendingSegments, status }) {
-  const completedCount = Object.values(status.segments || {}).filter((segment) => segment.status === 'completed').length;
+function printPlan({
+  date,
+  config,
+  manifestEntries,
+  allSegments,
+  selectedSegments,
+  pendingSegments,
+  status,
+}) {
+  const completedCount = Object.values(status.segments || {}).filter(
+    (segment) => segment.status === 'completed',
+  ).length;
   console.log(`Omi transcription plan for ${date}`);
   console.log(`Audio chunks: ${manifestEntries.length}`);
   console.log(`Segments found: ${allSegments.length}`);
-  console.log(`Segments eligible: ${selectedSegments.length}${config.finalize ? ' (--finalize)' : ''}`);
+  console.log(
+    `Segments eligible: ${selectedSegments.length}${config.finalize ? ' (--finalize)' : ''}`,
+  );
   console.log(`Segments pending: ${pendingSegments.length}${config.force ? ' (--force)' : ''}`);
   console.log(`Segments completed in status: ${completedCount}`);
   console.log(`Transcript path: ${relativeFromRoot(markdownPathForDate(date))}`);
@@ -771,7 +851,9 @@ function printPlan({ date, config, manifestEntries, allSegments, selectedSegment
   if (pendingSegments.length > 0) {
     console.log('Pending segment ids:');
     for (const segment of pendingSegments) {
-      console.log(`- ${segment.id}: ${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)}`);
+      console.log(
+        `- ${segment.id}: ${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)}`,
+      );
     }
   }
 }
@@ -858,11 +940,16 @@ function parsePositiveInteger(value, fallback) {
 }
 
 function firstNonEmpty(...values) {
-  return values.find((value) => typeof value === 'string' && value.trim().length > 0)?.trim() || null;
+  return (
+    values.find((value) => typeof value === 'string' && value.trim().length > 0)?.trim() || null
+  );
 }
 
 function normalizeBucketName(value) {
-  return (value || '').replace(/^gs:\/\//, '').replace(/\/.*$/, '').trim();
+  return (value || '')
+    .replace(/^gs:\/\//, '')
+    .replace(/\/.*$/, '')
+    .trim();
 }
 
 function statusPathForDate(date) {
@@ -954,7 +1041,7 @@ function toJsonSafe(value) {
         return nestedValue.toString();
       }
       return nestedValue;
-    })
+    }),
   );
 }
 
