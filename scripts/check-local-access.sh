@@ -9,7 +9,7 @@ print_system_status() {
   active_state="$(systemctl is-active "$service_name" 2>/dev/null || true)"
   enabled_state="$(systemctl is-enabled "$service_name" 2>/dev/null || true)"
 
-  printf "%-24s active=%-10s enabled=%s\n" "$service_name" "$active_state" "$enabled_state"
+  printf "%-28s active=%-10s enabled=%s\n" "$service_name" "$active_state" "$enabled_state"
 }
 
 print_user_status() {
@@ -20,7 +20,7 @@ print_user_status() {
   active_state="$(systemctl --user is-active "$service_name" 2>/dev/null || true)"
   enabled_state="$(systemctl --user is-enabled "$service_name" 2>/dev/null || true)"
 
-  printf "%-24s active=%-10s enabled=%s\n" "$service_name (user)" "$active_state" "$enabled_state"
+  printf "%-28s active=%-10s enabled=%s\n" "$service_name (user)" "$active_state" "$enabled_state"
 }
 
 echo "Local access checks (Raspberry Pi)"
@@ -28,7 +28,17 @@ echo "=================================="
 print_system_status tailscaled
 print_system_status agentic-journal
 print_system_status agentic-journal-dev
+print_system_status agentic-journal-omi-worker
 print_user_status openclaw-gateway
+
+echo
+echo "Omi worker dependencies"
+echo "-----------------------"
+if ffmpeg_path="$(command -v ffmpeg 2>/dev/null)"; then
+  printf "%-24s ok %s\n" "ffmpeg" "$ffmpeg_path"
+else
+  printf "%-24s missing (sudo apt install -y ffmpeg)\n" "ffmpeg"
+fi
 
 echo
 echo "Agentic Journal endpoint probes"

@@ -50,6 +50,7 @@ The current journal agent is configured for Google Vertex AI via `@ai-sdk/google
 - `npm` for the root Next.js app.
 - `pnpm` for `src/backend`.
 - Google Vertex AI credentials configured through `.env`.
+- `ffmpeg` on `PATH` for the Omi transcription worker (`sudo apt install -y ffmpeg`). The worker stays `active` without it but every transcription batch fails with `spawn ffmpeg ENOENT`.
 
 ### Install
 
@@ -166,6 +167,12 @@ npm run omi:worker -- --once --dry-run
 bash scripts/journal-mode.sh logs worker
 ```
 
+Omi worker notes:
+
+- The worker needs `ffmpeg` to stitch audio chunks. If logs show `batch failed: spawn ffmpeg ENOENT`, install it with `sudo apt install -y ffmpeg`; no restart is needed.
+- Batches that fail `OMI_TRANSCRIBE_MAX_RETRIES` times are skipped permanently. To re-plan them, stop the worker first (`sudo systemctl stop agentic-journal-omi-worker`), then delete or edit `src/backend/data/omi-transcripts/<date>.status.json`, then start the worker again. Editing the file while the worker runs has no effect because it rewrites the file from memory after every batch.
+
+
 ## Raspberry Pi / Tailscale Operations
 
 Use Tailscale as the default access path from your MacBook for both apps:
@@ -209,6 +216,7 @@ This checks:
 
 - `tailscaled` system service
 - `agentic-journal` system service
+- `agentic-journal-omi-worker` system service and its `ffmpeg` dependency
 - `openclaw-gateway` user service
 - Local Agentic Journal endpoint probes for Next, jobs, Mastra, and the `/mastra` proxy
 - Tailnet identity and `tailscale serve` route status

@@ -91,6 +91,10 @@ export async function POST(request: NextRequest) {
       statusFile.segments[id] = {
         ...segment,
         status: 'pending',
+        // A manual retry starts a fresh retry budget; otherwise a batch that
+        // already hit OMI_TRANSCRIBE_MAX_RETRIES is marked pending but the
+        // worker's isRetryable() check never picks it up.
+        retryCount: 0,
         retryAfter: null,
         operationName: null,
         gcsUri: null,

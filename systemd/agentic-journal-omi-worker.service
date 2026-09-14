@@ -11,6 +11,7 @@ WorkingDirectory=/home/openclaw/projects/agentic-journal
 Environment=NODE_ENV=production
 EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
 ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/scripts/omi-transcribe-worker.mjs
+ExecStartPre=/usr/bin/env ffmpeg -version
 ExecStart=/usr/bin/env npm run omi:worker
 Restart=always
 RestartSec=10

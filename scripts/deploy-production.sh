@@ -64,6 +64,11 @@ require_command pnpm
 require_command curl
 require_command sudo
 
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "Required command not found: ffmpeg (needed by ${OMI_WORKER_SERVICE}; install with: sudo apt install -y ffmpeg)" >&2
+  exit 1
+fi
+
 cd "$ROOT_DIR"
 
 echo "Installing Agentic Journal service units..."
