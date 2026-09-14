@@ -29,7 +29,7 @@ const SCREENSHOTS_DIR =
   process.env.JOB_APPLICATION_SCREENSHOTS_DIR || path.join(JOBS_DIR, 'application-screenshots');
 const APPLICATION_FILES_DIR =
   process.env.JOB_APPLICATION_FILES_DIR || path.join(JOBS_DIR, 'application-files');
-const DEFAULT_RESUME_DIR = '/home/rpi5/.openclaw/workspace/job-applications/resumes';
+const DEFAULT_RESUME_DIR = '/home/openclaw/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
 const LOCK_STALE_MS = 2 * 60 * 1000;

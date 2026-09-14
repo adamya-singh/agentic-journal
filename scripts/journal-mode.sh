@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="/home/rpi5/projects/agentic-journal"
+ROOT_DIR="/home/openclaw/projects/agentic-journal"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 PROD_SERVICE="agentic-journal.service"
 DEV_SERVICE="agentic-journal-dev.service"

@@ -67,7 +67,7 @@ if command -v tailscale >/dev/null 2>&1; then
     echo
     echo "Fallback URLs:"
     echo "  Agentic Journal: http://${ts_name}:3000"
-    echo "  OpenClaw tunnel: ssh -N -L 18789:127.0.0.1:18789 rpi5"
+    echo "  OpenClaw tunnel: ssh -N -L 18789:127.0.0.1:18789 ubuntu-laptop"
   elif [[ -n "${ts_ip:-}" ]]; then
     echo "Open from your MacBook:"
     echo "  Agentic Journal: http://${ts_ip}:3000"

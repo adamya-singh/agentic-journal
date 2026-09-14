@@ -109,7 +109,7 @@ export async function disableJobApplicationWorker(): Promise<WorkerControlResult
 }
 
 const WAKE_ONLY_MESSAGE =
-  'Run python3 /home/rpi5/.openclaw/workspace/skills/agentic-journal-job-applications/scripts/applications.py wake. ' +
+  'Run python3 /home/openclaw/.openclaw/workspace/skills/agentic-journal-job-applications/scripts/applications.py wake. ' +
   'Do not claim or process an application in this wake-only run.';
 
 /**

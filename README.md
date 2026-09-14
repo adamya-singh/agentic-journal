@@ -195,8 +195,8 @@ This configures:
 ### Default URLs From MacBook
 
 ```bash
-https://rpi5.taile85e97.ts.net
-https://rpi5.taile85e97.ts.net:18443
+https://ubuntu-laptop.taile85e97.ts.net
+https://ubuntu-laptop.taile85e97.ts.net:18443
 ```
 
 ### Quick Verification On The Pi
@@ -234,7 +234,7 @@ npm run journal:dev
 Then open or refresh:
 
 ```bash
-https://rpi5.taile85e97.ts.net
+https://ubuntu-laptop.taile85e97.ts.net
 ```
 
 Switch back to production:
@@ -260,10 +260,10 @@ If HTTPS routes are unavailable:
 
 ```bash
 # Agentic Journal over tailnet HTTP
-http://rpi5.taile85e97.ts.net:3000
+http://ubuntu-laptop.taile85e97.ts.net:3000
 
 # OpenClaw via SSH tunnel
-ssh -N -L 18789:127.0.0.1:18789 rpi5
+ssh -N -L 18789:127.0.0.1:18789 ubuntu-laptop
 ```
 
 ### OpenClaw Auth And Pairing
@@ -281,22 +281,22 @@ Use this flow:
 systemctl --user cat openclaw-gateway | rg OPENCLAW_GATEWAY_TOKEN
 ```
 
-2. In the OpenClaw Control UI opened at `https://rpi5.taile85e97.ts.net:18443`, paste that token in **Control UI settings**.
+2. In the OpenClaw Control UI opened at `https://ubuntu-laptop.taile85e97.ts.net:18443`, paste that token in **Control UI settings**.
 3. If pairing is still required, approve from terminal on the Pi:
 
 ```bash
 # show paired/pending device state
-node /home/rpi5/projects/openclaw/dist/index.js devices list
+node /home/openclaw/projects/openclaw/dist/index.js devices list
 
 # approve pending request, if any
-node /home/rpi5/projects/openclaw/dist/index.js devices approve
+node /home/openclaw/projects/openclaw/dist/index.js devices approve
 ```
 
 4. Refresh the browser tab.
 
 Notes:
 
-- Pairing is origin-based, so `https://rpi5...:18443` is treated as a new device even if `http://127.0.0.1:18789` already worked.
+- Pairing is origin-based, so `https://ubuntu-laptop...:18443` is treated as a new device even if `http://127.0.0.1:18789` already worked.
 - The current gateway service uses `OPENCLAW_GATEWAY_TOKEN=dev` unless you rotate it.
 
 ## Tech Stack

@@ -5,14 +5,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=rpi5
-Group=rpi5
-WorkingDirectory=/home/rpi5/projects/agentic-journal
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
 Environment=NODE_ENV=production
-EnvironmentFile=-/home/rpi5/projects/agentic-journal/.env
-ExecStartPre=/usr/bin/test -s /home/rpi5/projects/agentic-journal/.next/BUILD_ID
-ExecStartPre=/usr/bin/test -s /home/rpi5/projects/agentic-journal/.next/routes-manifest.json
-ExecStartPre=/usr/bin/test -s /home/rpi5/projects/agentic-journal/src/backend/.mastra/output/package.json
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/.next/BUILD_ID
+ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/.next/routes-manifest.json
+ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/src/backend/.mastra/output/package.json
 ExecStart=/usr/bin/env npm run start:production
 Restart=always
 RestartSec=5

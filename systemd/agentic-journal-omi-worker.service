@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=rpi5
-Group=rpi5
-WorkingDirectory=/home/rpi5/projects/agentic-journal
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
 Environment=NODE_ENV=production
-EnvironmentFile=-/home/rpi5/projects/agentic-journal/.env
-ExecStartPre=/usr/bin/test -s /home/rpi5/projects/agentic-journal/scripts/omi-transcribe-worker.mjs
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/scripts/omi-transcribe-worker.mjs
 ExecStart=/usr/bin/env npm run omi:worker
 Restart=always
 RestartSec=10
