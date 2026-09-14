@@ -93,7 +93,8 @@ echo
 echo "Building Next.js from a clean output directory..."
 rm -rf "${ROOT_DIR}/.next"
 rm -rf "${BACKEND_DIR}/.mastra"
-npm run build
+# next build exceeds Node's default ~2 GB heap on this project; raise it.
+NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
 test -s "${ROOT_DIR}/.next/BUILD_ID"
 
 echo
