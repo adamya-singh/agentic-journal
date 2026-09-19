@@ -18,9 +18,15 @@ export async function register(): Promise<void> {
   }
   globalState[REGISTERED_FLAG] = true;
 
-  const { reconcileAndWakeJobApplicationWorker } = await import(
+  const { ensureJobApplicationWorkerCron, reconcileAndWakeJobApplicationWorker } = await import(
     './app/api/jobs/application-worker-utils'
   );
+  ensureJobApplicationWorkerCron().then((result) => {
+    if (!result.success) console.error('Job application cron reconcile failed:', result.error);
+  }).catch((error) => console.error('Job application cron reconcile failed:', error));
+  reconcileAndWakeJobApplicationWorker().catch((error) => {
+    console.error('Startup job application reconcile failed:', error);
+  });
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {
       console.error('Scheduled job application reconcile failed:', error);

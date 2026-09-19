@@ -13,6 +13,12 @@ import {
 } from './application-store-utils';
 
 const OPENCLAW_CRON_JOB_NAME = 'Agentic Journal Job Applications';
+const OPENCLAW_CRON_DECLARATION_KEY = 'agentic-journal.job-applications.v2';
+const WORKER_MESSAGE =
+  'Use the agentic-journal-job-applications skill and process exactly one durable unit of work. ' +
+  'First claim and reconcile a pending Simplify tracker synchronization; if none exists, claim one job application. ' +
+  'For an application whose autoCompleteEligibleAt has passed, use write-as-adamya automated-application mode and ChatGPT Web only. ' +
+  'Follow every safety, screenshot, evidence, Google Doc, review-queue, and Simplify verification rule in the skill. Never use Claude.';
 
 export interface WorkerControlResult {
   success: boolean;
@@ -37,7 +43,7 @@ export async function wakeJobApplicationWorkerIfEnabled(): Promise<WorkerControl
 }
 
 export async function triggerJobApplicationWorker(): Promise<WorkerControlResult> {
-  const lookup = await readWorkerJob();
+  const lookup = await ensureWorkerJob();
   if (lookup.error) {
     return { success: false, jobFound: false, error: lookup.error };
   }
@@ -82,7 +88,7 @@ export async function triggerJobApplicationWorker(): Promise<WorkerControlResult
 }
 
 export async function disableJobApplicationWorker(): Promise<WorkerControlResult> {
-  const lookup = await readWorkerJob();
+  const lookup = await ensureWorkerJob();
   if (lookup.error) {
     return { success: false, jobFound: false, error: lookup.error };
   }
@@ -106,6 +112,23 @@ export async function disableJobApplicationWorker(): Promise<WorkerControlResult
       error: error instanceof Error ? error.message : 'Unable to disable OpenClaw worker',
     };
   }
+}
+
+export async function getJobApplicationSchedulerHealth(): Promise<{
+  healthy: boolean; jobFound: boolean; enabled: boolean; error?: string;
+}> {
+  const lookup = await readWorkerJob();
+  if (lookup.error) return { healthy: false, jobFound: false, enabled: false, error: lookup.error };
+  if (!lookup.job) return { healthy: false, jobFound: false, enabled: false, error: 'Cron job is missing' };
+  return { healthy: true, jobFound: true, enabled: lookup.job.enabled };
+}
+
+export async function ensureJobApplicationWorkerCron(): Promise<WorkerControlResult> {
+  const lookup = await ensureWorkerJob();
+  if (lookup.error || !lookup.job) {
+    return { success: false, jobFound: false, error: lookup.error ?? 'Unable to create worker cron' };
+  }
+  return { success: true, jobFound: true, enabled: lookup.job.enabled };
 }
 
 const WAKE_ONLY_MESSAGE =
@@ -192,5 +215,25 @@ async function readWorkerJob(): Promise<{ job?: OpenClawCronJob | null; error?: 
     return {
       error: error instanceof Error ? error.message : 'Unable to read OpenClaw cron jobs',
     };
+  }
+}
+
+async function ensureWorkerJob(): Promise<{ job?: OpenClawCronJob | null; error?: string }> {
+  const existing = await readWorkerJob();
+  if (existing.error || existing.job) return existing;
+  try {
+    const createArgs = [
+      'cron', 'add', '--name', OPENCLAW_CRON_JOB_NAME,
+      '--description', 'Three-day job application autopilot and durable Simplify reconciliation',
+      '--declaration-key', OPENCLAW_CRON_DECLARATION_KEY,
+      '--every', '1m', '--session', 'isolated', '--message', WORKER_MESSAGE,
+      '--no-deliver', '--timeout-seconds', '1800', '--json',
+    ];
+    if (!readJobApplicationsStore().workerEnabled) createArgs.push('--disabled');
+    await runOpenClawCli(createArgs);
+    const created = await readWorkerJob();
+    return created.job ? created : { error: created.error ?? 'Cron creation was not visible after creation' };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Unable to create OpenClaw cron job' };
   }
 }

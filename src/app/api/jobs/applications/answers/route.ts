@@ -106,6 +106,11 @@ export async function POST(request: NextRequest) {
           application.submissionEvidence = {
             message: 'Submission confirmed manually in Agentic Journal',
           };
+          application.simplifySync = {
+            status: 'pending',
+            attemptCount: application.simplifySync?.attemptCount ?? 0,
+            updatedAt: now,
+          };
           delete application.resumeRequestedAt;
           releaseApplicationLease(application);
           updateJobListingLeadStatus(parsed.data.listingId, 'applied');

@@ -20,15 +20,17 @@ interface QueueRow {
   pendingCount: number;
   requiredCount: number;
   blockedSince: string;
-}
-
-function blockedDays(since: string): number {
-  const ms = Date.now() - new Date(since).getTime();
-  return Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 86_400_000) : 0;
+  eligibleAt?: string;
+  autoCompletable: boolean;
 }
 
 export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueProps) {
   const [expanded, setExpanded] = React.useState(false);
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const rows = React.useMemo<QueueRow[]>(() => {
     if (!applications) return [];
@@ -52,6 +54,12 @@ export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueP
         pendingCount: pending.length,
         requiredCount: pending.filter((question) => question.required).length,
         blockedSince: blockedEntry?.changedAt ?? application.updatedAt,
+        eligibleAt: application.autoCompleteEligibleAt,
+        autoCompletable:
+          listing.applicationCategories.some((category) =>
+            applications.enabledApplicationCategories.includes(category),
+          ) && pending.length > 0 &&
+          pending.every((question) => question.kind === 'text' || question.kind === 'single-select' || question.kind === 'multi-select'),
       });
     }
     // Oldest blocked first: drain the backlog.
@@ -100,9 +108,11 @@ export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueP
                 {row.requiredCount > 0 && ` (${row.requiredCount} required)`}
               </span>
               <span className="w-24 shrink-0 text-right text-xs text-slate-400 dark:text-slate-500">
-                {blockedDays(row.blockedSince) === 0
-                  ? 'today'
-                  : `${blockedDays(row.blockedSince)}d blocked`}
+                {row.autoCompletable && row.eligibleAt
+                  ? Date.parse(row.eligibleAt) <= now
+                    ? 'Autopilot due'
+                    : `Auto in ${formatCountdown(Date.parse(row.eligibleAt) - now)}`
+                  : 'External blocker'}
               </span>
             </button>
           </li>
@@ -127,4 +137,11 @@ export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueP
       )}
     </section>
   );
+}
+
+function formatCountdown(milliseconds: number): string {
+  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours >= 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${hours}h ${minutes}m`;
 }

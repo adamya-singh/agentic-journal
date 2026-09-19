@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 
 // OpenClaw stores cron jobs in SQLite (the old ~/.openclaw/cron/jobs.json was
 // migrated away), so the CLI is the only supported way to read or control them.
-const DEFAULT_OPENCLAW_CLI_PATH = '/home/openclaw/projects/openclaw/openclaw.mjs';
+const DEFAULT_OPENCLAW_CLI_PATH = '/usr/bin/openclaw';
 
 export interface OpenClawCronJob {
   id: string;

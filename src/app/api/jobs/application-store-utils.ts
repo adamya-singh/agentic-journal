@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { DateSourceSchema } from '@/lib/employment-dates';
 import * as fs from 'fs';
 import * as path from 'path';
 import type {
@@ -13,6 +14,7 @@ import type {
   JobApplicationQueuePreviewEntry,
   JobApplicationReadiness,
   JobApplicationRecord,
+  JobApplicationReviewItem,
   JobApplicationScreenshotCapture,
   JobApplicationsStoreData,
   JobApplicationsViewData,
@@ -32,6 +34,7 @@ const APPLICATION_FILES_DIR =
 const DEFAULT_RESUME_DIR = '/home/openclaw/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
+export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 72 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 2 * 60 * 1000;
 
 export const JOB_APPLICATION_RESUME_FILES = {
@@ -75,11 +78,12 @@ export interface ClaimedJobApplication {
 
 export function getEmptyJobApplicationsStore(): JobApplicationsStoreData {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workerEnabled: false,
     enabledApplicationCategories: [...DEFAULT_ENABLED_APPLICATION_CATEGORIES],
     applications: {},
     answerBank: [],
+    reviewItems: [],
   };
 }
 
@@ -104,15 +108,22 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
   const answerBank = Array.isArray(parsed.answerBank)
     ? parsed.answerBank.flatMap((entry) => normalizeAnswerBankEntry(entry))
     : [];
+  const reviewItems = Array.isArray(parsed.reviewItems)
+    ? parsed.reviewItems.flatMap((item) => normalizeReviewItem(item))
+    : [];
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    ...(normalizeString(parsed.autopilotMigrationAt)
+      ? { autopilotMigrationAt: normalizeString(parsed.autopilotMigrationAt) }
+      : {}),
     workerEnabled: parsed.workerEnabled === true,
     enabledApplicationCategories: normalizeEnabledApplicationCategories(
       parsed.enabledApplicationCategories,
     ),
     applications,
     answerBank,
+    reviewItems,
   };
 }
 
@@ -195,7 +206,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     workerEnabled: store.workerEnabled,
     enabledApplicationCategories: store.enabledApplicationCategories,
     readiness: getJobApplicationReadiness(),
@@ -204,6 +215,13 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     eligibleBacklog,
     applications,
     answerBank: store.answerBank,
+    reviewItems: store.reviewItems,
+    schedulerHealth: {
+      healthy: false,
+      jobFound: false,
+      enabled: false,
+      error: 'Scheduler health unavailable',
+    },
     queuePreview: buildClaimQueuePreview(store, listings),
   };
 }
@@ -353,12 +371,18 @@ export interface StaleLeaseReconcileResult {
 export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseReconcileResult> {
   const hasStaleLease = (application: JobApplicationRecord, nowMs: number): boolean =>
     application.status === 'in-progress' &&
-    Boolean(application.lease) &&
-    Date.parse(application.lease!.expiresAt) <= nowMs;
+    ((Boolean(application.lease) && Date.parse(application.lease!.expiresAt) <= nowMs) ||
+      (!application.lease && Boolean(application.lastAttemptAt) &&
+        Date.parse(application.lastAttemptAt!) + LEASE_DURATION_MS <= nowMs));
 
   // Lock-free pre-check so the every-5-minutes caller costs one file read.
   const preCheck = readJobApplicationsStore();
-  if (!Object.values(preCheck.applications).some((app) => hasStaleLease(app, Date.now()))) {
+  const hasStaleSyncLease = (application: JobApplicationRecord, nowMs: number): boolean =>
+    application.simplifySync?.status === 'in-progress' &&
+    Boolean(application.simplifySync.lease) &&
+    Date.parse(application.simplifySync.lease!.expiresAt) <= nowMs;
+  if (!Object.values(preCheck.applications).some((app) =>
+    hasStaleLease(app, Date.now()) || hasStaleSyncLease(app, Date.now()))) {
     return { reconciled: [] };
   }
 
@@ -368,6 +392,14 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
     const reconciled: StaleLeaseReconcileResult['reconciled'] = [];
 
     for (const application of Object.values(store.applications)) {
+      if (hasStaleSyncLease(application, now.getTime()) && application.simplifySync) {
+        application.simplifySync.status = 'failed';
+        application.simplifySync.error = 'Simplify synchronization run was interrupted';
+        application.simplifySync.updatedAt = nowIso;
+        application.simplifySync.nextRetryAt = nowIso;
+        delete application.simplifySync.lease;
+        reconciled.push({ listingId: application.listingId, nextRetryAt: nowIso });
+      }
       if (!hasStaleLease(application, now.getTime())) {
         continue;
       }
@@ -440,6 +472,12 @@ export function hasActionableJobApplications(): boolean {
     return false;
   }
   const now = new Date();
+  if (Object.values(store.applications).some((application) => {
+    const sync = application.simplifySync;
+    return sync && sync.status !== 'synced' &&
+      (!sync.lease || Date.parse(sync.lease.expiresAt) <= now.getTime()) &&
+      (!sync.nextRetryAt || Date.parse(sync.nextRetryAt) <= now.getTime());
+  })) return true;
   if (
     Object.values(store.applications).some(
       (application) => application.lease && Date.parse(application.lease.expiresAt) > now.getTime(),
@@ -492,6 +530,16 @@ export function setApplicationStatus(
   if (application.status !== status) {
     application.status = status;
     application.statusHistory.push({ status, changedAt });
+  }
+  if (status === 'awaiting-user-input' && !application.awaitingInputSince) {
+    application.awaitingInputSince = changedAt;
+    application.autoCompleteEligibleAt = new Date(
+      Date.parse(changedAt) + JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS,
+    ).toISOString();
+  }
+  if (status !== 'awaiting-user-input' && status !== 'in-progress') {
+    delete application.awaitingInputSince;
+    delete application.autoCompleteEligibleAt;
   }
   application.updatedAt = changedAt;
 }
@@ -864,12 +912,15 @@ export function mergeApplicationQuestions(
     if (!existing) {
       return question;
     }
+    // Classification survives rediscovery; source evidence must be supplied afresh.
+    question = { ...question, employmentDateField: question.employmentDateField ?? existing.employmentDateField };
     if (existing.resolution !== 'pending') {
       return {
         ...question,
         answer: existing.answer,
         resolution: existing.resolution,
         answeredAt: existing.answeredAt,
+        generatedAnswer: existing.generatedAnswer,
       };
     }
     return {
@@ -879,6 +930,37 @@ export function mergeApplicationQuestions(
   });
   const incomingIds = new Set(incoming.map((question) => question.id));
   return [...merged, ...current.filter((question) => !incomingIds.has(question.id))];
+}
+
+function normalizeReviewItem(value: unknown): JobApplicationReviewItem[] {
+  if (!isRecord(value)) return [];
+  const answerUsed = normalizeAnswer(value.answerUsed);
+  const status = value.status;
+  const confidence = value.confidence;
+  const item: JobApplicationReviewItem = {
+    id: normalizeString(value.id),
+    listingId: normalizeString(value.listingId),
+    questionId: normalizeString(value.questionId),
+    question: normalizeString(value.question),
+    answerUsed: answerUsed ?? '',
+    clarificationPrompt: normalizeString(value.clarificationPrompt),
+    confidence: typeof confidence === 'number' ? confidence : -1,
+    company: normalizeString(value.company),
+    role: normalizeString(value.role),
+    createdAt: normalizeString(value.createdAt),
+    status:
+      status === 'confirmed' || status === 'corrected' ? status : 'pending',
+  };
+  if (
+    !item.id || !item.listingId || !item.questionId || !item.question ||
+    answerUsed === undefined || !item.clarificationPrompt || !item.company || !item.role ||
+    !item.createdAt || item.confidence < 0 || item.confidence > 1
+  ) return [];
+  if (normalizeString(value.submittedAt)) item.submittedAt = normalizeString(value.submittedAt);
+  if (normalizeString(value.resolvedAt)) item.resolvedAt = normalizeString(value.resolvedAt);
+  const correctedAnswer = normalizeAnswer(value.correctedAnswer);
+  if (correctedAnswer !== undefined) item.correctedAnswer = correctedAnswer;
+  return [item];
 }
 
 export function updateJobListingLeadStatus(
@@ -935,13 +1017,26 @@ function chooseResumeVariant(listing: JobListing): 'swe' | 'mle' {
   return mlePattern.test(text) ? 'mle' : 'swe';
 }
 
-function isApplicationClaimable(application: JobApplicationRecord, now: Date): boolean {
+export function isApplicationClaimable(application: JobApplicationRecord, now: Date): boolean {
   if (
     application.status === 'submitted' ||
-    application.status === 'closed' ||
-    application.status === 'awaiting-user-input'
+    application.status === 'closed'
   ) {
     return false;
+  }
+  if (
+    application.status === 'awaiting-user-input' &&
+    (!application.autoCompleteEligibleAt ||
+      Date.parse(application.autoCompleteEligibleAt) > now.getTime())
+  ) {
+    return false;
+  }
+  if (application.status === 'awaiting-user-input') {
+    const pending = application.questions.filter((question) => question.resolution === 'pending');
+    if (
+      pending.length === 0 ||
+      pending.some((question) => question.kind === 'file' || question.kind === 'action')
+    ) return false;
   }
   if (application.lease && Date.parse(application.lease.expiresAt) > now.getTime()) {
     return false;
@@ -953,6 +1048,17 @@ function isApplicationClaimable(application: JobApplicationRecord, now: Date): b
     return false;
   }
   return true;
+}
+
+export function buildGoogleDocAutoAnswerEntry(params: {
+  question: string; company: string; role: string; answer: JobApplicationAnswer;
+}): string {
+  const answer = Array.isArray(params.answer) ? params.answer.join(', ') : params.answer;
+  return `openclaw - ${params.question.trim()} (${params.company.trim()} — ${params.role.trim()}) ${answer.trim()}`;
+}
+
+export function googleDocContainsExactEntry(documentText: string, entry: string): boolean {
+  return documentText.split(/\r?\n/).some((line) => line.trim() === entry.trim());
 }
 
 function incrementStatusCount(counts: JobApplicationCounts, status: JobApplicationStatus): void {
@@ -1004,6 +1110,10 @@ function normalizeApplicationRecord(
   if (normalizeString(value.closedAt)) record.closedAt = normalizeString(value.closedAt);
   if (normalizeString(value.closedReason))
     record.closedReason = normalizeString(value.closedReason);
+  if (normalizeString(value.awaitingInputSince))
+    record.awaitingInputSince = normalizeString(value.awaitingInputSince);
+  if (normalizeString(value.autoCompleteEligibleAt))
+    record.autoCompleteEligibleAt = normalizeString(value.autoCompleteEligibleAt);
   if (isRecord(value.lease)) {
     const token = normalizeString(value.lease.token);
     const claimedAt = normalizeString(value.lease.claimedAt);
@@ -1032,6 +1142,37 @@ function normalizeApplicationRecord(
         ? { message: normalizeString(value.submissionEvidence.message) }
         : {}),
     };
+  }
+  if (isRecord(value.simplifySync)) {
+    const status = value.simplifySync.status;
+    const updatedAt = normalizeString(value.simplifySync.updatedAt);
+    if (
+      (status === 'pending' || status === 'in-progress' || status === 'synced' || status === 'failed') &&
+      updatedAt
+    ) {
+      record.simplifySync = {
+        status,
+        attemptCount: normalizeNonNegativeInteger(value.simplifySync.attemptCount),
+        updatedAt,
+        ...(normalizeString(value.simplifySync.nextRetryAt)
+          ? { nextRetryAt: normalizeString(value.simplifySync.nextRetryAt) }
+          : {}),
+        ...(normalizeString(value.simplifySync.cardId)
+          ? { cardId: normalizeString(value.simplifySync.cardId) }
+          : {}),
+        ...(normalizeString(value.simplifySync.error)
+          ? { error: normalizeString(value.simplifySync.error) }
+          : {}),
+      };
+      if (isRecord(value.simplifySync.lease)) {
+        const token = normalizeString(value.simplifySync.lease.token);
+        const claimedAt = normalizeString(value.simplifySync.lease.claimedAt);
+        const expiresAt = normalizeString(value.simplifySync.lease.expiresAt);
+        if (token && claimedAt && expiresAt) {
+          record.simplifySync.lease = { token, claimedAt, expiresAt };
+        }
+      }
+    }
   }
   if (isRecord(value.progress)) {
     const step = normalizeString(value.progress.step);
@@ -1174,10 +1315,48 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
   if (normalizeString(value.helpText)) question.helpText = normalizeString(value.helpText);
   if (normalizeString(value.pageUrl)) question.pageUrl = normalizeString(value.pageUrl);
   if (normalizeString(value.section)) question.section = normalizeString(value.section);
+  if (value.employmentDateField === 'start' || value.employmentDateField === 'end') {
+    question.employmentDateField = value.employmentDateField;
+  }
+  const dateSource = DateSourceSchema.safeParse(value.dateSource);
+  if (dateSource.success) question.dateSource = dateSource.data;
   if (value.multiline === true) question.multiline = true;
   const answer = normalizeAnswer(value.answer);
   if (answer !== undefined) question.answer = answer;
   if (normalizeString(value.answeredAt)) question.answeredAt = normalizeString(value.answeredAt);
+  if (isRecord(value.generatedAnswer)) {
+    const generatedAt = normalizeString(value.generatedAnswer.generatedAt);
+    const confidence = value.generatedAnswer.confidence;
+    const docAppend = value.generatedAnswer.docAppend;
+    if (
+      value.generatedAnswer.source === 'chatgpt-web' &&
+      generatedAt &&
+      typeof confidence === 'number' &&
+      confidence >= 0 && confidence <= 1 &&
+      isRecord(docAppend) &&
+      (docAppend.status === 'saved' || docAppend.status === 'failed') &&
+      normalizeString(docAppend.entry) &&
+      normalizeString(docAppend.attemptedAt)
+    ) {
+      question.generatedAnswer = {
+        source: 'chatgpt-web',
+        generatedAt,
+        confidence,
+        assumptions: Array.isArray(value.generatedAnswer.assumptions)
+          ? value.generatedAnswer.assumptions.map(normalizeString).filter(Boolean)
+          : [],
+        ...(normalizeString(value.generatedAnswer.clarificationPrompt)
+          ? { clarificationPrompt: normalizeString(value.generatedAnswer.clarificationPrompt) }
+          : {}),
+        docAppend: {
+          status: docAppend.status,
+          entry: normalizeString(docAppend.entry),
+          attemptedAt: normalizeString(docAppend.attemptedAt),
+          ...(normalizeString(docAppend.error) ? { error: normalizeString(docAppend.error) } : {}),
+        },
+      };
+    }
+  }
   if (isRecord(value.suggestion)) {
     const suggestedAnswer = normalizeAnswer(value.suggestion.answer);
     const sourceAnswerId = normalizeString(value.suggestion.sourceAnswerId);

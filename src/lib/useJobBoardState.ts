@@ -1,9 +1,11 @@
 'use client';
 
 import React from 'react';
+import { applyJobReviewResult, saveJobReview } from './job-review-result';
 import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import type {
   JobApplicationCategory,
+  JobApplicationAnswer,
   JobApplicationRecord,
   JobApplicationResumeVariant,
   JobApplicationsViewData,
@@ -32,6 +34,8 @@ export function useJobBoardState(
   const [jobApplicationsLoading, setJobApplicationsLoading] = React.useState(true);
   const [jobApplicationsError, setJobApplicationsError] = React.useState<string | null>(null);
   const silentRefreshInFlight = React.useRef(false);
+  // A list request begun before a completed review must not restore stale items.
+  const reviewRevision = React.useRef(0);
 
   const refreshJobListings = React.useCallback(async (opts: { silent?: boolean } = {}) => {
     if (!opts.silent) {
@@ -63,6 +67,7 @@ export function useJobBoardState(
   }, []);
 
   const refreshJobApplications = React.useCallback(async (opts: { silent?: boolean } = {}) => {
+    const revisionAtStart = reviewRevision.current;
     if (!opts.silent) {
       setJobApplicationsLoading(true);
       setJobApplicationsError(null);
@@ -73,8 +78,9 @@ export function useJobBoardState(
       if (!response.ok || !data.success) {
         throw new Error(data.error || 'Failed to load job applications');
       }
+      if (revisionAtStart !== reviewRevision.current) return;
       setJobApplicationsData({
-        schemaVersion: 1,
+        schemaVersion: 2,
         workerEnabled: data.workerEnabled === true,
         enabledApplicationCategories: data.enabledApplicationCategories,
         readiness: data.readiness,
@@ -83,6 +89,8 @@ export function useJobBoardState(
         eligibleBacklog: data.eligibleBacklog,
         applications: data.applications,
         answerBank: Array.isArray(data.answerBank) ? data.answerBank : [],
+        reviewItems: Array.isArray(data.reviewItems) ? data.reviewItems : [],
+        schedulerHealth: data.schedulerHealth,
         queuePreview: Array.isArray(data.queuePreview) ? data.queuePreview : [],
       });
     } catch (error) {
@@ -244,6 +252,16 @@ export function useJobBoardState(
     [refreshJobApplications, refreshJobListings],
   );
 
+  const resolveJobApplicationReview = React.useCallback(async (
+    reviewId: string,
+    action: 'confirm' | 'correct',
+    answer?: JobApplicationAnswer,
+  ) => {
+    const data = await saveJobReview(reviewId, action, answer);
+    reviewRevision.current += 1;
+    setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
+  }, []);
+
   return {
     jobListingsData,
     setJobListingsData,
@@ -258,5 +276,6 @@ export function useJobBoardState(
     controlJobApplications,
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
+    resolveJobApplicationReview,
   };
 }

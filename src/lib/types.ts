@@ -143,6 +143,13 @@ export interface JobApplicationQuestionSuggestion {
 }
 
 export interface JobApplicationQuestion {
+  employmentDateField?: 'start' | 'end';
+  dateSource?: {
+    experienceId: string;
+    field: 'start' | 'end';
+    value: string;
+    attemptCount: number;
+  };
   id: string;
   prompt: string;
   kind: JobApplicationQuestionKind;
@@ -157,8 +164,23 @@ export interface JobApplicationQuestion {
   resolution: JobApplicationQuestionResolution;
   discoveredAt: string;
   answeredAt?: string;
+  generatedAnswer?: JobApplicationGeneratedAnswer;
   /** View-time enrichment (never persisted): a matching saved answer from the bank. */
   bankMatch?: JobApplicationAnswerBankMatch;
+}
+
+export interface JobApplicationGeneratedAnswer {
+  source: 'chatgpt-web';
+  generatedAt: string;
+  confidence: number;
+  assumptions: string[];
+  clarificationPrompt?: string;
+  docAppend: {
+    status: 'saved' | 'failed';
+    entry: string;
+    attemptedAt: string;
+    error?: string;
+  };
 }
 
 export interface JobApplicationAnswerBankMatch {
@@ -191,6 +213,16 @@ export interface JobApplicationError {
 export interface JobApplicationSubmissionEvidence {
   url?: string;
   message?: string;
+}
+
+export interface JobApplicationSimplifySync {
+  status: 'pending' | 'in-progress' | 'synced' | 'failed';
+  attemptCount: number;
+  updatedAt: string;
+  nextRetryAt?: string;
+  lease?: JobApplicationLease;
+  cardId?: string;
+  error?: string;
 }
 
 export interface JobApplicationScreenshot {
@@ -233,12 +265,32 @@ export interface JobApplicationRecord {
   closedAt?: string;
   closedReason?: string;
   submissionEvidence?: JobApplicationSubmissionEvidence;
+  awaitingInputSince?: string;
+  autoCompleteEligibleAt?: string;
+  simplifySync?: JobApplicationSimplifySync;
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;
   incompleteScreenshotCapture?: JobApplicationScreenshotCapture;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JobApplicationReviewItem {
+  id: string;
+  listingId: string;
+  questionId: string;
+  question: string;
+  answerUsed: JobApplicationAnswer;
+  clarificationPrompt: string;
+  confidence: number;
+  company: string;
+  role: string;
+  createdAt: string;
+  submittedAt?: string;
+  status: 'pending' | 'confirmed' | 'corrected';
+  correctedAnswer?: JobApplicationAnswer;
+  resolvedAt?: string;
 }
 
 export interface JobApplicationAnswerBankEntry {
@@ -253,11 +305,13 @@ export interface JobApplicationAnswerBankEntry {
 }
 
 export interface JobApplicationsStoreData {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  autopilotMigrationAt?: string;
   workerEnabled: boolean;
   enabledApplicationCategories: JobApplicationCategory[];
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
+  reviewItems: JobApplicationReviewItem[];
 }
 
 export interface JobApplicationReadiness {
@@ -290,7 +344,7 @@ export interface JobApplicationQueuePreviewEntry {
 }
 
 export interface JobApplicationsViewData {
-  schemaVersion: 1;
+  schemaVersion: 2;
   workerEnabled: boolean;
   enabledApplicationCategories: JobApplicationCategory[];
   readiness: JobApplicationReadiness;
@@ -299,6 +353,13 @@ export interface JobApplicationsViewData {
   eligibleBacklog: number;
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
+  reviewItems: JobApplicationReviewItem[];
+  schedulerHealth: {
+    healthy: boolean;
+    jobFound: boolean;
+    enabled: boolean;
+    error?: string;
+  };
   queuePreview: JobApplicationQueuePreviewEntry[];
 }
 

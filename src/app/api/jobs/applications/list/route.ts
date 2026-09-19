@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { after } from 'next/server';
 import { buildJobApplicationsView } from '../../application-store-utils';
-import { reconcileAndWakeJobApplicationWorker } from '../../application-worker-utils';
+import { getJobApplicationSchedulerHealth, reconcileAndWakeJobApplicationWorker } from '../../application-worker-utils';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   try {
     const view = buildJobApplicationsView();
+    view.schedulerHealth = await getJobApplicationSchedulerHealth();
     // Fast-path self-heal: if the view exposes a run stranded behind an
     // expired lease, recover it after the response. The reconcile is
     // throttled and swallows its own errors; instrumentation.ts covers the

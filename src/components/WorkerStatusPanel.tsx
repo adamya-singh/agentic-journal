@@ -164,6 +164,11 @@ export function WorkerStatusPanel({
                     ? `Retry scheduled for ${new Date(nextRetryAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
                     : 'Idle — wakes when there’s work (answers, new leads, retries).'}
             </p>
+            <p className={`text-xs ${applications.schedulerHealth.healthy ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              Scheduler: {applications.schedulerHealth.healthy
+                ? `healthy · cron ${applications.schedulerHealth.enabled ? 'enabled' : 'disabled'}`
+                : applications.schedulerHealth.error ?? 'unavailable'}
+            </p>
           </div>
         </div>
         <button

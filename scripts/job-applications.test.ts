@@ -18,6 +18,7 @@ let answersRoute: typeof import('../src/app/api/jobs/applications/answers/route'
 let preferencesRoute: typeof import('../src/app/api/jobs/applications/preferences/route');
 let controlRoute: typeof import('../src/app/api/jobs/applications/control/route');
 let updateRoute: typeof import('../src/app/api/jobs/applications/update/route');
+let reviewsRoute: typeof import('../src/app/api/jobs/applications/reviews/route');
 let screenshotsRoute: typeof import('../src/app/api/jobs/applications/screenshots/route');
 let screenshotReadRoute: typeof import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
 const now = '2026-07-20T12:00:00.000Z';
@@ -36,6 +37,7 @@ before(async () => {
   preferencesRoute = await import('../src/app/api/jobs/applications/preferences/route');
   controlRoute = await import('../src/app/api/jobs/applications/control/route');
   updateRoute = await import('../src/app/api/jobs/applications/update/route');
+  reviewsRoute = await import('../src/app/api/jobs/applications/reviews/route');
   screenshotsRoute = await import('../src/app/api/jobs/applications/screenshots/route');
   screenshotReadRoute =
     await import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
@@ -49,11 +51,12 @@ before(async () => {
     'utf8',
   );
   store.writeJobApplicationsStore({
-    schemaVersion: 1,
+    schemaVersion: 2,
     workerEnabled: true,
     enabledApplicationCategories: ['spring-internship', 'new-grad'],
     applications: {},
     answerBank: [],
+    reviewItems: [],
   });
 });
 
@@ -581,6 +584,7 @@ describe('job application state', () => {
         store.releaseApplicationLease(application);
         if (id !== 'saved-old' && application.status !== 'submitted') {
           store.setApplicationStatus(application, 'awaiting-user-input', now);
+          application.autoCompleteEligibleAt = '2100-01-01T00:00:00.000Z';
         }
       }
       data.applications['saved-old'] = {
@@ -776,7 +780,7 @@ describe('job application state', () => {
     });
     const preview = store.buildClaimQueuePreview(
       {
-        schemaVersion: 1,
+        schemaVersion: 2,
         workerEnabled: true,
         enabledApplicationCategories: ['new-grad'],
         applications: {
@@ -792,6 +796,7 @@ describe('job application state', () => {
           }),
         },
         answerBank: [],
+        reviewItems: [],
       } as never,
       [
         previewListing('saved-older', 'saved', '2026-07-01T12:00:00.000Z'),
@@ -814,6 +819,100 @@ describe('job application state', () => {
       ],
     );
   });
+
+  test('uses the exact 72-hour boundary without resetting after partial work', () => {
+    const application: import('../src/lib/types').JobApplicationRecord = {
+      listingId: 'boundary', status: 'in-progress' as const, resumeVariant: 'swe' as const,
+      attemptCount: 1, statusHistory: [], questions: [], createdAt: now, updatedAt: now,
+    };
+    store.setApplicationStatus(application, 'awaiting-user-input', now);
+    assert.equal(application.awaitingInputSince, now);
+    assert.equal(application.autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
+    store.setApplicationStatus(application, 'awaiting-user-input', '2026-07-21T12:00:00.000Z');
+    assert.equal(application.autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
+    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-23T11:59:59.999Z')), false);
+    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-23T12:00:00.000Z')), true);
+  });
+
+  test('formats and deduplicates exact prefixed Google Doc entries', () => {
+    const entry = store.buildGoogleDocAutoAnswerEntry({
+      question: 'Which phone type?', company: 'Example', role: 'Engineer', answer: 'Home Cellular',
+    });
+    assert.equal(entry, 'openclaw - Which phone type? (Example — Engineer) Home Cellular');
+    assert.equal(store.googleDocContainsExactEntry(`older\n${entry}\n`, entry), true);
+    assert.equal(store.googleDocContainsExactEntry('openclaw - Which phone type? other', entry), false);
+  });
+
+  test('rejects wrong employment dates atomically and preserves refreshed source metadata', async () => {
+    const dateSource = { experienceId: 'moodys', field: 'end' as const, value: '2026-08', attemptCount: 2 };
+    const question = { id: 'employment-date', prompt: "Moody's Analytics (Intern) - End Date", kind: 'text' as const,
+      required: true, resolution: 'pending' as const, discoveredAt: now, employmentDateField: 'end' as const, dateSource };
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-new'] = {
+        listingId: 'saved-new', status: 'in-progress', resumeVariant: 'mle', attemptCount: 2,
+        statusHistory: [], questions: [question],
+        lease: { token: 'date-lease', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' }, createdAt: now, updatedAt: now,
+      };
+    });
+    assert.deepEqual(store.readJobApplicationsStore().applications['saved-new'].questions[0].dateSource, dateSource);
+    const { dateSource: _source, ...withoutSource } = question;
+    const merged = store.mergeApplicationQuestions([question], [withoutSource])[0];
+    assert.equal(merged.dateSource, undefined);
+    assert.equal(merged.employmentDateField, 'end');
+    const payload = (answer: string) => ({ action: 'record-auto-answers', listingId: 'saved-new', leaseToken: 'date-lease',
+      answers: [{ questionId: question.id, answer, confidence: 0.98, assumptions: ['Simplify date'],
+        docAppend: { status: 'failed', entry: store.buildGoogleDocAutoAnswerEntry({ question: question.prompt, company: 'Example', role: 'Machine Learning Engineer', answer }), attemptedAt: now, error: 'unavailable' } }] });
+    const reviewsBefore = store.readJobApplicationsStore().reviewItems.length;
+    assert.equal((await postUpdate(payload('08/2025'))).status, 400);
+    let data = store.readJobApplicationsStore();
+    assert.equal(data.applications['saved-new'].questions[0].resolution, 'pending');
+    assert.equal(data.reviewItems.length, reviewsBefore);
+    assert.equal((await postUpdate({ action: 'record-questions', listingId: 'saved-new', leaseToken: 'date-lease', retainLease: true,
+      questions: [{ ...question, dateSource: { ...dateSource, attemptCount: 1 } }] })).status, 400);
+    assert.equal((await postUpdate({ action: 'record-questions', listingId: 'saved-new', leaseToken: 'date-lease', retainLease: true,
+      questions: [withoutSource] })).status, 200);
+    assert.equal((await postUpdate(payload('08/2026'))).status, 400);
+    assert.equal((await postUpdate({ action: 'record-questions', listingId: 'saved-new', leaseToken: 'date-lease', retainLease: true, questions: [question] })).status, 200);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].lease?.token, 'date-lease');
+    assert.equal((await postUpdate(payload('08/2026'))).status, 200);
+  });
+
+  test('records generated provenance, tolerates Doc failure, and confirms through review', async () => {
+    const leaseToken = 'auto-answer-lease';
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-new'] = {
+        listingId: 'saved-new', status: 'in-progress', resumeVariant: 'mle', attemptCount: 2,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [{ id: 'phone-type', prompt: 'Which phone type?', kind: 'single-select', required: true,
+          options: [{ value: 'Home Cellular', label: 'Home Cellular' }], resolution: 'pending', discoveredAt: now }],
+        lease: { token: leaseToken, claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' },
+        createdAt: now, updatedAt: now,
+      };
+    });
+    const response = await postUpdate({
+      action: 'record-auto-answers', listingId: 'saved-new', leaseToken,
+      answers: [{ questionId: 'phone-type', answer: 'Home Cellular', confidence: 0.62,
+        assumptions: ['Phone type was not in confirmed sources.'],
+        clarificationPrompt: 'I selected Home Cellular. Which phone type should I use in future?',
+        docAppend: { status: 'failed', entry: 'openclaw - Which phone type? (Example — Machine Learning Engineer) Home Cellular', attemptedAt: now, error: 'Google Docs unavailable' } }],
+    });
+    assert.equal(response.status, 200);
+    let data = store.readJobApplicationsStore();
+    assert.equal(data.applications['saved-new'].questions[0].resolution, 'auto-resolved');
+    assert.equal(data.applications['saved-new'].questions[0].generatedAnswer?.docAppend.status, 'failed');
+    assert.equal(data.answerBank.some((entry) => entry.sourceListingId === 'saved-new' && entry.prompt === 'Which phone type?'), false);
+    const review = data.reviewItems.find((item) => item.questionId === 'phone-type');
+    assert.ok(review);
+    const confirmed = await postReview({ reviewId: review.id, action: 'confirm' });
+    assert.equal(confirmed.status, 200);
+    const savedResult = await confirmed.json();
+    assert.equal(savedResult.review.status, 'confirmed');
+    assert.ok(savedResult.answerBank.some((entry: { prompt: string }) => entry.prompt === 'Which phone type?'));
+    assert.ok(Array.isArray(savedResult.bankMatches));
+    data = store.readJobApplicationsStore();
+    assert.equal(data.reviewItems.find((item) => item.id === review.id)?.status, 'confirmed');
+    assert.equal(data.answerBank.some((entry) => entry.prompt === 'Which phone type?'), true);
+  });
 });
 
 function postAnswers(body: unknown) {
@@ -834,6 +933,12 @@ function postUpdate(body: unknown) {
       body: JSON.stringify(body),
     }),
   );
+}
+
+function postReview(body: unknown) {
+  return reviewsRoute.POST(new NextRequest('http://localhost/api/jobs/applications/reviews', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
 }
 
 function postScreenshot(params: {

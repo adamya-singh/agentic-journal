@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { after } from 'next/server';
 import { z } from 'zod';
 import {
   getJobApplicationReadiness,
@@ -45,38 +44,21 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
-      await mutateJobApplicationsStore((store) => {
-        store.workerEnabled = true;
-      });
-      // The flag flip above is the source of truth for claim gating; the slow
-      // OpenClaw CLI round-trips (2-5s cold start each) run after the response.
-      after(async () => {
-        try {
-          const worker = await triggerJobApplicationWorker();
-          if (!worker.success) {
-            console.error('Deferred worker trigger failed:', worker.error);
-          }
-        } catch (error) {
-          console.error('Deferred worker trigger failed:', error);
-        }
-      });
-      return NextResponse.json({ success: true, workerEnabled: true, readiness, deferred: true });
+      await mutateJobApplicationsStore((store) => { store.workerEnabled = true; });
+      const worker = await triggerJobApplicationWorker();
+      if (!worker.success) {
+        await mutateJobApplicationsStore((store) => { store.workerEnabled = false; });
+        return NextResponse.json({ success: false, error: worker.error, worker }, { status: 503 });
+      }
+      return NextResponse.json({ success: true, workerEnabled: true, readiness, worker });
     }
 
-    await mutateJobApplicationsStore((store) => {
-      store.workerEnabled = false;
-    });
-    after(async () => {
-      try {
-        const worker = await disableJobApplicationWorker();
-        if (!worker.success) {
-          console.error('Deferred worker disable failed:', worker.error);
-        }
-      } catch (error) {
-        console.error('Deferred worker disable failed:', error);
-      }
-    });
-    return NextResponse.json({ success: true, workerEnabled: false, deferred: true });
+    const worker = await disableJobApplicationWorker();
+    if (!worker.success) {
+      return NextResponse.json({ success: false, error: worker.error, worker }, { status: 503 });
+    }
+    await mutateJobApplicationsStore((store) => { store.workerEnabled = false; });
+    return NextResponse.json({ success: true, workerEnabled: false, worker });
   } catch (error) {
     console.error('Error controlling job application worker:', error);
     return NextResponse.json(

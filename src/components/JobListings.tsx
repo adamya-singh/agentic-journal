@@ -4,6 +4,7 @@ import React from 'react';
 import { BriefcaseBusiness, ExternalLink, Star, Trash2 } from 'lucide-react';
 import type {
   JobApplicationCategory,
+  JobApplicationAnswer,
   JobApplicationRecord,
   JobApplicationResumeVariant,
   JobApplicationsViewData,
@@ -16,6 +17,7 @@ import type { JobApplicationResponseInput } from './JobApplicationModal';
 import { AnswerBankPanel } from './AnswerBankPanel';
 import { NeedsYouQueue } from './NeedsYouQueue';
 import { WorkerStatusPanel } from './WorkerStatusPanel';
+import { ApplicationReviewPanel } from './ApplicationReviewPanel';
 
 interface JobListingsProps {
   data: JobListingsData | null;
@@ -36,6 +38,7 @@ interface JobListingsProps {
     application?: JobApplicationRecord;
     worker?: { queued?: boolean; enabled?: boolean };
   } | void>;
+  onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer) => Promise<void>;
 }
 
 const APPLICATION_CATEGORY_LABELS: Record<JobApplicationCategory, string> = {
@@ -121,6 +124,7 @@ export function JobListings({
   onApplicationControl,
   onApplicationCategoriesChange,
   onApplicationSave,
+  onApplicationReview,
 }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -281,6 +285,8 @@ export function JobListings({
             applications={applications ?? null}
             onOpen={(listingId) => setSelectedApplicationId(listingId)}
           />
+
+          <ApplicationReviewPanel applications={applications ?? null} onResolve={onApplicationReview} />
 
           <WorkerStatusPanel
             listings={data?.listings ?? []}

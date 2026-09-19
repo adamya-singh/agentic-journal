@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { DateSourceSchema, EmploymentDateError, validateEmploymentDate } from '@/lib/employment-dates';
 import type { JobApplicationQuestion } from '@/lib/types';
+import { readJobListings } from '../../job-store-utils';
 import {
   createActionQuestion,
+  buildGoogleDocAutoAnswerEntry,
   createApplicationQuestionId,
   completeApplicationScreenshotCapture,
   deleteApplicationScreenshotCaptureFiles,
@@ -23,6 +27,8 @@ export const runtime = 'nodejs';
 const AnswerSchema = z.union([z.string(), z.array(z.string())]);
 const QuestionOptionSchema = z.object({ value: z.string(), label: z.string() });
 const QuestionSchema = z.object({
+  employmentDateField: z.enum(['start', 'end']).optional(),
+  dateSource: DateSourceSchema.optional(),
   id: z.string().min(1).optional(),
   prompt: z.string().min(1),
   kind: z.enum(['text', 'single-select', 'multi-select', 'file', 'action']),
@@ -51,10 +57,29 @@ const BaseSchema = z.object({
   leaseToken: z.string().min(1),
 });
 
+const AutoAnswerSchema = z.object({
+  questionId: z.string().min(1),
+  answer: AnswerSchema,
+  confidence: z.number().min(0).max(1),
+  assumptions: z.array(z.string().min(1)).default([]),
+  clarificationPrompt: z.string().min(1).optional(),
+  docAppend: z.object({
+    status: z.enum(['saved', 'failed']),
+    entry: z.string().min(1),
+    attemptedAt: z.string().datetime(),
+    error: z.string().min(1).optional(),
+  }),
+});
+
 const UpdateSchema = z.discriminatedUnion('action', [
   BaseSchema.extend({
     action: z.literal('record-questions'),
     questions: z.array(QuestionSchema),
+    retainLease: z.boolean().optional(),
+  }),
+  BaseSchema.extend({
+    action: z.literal('record-auto-answers'),
+    answers: z.array(AutoAnswerSchema).min(1),
   }),
   BaseSchema.extend({
     action: z.literal('set-canonical-url'),
@@ -138,11 +163,82 @@ export async function POST(request: NextRequest) {
           discoveredAt: question.discoveredAt ?? now,
         }));
         application.questions = mergeApplicationQuestions(application.questions, questions);
-        if (application.questions.some((question) => question.resolution === 'pending')) {
+        for (const question of questions) {
+          if (question.dateSource && question.dateSource.attemptCount !== application.attemptCount) {
+            throw new EmploymentDateError('Fresh Simplify date source required for the current attempt');
+          }
+        }
+        if (!parsed.data.retainLease && application.questions.some((question) => question.resolution === 'pending')) {
           setApplicationStatus(application, 'awaiting-user-input', now);
           releaseApplicationLease(application);
         } else {
           application.updatedAt = now;
+        }
+      }
+
+      if (parsed.data.action === 'record-auto-answers') {
+        const listing = readJobListings().listings.find(
+          (candidate) => candidate.id === parsed.data.listingId,
+        );
+        if (!listing) throw new Error('Job listing not found');
+        for (const generated of parsed.data.answers) {
+          const question = application.questions.find(
+            (candidate) => candidate.id === generated.questionId,
+          );
+          if (!question || question.resolution !== 'pending') {
+            throw new Error(`Pending question not found: ${generated.questionId}`);
+          }
+          validateAutoAnswer(question, generated.answer);
+          validateEmploymentDate(question, generated.answer, application.attemptCount);
+          const expectedDocEntry = buildGoogleDocAutoAnswerEntry({
+            question: question.prompt,
+            company: listing.company,
+            role: listing.positionTitle,
+            answer: generated.answer,
+          });
+          if (generated.docAppend.entry !== expectedDocEntry) {
+            throw new Error(`Google Doc entry does not use the required prefix and format: ${question.prompt}`);
+          }
+          question.answer = generated.answer;
+          question.resolution = 'auto-resolved';
+          question.answeredAt = now;
+          question.generatedAnswer = {
+            source: 'chatgpt-web',
+            generatedAt: now,
+            confidence: generated.confidence,
+            assumptions: generated.assumptions,
+            ...(generated.clarificationPrompt
+              ? { clarificationPrompt: generated.clarificationPrompt }
+              : {}),
+            docAppend: generated.docAppend,
+          };
+          if (generated.clarificationPrompt || generated.assumptions.length > 0) {
+            const clarificationPrompt = generated.clarificationPrompt ??
+              `I used “${formatAnswer(generated.answer)}”. What should I use in future?`;
+            const existing = store.reviewItems.find(
+              (item) => item.listingId === application.listingId && item.questionId === question.id,
+            );
+            if (!existing) {
+              store.reviewItems.push({
+                id: randomUUID(),
+                listingId: application.listingId,
+                questionId: question.id,
+                question: question.prompt,
+                answerUsed: generated.answer,
+                clarificationPrompt,
+                confidence: generated.confidence,
+                company: listing.company,
+                role: listing.positionTitle,
+                createdAt: now,
+                status: 'pending',
+              });
+            }
+          }
+        }
+        application.updatedAt = now;
+        if (application.questions.some((question) => question.resolution === 'pending')) {
+          setApplicationStatus(application, 'awaiting-user-input', now);
+          releaseApplicationLease(application);
         }
       }
 
@@ -211,12 +307,23 @@ export async function POST(request: NextRequest) {
         if (!application.submissionAttemptedAt) {
           throw new Error('Record submission-attempted before marking an application submitted');
         }
+        if (!parsed.data.url?.trim() && !parsed.data.message?.trim()) {
+          throw new Error('Visible employer confirmation evidence is required');
+        }
         setApplicationStatus(application, 'submitted', now);
         application.submittedAt = now;
         application.submissionEvidence = {
           ...(parsed.data.url ? { url: parsed.data.url } : {}),
           ...(parsed.data.message ? { message: parsed.data.message } : {}),
         };
+        application.simplifySync = {
+          status: 'pending',
+          attemptCount: application.simplifySync?.attemptCount ?? 0,
+          updatedAt: now,
+        };
+        for (const item of store.reviewItems) {
+          if (item.listingId === application.listingId && !item.submittedAt) item.submittedAt = now;
+        }
         delete application.resumeRequestedAt;
         delete application.lastError;
         delete application.progress;
@@ -314,10 +421,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, application: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update job application';
-    const status = /lease|already|not found|submission-attempted|screenshot/i.test(message)
+    const status = error instanceof EmploymentDateError ? 400 : /lease|already|not found|submission-attempted|screenshot/i.test(message)
       ? 409
       : 500;
     console.error('Error updating job application:', error);
     return NextResponse.json({ success: false, error: message }, { status });
+  }
+}
+
+function formatAnswer(answer: string | string[]): string {
+  return Array.isArray(answer) ? answer.join(', ') : answer;
+}
+
+function validateAutoAnswer(question: JobApplicationQuestion, answer: string | string[]): void {
+  if (question.kind === 'file' || question.kind === 'action') {
+    throw new Error(`Question requires an external action and cannot be auto-resolved: ${question.prompt}`);
+  }
+  const values = Array.isArray(answer) ? answer : [answer];
+  if (values.length === 0 || values.some((value) => !value.trim())) {
+    throw new Error(`Auto-answer is empty: ${question.prompt}`);
+  }
+  if (values.some((value) => /\b(as an ai|i cannot|i don't have access|meta[- ]?commentary)\b/i.test(value))) {
+    throw new Error(`Auto-answer contains meta-commentary: ${question.prompt}`);
+  }
+  if (question.kind === 'text') {
+    const maxLength = Number(question.helpText?.match(/(?:max(?:imum)?|limit)\D{0,8}(\d+)/i)?.[1]);
+    if (Number.isFinite(maxLength) && values.join(', ').length > maxLength) {
+      throw new Error(`Auto-answer exceeds the form length limit: ${question.prompt}`);
+    }
+    return;
+  }
+  const allowed = new Set(
+    (question.options ?? []).flatMap((option) => [option.value, option.label]),
+  );
+  if (values.some((value) => !allowed.has(value))) {
+    throw new Error(`Auto-answer is not a live form option: ${question.prompt}`);
+  }
+  if (question.kind === 'single-select' && values.length !== 1) {
+    throw new Error(`Single-select question received multiple answers: ${question.prompt}`);
   }
 }
