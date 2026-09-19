@@ -903,12 +903,27 @@ describe('job application state', () => {
     assert.equal(data.answerBank.some((entry) => entry.sourceListingId === 'saved-new' && entry.prompt === 'Which phone type?'), false);
     const review = data.reviewItems.find((item) => item.questionId === 'phone-type');
     assert.ok(review);
+    await store.mutateJobApplicationsStore((store) => {
+      store.applications['saved-new'].questions.push(
+        { id: 'matching-phone', prompt: 'Which phone type?', kind: 'single-select', required: true,
+          resolution: 'pending', discoveredAt: now, options: [{ value: 'Home Cellular', label: 'Home Cellular' }] },
+        { id: 'different-options', prompt: 'Which phone type?', kind: 'single-select', required: true,
+          resolution: 'pending', discoveredAt: now, options: [{ value: 'Work', label: 'Work' }] },
+        { id: 'unrelated', prompt: 'Other question?', kind: 'text', required: true,
+          resolution: 'pending', discoveredAt: now },
+      );
+    });
     const confirmed = await postReview({ reviewId: review.id, action: 'confirm' });
     assert.equal(confirmed.status, 200);
     const savedResult = await confirmed.json();
     assert.equal(savedResult.review.status, 'confirmed');
     assert.ok(savedResult.answerBank.some((entry: { prompt: string }) => entry.prompt === 'Which phone type?'));
     assert.ok(Array.isArray(savedResult.bankMatches));
+    assert.deepEqual(savedResult.bankMatches.map((match: { questionId: string }) => match.questionId),
+      ['matching-phone', 'different-options']);
+    assert.equal(savedResult.bankMatches[0].bankMatch.usable, true);
+    assert.equal(savedResult.bankMatches[1].bankMatch.usable, false);
+    assert.match(confirmed.headers.get('Server-Timing')!, /review-save;dur=/);
     data = store.readJobApplicationsStore();
     assert.equal(data.reviewItems.find((item) => item.id === review.id)?.status, 'confirmed');
     assert.equal(data.answerBank.some((entry) => entry.prompt === 'Which phone type?'), true);

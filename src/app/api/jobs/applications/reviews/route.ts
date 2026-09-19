@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { findAnswerBankMatch, mutateJobApplicationsStore, upsertConfirmedAnswer } from '../../application-store-utils';
+import { findAnswerBankMatch, mutateJobApplicationsStore, normalizePrompt, upsertConfirmedAnswer } from '../../application-store-utils';
 import type { JobReviewResult } from '@/lib/job-review-result';
 
 export const runtime = 'nodejs';
@@ -12,6 +12,7 @@ const ReviewSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  const startedAt = performance.now();
   try {
     const parsed = ReviewSchema.safeParse(await request.json());
     if (!parsed.success || (parsed.data.action === 'correct' && parsed.data.answer === undefined)) {
@@ -30,11 +31,16 @@ export async function POST(request: NextRequest) {
       item.status = parsed.data.action === 'correct' ? 'corrected' : 'confirmed';
       if (parsed.data.action === 'correct') item.correctedAnswer = answer;
       item.resolvedAt = now;
+      // Only the reviewed prompt/kind can acquire a different best match. Keep
+      // all choice-set variants: exact and relaxed matches can both change.
+      const changedPrompt = normalizePrompt(question.prompt);
       return {
         review: item,
         answerBank: store.answerBank,
         bankMatches: Object.values(store.applications).flatMap((application) =>
-          application.questions.filter((question) => question.resolution === 'pending').map((question) => ({
+          application.questions.filter((candidate) => candidate.resolution === 'pending'
+            && candidate.kind === question.kind
+            && normalizePrompt(candidate.prompt) === changedPrompt).map((question) => ({
             listingId: application.listingId,
             questionId: question.id,
             bankMatch: findAnswerBankMatch(question, store.answerBank) ?? null,
@@ -42,7 +48,10 @@ export async function POST(request: NextRequest) {
         ),
       };
     });
-    return NextResponse.json({ success: true, ...result });
+    // The transaction (including its atomic file replacement) has completed.
+    return NextResponse.json({ success: true, ...result }, {
+      headers: { 'Server-Timing': `review-save;dur=${(performance.now() - startedAt).toFixed(1)}` },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update review';
     return NextResponse.json({ success: false, error: message }, { status: /not found|already/i.test(message) ? 409 : 500 });

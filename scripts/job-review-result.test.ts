@@ -29,7 +29,9 @@ test('committed review updates the answer bank and pending suggestions without c
   const current = {
     workerEnabled: true, schedulerHealth: { healthy: true }, counts: { inProgress: 1 },
     reviewItems: [{ id: 'review', status: 'pending' }, { id: 'other', status: 'pending' }], answerBank: [],
-    applications: { app: { questions: [{ id: 'question', resolution: 'pending' }] } },
+    applications: { app: { questions: [{ id: 'question', resolution: 'pending' },
+      { id: 'unrelated', resolution: 'pending', bankMatch: { entryId: 'previous' } }] },
+      unrelated: { questions: [{ id: 'other-question', resolution: 'pending' }] } },
   } as unknown as JobApplicationsViewData;
   const result = { review: { id: 'review', status: 'confirmed' }, answerBank: [{ id: 'answer' }],
     bankMatches: [{ listingId: 'app', questionId: 'question', bankMatch: { entryId: 'answer', answer: 'Yes', usable: true } }],
@@ -42,4 +44,6 @@ test('committed review updates the answer bank and pending suggestions without c
   assert.equal(next.answerBank, result.answerBank);
   assert.equal(next.schedulerHealth, current.schedulerHealth);
   assert.equal(next.counts, current.counts);
+  assert.equal(next.applications.unrelated, current.applications.unrelated);
+  assert.equal(next.applications.app.questions[1], current.applications.app.questions[1]);
 });
