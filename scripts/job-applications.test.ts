@@ -20,6 +20,8 @@ let controlRoute: typeof import('../src/app/api/jobs/applications/control/route'
 let updateRoute: typeof import('../src/app/api/jobs/applications/update/route');
 let reviewsRoute: typeof import('../src/app/api/jobs/applications/reviews/route');
 let screenshotsRoute: typeof import('../src/app/api/jobs/applications/screenshots/route');
+let questionScreenshotsRoute: typeof import('../src/app/api/jobs/applications/question-screenshots/route');
+let questionScreenshotReadRoute: typeof import('../src/app/api/jobs/applications/question-screenshots/[listingId]/[screenshotId]/route');
 let screenshotReadRoute: typeof import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
 const now = '2026-07-20T12:00:00.000Z';
 const listings = [
@@ -39,6 +41,9 @@ before(async () => {
   updateRoute = await import('../src/app/api/jobs/applications/update/route');
   reviewsRoute = await import('../src/app/api/jobs/applications/reviews/route');
   screenshotsRoute = await import('../src/app/api/jobs/applications/screenshots/route');
+  questionScreenshotsRoute = await import('../src/app/api/jobs/applications/question-screenshots/route');
+  questionScreenshotReadRoute =
+    await import('../src/app/api/jobs/applications/question-screenshots/[listingId]/[screenshotId]/route');
   screenshotReadRoute =
     await import('../src/app/api/jobs/applications/screenshots/[listingId]/[screenshotId]/route');
   mkdirSync(jobsDir, { recursive: true });
@@ -1072,6 +1077,76 @@ describe('job application state', () => {
     assert.equal(claim?.application.questions.every((question) => question.resolution !== 'pending'), true);
   });
 
+  test('stores one replaceable form screenshot per drafted question without gating the review hold', async () => {
+    const leaseToken = 'question-shot-lease';
+    await store.mutateJobApplicationsStore((data) => {
+      data.reviewItems = data.reviewItems.filter((item) => item.listingId !== 'saved-new');
+      data.applications['saved-new'] = {
+        listingId: 'saved-new', status: 'in-progress', resumeVariant: 'mle', attemptCount: 4,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        awaitingInputSince: now, autoCompleteEligibleAt: now,
+        questions: [
+          { id: 'why', prompt: 'Why this team?', kind: 'text', required: true, resolution: 'pending', discoveredAt: now },
+          { id: 'transcript', prompt: 'Upload transcript', kind: 'file', required: false, resolution: 'skipped', discoveredAt: now },
+        ],
+        lease: { token: leaseToken, claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' },
+        createdAt: now, updatedAt: now,
+      };
+    });
+    const base = { listingId: 'saved-new', leaseToken, questionId: 'why' };
+
+    assert.equal((await postQuestionScreenshot({ ...base, leaseToken: 'wrong', bytes: pngFixture(800, 240) })).status, 409);
+    assert.equal((await postQuestionScreenshot({ ...base, questionId: 'missing', bytes: pngFixture(800, 240) })).status, 409);
+    assert.equal((await postQuestionScreenshot({ ...base, questionId: 'transcript', bytes: pngFixture(800, 240) })).status, 409);
+    assert.equal((await postQuestionScreenshot({ ...base, bytes: Buffer.from('not a png') })).status, 400);
+    assert.equal((await postQuestionScreenshot({ ...base, bytes: pngFixture(800, 240), type: 'image/jpeg' })).status, 413);
+    assert.equal((await postQuestionScreenshot({ ...base, bytes: pngFixture(800, 2400) })).status, 413);
+    assert.equal((await postQuestionScreenshot({ ...base, bytes: pngFixture(60, 40) })).status, 413);
+    assert.equal((await postQuestionScreenshot({ ...base, bytes: pngFixture(2600, 400) })).status, 413);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].questions[0].answerScreenshot, undefined);
+
+    const firstBytes = pngFixture(800, 240, 1);
+    const first = await postQuestionScreenshot({ ...base, bytes: firstBytes });
+    assert.equal(first.status, 201);
+    const firstShot = (await first.json()).screenshot;
+    assert.deepEqual(
+      { width: firstShot.width, height: firstShot.height, attemptCount: firstShot.attemptCount, byteSize: firstShot.byteSize },
+      { width: 800, height: 240, attemptCount: 4, byteSize: firstBytes.length },
+    );
+    const served = await readQuestionScreenshot('saved-new', firstShot.id);
+    assert.equal(served.status, 200);
+    assert.equal(served.headers.get('cache-control'), 'private, max-age=31536000, immutable');
+    assert.deepEqual(Buffer.from(await served.arrayBuffer()), firstBytes);
+    // A screenshot is only served through the application that owns it.
+    assert.equal((await readQuestionScreenshot('saved-old', firstShot.id)).status, 404);
+    assert.throws(() => store.getQuestionScreenshotFilePath('../unsafe'), /Invalid screenshot identifier/);
+
+    const second = await postQuestionScreenshot({ ...base, bytes: pngFixture(640, 300, 2) });
+    const secondShot = (await second.json()).screenshot;
+    assert.notEqual(secondShot.id, firstShot.id);
+    assert.equal((await readQuestionScreenshot('saved-new', firstShot.id)).status, 404);
+    assert.throws(() => readFileSync(store.getQuestionScreenshotFilePath(firstShot.id)));
+    assert.equal((await readQuestionScreenshot('saved-new', secondShot.id)).status, 200);
+
+    // Rediscovering the question keeps its screenshot, and drafting still holds for review.
+    const rediscovered = await postUpdate({
+      action: 'record-questions', listingId: 'saved-new', leaseToken, retainLease: true,
+      questions: [{ id: 'why', prompt: 'Why this team?', kind: 'text', required: true }],
+    });
+    assert.equal(rediscovered.status, 200);
+    const drafted = await postUpdate({
+      action: 'record-auto-answers', listingId: 'saved-new', leaseToken,
+      answers: [draftAnswer('why', 'Why this team?', 'I like it.')],
+    });
+    assert.equal(drafted.status, 200);
+    assert.ok((await drafted.json()).reviewHold);
+    const question = store.readJobApplicationsStore().applications['saved-new'].questions[0];
+    assert.equal(question.resolution, 'auto-resolved');
+    assert.equal(question.answerScreenshot?.id, secondShot.id);
+    const view = store.buildJobApplicationsView();
+    assert.equal(view.applications['saved-new'].questions[0].answerScreenshot?.width, 640);
+  });
+
   test('upgrades schema 2 autopilot stamps to the one-day draft delay exactly once', () => {
     const file = path.join(jobsDir, 'applications.json');
     const original = readFileSync(file, 'utf8');
@@ -1143,14 +1218,33 @@ function postScreenshot(params: {
   );
 }
 
-function pngFixture(): Buffer {
+function postQuestionScreenshot(params: {
+  listingId: string; leaseToken: string; questionId: string; bytes: Buffer; type?: string;
+}) {
+  const form = new FormData();
+  form.set('listingId', params.listingId);
+  form.set('leaseToken', params.leaseToken);
+  form.set('questionId', params.questionId);
+  form.set('image', new Blob([params.bytes], { type: params.type ?? 'image/png' }), 'question.png');
+  return questionScreenshotsRoute.POST(
+    new NextRequest('http://localhost/api/jobs/applications/question-screenshots', { method: 'POST', body: form }),
+  );
+}
+
+function readQuestionScreenshot(listingId: string, screenshotId: string) {
+  return questionScreenshotReadRoute.GET(new Request('http://localhost/'), {
+    params: Promise.resolve({ listingId, screenshotId }),
+  });
+}
+
+function pngFixture(width = 1900, height = 1600, filler = 0): Buffer {
   // Synthetic PNG header/trailer with viewport-plausible dimensions (the
   // upload route validates structure + dimensions, not decodability).
-  const buffer = Buffer.alloc(60);
+  const buffer = Buffer.alloc(60, filler);
   Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(buffer, 0);
   buffer.write('IHDR', 12, 'ascii');
-  buffer.writeUInt32BE(1900, 16);
-  buffer.writeUInt32BE(1600, 20);
+  buffer.writeUInt32BE(width, 16);
+  buffer.writeUInt32BE(height, 20);
   buffer.write('IEND', buffer.length - 8, 'ascii');
   return buffer;
 }

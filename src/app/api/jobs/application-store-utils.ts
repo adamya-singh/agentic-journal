@@ -69,6 +69,11 @@ export const JOB_APPLICATION_SCREENSHOT_MAX_BYTES = 25 * 1024 * 1024;
 // images are rejected outright).
 export const JOB_APPLICATION_SCREENSHOT_MAX_HEIGHT_PX = 2200;
 export const JOB_APPLICATION_SCREENSHOT_MIN_WIDTH_PX = 1000;
+// Per-question element screenshots shown in the answer-review queue. They are
+// crops of a single form field, so they are small and have no minimum page width.
+export const JOB_APPLICATION_QUESTION_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
+export const JOB_APPLICATION_QUESTION_SCREENSHOT_MIN_WIDTH_PX = 120;
+export const JOB_APPLICATION_QUESTION_SCREENSHOT_MAX_WIDTH_PX = 2000;
 const OPAQUE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -716,6 +721,22 @@ export function getApplicationScreenshotFilePath(captureId: string, screenshotId
   return path.join(SCREENSHOTS_DIR, captureId, `${screenshotId}.png`);
 }
 
+export function getQuestionScreenshotFilePath(screenshotId: string): string {
+  if (!OPAQUE_ID_PATTERN.test(screenshotId)) {
+    throw new Error('Invalid screenshot identifier');
+  }
+  return path.join(SCREENSHOTS_DIR, 'question-answers', `${screenshotId}.png`);
+}
+
+export function deleteQuestionScreenshotFile(screenshotId: string | undefined): void {
+  if (!screenshotId || !OPAQUE_ID_PATTERN.test(screenshotId)) return;
+  try {
+    fs.rmSync(getQuestionScreenshotFilePath(screenshotId), { force: true });
+  } catch (error) {
+    console.error(`Unable to remove superseded question screenshot ${screenshotId}:`, error);
+  }
+}
+
 export function deleteApplicationScreenshotCaptureFiles(captureId: string | undefined): void {
   if (!captureId || !OPAQUE_ID_PATTERN.test(captureId)) return;
   try {
@@ -1015,11 +1036,13 @@ export function mergeApplicationQuestions(
         resolution: existing.resolution,
         answeredAt: existing.answeredAt,
         generatedAnswer: existing.generatedAnswer,
+        ...(existing.answerScreenshot ? { answerScreenshot: existing.answerScreenshot } : {}),
       };
     }
     return {
       ...question,
       ...(existing.answer !== undefined ? { answer: existing.answer } : {}),
+      ...(existing.answerScreenshot ? { answerScreenshot: existing.answerScreenshot } : {}),
     };
   });
   const incomingIds = new Set(incoming.map((question) => question.id));
@@ -1467,6 +1490,26 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
   const answer = normalizeAnswer(value.answer);
   if (answer !== undefined) question.answer = answer;
   if (normalizeString(value.answeredAt)) question.answeredAt = normalizeString(value.answeredAt);
+  if (isRecord(value.answerScreenshot)) {
+    const shot = value.answerScreenshot;
+    const id = normalizeString(shot.id);
+    const capturedAt = normalizeString(shot.capturedAt);
+    const isPositiveInteger = (candidate: unknown): candidate is number =>
+      typeof candidate === 'number' && Number.isInteger(candidate) && candidate > 0;
+    if (
+      OPAQUE_ID_PATTERN.test(id) && capturedAt &&
+      isPositiveInteger(shot.width) && isPositiveInteger(shot.height) && isPositiveInteger(shot.byteSize)
+    ) {
+      question.answerScreenshot = {
+        id,
+        attemptCount: normalizeNonNegativeInteger(shot.attemptCount),
+        capturedAt,
+        width: shot.width,
+        height: shot.height,
+        byteSize: shot.byteSize,
+      };
+    }
+  }
   if (isRecord(value.generatedAnswer)) {
     const generatedAt = normalizeString(value.generatedAnswer.generatedAt);
     const confidence = value.generatedAnswer.confidence;

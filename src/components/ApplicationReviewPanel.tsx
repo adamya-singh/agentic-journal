@@ -1,7 +1,10 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element -- screenshots use private dynamic URLs and must retain original resolution. */
+
 import React from 'react';
-import { Check, CheckCheck, ChevronDown, ChevronRight, Clock, MessageCircleQuestion, Pencil, Send } from 'lucide-react';
+import { Check, CheckCheck, ChevronDown, ChevronRight, Clock, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
+import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
   JobApplicationQuestion,
@@ -25,16 +28,20 @@ interface ReviewGroup {
   holdUntil?: string;
   submittedAt?: string;
   closed: boolean;
+  /** Full-page screenshots of the filled application exist (opens the gallery). */
+  hasFullScreenshots: boolean;
 }
 
 export function ApplicationReviewPanel({
   applications,
   onResolve,
   onConfirmAll,
+  onOpenApplication,
 }: {
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
   onConfirmAll?: (listingId: string) => Promise<void>;
+  onOpenApplication?: (listingId: string) => void;
 }) {
   // The fold state is remembered so a long queue doesn't push the rest of the
   // page down on every visit (it matters most on mobile).
@@ -132,6 +139,7 @@ export function ApplicationReviewPanel({
               await onConfirmAll(group.listingId);
               noteReleased(group, group.items.length);
             })}
+            onOpenApplication={onOpenApplication && (() => onOpenApplication(group.listingId))}
           />
         ))}
       </div>
@@ -147,6 +155,7 @@ function ReviewGroupCard({
   questions,
   onResolve,
   onConfirmAll,
+  onOpenApplication,
 }: {
   group: ReviewGroup;
   now: number;
@@ -155,6 +164,7 @@ function ReviewGroupCard({
   questions?: JobApplicationQuestion[];
   onResolve?: ResolveHandler;
   onConfirmAll?: () => Promise<void>;
+  onOpenApplication?: () => void;
 }) {
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState<{ id: string; message: string } | null>(null);
@@ -199,6 +209,17 @@ function ReviewGroupCard({
           <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
             {reviewed}/{group.total}
           </span>
+          {onOpenApplication && group.hasFullScreenshots && (
+            <button
+              type="button"
+              onClick={onOpenApplication}
+              title="Open the application with its full-page screenshots"
+              className="inline-flex min-h-8 items-center gap-1 rounded border border-slate-300 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            >
+              <Images className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Full screenshots</span>
+            </button>
+          )}
           {onConfirmAll && group.items.length > 1 && (
             <button
               type="button"
@@ -228,6 +249,7 @@ function ReviewGroupCard({
           {group.items.map((item) => (
             <ReviewRow
               key={item.id}
+              listingId={group.listingId}
               item={item}
               question={questions?.find((question) => question.id === item.questionId)}
               busy={busy === item.id}
@@ -279,6 +301,7 @@ function GroupStatusChip({ group, now }: { group: ReviewGroup; now: number }) {
 }
 
 function ReviewRow({
+  listingId,
   item,
   question,
   busy,
@@ -287,6 +310,7 @@ function ReviewRow({
   onConfirm,
   onCorrect,
 }: {
+  listingId: string;
   item: JobApplicationReviewItem;
   question?: JobApplicationQuestion;
   busy: boolean;
@@ -304,74 +328,140 @@ function ReviewRow({
   const lowConfidence = item.confidence < LOW_CONFIDENCE;
   const draftEmpty = draft === null || (Array.isArray(draft) ? draft.length === 0 : !draft.trim());
 
+  const screenshot = question?.answerScreenshot;
+  // The capture predates any correction; say so rather than imply it is current.
+  const screenshotStale = screenshot !== undefined && question?.answer !== undefined &&
+    formatAnswer(question.answer, question) !== used;
+
   return (
-    <li className="px-3 py-2.5">
-      <div className="flex items-start gap-2">
-        <p className="min-w-0 flex-1 font-medium text-slate-900 dark:text-slate-100">{item.question}</p>
-        <span
-          className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${lowConfidence
-            ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200'
-            : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}
-          title="OpenClaw’s confidence in this answer"
-        >
-          {Math.round(item.confidence * 100)}%
-        </span>
-      </div>
-      <p className="mt-1 whitespace-pre-wrap break-words text-slate-700 dark:text-slate-300">
-        <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Used </span>
-        {used}
-      </p>
-      {!genericPrompt && <p className="mt-1 text-violet-800 dark:text-violet-300">{item.clarificationPrompt}</p>}
-      {draft === null ? (
-        <div className="mt-2 flex gap-2">
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={onConfirm}
-            className="inline-flex min-h-9 items-center gap-1 rounded bg-emerald-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
+    // With a screenshot: text and actions stack in the left column and the capture
+    // takes the wider right one; on phones it sits between the answer and the actions.
+    <li className={`px-3 py-2.5 ${screenshot ? 'sm:grid sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:grid-rows-[auto_1fr] sm:gap-x-4' : ''}`}>
+      <div className="min-w-0 sm:col-start-1 sm:row-start-1">
+        <div className="flex items-start gap-2">
+          <p className="min-w-0 flex-1 font-medium text-slate-900 dark:text-slate-100">{item.question}</p>
+          <span
+            className={`shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums ${lowConfidence
+              ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-200'
+              : 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400'}`}
+            title="OpenClaw’s confidence in this answer"
           >
-            <Check className="h-3.5 w-3.5" /> {busy ? 'Saving…' : 'Confirm'}
-          </button>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => setDraft(initialDraft(item.answerUsed, question))}
-            className="inline-flex min-h-9 items-center gap-1 rounded border border-violet-300 px-3 py-1 font-semibold text-violet-700 disabled:opacity-50 dark:border-violet-700 dark:text-violet-300"
-          >
-            <Pencil className="h-3.5 w-3.5" /> Correct
-          </button>
+            {Math.round(item.confidence * 100)}%
+          </span>
         </div>
-      ) : (
-        <form
-          className="mt-2 space-y-2"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            if (draftEmpty || disabled) return;
-            if (await onCorrect(draft)) setDraft(null);
-          }}
-        >
-          <CorrectionEditor question={question} value={draft} onChange={setDraft} label={item.question} />
-          <div className="flex gap-2">
+        <p className="mt-1 whitespace-pre-wrap break-words text-slate-700 dark:text-slate-300">
+          <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Used </span>
+          {used}
+        </p>
+        {!genericPrompt && <p className="mt-1 text-violet-800 dark:text-violet-300">{item.clarificationPrompt}</p>}
+      </div>
+      {screenshot && (
+        <QuestionScreenshot
+          src={`/api/jobs/applications/question-screenshots/${encodeURIComponent(listingId)}/${encodeURIComponent(screenshot.id)}`}
+          screenshot={screenshot}
+          question={item.question}
+          stale={screenshotStale}
+        />
+      )}
+      <div className="min-w-0 sm:col-start-1 sm:row-start-2">
+        {draft === null ? (
+          <div className="mt-2 flex gap-2">
             <button
-              type="submit"
-              disabled={draftEmpty || disabled}
-              className="min-h-9 rounded bg-violet-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
+              type="button"
+              disabled={disabled}
+              onClick={onConfirm}
+              className="inline-flex min-h-9 items-center gap-1 rounded bg-emerald-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
             >
-              {busy ? 'Saving…' : 'Save correction'}
+              <Check className="h-3.5 w-3.5" /> {busy ? 'Saving…' : 'Confirm'}
             </button>
             <button
               type="button"
-              disabled={busy}
-              onClick={() => setDraft(null)}
-              className="min-h-9 rounded px-3 py-1 font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              disabled={disabled}
+              onClick={() => setDraft(initialDraft(item.answerUsed, question))}
+              className="inline-flex min-h-9 items-center gap-1 rounded border border-violet-300 px-3 py-1 font-semibold text-violet-700 disabled:opacity-50 dark:border-violet-700 dark:text-violet-300"
             >
-              Cancel
+              <Pencil className="h-3.5 w-3.5" /> Correct
             </button>
           </div>
-        </form>
-      )}
-      {error && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{error}</p>}
+        ) : (
+          <form
+            className="mt-2 space-y-2"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (draftEmpty || disabled) return;
+              if (await onCorrect(draft)) setDraft(null);
+            }}
+          >
+            <CorrectionEditor question={question} value={draft} onChange={setDraft} label={item.question} />
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={draftEmpty || disabled}
+                className="min-h-9 rounded bg-violet-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
+              >
+                {busy ? 'Saving…' : 'Save correction'}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setDraft(null)}
+                className="min-h-9 rounded px-3 py-1 font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        )}
+        {error && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{error}</p>}
+      </div>
     </li>
+  );
+}
+
+function QuestionScreenshot({
+  src,
+  screenshot,
+  question,
+  stale,
+}: {
+  src: string;
+  screenshot: NonNullable<JobApplicationQuestion['answerScreenshot']>;
+  question: string;
+  stale: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
+  const close = React.useCallback(() => setOpen(false), []);
+  if (failed) return null;
+  const alt = `Application form: ${question}`;
+  const captured = new Date(screenshot.capturedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return (
+    <figure className="mt-2 min-w-0 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0">
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Enlarge screenshot of “${question}” on the application form`}
+        className="group relative block max-w-full overflow-hidden rounded border border-slate-200 bg-white text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500 dark:border-slate-700"
+      >
+        <img
+          src={src}
+          alt={alt}
+          width={screenshot.width}
+          height={screenshot.height}
+          loading="lazy"
+          decoding="async"
+          onError={() => setFailed(true)}
+          className="h-auto max-h-56 w-auto max-w-full object-contain object-left-top sm:max-h-64"
+        />
+        <span className="pointer-events-none absolute right-1 top-1 rounded bg-slate-900/70 p-1 text-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+          <ZoomIn className="h-3.5 w-3.5" />
+        </span>
+      </button>
+      <figcaption className={`mt-1 text-[11px] ${stale ? 'text-amber-700 dark:text-amber-300' : 'text-slate-400'}`}>
+        {stale ? 'Screenshot shows OpenClaw’s original draft' : `As entered on the form · ${captured}`}
+      </figcaption>
+      {open && <ScreenshotLightbox src={src} alt={alt} caption={question} onClose={close} />}
+    </figure>
   );
 }
 
@@ -437,6 +527,7 @@ function buildGroups(applications: JobApplicationsViewData | null): ReviewGroup[
         holdUntil: application?.reviewHoldSince ? application.autoSubmitEligibleAt : undefined,
         submittedAt: application?.submittedAt ?? item.submittedAt,
         closed: application?.status === 'closed',
+        hasFullScreenshots: (application?.screenshotCapture?.screenshots.length ?? 0) > 0,
       };
       byListing.set(item.listingId, group);
     }

@@ -165,8 +165,19 @@ export interface JobApplicationQuestion {
   discoveredAt: string;
   answeredAt?: string;
   generatedAnswer?: JobApplicationGeneratedAnswer;
+  /** Element screenshot of this question with its answer entered on the live form. */
+  answerScreenshot?: JobApplicationQuestionScreenshot;
   /** View-time enrichment (never persisted): a matching saved answer from the bank. */
   bankMatch?: JobApplicationAnswerBankMatch;
+}
+
+export interface JobApplicationQuestionScreenshot {
+  id: string;
+  attemptCount: number;
+  capturedAt: string;
+  width: number;
+  height: number;
+  byteSize: number;
 }
 
 export interface JobApplicationGeneratedAnswer {

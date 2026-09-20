@@ -292,6 +292,7 @@ export function JobListings({
             applications={applications ?? null}
             onResolve={onApplicationReview}
             onConfirmAll={onApplicationReviewConfirmAll}
+            onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
           />
 
           <WorkerStatusPanel
