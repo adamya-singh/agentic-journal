@@ -39,6 +39,7 @@ interface JobListingsProps {
     worker?: { queued?: boolean; enabled?: boolean };
   } | void>;
   onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer) => Promise<void>;
+  onApplicationReviewConfirmAll?: (listingId: string) => Promise<void>;
 }
 
 const APPLICATION_CATEGORY_LABELS: Record<JobApplicationCategory, string> = {
@@ -125,6 +126,7 @@ export function JobListings({
   onApplicationCategoriesChange,
   onApplicationSave,
   onApplicationReview,
+  onApplicationReviewConfirmAll,
 }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
@@ -286,7 +288,11 @@ export function JobListings({
             onOpen={(listingId) => setSelectedApplicationId(listingId)}
           />
 
-          <ApplicationReviewPanel applications={applications ?? null} onResolve={onApplicationReview} />
+          <ApplicationReviewPanel
+            applications={applications ?? null}
+            onResolve={onApplicationReview}
+            onConfirmAll={onApplicationReviewConfirmAll}
+          />
 
           <WorkerStatusPanel
             listings={data?.listings ?? []}
@@ -797,16 +803,21 @@ function ApplicationStatusButton({
   // pill says so instead of reading as a passive status badge.
   const screenshotCount =
     application.status === 'submitted' ? (application.screenshotCapture?.screenshots.length ?? 0) : 0;
+  // Drafted by autopilot and parked until its answers are reviewed.
+  const label =
+    application.status === 'awaiting-user-input' && application.reviewHoldSince && pendingCount === 0
+      ? 'Review answers'
+      : labels[application.status];
   return (
     <button
       type="button"
       onClick={onClick}
-      aria-label={`${labels[application.status]} — open application details${
+      aria-label={`${label} — open application details${
         screenshotCount > 0 ? ` and ${screenshotCount} screenshot${screenshotCount === 1 ? '' : 's'}` : ''
       }`}
       className={`inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-full py-1 pl-2.5 pr-1.5 text-xs font-semibold shadow-sm ring-1 ring-inset transition hover:brightness-95 active:brightness-90 ${colors[application.status]}`}
     >
-      {labels[application.status]}
+      {label}
       {pendingCount > 0 ? ` · ${pendingCount}` : ''}
       {screenshotCount > 0 && (
         <>

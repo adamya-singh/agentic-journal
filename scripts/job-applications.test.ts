@@ -51,7 +51,7 @@ before(async () => {
     'utf8',
   );
   store.writeJobApplicationsStore({
-    schemaVersion: 2,
+    schemaVersion: 3,
     workerEnabled: true,
     enabledApplicationCategories: ['spring-internship', 'new-grad'],
     applications: {},
@@ -820,18 +820,19 @@ describe('job application state', () => {
     );
   });
 
-  test('uses the exact 72-hour boundary without resetting after partial work', () => {
+  test('uses the exact 24-hour draft boundary without resetting after partial work', () => {
     const application: import('../src/lib/types').JobApplicationRecord = {
       listingId: 'boundary', status: 'in-progress' as const, resumeVariant: 'swe' as const,
-      attemptCount: 1, statusHistory: [], questions: [], createdAt: now, updatedAt: now,
+      attemptCount: 1, statusHistory: [], createdAt: now, updatedAt: now,
+      questions: [{ id: 'open', prompt: 'Why us?', kind: 'text', required: true, resolution: 'pending', discoveredAt: now }],
     };
     store.setApplicationStatus(application, 'awaiting-user-input', now);
     assert.equal(application.awaitingInputSince, now);
-    assert.equal(application.autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
-    store.setApplicationStatus(application, 'awaiting-user-input', '2026-07-21T12:00:00.000Z');
-    assert.equal(application.autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
-    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-23T11:59:59.999Z')), false);
-    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-23T12:00:00.000Z')), true);
+    assert.equal(application.autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+    store.setApplicationStatus(application, 'awaiting-user-input', '2026-07-20T18:00:00.000Z');
+    assert.equal(application.autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-21T11:59:59.999Z')), false);
+    assert.equal(store.isApplicationClaimable(application, new Date('2026-07-21T12:00:00.000Z')), true);
   });
 
   test('formats and deduplicates exact prefixed Google Doc entries', () => {
@@ -916,7 +917,7 @@ describe('job application state', () => {
     const confirmed = await postReview({ reviewId: review.id, action: 'confirm' });
     assert.equal(confirmed.status, 200);
     const savedResult = await confirmed.json();
-    assert.equal(savedResult.review.status, 'confirmed');
+    assert.equal(savedResult.reviews[0].status, 'confirmed');
     assert.ok(savedResult.answerBank.some((entry: { prompt: string }) => entry.prompt === 'Which phone type?'));
     assert.ok(Array.isArray(savedResult.bankMatches));
     assert.deepEqual(savedResult.bankMatches.map((match: { questionId: string }) => match.questionId),
@@ -927,6 +928,167 @@ describe('job application state', () => {
     data = store.readJobApplicationsStore();
     assert.equal(data.reviewItems.find((item) => item.id === review.id)?.status, 'confirmed');
     assert.equal(data.answerBank.some((entry) => entry.prompt === 'Which phone type?'), true);
+  });
+
+  const draftEntry = (question: string, answer: string) =>
+    `openclaw - ${question} (Example — Machine Learning Engineer) ${answer}`;
+  const draftAnswer = (questionId: string, question: string, answer: string) => ({
+    questionId, answer, confidence: 0.95, assumptions: [],
+    docAppend: { status: 'saved' as const, entry: draftEntry(question, answer), attemptedAt: now },
+  });
+  async function seedDraft(leaseToken: string, overrides: Record<string, unknown> = {}) {
+    await store.mutateJobApplicationsStore((data) => {
+      data.reviewItems = data.reviewItems.filter((item) => item.listingId !== 'saved-new');
+      data.answerBank = [];
+      data.applications['saved-new'] = {
+        listingId: 'saved-new', status: 'in-progress', resumeVariant: 'mle', attemptCount: 2,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        awaitingInputSince: now, autoCompleteEligibleAt: now,
+        questions: [
+          { id: 'phone-type', prompt: 'Which phone type?', kind: 'single-select', required: true,
+            options: [{ value: 'cell', label: 'Home Cellular' }, { value: 'work', label: 'Work' }],
+            resolution: 'pending', discoveredAt: now },
+          { id: 'why', prompt: 'Why this team?', kind: 'text', required: false, resolution: 'pending', discoveredAt: now },
+        ],
+        lease: { token: leaseToken, claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' },
+        createdAt: now, updatedAt: now,
+        ...overrides,
+      } as import('../src/lib/types').JobApplicationRecord;
+    });
+    return postUpdate({
+      action: 'record-auto-answers', listingId: 'saved-new', leaseToken,
+      answers: [draftAnswer('phone-type', 'Which phone type?', 'cell'), draftAnswer('why', 'Why this team?', 'I like it.')],
+    });
+  }
+
+  test('holds a fully drafted application for review and blocks submission until the deadline', async () => {
+    const before = Date.now();
+    const response = await seedDraft('hold-lease');
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    const data = store.readJobApplicationsStore();
+    const application = data.applications['saved-new'];
+    // Confident answers without assumptions are queued for review too.
+    assert.equal(data.reviewItems.filter((item) => item.listingId === 'saved-new' && item.status === 'pending').length, 2);
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.lease, undefined);
+    assert.ok(application.reviewHoldSince);
+    assert.equal(body.reviewHold.until, application.autoSubmitEligibleAt);
+    const until = Date.parse(application.autoSubmitEligibleAt!);
+    assert.ok(until >= before + store.JOB_APPLICATION_REVIEW_WINDOW_MS);
+    assert.ok(until <= Date.now() + store.JOB_APPLICATION_REVIEW_WINDOW_MS);
+    assert.equal(store.isApplicationClaimable(application, new Date(until - 1)), false);
+    assert.equal(store.isApplicationClaimable(application, new Date(until)), true);
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date(until - 1)), true);
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date(until)), false);
+
+    // An agent that kept going anyway cannot reach the Submit click.
+    await store.mutateJobApplicationsStore((mutable) => {
+      mutable.applications['saved-new'].lease = { token: 'rogue', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' };
+    });
+    const blocked = await postUpdate({ action: 'submission-attempted', listingId: 'saved-new', leaseToken: 'rogue' });
+    assert.equal(blocked.status, 409);
+    assert.match((await blocked.json()).error, /awaiting review/);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].submissionAttemptedAt, undefined);
+  });
+
+  test('never extends a review deadline that was already stamped', async () => {
+    const passed = '2026-01-01T00:00:00.000Z';
+    const response = await seedDraft('redraft-lease', { autoSubmitEligibleAt: passed });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).reviewHold, undefined);
+    const application = store.readJobApplicationsStore().applications['saved-new'];
+    assert.equal(application.autoSubmitEligibleAt, passed);
+    assert.equal(application.reviewHoldSince, undefined);
+    assert.equal(application.status, 'in-progress');
+    assert.equal(application.lease?.token, 'redraft-lease');
+  });
+
+  test('corrections rewrite the drafted answer and the last review releases the hold', async () => {
+    await seedDraft('correct-lease');
+    let data = store.readJobApplicationsStore();
+    const [phone, why] = ['phone-type', 'why'].map((id) => data.reviewItems.find(
+      (item) => item.listingId === 'saved-new' && item.questionId === id)!);
+
+    const invalid = await postReview({ reviewId: phone.id, action: 'correct', answer: 'Fax' });
+    assert.equal(invalid.status, 400);
+    data = store.readJobApplicationsStore();
+    assert.equal(data.reviewItems.find((item) => item.id === phone.id)?.status, 'pending');
+    assert.equal(data.applications['saved-new'].questions[0].answer, 'cell');
+
+    const corrected = await postReview({ reviewId: phone.id, action: 'correct', answer: 'work' });
+    assert.equal(corrected.status, 200);
+    const correctedBody = await corrected.json();
+    assert.equal(correctedBody.reviews[0].status, 'corrected');
+    assert.equal(correctedBody.released, undefined);
+    assert.equal(correctedBody.application.status, 'awaiting-user-input');
+    data = store.readJobApplicationsStore();
+    assert.equal(data.applications['saved-new'].questions[0].answer, 'work');
+    assert.equal(data.applications['saved-new'].questions[0].resolution, 'answered');
+    assert.ok(data.applications['saved-new'].reviewHoldSince);
+
+    const confirmed = await postReview({ reviewId: why.id, action: 'confirm' });
+    assert.equal(confirmed.status, 200);
+    assert.equal((await confirmed.json()).application.status, 'in-progress');
+    const application = store.readJobApplicationsStore().applications['saved-new'];
+    assert.equal(application.status, 'in-progress');
+    assert.equal(application.reviewHoldSince, undefined);
+    assert.ok(application.resumeRequestedAt);
+    assert.equal(application.questions[1].resolution, 'auto-resolved');
+    assert.equal(store.isApplicationClaimable(application, new Date()), true);
+    assert.equal(store.isSubmissionBlockedByReview(store.readJobApplicationsStore(), application, new Date()), false);
+  });
+
+  test('confirm-all resolves one application in a single transaction and releases it', async () => {
+    await seedDraft('confirm-all-lease');
+    const response = await postReview({ listingId: 'saved-new', action: 'confirm-all' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.reviews.length, 2);
+    assert.equal(body.application.status, 'in-progress');
+    const data = store.readJobApplicationsStore();
+    assert.equal(data.reviewItems.some((item) => item.listingId === 'saved-new' && item.status === 'pending'), false);
+    assert.ok(data.applications['saved-new'].resumeRequestedAt);
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'confirm-all' })).status, 409);
+  });
+
+  test('claiming after the review deadline clears the hold but keeps the deadline', async () => {
+    await seedDraft('deadline-lease');
+    const passed = '2026-01-01T00:00:00.000Z';
+    await store.mutateJobApplicationsStore((data) => {
+      for (const [id, application] of Object.entries(data.applications)) {
+        store.releaseApplicationLease(application);
+        if (id !== 'saved-new' && application.status !== 'submitted' && application.status !== 'closed') {
+          store.setApplicationStatus(application, 'awaiting-user-input', now);
+          application.autoCompleteEligibleAt = '2100-01-01T00:00:00.000Z';
+        }
+      }
+      data.applications['saved-new'].autoSubmitEligibleAt = passed;
+    });
+    const claim = await store.claimNextJobApplication();
+    assert.equal(claim?.listing.id, 'saved-new');
+    assert.equal(claim?.application.reviewHoldSince, undefined);
+    assert.equal(claim?.application.autoSubmitEligibleAt, passed);
+    assert.equal(claim?.application.questions.every((question) => question.resolution !== 'pending'), true);
+  });
+
+  test('upgrades schema 2 autopilot stamps to the one-day draft delay exactly once', () => {
+    const file = path.join(jobsDir, 'applications.json');
+    const original = readFileSync(file, 'utf8');
+    try {
+      const raw = JSON.parse(original);
+      raw.applications['saved-new'] = {
+        ...raw.applications['saved-new'], status: 'awaiting-user-input',
+        awaitingInputSince: now, autoCompleteEligibleAt: '2026-07-23T12:00:00.000Z',
+      };
+      writeFileSync(file, JSON.stringify({ ...raw, schemaVersion: 2 }), 'utf8');
+      assert.equal(store.readJobApplicationsStore().schemaVersion, 3);
+      assert.equal(store.readJobApplicationsStore().applications['saved-new'].autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+      writeFileSync(file, JSON.stringify({ ...raw, schemaVersion: 3 }), 'utf8');
+      assert.equal(store.readJobApplicationsStore().applications['saved-new'].autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
+    } finally {
+      writeFileSync(file, original, 'utf8');
+    }
   });
 });
 

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { applyJobReviewResult, saveJobReview } from './job-review-result';
+import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll } from './job-review-result';
 import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import type {
   JobApplicationCategory,
@@ -262,6 +262,12 @@ export function useJobBoardState(
     setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
   }, []);
 
+  const confirmAllJobApplicationReviews = React.useCallback(async (listingId: string) => {
+    const data = await saveJobReviewConfirmAll(listingId);
+    reviewRevision.current += 1;
+    setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
+  }, []);
+
   return {
     jobListingsData,
     setJobListingsData,
@@ -277,5 +283,6 @@ export function useJobBoardState(
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
+    confirmAllJobApplicationReviews,
   };
 }

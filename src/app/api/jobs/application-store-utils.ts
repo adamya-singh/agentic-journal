@@ -34,7 +34,10 @@ const APPLICATION_FILES_DIR =
 const DEFAULT_RESUME_DIR = '/home/openclaw/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
-export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 72 * 60 * 60 * 1000;
+// Autopilot drafts the remaining answers a day after an application blocks,
+// then holds them in the review queue for up to two more days before submitting.
+export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 24 * 60 * 60 * 1000;
+export const JOB_APPLICATION_REVIEW_WINDOW_MS = 48 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 2 * 60 * 1000;
 
 export const JOB_APPLICATION_RESUME_FILES = {
@@ -78,7 +81,7 @@ export interface ClaimedJobApplication {
 
 export function getEmptyJobApplicationsStore(): JobApplicationsStoreData {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     workerEnabled: false,
     enabledApplicationCategories: [...DEFAULT_ENABLED_APPLICATION_CATEGORIES],
     applications: {},
@@ -95,11 +98,22 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
   const parsed = JSON.parse(
     fs.readFileSync(APPLICATIONS_FILE, 'utf-8'),
   ) as Partial<JobApplicationsStoreData>;
+  // Schema 2 stamped autoCompleteEligibleAt at +72h. Re-derive it once from
+  // awaitingInputSince; the next locked write persists schema 3.
+  const upgradeAutopilotDelay = (parsed.schemaVersion as number | undefined) !== 3;
   const applications: Record<string, JobApplicationRecord> = {};
   if (parsed.applications && typeof parsed.applications === 'object') {
     for (const [listingId, value] of Object.entries(parsed.applications)) {
       const normalized = normalizeApplicationRecord(listingId, value);
       if (normalized) {
+        if (upgradeAutopilotDelay && normalized.awaitingInputSince) {
+          const since = Date.parse(normalized.awaitingInputSince);
+          if (!Number.isNaN(since)) {
+            normalized.autoCompleteEligibleAt = new Date(
+              since + JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS,
+            ).toISOString();
+          }
+        }
         applications[listingId] = normalized;
       }
     }
@@ -113,7 +127,7 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
     : [];
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     ...(normalizeString(parsed.autopilotMigrationAt)
       ? { autopilotMigrationAt: normalizeString(parsed.autopilotMigrationAt) }
       : {}),
@@ -340,6 +354,9 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
     };
     delete application.nextRetryAt;
     delete application.progress;
+    // A claimed run is no longer on hold. autoSubmitEligibleAt stays as the
+    // once-only review deadline so a re-draft can never extend it.
+    delete application.reviewHoldSince;
     if (selected.application.status !== 'in-progress') {
       application.statusHistory = [
         ...selected.application.statusHistory,
@@ -540,8 +557,85 @@ export function setApplicationStatus(
   if (status !== 'awaiting-user-input' && status !== 'in-progress') {
     delete application.awaitingInputSince;
     delete application.autoCompleteEligibleAt;
+    delete application.reviewHoldSince;
+    delete application.autoSubmitEligibleAt;
   }
   application.updatedAt = changedAt;
+}
+
+export function hasPendingReviewItems(store: JobApplicationsStoreData, listingId: string): boolean {
+  return store.reviewItems.some((item) => item.listingId === listingId && item.status === 'pending');
+}
+
+/**
+ * Park a fully drafted application until its auto-answers are reviewed or the
+ * review deadline passes. Returns the deadline when the hold was placed.
+ */
+export function holdApplicationForReview(
+  store: JobApplicationsStoreData,
+  application: JobApplicationRecord,
+  now: string,
+): string | null {
+  if (
+    application.questions.some((question) => question.resolution === 'pending') ||
+    !hasPendingReviewItems(store, application.listingId)
+  ) {
+    return null;
+  }
+  if (!application.autoSubmitEligibleAt) {
+    application.autoSubmitEligibleAt = new Date(
+      Date.parse(now) + JOB_APPLICATION_REVIEW_WINDOW_MS,
+    ).toISOString();
+  }
+  if (Date.parse(application.autoSubmitEligibleAt) <= Date.parse(now)) {
+    return null;
+  }
+  application.reviewHoldSince = now;
+  setApplicationStatus(application, 'awaiting-user-input', now);
+  releaseApplicationLease(application);
+  return application.autoSubmitEligibleAt;
+}
+
+/** True while unreviewed auto-answers still block submission. */
+export function isSubmissionBlockedByReview(
+  store: JobApplicationsStoreData,
+  application: JobApplicationRecord,
+  now: Date,
+): boolean {
+  return Boolean(
+    application.autoSubmitEligibleAt &&
+      Date.parse(application.autoSubmitEligibleAt) > now.getTime() &&
+      hasPendingReviewItems(store, application.listingId),
+  );
+}
+
+/**
+ * Once every auto-answer of a held application is reviewed, hand it straight
+ * back to the worker (same priority path as answering all questions).
+ */
+export function releaseReviewHoldIfComplete(
+  store: JobApplicationsStoreData,
+  listingId: string,
+  now: string,
+): boolean {
+  const application = store.applications[listingId];
+  if (
+    !application ||
+    !application.reviewHoldSince ||
+    application.status !== 'awaiting-user-input' ||
+    hasPendingReviewItems(store, listingId)
+  ) {
+    return false;
+  }
+  delete application.reviewHoldSince;
+  if (application.questions.some((question) => question.resolution === 'pending')) {
+    return false;
+  }
+  setApplicationStatus(application, 'in-progress', now);
+  application.resumeRequestedAt = now;
+  delete application.nextRetryAt;
+  releaseApplicationLease(application);
+  return true;
 }
 
 export function releaseApplicationLease(application: JobApplicationRecord): void {
@@ -1031,8 +1125,24 @@ export function isApplicationClaimable(application: JobApplicationRecord, now: D
   ) {
     return false;
   }
-  if (application.status === 'awaiting-user-input') {
-    const pending = application.questions.filter((question) => question.resolution === 'pending');
+  const pendingQuestions = application.questions.filter(
+    (question) => question.resolution === 'pending',
+  );
+  if (
+    application.status === 'awaiting-user-input' &&
+    application.reviewHoldSince &&
+    pendingQuestions.length === 0
+  ) {
+    // Review hold: drafted answers wait for review until the deadline passes.
+    // (Finishing the review releases the hold in the reviews route.)
+    if (
+      !application.autoSubmitEligibleAt ||
+      Date.parse(application.autoSubmitEligibleAt) > now.getTime()
+    ) {
+      return false;
+    }
+  } else if (application.status === 'awaiting-user-input') {
+    const pending = pendingQuestions;
     if (
       pending.length === 0 ||
       pending.some((question) => question.kind === 'file' || question.kind === 'action')
@@ -1048,6 +1158,35 @@ export function isApplicationClaimable(application: JobApplicationRecord, now: D
     return false;
   }
   return true;
+}
+
+export function validateAutoAnswer(question: JobApplicationQuestion, answer: string | string[]): void {
+  if (question.kind === 'file' || question.kind === 'action') {
+    throw new Error(`Question requires an external action and cannot be auto-resolved: ${question.prompt}`);
+  }
+  const values = Array.isArray(answer) ? answer : [answer];
+  if (values.length === 0 || values.some((value) => !value.trim())) {
+    throw new Error(`Auto-answer is empty: ${question.prompt}`);
+  }
+  if (values.some((value) => /\b(as an ai|i cannot|i don't have access|meta[- ]?commentary)\b/i.test(value))) {
+    throw new Error(`Auto-answer contains meta-commentary: ${question.prompt}`);
+  }
+  if (question.kind === 'text') {
+    const maxLength = Number(question.helpText?.match(/(?:max(?:imum)?|limit)\D{0,8}(\d+)/i)?.[1]);
+    if (Number.isFinite(maxLength) && values.join(', ').length > maxLength) {
+      throw new Error(`Auto-answer exceeds the form length limit: ${question.prompt}`);
+    }
+    return;
+  }
+  const allowed = new Set(
+    (question.options ?? []).flatMap((option) => [option.value, option.label]),
+  );
+  if (values.some((value) => !allowed.has(value))) {
+    throw new Error(`Auto-answer is not a live form option: ${question.prompt}`);
+  }
+  if (question.kind === 'single-select' && values.length !== 1) {
+    throw new Error(`Single-select question received multiple answers: ${question.prompt}`);
+  }
 }
 
 export function buildGoogleDocAutoAnswerEntry(params: {
@@ -1114,6 +1253,10 @@ function normalizeApplicationRecord(
     record.awaitingInputSince = normalizeString(value.awaitingInputSince);
   if (normalizeString(value.autoCompleteEligibleAt))
     record.autoCompleteEligibleAt = normalizeString(value.autoCompleteEligibleAt);
+  if (normalizeString(value.reviewHoldSince))
+    record.reviewHoldSince = normalizeString(value.reviewHoldSince);
+  if (normalizeString(value.autoSubmitEligibleAt))
+    record.autoSubmitEligibleAt = normalizeString(value.autoSubmitEligibleAt);
   if (isRecord(value.lease)) {
     const token = normalizeString(value.lease.token);
     const claimedAt = normalizeString(value.lease.claimedAt);

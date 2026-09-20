@@ -266,7 +266,12 @@ export interface JobApplicationRecord {
   closedReason?: string;
   submissionEvidence?: JobApplicationSubmissionEvidence;
   awaitingInputSince?: string;
+  /** When autopilot may draft the remaining answers (awaitingInputSince + 24h). */
   autoCompleteEligibleAt?: string;
+  /** Set while drafted answers wait in the review queue before submission. */
+  reviewHoldSince?: string;
+  /** Review deadline; stamped once, when the first draft enters the review queue. */
+  autoSubmitEligibleAt?: string;
   simplifySync?: JobApplicationSimplifySync;
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
@@ -305,7 +310,7 @@ export interface JobApplicationAnswerBankEntry {
 }
 
 export interface JobApplicationsStoreData {
-  schemaVersion: 2;
+  schemaVersion: 3;
   autopilotMigrationAt?: string;
   workerEnabled: boolean;
   enabledApplicationCategories: JobApplicationCategory[];

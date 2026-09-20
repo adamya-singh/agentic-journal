@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { DateSourceSchema, EmploymentDateError, validateEmploymentDate } from '@/lib/employment-dates';
-import type { JobApplicationQuestion } from '@/lib/types';
+import type { JobApplicationQuestion, JobApplicationRecord } from '@/lib/types';
 import { readJobListings } from '../../job-store-utils';
 import {
   createActionQuestion,
@@ -12,6 +12,8 @@ import {
   deleteApplicationScreenshotCaptureFiles,
   failApplicationScreenshotCapture,
   hasCurrentCompleteScreenshotCapture,
+  holdApplicationForReview,
+  isSubmissionBlockedByReview,
   JOB_APPLICATION_RETRY_DELAYS_MS,
   mergeApplicationQuestions,
   mutateJobApplicationsStore,
@@ -20,6 +22,7 @@ import {
   setApplicationStatus,
   startApplicationScreenshotCapture,
   updateJobListingLeadStatus,
+  validateAutoAnswer,
 } from '../../application-store-utils';
 
 export const runtime = 'nodejs';
@@ -141,7 +144,8 @@ export async function POST(request: NextRequest) {
     }
 
     const cleanupCaptureIds: string[] = [];
-    const result = await mutateJobApplicationsStore((store) => {
+    let reviewHold: { until: string } | undefined;
+    const result = await mutateJobApplicationsStore<JobApplicationRecord>((store) => {
       const application = requireApplicationLease(
         store.applications[parsed.data.listingId],
         parsed.data.leaseToken,
@@ -212,33 +216,35 @@ export async function POST(request: NextRequest) {
               : {}),
             docAppend: generated.docAppend,
           };
-          if (generated.clarificationPrompt || generated.assumptions.length > 0) {
-            const clarificationPrompt = generated.clarificationPrompt ??
-              `I used “${formatAnswer(generated.answer)}”. What should I use in future?`;
-            const existing = store.reviewItems.find(
-              (item) => item.listingId === application.listingId && item.questionId === question.id,
-            );
-            if (!existing) {
-              store.reviewItems.push({
-                id: randomUUID(),
-                listingId: application.listingId,
-                questionId: question.id,
-                question: question.prompt,
-                answerUsed: generated.answer,
-                clarificationPrompt,
-                confidence: generated.confidence,
-                company: listing.company,
-                role: listing.positionTitle,
-                createdAt: now,
-                status: 'pending',
-              });
-            }
+          // Every generated answer is queued for review before submission.
+          const clarificationPrompt = generated.clarificationPrompt ??
+            `I used “${formatAnswer(generated.answer)}”. What should I use in future?`;
+          const existing = store.reviewItems.find(
+            (item) => item.listingId === application.listingId && item.questionId === question.id,
+          );
+          if (!existing) {
+            store.reviewItems.push({
+              id: randomUUID(),
+              listingId: application.listingId,
+              questionId: question.id,
+              question: question.prompt,
+              answerUsed: generated.answer,
+              clarificationPrompt,
+              confidence: generated.confidence,
+              company: listing.company,
+              role: listing.positionTitle,
+              createdAt: now,
+              status: 'pending',
+            });
           }
         }
         application.updatedAt = now;
         if (application.questions.some((question) => question.resolution === 'pending')) {
           setApplicationStatus(application, 'awaiting-user-input', now);
           releaseApplicationLease(application);
+        } else {
+          const until = holdApplicationForReview(store, application, now);
+          if (until) reviewHold = { until };
         }
       }
 
@@ -250,6 +256,11 @@ export async function POST(request: NextRequest) {
       if (parsed.data.action === 'submission-attempted') {
         if (application.submissionAttemptedAt) {
           throw new Error('Submission has already been attempted for this application');
+        }
+        if (isSubmissionBlockedByReview(store, application, new Date(now))) {
+          throw new Error(
+            `Auto-answers are still awaiting review until ${application.autoSubmitEligibleAt}; release the lease and stop`,
+          );
         }
         if (!hasCurrentCompleteScreenshotCapture(application)) {
           throw new Error(
@@ -418,10 +429,10 @@ export async function POST(request: NextRequest) {
     });
 
     cleanupCaptureIds.forEach(deleteApplicationScreenshotCaptureFiles);
-    return NextResponse.json({ success: true, application: result });
+    return NextResponse.json({ success: true, application: result, ...(reviewHold ? { reviewHold } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update job application';
-    const status = error instanceof EmploymentDateError ? 400 : /lease|already|not found|submission-attempted|screenshot/i.test(message)
+    const status = error instanceof EmploymentDateError ? 400 : /lease|already|not found|submission-attempted|screenshot|awaiting review/i.test(message)
       ? 409
       : 500;
     console.error('Error updating job application:', error);
@@ -431,33 +442,4 @@ export async function POST(request: NextRequest) {
 
 function formatAnswer(answer: string | string[]): string {
   return Array.isArray(answer) ? answer.join(', ') : answer;
-}
-
-function validateAutoAnswer(question: JobApplicationQuestion, answer: string | string[]): void {
-  if (question.kind === 'file' || question.kind === 'action') {
-    throw new Error(`Question requires an external action and cannot be auto-resolved: ${question.prompt}`);
-  }
-  const values = Array.isArray(answer) ? answer : [answer];
-  if (values.length === 0 || values.some((value) => !value.trim())) {
-    throw new Error(`Auto-answer is empty: ${question.prompt}`);
-  }
-  if (values.some((value) => /\b(as an ai|i cannot|i don't have access|meta[- ]?commentary)\b/i.test(value))) {
-    throw new Error(`Auto-answer contains meta-commentary: ${question.prompt}`);
-  }
-  if (question.kind === 'text') {
-    const maxLength = Number(question.helpText?.match(/(?:max(?:imum)?|limit)\D{0,8}(\d+)/i)?.[1]);
-    if (Number.isFinite(maxLength) && values.join(', ').length > maxLength) {
-      throw new Error(`Auto-answer exceeds the form length limit: ${question.prompt}`);
-    }
-    return;
-  }
-  const allowed = new Set(
-    (question.options ?? []).flatMap((option) => [option.value, option.label]),
-  );
-  if (values.some((value) => !allowed.has(value))) {
-    throw new Error(`Auto-answer is not a live form option: ${question.prompt}`);
-  }
-  if (question.kind === 'single-select' && values.length !== 1) {
-    throw new Error(`Single-select question received multiple answers: ${question.prompt}`);
-  }
 }

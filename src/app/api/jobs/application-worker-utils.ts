@@ -224,7 +224,7 @@ async function ensureWorkerJob(): Promise<{ job?: OpenClawCronJob | null; error?
   try {
     const createArgs = [
       'cron', 'add', '--name', OPENCLAW_CRON_JOB_NAME,
-      '--description', 'Three-day job application autopilot and durable Simplify reconciliation',
+      '--description', 'Job application autopilot (one-day draft, reviewed submission) and durable Simplify reconciliation',
       '--declaration-key', OPENCLAW_CRON_DECLARATION_KEY,
       '--every', '1m', '--session', 'isolated', '--message', WORKER_MESSAGE,
       '--no-deliver', '--timeout-seconds', '1800', '--json',

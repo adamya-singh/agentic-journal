@@ -43,6 +43,8 @@ export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueP
       const pending = application.questions.filter(
         (question) => question.resolution === 'pending',
       );
+      // Drafted applications waiting on answer review live in the review panel.
+      if (pending.length === 0 && application.reviewHoldSince) continue;
       const blockedEntry = [...application.statusHistory]
         .reverse()
         .find((entry) => entry.status === 'awaiting-user-input');
@@ -110,8 +112,8 @@ export function NeedsYouQueue({ listings, applications, onOpen }: NeedsYouQueueP
               <span className="w-24 shrink-0 text-right text-xs text-slate-400 dark:text-slate-500">
                 {row.autoCompletable && row.eligibleAt
                   ? Date.parse(row.eligibleAt) <= now
-                    ? 'Autopilot due'
-                    : `Auto in ${formatCountdown(Date.parse(row.eligibleAt) - now)}`
+                    ? 'Draft due'
+                    : `Drafts in ${formatCountdown(Date.parse(row.eligibleAt) - now)}`
                   : 'External blocker'}
               </span>
             </button>
