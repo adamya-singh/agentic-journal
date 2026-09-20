@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BriefcaseBusiness, ExternalLink, Star, Trash2 } from 'lucide-react';
+import { BriefcaseBusiness, ChevronRight, ExternalLink, Images, Star, Trash2 } from 'lucide-react';
 import type {
   JobApplicationCategory,
   JobApplicationAnswer,
@@ -793,14 +793,29 @@ function ApplicationStatusButton({
     closed:
       'bg-slate-100 text-slate-500 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700',
   };
+  // Submitted applications open onto their verification screenshots, so the
+  // pill says so instead of reading as a passive status badge.
+  const screenshotCount =
+    application.status === 'submitted' ? (application.screenshotCapture?.screenshots.length ?? 0) : 0;
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset transition hover:brightness-95 ${colors[application.status]}`}
+      aria-label={`${labels[application.status]} — open application details${
+        screenshotCount > 0 ? ` and ${screenshotCount} screenshot${screenshotCount === 1 ? '' : 's'}` : ''
+      }`}
+      className={`inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-full py-1 pl-2.5 pr-1.5 text-xs font-semibold shadow-sm ring-1 ring-inset transition hover:brightness-95 active:brightness-90 ${colors[application.status]}`}
     >
       {labels[application.status]}
       {pendingCount > 0 ? ` · ${pendingCount}` : ''}
+      {screenshotCount > 0 && (
+        <>
+          <span aria-hidden="true">·</span>
+          <Images className="h-3.5 w-3.5" aria-hidden="true" />
+          {screenshotCount} screenshot{screenshotCount === 1 ? '' : 's'}
+        </>
+      )}
+      <ChevronRight className="h-3.5 w-3.5 opacity-70" aria-hidden="true" />
     </button>
   );
 }

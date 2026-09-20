@@ -1,8 +1,10 @@
 'use client';
 
 import React from 'react';
-import { Check, MessageCircleQuestion } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, MessageCircleQuestion } from 'lucide-react';
 import type { JobApplicationAnswer, JobApplicationsViewData } from '@/lib/types';
+
+const COLLAPSED_STORAGE_KEY = 'jobs.reviewPanel.collapsed';
 
 export function ApplicationReviewPanel({
   applications,
@@ -15,6 +17,22 @@ export function ApplicationReviewPanel({
   const [answer, setAnswer] = React.useState('');
   const [pending, setPending] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  // The fold state is remembered so a long queue doesn't push the rest of the
+  // page down on every visit (it matters most on mobile).
+  const [collapsed, setCollapsed] = React.useState(false);
+  React.useEffect(() => {
+    try {
+      setCollapsed(window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1');
+    } catch {}
+  }, []);
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      try {
+        window.localStorage.setItem(COLLAPSED_STORAGE_KEY, current ? '0' : '1');
+      } catch {}
+      return !current;
+    });
+  };
   const items = (applications?.reviewItems ?? []).filter((item) => item.status === 'pending');
   if (items.length === 0) return null;
 
@@ -35,11 +53,23 @@ export function ApplicationReviewPanel({
 
   return (
     <section className="border-b border-violet-200 bg-violet-50/50 px-5 py-4 dark:border-violet-900/60 dark:bg-violet-950/10">
-      <div className="mb-3 flex items-center gap-2">
-        <MessageCircleQuestion className="h-4 w-4 text-violet-600" />
-        <h3 className="text-sm font-semibold text-violet-900 dark:text-violet-200">Review OpenClaw’s personal-information choices ({items.length})</h3>
-      </div>
-      <div className="space-y-3">
+      <h3>
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-controls="application-review-items"
+          className="-my-2 flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold text-violet-900 dark:text-violet-200"
+        >
+          <MessageCircleQuestion className="h-4 w-4 shrink-0 text-violet-600" />
+          <span className="min-w-0 flex-1">Review OpenClaw’s personal-information choices ({items.length})</span>
+          <span className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-violet-700 dark:text-violet-300">
+            {collapsed ? 'Show' : 'Hide'}
+            {collapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+          </span>
+        </button>
+      </h3>
+      <div id="application-review-items" hidden={collapsed} className="mt-3 space-y-3">
         {error && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{error}</p>}
         {items.map((item) => (
           <article key={item.id} className="rounded-md border border-violet-200 bg-white p-3 text-sm dark:border-violet-800 dark:bg-slate-900">
