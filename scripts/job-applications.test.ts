@@ -18,6 +18,9 @@ let answersRoute: typeof import('../src/app/api/jobs/applications/answers/route'
 let preferencesRoute: typeof import('../src/app/api/jobs/applications/preferences/route');
 let controlRoute: typeof import('../src/app/api/jobs/applications/control/route');
 let updateRoute: typeof import('../src/app/api/jobs/applications/update/route');
+let autopilotRoute: typeof import('../src/app/api/jobs/applications/autopilot/route');
+let emailUpdatesRoute: typeof import('../src/app/api/jobs/applications/email-updates/route');
+let trackerSyncRoute: typeof import('../src/app/api/jobs/applications/tracker-sync/route');
 let reviewsRoute: typeof import('../src/app/api/jobs/applications/reviews/route');
 let screenshotsRoute: typeof import('../src/app/api/jobs/applications/screenshots/route');
 let questionScreenshotsRoute: typeof import('../src/app/api/jobs/applications/question-screenshots/route');
@@ -39,6 +42,9 @@ before(async () => {
   preferencesRoute = await import('../src/app/api/jobs/applications/preferences/route');
   controlRoute = await import('../src/app/api/jobs/applications/control/route');
   updateRoute = await import('../src/app/api/jobs/applications/update/route');
+  autopilotRoute = await import('../src/app/api/jobs/applications/autopilot/route');
+  emailUpdatesRoute = await import('../src/app/api/jobs/applications/email-updates/route');
+  trackerSyncRoute = await import('../src/app/api/jobs/applications/tracker-sync/route');
   reviewsRoute = await import('../src/app/api/jobs/applications/reviews/route');
   screenshotsRoute = await import('../src/app/api/jobs/applications/screenshots/route');
   questionScreenshotsRoute = await import('../src/app/api/jobs/applications/question-screenshots/route');
@@ -62,6 +68,7 @@ before(async () => {
     applications: {},
     answerBank: [],
     reviewItems: [],
+    emailUpdates: { enabled: true, pending: [], processed: {} },
   });
 });
 
@@ -1165,6 +1172,251 @@ describe('job application state', () => {
       writeFileSync(file, original, 'utf8');
     }
   });
+
+  test('extends the draft date while waiting and the auto-submit deadline while under review', async () => {
+    const hour = 3600_000;
+    await store.mutateJobApplicationsStore((data) => {
+      for (const application of Object.values(data.applications)) store.releaseApplicationLease(application);
+      data.applications['saved-old'] = {
+        listingId: 'saved-old', status: 'awaiting-user-input', resumeVariant: 'swe', attemptCount: 1,
+        statusHistory: [{ status: 'awaiting-user-input', changedAt: now }],
+        awaitingInputSince: now, autoCompleteEligibleAt: '2026-01-01T00:00:00.000Z',
+        questions: [{ id: 'open', prompt: 'Why us?', kind: 'text', required: true, resolution: 'pending', discoveredAt: now }],
+        createdAt: now, updatedAt: now,
+      };
+    });
+    // A date that already passed restarts from now, so the extra day is a real day.
+    const before = Date.now();
+    const drafted = await (await postAutopilot({ action: 'extend', listingId: 'saved-old' })).json();
+    assert.equal(drafted.field, 'autoCompleteEligibleAt');
+    assert.ok(Date.parse(drafted.extendedTo) >= before + 24 * hour);
+    let application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(store.isApplicationClaimable(application, new Date()), false);
+    // A second press stacks on the first.
+    const again = await (await postAutopilot({ action: 'extend', listingId: 'saved-old', hours: 48 })).json();
+    assert.equal(Date.parse(again.extendedTo), Date.parse(drafted.extendedTo) + 48 * hour);
+
+    await seedDraft('extend-hold-lease');
+    const held = store.readJobApplicationsStore().applications['saved-new'];
+    const extended = await (await postAutopilot({ action: 'extend', listingId: 'saved-new' })).json();
+    assert.equal(extended.field, 'autoSubmitEligibleAt');
+    assert.equal(Date.parse(extended.extendedTo), Date.parse(held.autoSubmitEligibleAt!) + 24 * hour);
+    application = store.readJobApplicationsStore().applications['saved-new'];
+    assert.equal(application.autoCompleteEligibleAt, held.autoCompleteEligibleAt);
+    assert.equal(store.isApplicationClaimable(application, new Date(Date.parse(held.autoSubmitEligibleAt!))), false);
+    assert.equal(store.isApplicationClaimable(application, new Date(Date.parse(extended.extendedTo))), true);
+
+    // Never under a run that already claimed it, and never for unknown or finished applications.
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-new'].lease = { token: 'live', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' };
+    });
+    assert.equal((await postAutopilot({ action: 'extend', listingId: 'saved-new' })).status, 409);
+    assert.equal((await postAutopilot({ action: 'extend', listingId: 'missing' })).status, 404);
+    assert.equal((await postAutopilot({ action: 'extend', listingId: 'saved-new', hours: 0 })).status, 400);
+    await store.mutateJobApplicationsStore((data) => {
+      store.releaseApplicationLease(data.applications['saved-new']);
+    });
+  });
+
+  const email = (id: string, overrides: Record<string, unknown> = {}) => ({
+    gmailMessageId: id, gmailThreadId: `thread-${id}`, receivedAt: '2026-07-21T09:00:00.000Z',
+    from: 'Example Recruiting <no-reply@example.com>', subject: `Update ${id}`,
+    summary: 'One-sentence summary.', relevant: true, stage: 'interview', listingId: 'applied',
+    confidence: 0.95, reason: 'Company and role named in the subject.', ...overrides,
+  });
+  async function seedSubmitted() {
+    await store.mutateJobApplicationsStore((data) => {
+      data.emailUpdates = { enabled: true, pending: [], processed: {} };
+      for (const application of Object.values(data.applications)) delete application.simplifySync;
+      const submitted = (listingId: string) => ({
+        listingId, status: 'submitted' as const, resumeVariant: 'swe' as const, attemptCount: 1,
+        statusHistory: [{ status: 'submitted' as const, changedAt: now }], questions: [],
+        submittedAt: now, createdAt: now, updatedAt: now,
+      });
+      data.applications.applied = {
+        ...submitted('applied'),
+        simplifySync: { status: 'synced', attemptCount: 1, updatedAt: now, cardId: 'card-applied' },
+      };
+      // A second posting at the same company, applied for by hand: no Simplify card yet.
+      data.applications.starred = submitted('starred');
+    });
+  }
+
+  test('gives the email agent a bounded window, handled ids, and only applied postings', async () => {
+    await seedSubmitted();
+    const before = Date.now();
+    const context = await (await emailUpdatesRoute.GET()).json();
+    assert.equal(context.enabled, true);
+    assert.equal(context.autoApplyConfidence, 0.85);
+    assert.deepEqual(context.listings.map((entry: { listingId: string }) => entry.listingId).sort(), ['applied', 'starred']);
+    assert.equal(context.listings[0].linkHost.length > 0, true);
+    // First pass backfills 45 days.
+    assert.ok(Math.abs(Date.parse(context.since) - (before - 45 * 24 * 3600_000)) < 60_000);
+    await postEmailUpdates({ action: 'record', emails: [email('seen', { relevant: false })] });
+    const next = await (await emailUpdatesRoute.GET()).json();
+    assert.deepEqual(next.knownMessageIds, ['seen']);
+    // Later passes overlap the previous one by six hours.
+    assert.ok(Math.abs(Date.parse(next.since) - (Date.now() - 6 * 3600_000)) < 60_000);
+  });
+
+  test('applies only confident single-posting emails and queues the rest for confirmation', async () => {
+    await seedSubmitted();
+    const response = await postEmailUpdates({
+      action: 'record',
+      emails: [
+        email('confident'),
+        email('low', { confidence: 0.6, stage: 'rejected' }),
+        email('ambiguous', { alternatives: ['starred', 'saved-old'] }),
+        email('no-stage', { stage: undefined }),
+        email('unknown-posting', { listingId: 'saved-old' }),
+        email('newsletter', { relevant: false }),
+      ],
+    });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.deepEqual(body.summary, { applied: 1, queued: 4, ignored: 1, skipped: 0 });
+    assert.equal(body.applications.length, 1);
+    assert.equal(body.emailUpdates.processed, undefined);
+    let data = store.readJobApplicationsStore();
+    assert.equal(data.applications.applied.employerStage, 'interview');
+    assert.equal(data.applications.applied.employerUpdates?.[0].gmailMessageId, 'confident');
+    assert.equal(data.applications.starred.employerStage, undefined);
+    assert.ok(data.emailUpdates.lastPolledAt);
+    const pending = Object.fromEntries(data.emailUpdates.pending.map((entry) => [entry.gmailMessageId, entry]));
+    assert.deepEqual(Object.keys(pending).sort(), ['ambiguous', 'low', 'no-stage', 'unknown-posting']);
+    // Suggestions only ever name postings that were actually applied for.
+    assert.deepEqual(pending.ambiguous.suggestedListingIds, ['applied', 'starred']);
+    assert.deepEqual(pending['unknown-posting'].suggestedListingIds, []);
+    assert.equal(pending.low.suggestedStage, 'rejected');
+
+    // The mailbox is never modified, so the ledger is what makes a second pass harmless.
+    const repeat = await (await postEmailUpdates({
+      action: 'record', emails: [email('confident'), email('low', { confidence: 0.99 })],
+    })).json();
+    assert.deepEqual(repeat.summary, { applied: 0, queued: 0, ignored: 0, skipped: 2 });
+    data = store.readJobApplicationsStore();
+    assert.equal(data.applications.applied.employerUpdates?.length, 1);
+    assert.equal(data.emailUpdates.pending.length, 4);
+    // The browser never receives the ledger.
+    assert.equal('processed' in store.buildJobApplicationsView().emailUpdates, false);
+    assert.equal(store.buildJobApplicationsView().emailUpdates.pending.length, 4);
+
+    const invalid = await postEmailUpdates({ action: 'record', emails: [email('long', { summary: 'x'.repeat(301) })] });
+    assert.equal(invalid.status, 400);
+  });
+
+  test('follows the newest employer email and re-arms the Simplify card move', async () => {
+    await seedSubmitted();
+    await postEmailUpdates({ action: 'record', emails: [email('ack', { stage: 'received', receivedAt: '2026-07-21T08:00:00.000Z' })] });
+    let application = store.readJobApplicationsStore().applications.applied;
+    assert.equal(application.employerStage, 'received');
+    // "Received" already matches the Applied column: nothing to move.
+    assert.equal(application.simplifySync?.status, 'synced');
+
+    await postEmailUpdates({ action: 'record', emails: [email('oa', { stage: 'assessment', receivedAt: '2026-07-22T08:00:00.000Z' })] });
+    application = store.readJobApplicationsStore().applications.applied;
+    assert.equal(application.employerStage, 'assessment');
+    assert.deepEqual(
+      { status: application.simplifySync?.status, target: application.simplifySync?.targetStatus, cardId: application.simplifySync?.cardId, attempts: application.simplifySync?.attemptCount },
+      { status: 'pending', target: 'Screen', cardId: 'card-applied', attempts: 0 },
+    );
+    assert.equal(store.hasActionableJobApplications(), true);
+
+    // A late acknowledgement and an older email never pull the stage backwards.
+    await postEmailUpdates({ action: 'record', emails: [
+      email('late-ack', { stage: 'received', receivedAt: '2026-07-23T08:00:00.000Z' }),
+      email('older-interview', { stage: 'interview', receivedAt: '2026-07-21T20:00:00.000Z' }),
+    ] });
+    application = store.readJobApplicationsStore().applications.applied;
+    assert.equal(application.employerStage, 'assessment');
+    assert.equal(application.employerUpdates?.length, 4);
+
+    await postEmailUpdates({ action: 'record', emails: [email('no', { stage: 'rejected', receivedAt: '2026-07-25T08:00:00.000Z' })] });
+    application = store.readJobApplicationsStore().applications.applied;
+    assert.equal(application.employerStage, 'rejected');
+    assert.equal(application.simplifySync?.targetStatus, 'Rejected');
+    // The posting itself keeps its four-value status; the stage lives on the application.
+    assert.equal(jobStore.readJobListings().listings.find((entry) => entry.id === 'applied')?.status, 'applied');
+  });
+
+  test('tracker sync hands the agent the target column and parks a permanent failure', async () => {
+    await seedSubmitted();
+    await postEmailUpdates({ action: 'record', emails: [email('invite')] });
+    const claim = (await (await postTrackerSync({ action: 'claim' })).json()).sync;
+    assert.equal(claim.listing.id, 'applied');
+    assert.equal(claim.targetStatus, 'Interviewing');
+    assert.equal(claim.cardId, 'card-applied');
+    assert.equal((await (await postTrackerSync({ action: 'claim' })).json()).sync, null);
+    assert.equal((await postTrackerSync({ action: 'complete', listingId: 'applied', leaseToken: 'wrong', cardId: 'x' })).status, 409);
+
+    const failed = await postTrackerSync({
+      action: 'fail', listingId: 'applied', leaseToken: claim.leaseToken,
+      error: 'Tracker has no Interviewing column', retryable: false,
+    });
+    assert.equal(failed.status, 200);
+    assert.equal(store.readJobApplicationsStore().applications.applied.simplifySync?.status, 'failed');
+    assert.equal((await (await postTrackerSync({ action: 'claim' })).json()).sync, null);
+    assert.equal(store.hasActionableJobApplications(), false);
+
+    // The next stage change re-arms it, and completing records the card again.
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'offer' });
+    const second = (await (await postTrackerSync({ action: 'claim' })).json()).sync;
+    assert.equal(second.targetStatus, 'Offer');
+    await postTrackerSync({ action: 'complete', listingId: 'applied', leaseToken: second.leaseToken, cardId: 'card-applied' });
+    const sync = store.readJobApplicationsStore().applications.applied.simplifySync;
+    assert.deepEqual({ status: sync?.status, target: sync?.targetStatus, cardId: sync?.cardId }, { status: 'synced', target: 'Offer', cardId: 'card-applied' });
+
+    // A retryable failure backs off instead.
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'rejected' });
+    const third = (await (await postTrackerSync({ action: 'claim' })).json()).sync;
+    await postTrackerSync({ action: 'fail', listingId: 'applied', leaseToken: third.leaseToken, error: 'Tracker timed out' });
+    const retry = store.readJobApplicationsStore().applications.applied.simplifySync;
+    assert.ok(Date.parse(retry!.nextRetryAt!) > Date.now() + 4 * 60_000);
+  });
+
+  test('confirming, dismissing, and manually correcting employer updates', async () => {
+    await seedSubmitted();
+    await postEmailUpdates({ action: 'record', emails: [
+      email('pick-me', { alternatives: ['starred'], stage: 'rejected' }),
+      email('not-mine', { listingId: undefined, confidence: 0.2 }),
+    ] });
+    const [pick, other] = store.readJobApplicationsStore().emailUpdates.pending;
+
+    assert.equal((await postEmailUpdates({ action: 'resolve', candidateId: pick.id, resolution: { kind: 'apply', listingId: 'saved-old', stage: 'rejected' } })).status, 404);
+    const applied = await postEmailUpdates({ action: 'resolve', candidateId: pick.id, resolution: { kind: 'apply', listingId: 'starred', stage: 'rejected' } });
+    assert.equal(applied.status, 200);
+    const appliedBody = await applied.json();
+    assert.equal(appliedBody.applications[0].listingId, 'starred');
+    assert.equal(appliedBody.emailUpdates.pending.length, 1);
+    let data = store.readJobApplicationsStore();
+    assert.equal(data.applications.starred.employerStage, 'rejected');
+    assert.equal(data.applications.starred.employerUpdates?.[0].subject, 'Update pick-me');
+    // Applied for by hand, so the Simplify task starts without a card to look up.
+    assert.deepEqual(
+      { status: data.applications.starred.simplifySync?.status, target: data.applications.starred.simplifySync?.targetStatus, cardId: data.applications.starred.simplifySync?.cardId },
+      { status: 'pending', target: 'Rejected', cardId: undefined },
+    );
+    assert.equal(data.emailUpdates.processed['pick-me'].outcome, 'applied');
+
+    assert.equal((await postEmailUpdates({ action: 'resolve', candidateId: other.id, resolution: { kind: 'dismiss' } })).status, 200);
+    data = store.readJobApplicationsStore();
+    assert.equal(data.emailUpdates.pending.length, 0);
+    assert.equal(data.emailUpdates.processed['not-mine'].outcome, 'ignored');
+    assert.equal((await postEmailUpdates({ action: 'resolve', candidateId: other.id, resolution: { kind: 'dismiss' } })).status, 404);
+
+    // Undoing a wrong rejection by hand puts the card back in Applied.
+    await postEmailUpdates({ action: 'set-stage', listingId: 'starred', stage: null });
+    data = store.readJobApplicationsStore();
+    assert.equal(data.applications.starred.employerStage, undefined);
+    assert.equal(data.applications.starred.employerUpdates?.at(-1)?.source, 'manual');
+    assert.equal(data.applications.starred.simplifySync?.targetStatus, 'Applied');
+
+    await postEmailUpdates({ action: 'poll-failed', error: 'gog: token expired' });
+    assert.equal(store.readJobApplicationsStore().emailUpdates.lastError?.message, 'gog: token expired');
+    await postEmailUpdates({ action: 'set-enabled', enabled: false });
+    assert.equal(store.readJobApplicationsStore().emailUpdates.enabled, false);
+    assert.equal((await (await emailUpdatesRoute.GET()).json()).enabled, false);
+  });
 });
 
 function postAnswers(body: unknown) {
@@ -1185,6 +1437,24 @@ function postUpdate(body: unknown) {
       body: JSON.stringify(body),
     }),
   );
+}
+
+function postAutopilot(body: unknown) {
+  return autopilotRoute.POST(new NextRequest('http://localhost/api/jobs/applications/autopilot', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
+function postEmailUpdates(body: unknown) {
+  return emailUpdatesRoute.POST(new NextRequest('http://localhost/api/jobs/applications/email-updates', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
+function postTrackerSync(body: unknown) {
+  return trackerSyncRoute.POST(new NextRequest('http://localhost/api/jobs/applications/tracker-sync', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
 }
 
 function postReview(body: unknown) {

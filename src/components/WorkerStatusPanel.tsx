@@ -2,12 +2,14 @@
 
 import React from 'react';
 import { Bot, Loader2, Pause, Play, Star } from 'lucide-react';
+import type { JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import type { JobApplicationsViewData, JobListing } from '@/lib/types';
 
 interface WorkerStatusPanelProps {
   listings: JobListing[];
   applications: JobApplicationsViewData | null;
   onControl?: (action: 'start' | 'pause') => Promise<void>;
+  onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
   onOpenApplication: (listingId: string) => void;
   onError?: (message: string | null) => void;
 }
@@ -46,6 +48,7 @@ export function WorkerStatusPanel({
   listings,
   applications,
   onControl,
+  onEmailUpdate,
   onOpenApplication,
   onError,
 }: WorkerStatusPanelProps) {
@@ -169,6 +172,7 @@ export function WorkerStatusPanel({
                 ? `healthy · cron ${applications.schedulerHealth.enabled ? 'enabled' : 'disabled'}`
                 : applications.schedulerHealth.error ?? 'unavailable'}
             </p>
+            <EmailUpdatesStatus emailUpdates={applications.emailUpdates} onEmailUpdate={onEmailUpdate} onError={onError} />
           </div>
         </div>
         <button
@@ -268,5 +272,53 @@ export function WorkerStatusPanel({
         </div>
       )}
     </div>
+  );
+}
+
+/** One line: whether OpenClaw is reading employer replies, and the switch for it. */
+function EmailUpdatesStatus({
+  emailUpdates,
+  onEmailUpdate,
+  onError,
+}: {
+  emailUpdates: JobApplicationsViewData['emailUpdates'];
+  onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
+  onError?: (message: string | null) => void;
+}) {
+  const [pending, setPending] = React.useState(false);
+  const toggle = async () => {
+    if (!onEmailUpdate || pending) return;
+    setPending(true);
+    onError?.(null);
+    try {
+      await onEmailUpdate({ action: 'set-enabled', enabled: !emailUpdates.enabled });
+    } catch (error) {
+      onError?.(error instanceof Error ? error.message : 'Failed to change employer email updates');
+    } finally {
+      setPending(false);
+    }
+  };
+  return (
+    <p className="text-xs text-slate-500 dark:text-slate-400">
+      Employer email updates:{' '}
+      {emailUpdates.enabled
+        ? emailUpdates.lastPolledAt
+          ? `on · inbox checked ${new Date(emailUpdates.lastPolledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+          : 'on · inbox not checked yet'
+        : 'off'}
+      {onEmailUpdate && (
+        <>
+          {' · '}
+          <button
+            type="button"
+            onClick={toggle}
+            disabled={pending}
+            className="font-semibold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-50 dark:text-indigo-300"
+          >
+            {emailUpdates.enabled ? 'Turn off' : 'Turn on'}
+          </button>
+        </>
+      )}
+    </p>
   );
 }

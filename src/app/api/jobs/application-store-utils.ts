@@ -20,8 +20,17 @@ import type {
   JobApplicationsViewData,
   JobApplicationStatus,
   JobListing,
+  JobSimplifyTrackerStatus,
 } from '@/lib/types';
 import { readJobListings, writeJobListings } from './job-store-utils';
+import {
+  getEmptyEmailUpdatesState,
+  isJobEmployerStage,
+  isSimplifySyncClaimable,
+  normalizeEmailUpdatesState,
+  normalizeEmployerUpdates,
+  toEmailUpdatesView,
+} from './email-update-utils';
 
 const JOBS_DIR =
   process.env.JOB_APPLICATION_JOBS_DIR || path.join(process.cwd(), 'src/backend/data/jobs');
@@ -92,6 +101,7 @@ export function getEmptyJobApplicationsStore(): JobApplicationsStoreData {
     applications: {},
     answerBank: [],
     reviewItems: [],
+    emailUpdates: getEmptyEmailUpdatesState(),
   };
 }
 
@@ -143,6 +153,7 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
     applications,
     answerBank,
     reviewItems,
+    emailUpdates: normalizeEmailUpdatesState(parsed.emailUpdates),
   };
 }
 
@@ -235,6 +246,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     applications,
     answerBank: store.answerBank,
     reviewItems: store.reviewItems,
+    emailUpdates: toEmailUpdatesView(store.emailUpdates),
     schedulerHealth: {
       healthy: false,
       jobFound: false,
@@ -494,12 +506,9 @@ export function hasActionableJobApplications(): boolean {
     return false;
   }
   const now = new Date();
-  if (Object.values(store.applications).some((application) => {
-    const sync = application.simplifySync;
-    return sync && sync.status !== 'synced' &&
-      (!sync.lease || Date.parse(sync.lease.expiresAt) <= now.getTime()) &&
-      (!sync.nextRetryAt || Date.parse(sync.nextRetryAt) <= now.getTime());
-  })) return true;
+  if (Object.values(store.applications).some(
+    (application) => isSimplifySyncClaimable(application.simplifySync, now),
+  )) return true;
   if (
     Object.values(store.applications).some(
       (application) => application.lease && Date.parse(application.lease.expiresAt) > now.getTime(),
@@ -1320,6 +1329,9 @@ function normalizeApplicationRecord(
         status,
         attemptCount: normalizeNonNegativeInteger(value.simplifySync.attemptCount),
         updatedAt,
+        ...(isSimplifyTrackerStatus(value.simplifySync.targetStatus)
+          ? { targetStatus: value.simplifySync.targetStatus }
+          : {}),
         ...(normalizeString(value.simplifySync.nextRetryAt)
           ? { nextRetryAt: normalizeString(value.simplifySync.nextRetryAt) }
           : {}),
@@ -1340,6 +1352,9 @@ function normalizeApplicationRecord(
       }
     }
   }
+  const employerUpdates = normalizeEmployerUpdates(value.employerUpdates);
+  if (employerUpdates.length > 0) record.employerUpdates = employerUpdates;
+  if (isJobEmployerStage(value.employerStage)) record.employerStage = value.employerStage;
   if (isRecord(value.progress)) {
     const step = normalizeString(value.progress.step);
     const label = normalizeString(value.progress.label);
@@ -1607,6 +1622,11 @@ function normalizeApplicationStatus(value: unknown): JobApplicationStatus {
     value === 'closed'
     ? value
     : 'unstarted';
+}
+
+function isSimplifyTrackerStatus(value: unknown): value is JobSimplifyTrackerStatus {
+  return value === 'Applied' || value === 'Screen' || value === 'Interviewing' ||
+    value === 'Offer' || value === 'Rejected';
 }
 
 function normalizeQuestionKind(value: unknown): JobApplicationQuestionKind | null {

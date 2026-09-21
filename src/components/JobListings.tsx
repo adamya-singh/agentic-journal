@@ -18,6 +18,9 @@ import { AnswerBankPanel } from './AnswerBankPanel';
 import { NeedsYouQueue } from './NeedsYouQueue';
 import { WorkerStatusPanel } from './WorkerStatusPanel';
 import { ApplicationReviewPanel } from './ApplicationReviewPanel';
+import { EmailUpdatesPanel } from './EmailUpdatesPanel';
+import { EMPLOYER_STAGE_STYLES } from './EmployerStageBadge';
+import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
 
 interface JobListingsProps {
   data: JobListingsData | null;
@@ -40,6 +43,9 @@ interface JobListingsProps {
   } | void>;
   onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer) => Promise<void>;
   onApplicationReviewConfirmAll?: (listingId: string) => Promise<void>;
+  onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
+  /** Pushes an application's next autopilot date (draft or auto-submit) back by a day. */
+  onExtendAutopilot?: (listingId: string) => Promise<void>;
 }
 
 const APPLICATION_CATEGORY_LABELS: Record<JobApplicationCategory, string> = {
@@ -127,10 +133,12 @@ export function JobListings({
   onApplicationSave,
   onApplicationReview,
   onApplicationReviewConfirmAll,
+  onEmailUpdate,
+  onExtendAutopilot,
 }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
-  const [viewMode, setViewMode] = React.useState<'active' | 'applied' | 'closed'>('active');
+  const [viewMode, setViewMode] = React.useState<'active' | 'applied' | 'rejected' | 'closed'>('active');
   const [selectedApplicationId, setSelectedApplicationId] = React.useState<string | null>(null);
   const [categoryAction, setCategoryAction] = React.useState<JobApplicationCategory | null>(null);
   const nonArchivedListings = (data?.listings ?? []).filter(
@@ -148,7 +156,20 @@ export function JobListings({
 
       return firstStarred ? -1 : 1;
     });
-  const appliedListings = nonArchivedListings.filter((listing) => getStatus(listing) === 'applied');
+  // An employer rejection (learned from their email) moves a posting out of
+  // Applied for good, even if it is archived later.
+  const isRejected = (listing: JobListing) =>
+    applications?.applications[listing.id]?.employerStage === 'rejected';
+  const rejectedAt = (listing: JobListing) =>
+    [...(applications?.applications[listing.id]?.employerUpdates ?? [])]
+      .reverse()
+      .find((update) => update.stage === 'rejected')?.receivedAt;
+  const appliedListings = nonArchivedListings.filter(
+    (listing) => getStatus(listing) === 'applied' && !isRejected(listing),
+  );
+  const rejectedListings = (data?.listings ?? [])
+    .filter(isRejected)
+    .sort((first, second) => (rejectedAt(second) ?? '').localeCompare(rejectedAt(first) ?? ''));
   // Closing an application archives its listing, so the closed view is the
   // join of archived listings with a recorded closed application.
   const closedListings = (data?.listings ?? [])
@@ -162,9 +183,11 @@ export function JobListings({
         Date.parse(applications?.applications[second.id]?.closedAt ?? '') -
         Date.parse(applications?.applications[first.id]?.closedAt ?? ''),
     );
-  const listings =
-    viewMode === 'active' ? activeListings : viewMode === 'applied' ? appliedListings : closedListings;
+  const listings = {
+    active: activeListings, applied: appliedListings, rejected: rejectedListings, closed: closedListings,
+  }[viewMode];
   const closedMode = viewMode === 'closed';
+  const rejectedMode = viewMode === 'rejected';
 
   const setStatus = async (listing: JobListing, status: JobListingStatus) => {
     if (!onStatusChange || pendingListingId) {
@@ -250,6 +273,7 @@ export function JobListings({
                   [
                     { value: 'active', label: `Active · ${activeListings.length}` },
                     { value: 'applied', label: `Applied · ${appliedListings.length}` },
+                    { value: 'rejected', label: `Rejected · ${rejectedListings.length}` },
                     { value: 'closed', label: `Closed · ${closedListings.length}` },
                   ] as const
                 ).map((option) => (
@@ -286,12 +310,20 @@ export function JobListings({
             listings={data?.listings ?? []}
             applications={applications ?? null}
             onOpen={(listingId) => setSelectedApplicationId(listingId)}
+            onExtend={onExtendAutopilot}
+          />
+
+          <EmailUpdatesPanel
+            listings={data?.listings ?? []}
+            applications={applications ?? null}
+            onUpdate={onEmailUpdate}
           />
 
           <ApplicationReviewPanel
             applications={applications ?? null}
             onResolve={onApplicationReview}
             onConfirmAll={onApplicationReviewConfirmAll}
+            onExtend={onExtendAutopilot}
             onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
           />
 
@@ -299,6 +331,7 @@ export function JobListings({
             listings={data?.listings ?? []}
             applications={applications ?? null}
             onControl={onApplicationControl}
+            onEmailUpdate={onEmailUpdate}
             onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
             onError={setActionError}
           />
@@ -514,7 +547,14 @@ export function JobListings({
                         </div>
                       </dl>
 
-                      {closedMode ? (
+                      {rejectedMode ? (
+                        <div className="text-xs text-slate-600 dark:text-slate-300">
+                          <span className="font-semibold text-red-700 dark:text-red-300">
+                            Rejected:{' '}
+                          </span>
+                          {formatDate(rejectedAt(listing))}
+                        </div>
+                      ) : closedMode ? (
                         <div className="text-xs text-slate-600 dark:text-slate-300">
                           <span className="font-semibold text-slate-700 dark:text-slate-200">
                             Closed:{' '}
@@ -719,7 +759,11 @@ export function JobListings({
                             </dl>
                           </td>
                           <td className="px-5 py-4 text-sm">
-                            {closedMode ? (
+                            {rejectedMode ? (
+                              <div className="min-w-40 text-xs font-semibold text-red-700 dark:text-red-300">
+                                Rejected {formatDate(rejectedAt(listing))}
+                              </div>
+                            ) : closedMode ? (
                               <div className="min-w-40 text-xs text-slate-600 dark:text-slate-300">
                                 <div className="font-semibold text-slate-700 dark:text-slate-200">
                                   Closed {formatDate(application?.closedAt)}
@@ -765,6 +809,7 @@ export function JobListings({
           application={selectedApplication}
           onClose={() => setSelectedApplicationId(null)}
           onSave={onApplicationSave}
+          onEmailUpdate={onEmailUpdate}
         />
       )}
     </>
@@ -805,8 +850,14 @@ function ApplicationStatusButton({
   const screenshotCount =
     application.status === 'submitted' ? (application.screenshotCapture?.screenshots.length ?? 0) : 0;
   // Drafted by autopilot and parked until its answers are reviewed.
-  const label =
-    application.status === 'awaiting-user-input' && application.reviewHoldSince && pendingCount === 0
+  // Once the employer has replied, their stage says more than "Submitted".
+  const stage =
+    application.employerStage && application.employerStage !== 'received'
+      ? application.employerStage
+      : undefined;
+  const label = stage
+    ? JOB_EMPLOYER_STAGE_LABELS[stage]
+    : application.status === 'awaiting-user-input' && application.reviewHoldSince && pendingCount === 0
       ? 'Review answers'
       : labels[application.status];
   return (
@@ -816,7 +867,7 @@ function ApplicationStatusButton({
       aria-label={`${label} — open application details${
         screenshotCount > 0 ? ` and ${screenshotCount} screenshot${screenshotCount === 1 ? '' : 's'}` : ''
       }`}
-      className={`inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-full py-1 pl-2.5 pr-1.5 text-xs font-semibold shadow-sm ring-1 ring-inset transition hover:brightness-95 active:brightness-90 ${colors[application.status]}`}
+      className={`inline-flex min-h-8 items-center gap-1 whitespace-nowrap rounded-full py-1 pl-2.5 pr-1.5 text-xs font-semibold shadow-sm ring-1 ring-inset transition hover:brightness-95 active:brightness-90 ${stage ? EMPLOYER_STAGE_STYLES[stage] : colors[application.status]}`}
     >
       {label}
       {pendingCount > 0 ? ` · ${pendingCount}` : ''}

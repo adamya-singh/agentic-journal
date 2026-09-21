@@ -3,7 +3,7 @@
 /* eslint-disable @next/next/no-img-element -- screenshots use private dynamic URLs and must retain original resolution. */
 
 import React from 'react';
-import { Check, CheckCheck, ChevronDown, ChevronRight, Clock, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
+import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
 import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
@@ -37,11 +37,13 @@ export function ApplicationReviewPanel({
   onResolve,
   onConfirmAll,
   onOpenApplication,
+  onExtend,
 }: {
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
   onConfirmAll?: (listingId: string) => Promise<void>;
   onOpenApplication?: (listingId: string) => void;
+  onExtend?: (listingId: string) => Promise<void>;
 }) {
   // The fold state is remembered so a long queue doesn't push the rest of the
   // page down on every visit (it matters most on mobile).
@@ -140,6 +142,7 @@ export function ApplicationReviewPanel({
               noteReleased(group, group.items.length);
             })}
             onOpenApplication={onOpenApplication && (() => onOpenApplication(group.listingId))}
+            onExtend={onExtend && (() => onExtend(group.listingId))}
           />
         ))}
       </div>
@@ -156,6 +159,7 @@ function ReviewGroupCard({
   onResolve,
   onConfirmAll,
   onOpenApplication,
+  onExtend,
 }: {
   group: ReviewGroup;
   now: number;
@@ -165,6 +169,7 @@ function ReviewGroupCard({
   onResolve?: ResolveHandler;
   onConfirmAll?: () => Promise<void>;
   onOpenApplication?: () => void;
+  onExtend?: () => Promise<void>;
 }) {
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState<{ id: string; message: string } | null>(null);
@@ -206,6 +211,18 @@ function ReviewGroupCard({
         </button>
         <div className="flex shrink-0 items-center gap-2">
           <GroupStatusChip group={group} now={now} />
+          {onExtend && group.holdUntil && (
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => run('extend', onExtend)}
+              title="Give yourself another day before OpenClaw submits this application on its own"
+              className="inline-flex min-h-8 items-center gap-1 rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-950/40"
+            >
+              <CalendarPlus className="h-3.5 w-3.5" />
+              +1 day
+            </button>
+          )}
           <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
             {reviewed}/{group.total}
           </span>
@@ -243,7 +260,7 @@ function ReviewGroupCard({
       >
         <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${(reviewed / group.total) * 100}%` }} />
       </div>
-      {error?.id === 'all' && <p role="alert" className="px-3 pt-2 text-sm text-red-700 dark:text-red-300">{error.message}</p>}
+      {(error?.id === 'all' || error?.id === 'extend') && <p role="alert" className="px-3 pt-2 text-sm text-red-700 dark:text-red-300">{error.message}</p>}
       {open && (
         <ul id={bodyId} className="divide-y divide-violet-100 dark:divide-violet-900/50">
           {group.items.map((item) => (

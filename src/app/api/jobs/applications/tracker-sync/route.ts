@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { readJobListings } from '../../job-store-utils';
 import { mutateJobApplicationsStore } from '../../application-store-utils';
+import { isSimplifySyncClaimable } from '../../email-update-utils';
 
 export const runtime = 'nodejs';
 
@@ -29,9 +30,7 @@ export async function POST(request: NextRequest) {
       if (parsed.data.action === 'claim') {
         for (const application of Object.values(store.applications)) {
           const sync = application.simplifySync;
-          if (!sync || sync.status === 'synced') continue;
-          if (sync.lease && Date.parse(sync.lease.expiresAt) > now.getTime()) continue;
-          if (sync.nextRetryAt && Date.parse(sync.nextRetryAt) > now.getTime()) continue;
+          if (!sync || !isSimplifySyncClaimable(sync, now)) continue;
           const listing = listings.find((candidate) => candidate.id === application.listingId);
           if (!listing) continue;
           const leaseToken = randomUUID();
@@ -44,7 +43,12 @@ export async function POST(request: NextRequest) {
             expiresAt: new Date(now.getTime() + 30 * 60 * 1000).toISOString(),
           };
           delete sync.nextRetryAt;
-          return { listing, application, leaseToken };
+          // The card moves to targetStatus; a known cardId identifies the card to move.
+          return {
+            listing, application, leaseToken,
+            targetStatus: sync.targetStatus ?? 'Applied',
+            ...(sync.cardId ? { cardId: sync.cardId } : {}),
+          };
         }
         return null;
       }

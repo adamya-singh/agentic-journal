@@ -20,7 +20,10 @@ import type {
   JobApplicationResumeVariant,
   JobApplicationScreenshotCapture,
   JobListing,
+  JobEmployerStage,
 } from '@/lib/types';
+import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
+import { EmployerStageBadge } from './EmployerStageBadge';
 
 export interface JobApplicationResponseInput {
   questionId: string;
@@ -32,6 +35,7 @@ interface JobApplicationModalProps {
   listing: JobListing;
   application: JobApplicationRecord;
   onClose: () => void;
+  onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
   onSave: (
     listingId: string,
     resumeVariant: JobApplicationResumeVariant,
@@ -66,6 +70,7 @@ export function JobApplicationModal({
   application,
   onClose,
   onSave,
+  onEmailUpdate,
 }: JobApplicationModalProps) {
   const pendingQuestions = application.questions.filter(
     (question) => question.resolution === 'pending',
@@ -391,6 +396,10 @@ export function JobApplicationModal({
                 )}
               </div>
             </div>
+          )}
+
+          {(application.status === 'submitted' || (application.employerUpdates?.length ?? 0) > 0) && (
+            <EmployerUpdatesSection application={application} onEmailUpdate={onEmailUpdate} />
           )}
 
           {application.status === 'closed' && (
@@ -1073,4 +1082,86 @@ function formatAnswerPreview(answer: JobApplicationAnswer): string {
 function formatDateTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+const EMPLOYER_STAGES = Object.keys(JOB_EMPLOYER_STAGE_LABELS) as JobEmployerStage[];
+
+/** What the employer has said since submission, newest first, with a manual override. */
+function EmployerUpdatesSection({
+  application,
+  onEmailUpdate,
+}: {
+  application: JobApplicationRecord;
+  onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
+}) {
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  const updates = [...(application.employerUpdates ?? [])].sort((first, second) =>
+    second.receivedAt.localeCompare(first.receivedAt) || second.appliedAt.localeCompare(first.appliedAt));
+  const setStage = async (value: string) => {
+    if (!onEmailUpdate || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await onEmailUpdate({
+        action: 'set-stage', listingId: application.listingId,
+        stage: value ? (value as JobEmployerStage) : null,
+      });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Failed to set the stage');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <section className="rounded-lg border border-slate-200 p-3 text-sm dark:border-slate-700">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
+          Employer updates
+          {application.employerStage && <EmployerStageBadge stage={application.employerStage} />}
+        </h3>
+        {onEmailUpdate && (
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+            Set stage
+            <select
+              value={application.employerStage ?? ''}
+              disabled={saving}
+              onChange={(event) => setStage(event.target.value)}
+              className="min-h-8 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            >
+              <option value="">No reply yet</option>
+              {EMPLOYER_STAGES.map((stage) => (
+                <option key={stage} value={stage}>{JOB_EMPLOYER_STAGE_LABELS[stage]}</option>
+              ))}
+            </select>
+          </label>
+        )}
+      </div>
+      {error && <p role="alert" className="mt-2 text-red-700 dark:text-red-300">{error}</p>}
+      {updates.length === 0 ? (
+        <p className="mt-2 text-slate-500 dark:text-slate-400">
+          No employer emails yet. OpenClaw checks the inbox and updates this automatically.
+        </p>
+      ) : (
+        <ol className="mt-2 space-y-2">
+          {updates.map((update) => (
+            <li key={update.id} className="border-l-2 border-slate-200 pl-3 dark:border-slate-700">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                {update.stage
+                  ? <EmployerStageBadge stage={update.stage} />
+                  : <span className="text-xs font-semibold text-slate-500">Reset to applied</span>}
+                <time className="text-xs text-slate-500 dark:text-slate-400" dateTime={update.receivedAt}>
+                  {formatDateTime(update.receivedAt)}
+                </time>
+                <span className="text-xs text-slate-400">{update.source === 'manual' ? 'set by you' : 'from email'}</span>
+              </div>
+              {update.subject && <p className="mt-0.5 break-words font-medium text-slate-800 dark:text-slate-200">{update.subject}</p>}
+              {update.from && <p className="truncate text-xs text-slate-500 dark:text-slate-400">{update.from}</p>}
+              {update.summary && <p className="mt-0.5 break-words text-slate-600 dark:text-slate-300">{update.summary}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </section>
+  );
 }

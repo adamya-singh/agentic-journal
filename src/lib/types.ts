@@ -226,8 +226,64 @@ export interface JobApplicationSubmissionEvidence {
   message?: string;
 }
 
+/** Where the employer says the application stands, learned from their emails. */
+export type JobEmployerStage = 'received' | 'assessment' | 'interview' | 'offer' | 'rejected';
+
+export type JobSimplifyTrackerStatus = 'Applied' | 'Screen' | 'Interviewing' | 'Offer' | 'Rejected';
+
+export interface JobEmployerUpdate {
+  id: string;
+  source: 'email' | 'manual';
+  /** null records a manual reset back to plain "applied". */
+  stage: JobEmployerStage | null;
+  /** When the employer sent it (email) or when it was set by hand. */
+  receivedAt: string;
+  appliedAt: string;
+  gmailMessageId?: string;
+  gmailThreadId?: string;
+  from?: string;
+  subject?: string;
+  summary?: string;
+  confidence?: number;
+}
+
+/** An email OpenClaw could not confidently tie to one posting and stage. */
+export interface JobEmailUpdateCandidate {
+  id: string;
+  gmailMessageId: string;
+  gmailThreadId?: string;
+  receivedAt: string;
+  from: string;
+  subject: string;
+  summary: string;
+  suggestedStage?: JobEmployerStage;
+  suggestedListingIds: string[];
+  confidence: number;
+  reason: string;
+  createdAt: string;
+}
+
+export interface JobEmailUpdatesProcessedEntry {
+  at: string;
+  outcome: 'applied' | 'queued' | 'ignored';
+  listingId?: string;
+}
+
+export interface JobEmailUpdatesState {
+  enabled: boolean;
+  lastPolledAt?: string;
+  lastError?: { message: string; occurredAt: string };
+  pending: JobEmailUpdateCandidate[];
+  /** Gmail message ids already handled; the mailbox itself is never modified. */
+  processed: Record<string, JobEmailUpdatesProcessedEntry>;
+}
+
+export type JobEmailUpdatesView = Omit<JobEmailUpdatesState, 'processed'>;
+
 export interface JobApplicationSimplifySync {
   status: 'pending' | 'in-progress' | 'synced' | 'failed';
+  /** Tracker column the card must end up in; absent means Applied. */
+  targetStatus?: JobSimplifyTrackerStatus;
   attemptCount: number;
   updatedAt: string;
   nextRetryAt?: string;
@@ -284,6 +340,8 @@ export interface JobApplicationRecord {
   /** Review deadline; stamped once, when the first draft enters the review queue. */
   autoSubmitEligibleAt?: string;
   simplifySync?: JobApplicationSimplifySync;
+  employerStage?: JobEmployerStage;
+  employerUpdates?: JobEmployerUpdate[];
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;
@@ -328,6 +386,7 @@ export interface JobApplicationsStoreData {
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
   reviewItems: JobApplicationReviewItem[];
+  emailUpdates: JobEmailUpdatesState;
 }
 
 export interface JobApplicationReadiness {
@@ -370,6 +429,7 @@ export interface JobApplicationsViewData {
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
   reviewItems: JobApplicationReviewItem[];
+  emailUpdates: JobEmailUpdatesView;
   schedulerHealth: {
     healthy: boolean;
     jobFound: boolean;

@@ -19,6 +19,8 @@ export default function JobsPage() {
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
     confirmAllJobApplicationReviews,
+    updateJobEmailUpdates,
+    extendJobApplicationAutopilot,
   } = useJobBoardState({ refetchOnFocus: true, pollWhileActive: true });
 
   // Prune local answer drafts for applications that are no longer awaiting input.
@@ -59,6 +61,8 @@ export default function JobsPage() {
           onApplicationSave={saveJobApplicationAnswers}
           onApplicationReview={resolveJobApplicationReview}
           onApplicationReviewConfirmAll={confirmAllJobApplicationReviews}
+          onEmailUpdate={updateJobEmailUpdates}
+          onExtendAutopilot={extendJobApplicationAutopilot}
         />
       </div>
     </div>

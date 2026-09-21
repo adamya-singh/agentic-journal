@@ -2,6 +2,9 @@
 
 import React from 'react';
 import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll } from './job-review-result';
+import {
+  applyJobEmailUpdatesResult, normalizeEmailUpdatesView, postJobEmailUpdate, type JobEmailUpdateRequest,
+} from './job-email-updates';
 import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import type {
   JobApplicationCategory,
@@ -90,6 +93,7 @@ export function useJobBoardState(
         applications: data.applications,
         answerBank: Array.isArray(data.answerBank) ? data.answerBank : [],
         reviewItems: Array.isArray(data.reviewItems) ? data.reviewItems : [],
+        emailUpdates: normalizeEmailUpdatesView(data.emailUpdates),
         schedulerHealth: data.schedulerHealth,
         queuePreview: Array.isArray(data.queuePreview) ? data.queuePreview : [],
       });
@@ -262,6 +266,27 @@ export function useJobBoardState(
     setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
   }, []);
 
+  // Same contract as reviews: wait for the commit, patch in place, and drop
+  // any poll that started before it.
+  const updateJobEmailUpdates = React.useCallback(async (request: JobEmailUpdateRequest) => {
+    const data = await postJobEmailUpdate(request);
+    reviewRevision.current += 1;
+    setJobApplicationsData((current) => current ? applyJobEmailUpdatesResult(current, data) : current);
+  }, []);
+
+  const extendJobApplicationAutopilot = React.useCallback(async (listingId: string) => {
+    const response = await fetch('/api/jobs/applications/autopilot', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'extend', listingId, hours: 24 }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.success) throw new Error(data.error || 'Failed to extend the autopilot date');
+    reviewRevision.current += 1;
+    setJobApplicationsData((current) => current
+      ? applyJobEmailUpdatesResult(current, { emailUpdates: current.emailUpdates, applications: [data.application] })
+      : current);
+  }, []);
+
   const confirmAllJobApplicationReviews = React.useCallback(async (listingId: string) => {
     const data = await saveJobReviewConfirmAll(listingId);
     reviewRevision.current += 1;
@@ -284,5 +309,7 @@ export function useJobBoardState(
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
     confirmAllJobApplicationReviews,
+    updateJobEmailUpdates,
+    extendJobApplicationAutopilot,
   };
 }
