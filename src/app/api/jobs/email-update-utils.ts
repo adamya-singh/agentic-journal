@@ -21,6 +21,15 @@ export const JOB_EMPLOYER_STAGES: JobEmployerStage[] = [
 // An email is applied without confirmation only at or above this confidence,
 // with exactly one matching posting. Everything else waits for the user.
 export const JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE = 0.85;
+// A plain "application received" notice changes nothing that matters (it never
+// overrides a real stage or moves a Simplify card), so it needs less certainty.
+export const JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE = 0.8;
+
+export function autoApplyConfidenceForStage(stage: JobEmployerStage): number {
+  return stage === 'received'
+    ? JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE
+    : JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE;
+}
 export const JOB_EMAIL_UPDATE_FIRST_POLL_LOOKBACK_MS = 45 * 24 * 60 * 60 * 1000;
 export const JOB_EMAIL_UPDATE_POLL_OVERLAP_MS = 6 * 60 * 60 * 1000;
 export const JOB_EMAIL_UPDATE_SUMMARY_MAX_LENGTH = 300;

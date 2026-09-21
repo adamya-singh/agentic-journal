@@ -1301,6 +1301,15 @@ describe('job application state', () => {
     assert.equal('processed' in store.buildJobApplicationsView().emailUpdates, false);
     assert.equal(store.buildJobApplicationsView().emailUpdates.pending.length, 4);
 
+    // An acknowledgement is harmless, so it needs less certainty than a real stage change.
+    const lenient = await (await postEmailUpdates({ action: 'record', emails: [
+      email('ack-80', { listingId: 'starred', stage: 'received', confidence: 0.8 }),
+      email('ack-79', { listingId: 'starred', stage: 'received', confidence: 0.79 }),
+      email('reject-80', { listingId: 'starred', stage: 'rejected', confidence: 0.8 }),
+    ] })).json();
+    assert.deepEqual(lenient.summary, { applied: 1, queued: 2, ignored: 0, skipped: 0 });
+    assert.equal(store.readJobApplicationsStore().applications.starred.employerStage, 'received');
+
     const invalid = await postEmailUpdates({ action: 'record', emails: [email('long', { summary: 'x'.repeat(301) })] });
     assert.equal(invalid.status, 400);
   });

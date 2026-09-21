@@ -10,6 +10,8 @@ import {
 } from '../../application-store-utils';
 import {
   applyEmployerUpdate,
+  autoApplyConfidenceForStage,
+  JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE,
   JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE,
   JOB_EMAIL_UPDATE_FIRST_POLL_LOOKBACK_MS,
   JOB_EMAIL_UPDATE_POLL_OVERLAP_MS,
@@ -102,6 +104,7 @@ export async function GET() {
       enabled: state.enabled,
       since,
       autoApplyConfidence: JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE,
+      receivedAutoApplyConfidence: JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE,
       knownMessageIds: Object.keys(state.processed),
       listings,
     });
@@ -153,7 +156,7 @@ export async function POST(request: NextRequest) {
           // The agent only reports; whether an email is trusted enough to act on is decided here.
           const confident = listing !== undefined && email.stage !== undefined &&
             email.alternatives.length === 0 &&
-            email.confidence >= JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE;
+            email.confidence >= autoApplyConfidenceForStage(email.stage);
           if (confident) {
             apply(listing.id, {
               source: 'email', stage: email.stage!, receivedAt: email.receivedAt,
