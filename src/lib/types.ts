@@ -232,6 +232,15 @@ export type JobEmployerStage = 'received' | 'assessment' | 'interview' | 'offer'
 export type JobSimplifyTrackerStatus = 'Applied' | 'Screen' | 'Interviewing' | 'Offer' | 'Rejected';
 
 export interface JobEmployerUpdate {
+  enrichedAt?: string;
+  eventKind?: 'stage-change' | 'assessment-reminder' | 'still-reviewing';
+  assessmentType?: string;
+  provider?: string;
+  deadline?: string;
+  interviewRound?: string;
+  outcomeReason?: string;
+  supportingParaphrase?: string;
+  automation?: 'explicit' | 'unknown';
   id: string;
   source: 'email' | 'manual';
   /** null records a manual reset back to plain "applied". */
@@ -249,6 +258,8 @@ export interface JobEmployerUpdate {
 
 /** An email OpenClaw could not confidently tie to one posting and stage. */
 export interface JobEmailUpdateCandidate {
+  enrichedAt?: string;
+  details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation'>>;
   id: string;
   gmailMessageId: string;
   gmailThreadId?: string;
@@ -314,6 +325,7 @@ export interface JobApplicationScreenshotCapture {
 }
 
 export interface JobApplicationRecord {
+  submissionSnapshot?: import('./job-overview').SubmissionSnapshot;
   listingId: string;
   status: JobApplicationStatus;
   resumeVariant: JobApplicationResumeVariant;

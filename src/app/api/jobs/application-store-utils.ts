@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'crypto';
+import { makeSnapshot } from '@/lib/job-overview';
 import { DateSourceSchema } from '@/lib/employment-dates';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -162,6 +163,18 @@ export function writeJobApplicationsStore(data: JobApplicationsStoreData): void 
   const temporaryPath = `${APPLICATIONS_FILE}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(temporaryPath, `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
   fs.renameSync(temporaryPath, APPLICATIONS_FILE);
+}
+
+export function captureSubmissionSnapshot(application: JobApplicationRecord, manual = false): void {
+  if (application.submissionSnapshot) return;
+  const listing = readJobListings().listings.find(l => l.id === application.listingId);
+  if (!listing) return;
+  const snapshot = makeSnapshot(application, listing, false, manual);
+  if (!manual) {
+    const file = path.join(RESUME_DIR, JOB_APPLICATION_RESUME_FILES[application.resumeOverride ?? application.resumeVariant]);
+    if (fs.existsSync(file)) snapshot.resumeHash = createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+  }
+  application.submissionSnapshot = snapshot;
 }
 
 export async function mutateJobApplicationsStore<T>(
@@ -1268,6 +1281,9 @@ function normalizeApplicationRecord(
 
   if (value.resumeOverride === 'swe' || value.resumeOverride === 'mle')
     record.resumeOverride = value.resumeOverride;
+  if (isRecord(value.submissionSnapshot) && isRecord(value.submissionSnapshot.listing) && Array.isArray(value.submissionSnapshot.answers) && typeof value.submissionSnapshot.capturedAt === 'string') {
+    record.submissionSnapshot = value.submissionSnapshot as unknown as JobApplicationRecord['submissionSnapshot'];
+  }
   if (normalizeString(value.canonicalApplicationUrl))
     record.canonicalApplicationUrl = normalizeString(value.canonicalApplicationUrl);
   if (normalizeString(value.nextRetryAt)) record.nextRetryAt = normalizeString(value.nextRetryAt);

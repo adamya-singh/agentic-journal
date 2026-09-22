@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { captureSubmissionSnapshot } from '../../application-store-utils';
 import { DateSourceSchema, EmploymentDateError, validateEmploymentDate } from '@/lib/employment-dates';
 import type { JobApplicationQuestion, JobApplicationRecord } from '@/lib/types';
 import { readJobListings } from '../../job-store-utils';
@@ -332,6 +333,7 @@ export async function POST(request: NextRequest) {
           attemptCount: application.simplifySync?.attemptCount ?? 0,
           updatedAt: now,
         };
+        captureSubmissionSnapshot(application);
         for (const item of store.reviewItems) {
           if (item.listingId === application.listingId && !item.submittedAt) item.submittedAt = now;
         }

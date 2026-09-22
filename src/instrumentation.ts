@@ -17,6 +17,10 @@ export async function register(): Promise<void> {
     return;
   }
   globalState[REGISTERED_FLAG] = true;
+  if (process.env.JOB_OVERVIEW_SCHEDULER_DISABLED !== '1') {
+    const { ensureOverviewCron } = await import('./app/api/jobs/overview/scheduler');
+    ensureOverviewCron().catch(error => console.error('Job overview scheduler:',error));
+  }
 
   const {
     ensureJobApplicationWorkerCron, reconcileAndWakeJobApplicationWorker, syncJobEmailUpdatesCron,

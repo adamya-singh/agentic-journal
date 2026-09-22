@@ -1245,7 +1245,7 @@ describe('job application state', () => {
   test('gives the email agent a bounded window, handled ids, and only applied postings', async () => {
     await seedSubmitted();
     const before = Date.now();
-    const context = await (await emailUpdatesRoute.GET()).json();
+    const context = await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json();
     assert.equal(context.enabled, true);
     assert.equal(context.autoApplyConfidence, 0.85);
     assert.deepEqual(context.listings.map((entry: { listingId: string }) => entry.listingId).sort(), ['applied', 'starred']);
@@ -1253,7 +1253,7 @@ describe('job application state', () => {
     // First pass backfills 45 days.
     assert.ok(Math.abs(Date.parse(context.since) - (before - 45 * 24 * 3600_000)) < 60_000);
     await postEmailUpdates({ action: 'record', emails: [email('seen', { relevant: false })] });
-    const next = await (await emailUpdatesRoute.GET()).json();
+    const next = await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json();
     assert.deepEqual(next.knownMessageIds, ['seen']);
     // Later passes overlap the previous one by six hours.
     assert.ok(Math.abs(Date.parse(next.since) - (Date.now() - 6 * 3600_000)) < 60_000);
@@ -1424,7 +1424,7 @@ describe('job application state', () => {
     assert.equal(store.readJobApplicationsStore().emailUpdates.lastError?.message, 'gog: token expired');
     await postEmailUpdates({ action: 'set-enabled', enabled: false });
     assert.equal(store.readJobApplicationsStore().emailUpdates.enabled, false);
-    assert.equal((await (await emailUpdatesRoute.GET()).json()).enabled, false);
+    assert.equal((await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json()).enabled, false);
   });
 });
 

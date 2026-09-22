@@ -13,7 +13,7 @@ export const JOB_EMPLOYER_STAGE_LABELS: Record<JobEmployerStage, string> = {
 export type JobEmailUpdateRequest =
   | {
     action: 'resolve'; candidateId: string;
-    resolution: { kind: 'apply'; listingId: string; stage: JobEmployerStage } | { kind: 'dismiss' };
+    resolution: { kind: 'apply'; listingId: string; stage?: JobEmployerStage } | { kind: 'dismiss' };
   }
   | { action: 'set-stage'; listingId: string; stage: JobEmployerStage | null }
   | { action: 'set-enabled'; enabled: boolean };

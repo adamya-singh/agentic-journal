@@ -119,16 +119,17 @@ function CandidateCard({
   const [busy, setBusy] = React.useState<'apply' | 'dismiss' | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const fieldId = `email-update-${candidate.id}`;
+  const informational=['still-reviewing','assessment-reminder'].includes(candidate.details?.eventKind??'');
 
   const run = async (kind: 'apply' | 'dismiss') => {
     if (!onUpdate || busy) return;
-    if (kind === 'apply' && (!listingId || !stage)) return;
+    if (kind === 'apply' && (!listingId || (!stage&&!informational))) return;
     setBusy(kind);
     setError(null);
     try {
       await onUpdate({
         action: 'resolve', candidateId: candidate.id,
-        resolution: kind === 'apply' && stage ? { kind: 'apply', listingId, stage } : { kind: 'dismiss' },
+        resolution: kind === 'apply' ? { kind: 'apply', listingId, ...(stage&&!informational?{stage}:{}) } : { kind: 'dismiss' },
       });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Failed to save. Please try again.');
@@ -174,15 +175,15 @@ function CandidateCard({
         </label>
         <label className="text-xs font-semibold text-slate-600 dark:text-slate-300" htmlFor={`${fieldId}-stage`}>
           Stage
-          <select id={`${fieldId}-stage`} value={stage} onChange={(event) => setStage(event.target.value as JobEmployerStage | '')} className={`mt-1 font-normal ${field}`}>
-            <option value="">Choose…</option>
+          <select disabled={informational} id={`${fieldId}-stage`} value={stage} onChange={(event) => setStage(event.target.value as JobEmployerStage | '')} className={`mt-1 font-normal ${field}`}>
+            <option value="">{informational?'Informational — stage unchanged':'Choose…'}</option>
             {STAGES.map((value) => <option key={value} value={value}>{JOB_EMPLOYER_STAGE_LABELS[value]}</option>)}
           </select>
         </label>
         <div className="flex gap-2">
           <button
             type="button"
-            disabled={!onUpdate || busy !== null || !listingId || !stage}
+            disabled={!onUpdate || busy !== null || !listingId || (!stage&&!informational)}
             onClick={() => run('apply')}
             className="inline-flex min-h-9 items-center gap-1 rounded bg-sky-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
           >

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { eventDetails } from '@/lib/job-event-details';
 import type {
   JobApplicationRecord,
   JobApplicationSimplifySync,
@@ -75,13 +76,14 @@ export function isSimplifySyncClaimable(sync: JobApplicationSimplifySync | undef
 export function deriveEmployerStage(updates: JobEmployerUpdate[]): JobEmployerStage | undefined {
   const newestFirst = [...updates].sort(
     (first, second) =>
-      second.receivedAt.localeCompare(first.receivedAt) || second.appliedAt.localeCompare(first.appliedAt),
+      Date.parse(second.receivedAt) - Date.parse(first.receivedAt) || Date.parse(second.appliedAt) - Date.parse(first.appliedAt),
   );
   for (const update of newestFirst) {
+    if (update.eventKind === 'still-reviewing' || update.eventKind === 'assessment-reminder') continue;
     if (update.stage === null) return undefined;
     if (update.stage !== 'received') return update.stage;
   }
-  return newestFirst.length > 0 ? 'received' : undefined;
+  return newestFirst.some(update => update.stage === 'received' && !['still-reviewing','assessment-reminder'].includes(update.eventKind ?? '')) ? 'received' : undefined;
 }
 
 /** Queue the durable Simplify task that moves this application's card to its new column. */
@@ -164,6 +166,8 @@ export function normalizeEmployerUpdates(value: unknown): JobEmployerUpdate[] {
     if (!id || !receivedAt || !appliedAt || stage === undefined) return [];
     const score = confidence(entry.confidence);
     return [{
+      ...eventDetails(entry),
+      ...(text(entry.enrichedAt) ? {enrichedAt:text(entry.enrichedAt)} : {}),
       id,
       source: entry.source === 'manual' ? 'manual' : 'email',
       stage,
@@ -187,6 +191,8 @@ function normalizeCandidate(value: unknown): JobEmailUpdateCandidate[] {
   const createdAt = text(value.createdAt);
   if (!id || !gmailMessageId || !receivedAt || !createdAt) return [];
   return [{
+    details: eventDetails(value.details),
+    ...(text(value.enrichedAt) ? {enrichedAt:text(value.enrichedAt)} : {}),
     id,
     gmailMessageId,
     ...(text(value.gmailThreadId) ? { gmailThreadId: text(value.gmailThreadId) } : {}),

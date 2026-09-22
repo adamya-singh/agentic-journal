@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { EventDetailsSchema, eventDetails } from '@/lib/job-event-details';
 import type { JobApplicationRecord, JobEmailUpdatesView, JobListing } from '@/lib/types';
 import { readJobListings } from '../../job-store-utils';
 import {
@@ -29,7 +30,7 @@ export const dynamic = 'force-dynamic';
 
 const StageSchema = z.enum(['received', 'assessment', 'interview', 'offer', 'rejected']);
 
-const EmailSchema = z.object({
+const EmailSchema = EventDetailsSchema.extend({
   gmailMessageId: z.string().min(1).max(200),
   gmailThreadId: z.string().min(1).max(200).optional(),
   receivedAt: z.string().datetime({ offset: true }),
@@ -46,16 +47,25 @@ const EmailSchema = z.object({
 });
 
 const ActionSchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('enrich'),
+    emails: z.array(EventDetailsSchema.extend({ gmailMessageId: z.string().min(1) })).max(200),
+  }),
   z.object({ action: z.literal('record'), emails: z.array(EmailSchema).max(200) }),
   z.object({ action: z.literal('poll-failed'), error: z.string().trim().min(1).max(500) }),
   z.object({
-    action: z.literal('resolve'), candidateId: z.string().min(1),
+    action: z.literal('resolve'),
+    candidateId: z.string().min(1),
     resolution: z.discriminatedUnion('kind', [
-      z.object({ kind: z.literal('apply'), listingId: z.string().min(1), stage: StageSchema }),
+      z.object({ kind: z.literal('apply'), listingId: z.string().min(1), stage: StageSchema.optional() }),
       z.object({ kind: z.literal('dismiss') }),
     ]),
   }),
-  z.object({ action: z.literal('set-stage'), listingId: z.string().min(1), stage: StageSchema.nullable() }),
+  z.object({
+    action: z.literal('set-stage'),
+    listingId: z.string().min(1),
+    stage: StageSchema.nullable(),
+  }),
   z.object({ action: z.literal('set-enabled'), enabled: z.boolean() }),
 ]);
 
@@ -72,10 +82,30 @@ function isTrackable(listing: JobListing, application: JobApplicationRecord | un
 }
 
 /** What the agent needs for one pass: the time window, handled ids, and the postings to match against. */
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const store = readJobApplicationsStore();
     const state = store.emailUpdates;
+    if (request?.nextUrl.searchParams.get('enrichment') === 'true') {
+      const events = Object.values(store.applications).flatMap((a) =>
+        (a.employerUpdates ?? [])
+          .filter((e) => e.gmailMessageId && !e.enrichedAt)
+          .map((e) => ({
+            gmailMessageId: e.gmailMessageId,
+            listingId: a.listingId,
+            stage: e.stage,
+          })),
+      );
+      const pending = state.pending
+        .filter((e) => !e.enrichedAt)
+        .map((e) => ({ gmailMessageId: e.gmailMessageId, stage: e.suggestedStage }));
+      return NextResponse.json({
+        success: true,
+        messages: [...events, ...pending]
+          .filter((e, i, all) => all.findIndex((x) => x.gmailMessageId === e.gmailMessageId) === i)
+          .slice(0, 50),
+      });
+    }
     const now = Date.now();
     const since = new Date(
       state.lastPolledAt
@@ -89,15 +119,17 @@ export async function GET() {
       try {
         linkHost = new URL(application?.canonicalApplicationUrl ?? listing.link).hostname;
       } catch {}
-      return [{
-        listingId: listing.id,
-        company: listing.company,
-        positionTitle: listing.positionTitle,
-        location: listing.location,
-        linkHost,
-        submittedAt: application?.submittedAt ?? listing.updatedAt,
-        employerStage: application?.employerStage ?? null,
-      }];
+      return [
+        {
+          listingId: listing.id,
+          company: listing.company,
+          positionTitle: listing.positionTitle,
+          location: listing.location,
+          linkHost,
+          submittedAt: application?.submittedAt ?? listing.updatedAt,
+          employerStage: application?.employerStage ?? null,
+        },
+      ];
     });
     return NextResponse.json({
       success: true,
@@ -110,7 +142,10 @@ export async function GET() {
     });
   } catch (error) {
     console.error('Error reading job email update context:', error);
-    return NextResponse.json({ success: false, error: 'Failed to read email update context' }, { status: 500 });
+    return NextResponse.json(
+      { success: false, error: 'Failed to read email update context' },
+      { status: 500 },
+    );
   }
 }
 
@@ -132,13 +167,39 @@ export async function POST(request: NextRequest) {
       const changed = new Map<string, JobApplicationRecord>();
       const trackable = (listingId: string | undefined) => {
         const listing = listings.find((candidate) => candidate.id === listingId);
-        return listing && isTrackable(listing, store.applications[listing.id]) ? listing : undefined;
+        return listing && isTrackable(listing, store.applications[listing.id])
+          ? listing
+          : undefined;
       };
       const apply = (listingId: string, update: Parameters<typeof applyEmployerUpdate>[1]) => {
         const application = materializeJobApplication(store, listingId);
         if (applyEmployerUpdate(application, update, now)) stageChanged = true;
         changed.set(listingId, application);
       };
+
+      if (input.action === 'enrich') {
+        for (const item of input.emails) {
+          const known =
+            state.pending.some((e) => e.gmailMessageId === item.gmailMessageId) ||
+            Object.values(store.applications).some((a) =>
+              (a.employerUpdates ?? []).some((e) => e.gmailMessageId === item.gmailMessageId),
+            );
+          if (!known) throw new Error('Enrichment requires a known relevant message ID');
+          for (const application of Object.values(store.applications)) {
+            for (const event of application.employerUpdates ?? []) {
+              if (event.gmailMessageId === item.gmailMessageId)
+                Object.assign(event, eventDetails(item), { enrichedAt: now });
+            }
+          }
+          for (const candidate of state.pending) {
+            if (candidate.gmailMessageId === item.gmailMessageId) {
+              candidate.details = { ...candidate.details, ...eventDetails(item) };
+              candidate.enrichedAt = now;
+            }
+          }
+        }
+        return { emailUpdates: toEmailUpdatesView(state), applications: [] };
+      }
 
       if (input.action === 'record') {
         const summary = { applied: 0, queued: 0, ignored: 0, skipped: 0 };
@@ -154,23 +215,41 @@ export async function POST(request: NextRequest) {
           }
           const listing = trackable(email.listingId);
           // The agent only reports; whether an email is trusted enough to act on is decided here.
-          const confident = listing !== undefined && email.stage !== undefined &&
+          const informational =
+            email.eventKind === 'still-reviewing' || email.eventKind === 'assessment-reminder';
+          const confident =
+            listing !== undefined &&
+            (email.stage !== undefined || informational) &&
             email.alternatives.length === 0 &&
-            email.confidence >= autoApplyConfidenceForStage(email.stage);
+            email.confidence >= autoApplyConfidenceForStage(email.stage ?? 'assessment');
           if (confident) {
             apply(listing.id, {
-              source: 'email', stage: email.stage!, receivedAt: email.receivedAt,
+              ...eventDetails(email),
+              ...(email.eventKind ? { enrichedAt: now } : {}),
+              source: 'email',
+              stage: informational ? null : email.stage!,
+              receivedAt: email.receivedAt,
               gmailMessageId: email.gmailMessageId,
               ...(email.gmailThreadId ? { gmailThreadId: email.gmailThreadId } : {}),
-              from: email.from, subject: email.subject, summary: email.summary, confidence: email.confidence,
+              from: email.from,
+              subject: email.subject,
+              summary: email.summary,
+              confidence: email.confidence,
             });
-            markEmailProcessed(state, email.gmailMessageId, { at: now, outcome: 'applied', listingId: listing.id });
+            markEmailProcessed(state, email.gmailMessageId, {
+              at: now,
+              outcome: 'applied',
+              listingId: listing.id,
+            });
             summary.applied += 1;
             continue;
           }
-          const suggestedListingIds = [...new Set([email.listingId, ...email.alternatives])]
-            .filter((id): id is string => trackable(id) !== undefined);
+          const suggestedListingIds = [...new Set([email.listingId, ...email.alternatives])].filter(
+            (id): id is string => trackable(id) !== undefined,
+          );
           state.pending.push({
+            ...(email.eventKind ? { enrichedAt: now } : {}),
+            details: eventDetails(email),
             id: randomUUID(),
             gmailMessageId: email.gmailMessageId,
             ...(email.gmailThreadId ? { gmailThreadId: email.gmailThreadId } : {}),
@@ -189,7 +268,11 @@ export async function POST(request: NextRequest) {
         }
         state.lastPolledAt = now;
         delete state.lastError;
-        return { emailUpdates: toEmailUpdatesView(state), applications: [...changed.values()], summary };
+        return {
+          emailUpdates: toEmailUpdatesView(state),
+          applications: [...changed.values()],
+          summary,
+        };
       }
 
       if (input.action === 'poll-failed') {
@@ -201,15 +284,27 @@ export async function POST(request: NextRequest) {
         if (!candidate) throw new Error('Email update not found');
         const resolution = input.resolution;
         if (resolution.kind === 'apply') {
-          if (!trackable(resolution.listingId)) throw new Error('Job posting not found among applied postings');
+          const informational=['still-reviewing','assessment-reminder'].includes(candidate.details?.eventKind??'');
+          if(!informational&&!resolution.stage)throw new Error('Choose an employer stage');
+          if (!trackable(resolution.listingId))
+            throw new Error('Job posting not found among applied postings');
           apply(resolution.listingId, {
-            source: 'email', stage: resolution.stage, receivedAt: candidate.receivedAt,
+            ...candidate.details,
+            source: 'email',
+            stage: informational ? null : resolution.stage!,
+            receivedAt: candidate.receivedAt,
             gmailMessageId: candidate.gmailMessageId,
             ...(candidate.gmailThreadId ? { gmailThreadId: candidate.gmailThreadId } : {}),
-            from: candidate.from, subject: candidate.subject, summary: candidate.summary,
+            from: candidate.from,
+            subject: candidate.subject,
+            summary: candidate.summary,
             confidence: candidate.confidence,
           });
-          markEmailProcessed(state, candidate.gmailMessageId, { at: now, outcome: 'applied', listingId: resolution.listingId });
+          markEmailProcessed(state, candidate.gmailMessageId, {
+            at: now,
+            outcome: 'applied',
+            listingId: resolution.listingId,
+          });
         } else {
           markEmailProcessed(state, candidate.gmailMessageId, { at: now, outcome: 'ignored' });
         }
@@ -217,7 +312,8 @@ export async function POST(request: NextRequest) {
       }
 
       if (input.action === 'set-stage') {
-        if (!trackable(input.listingId)) throw new Error('Job posting not found among applied postings');
+        if (!trackable(input.listingId))
+          throw new Error('Job posting not found among applied postings');
         apply(input.listingId, { source: 'manual', stage: input.stage, receivedAt: now });
       }
 
@@ -233,9 +329,10 @@ export async function POST(request: NextRequest) {
     if (stageChanged) followUps.push(() => wakeJobApplicationWorkerIfEnabled());
     if (input.action === 'set-enabled') followUps.push(() => syncJobEmailUpdatesCron());
     for (const followUp of followUps) {
-      const run = () => followUp().catch((error) => {
-        console.error('Job email update follow-up failed:', error);
-      });
+      const run = () =>
+        followUp().catch((error) => {
+          console.error('Job email update follow-up failed:', error);
+        });
       try {
         after(run);
       } catch {
@@ -247,6 +344,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update email updates';
     console.error('Error updating job email updates:', error);
-    return NextResponse.json({ success: false, error: message }, { status: /not found/i.test(message) ? 404 : 500 });
+    return NextResponse.json(
+      { success: false, error: message },
+      { status: /not found/i.test(message) ? 404 : 500 },
+    );
   }
 }

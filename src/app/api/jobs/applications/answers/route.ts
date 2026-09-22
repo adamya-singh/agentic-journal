@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { captureSubmissionSnapshot } from '../../application-store-utils';
 import type { JobApplicationAnswer, JobApplicationQuestion } from '@/lib/types';
 import {
   applicationFileExists,
@@ -106,6 +107,7 @@ export async function POST(request: NextRequest) {
           application.submissionEvidence = {
             message: 'Submission confirmed manually in Agentic Journal',
           };
+          captureSubmissionSnapshot(application, true);
           application.simplifySync = {
             status: 'pending',
             attemptCount: application.simplifySync?.attemptCount ?? 0,

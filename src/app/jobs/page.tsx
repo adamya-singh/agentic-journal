@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { JobsNavigation } from '@/components/JobsNavigation';
 import { AppHeader } from '@/components/AppHeader';
 import { JobListings } from '@/components/JobListings';
 import { useJobBoardState } from '@/lib/useJobBoardState';
@@ -48,6 +49,7 @@ export default function JobsPage() {
     <div className="min-h-screen bg-white dark:bg-gray-900">
       <AppHeader title="Jobs" subtitle="OpenClaw-maintained job board and application pipeline" />
       <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+        <JobsNavigation />
         <JobListings
           data={jobListingsData}
           loading={jobListingsLoading}
