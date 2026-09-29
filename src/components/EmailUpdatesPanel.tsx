@@ -62,7 +62,10 @@ export function EmailUpdatesPanel({
   if (!state || (state.pending.length === 0 && !state.lastError)) return null;
 
   return (
-    <section className="border-b border-sky-200 bg-sky-50/60 px-5 py-4 dark:border-sky-900/60 dark:bg-sky-950/10">
+    <section
+      id="email-updates"
+      className="scroll-mt-24 border-b border-sky-200 bg-sky-50/60 px-5 py-4 dark:border-sky-900/60 dark:bg-sky-950/10"
+    >
       <h3>
         <button
           type="button"

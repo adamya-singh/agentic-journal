@@ -140,6 +140,11 @@ export function JobListings({
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [viewMode, setViewMode] = React.useState<'active' | 'applied' | 'rejected' | 'closed'>('active');
   const [selectedApplicationId, setSelectedApplicationId] = React.useState<string | null>(null);
+  // Deep link from the Overview: /jobs?application=<listingId> opens that record.
+  React.useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get('application');
+    if (id) setSelectedApplicationId(id);
+  }, []);
   const [categoryAction, setCategoryAction] = React.useState<JobApplicationCategory | null>(null);
   const nonArchivedListings = (data?.listings ?? []).filter(
     (listing) => getStatus(listing) !== 'archived',
