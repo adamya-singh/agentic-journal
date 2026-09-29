@@ -29,6 +29,19 @@ Comparisons use applications observed for at least the selected window and count
 
 AI input includes calculated statistics, cited employer reasons, milestone kinds/times, and allowlisted job-related qualification answers with provenance. Demographic prompts, credentials, private URLs, arbitrary notes, and the answer bank are excluded. The UI's raw-answer detail stays local to the authenticated/private app environment.
 
+## UI
+
+`/jobs/overview` is one card, read top to bottom: what needs you, where things stand, timing and evidence, then the records.
+
+- **Filters** live in the sticky bar and every number below it follows them, except the AI report, which reads all records and says so. The period is a *submission* period: it narrows submitted applications only; unsubmitted and closed records are never period-filtered. Active filters render as removable chips; the scope line states what the numbers cover ("95 submitted · 291 records").
+- **Outcome tiles use facet semantics.** They are computed from the cohort before the outcome filter, so selecting "Rejected" rings that tile and narrows the chart, evidence cards, and table without zeroing the other tiles. Outcomes mean "ever reached" and overlap; the bar beneath ("Where they stand now") is the partition of current stage, mirroring the server's employer-stage derivation, with a `withdrawn` milestone taking precedence.
+- **Cited sets** ("Show these applications" on a comparison, pattern, or AI insight) narrow the view to specific ids. They expand to every member of a confirmed duplicate group so merged rows still match, and they are not written to the URL.
+- **Needs you** lists employer-side items no agent can resolve: an assessment invitation with no `assessment-*` milestone (and no later decision), an interview milestone in the future or in the past without a recorded outcome, pending employer emails (linking to `/jobs#email-updates`), an inbox error, an analysis error, or an analysis that is stale *and* more than 36 hours old. Plain staleness is only a badge on the report card, since the 9 AM run refreshes it. Duplicate candidates appear in a quiet band on the Applications card because there is no dismiss action.
+- **Recording milestones** always goes through the detail modal with the time editable ("Record completion" pre-selects the kind); nothing is stamped with "now" silently. Corrections show a banner naming the milestone being corrected.
+- **Sparse data** is the normal case: response-time quartiles need five observations, comparison dimensions need two named groups of ten, and each card says what is missing instead of rendering "Unknown".
+- **URL keys** (`history.replaceState`, no server round trip): `p` (all|30|90|custom), `from`, `to`, `resume`, `family`, `category`, `q`, `outcome` (received|assessment|interview|offer|rejected|awaiting), `status` (submitted|all|unsubmitted|closed; default submitted), `day`, `merge`, `w` (7|14|30), `sort` (submitted|company|activity), `application` (open detail). `/jobs?application=<listingId>` opens the same record on the Board.
+- View-layer derivations (`deriveView`, `currentStage`, `attentionItems`, `dailyActivity`, `comparisonCards`) live in `src/lib/job-overview-view.ts` with tests in `scripts/job-overview-view.test.ts`. `summarize` is unchanged and remains the fingerprinted input to the AI report.
+
 ## Validation
 
 `npm test`, `npx tsc --noEmit`, and `npm run build`. Tests use isolated stores and mocked model failures; they do not contact employers or submit applications.
