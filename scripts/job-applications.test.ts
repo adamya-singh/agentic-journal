@@ -10,6 +10,8 @@ const jobsDir = path.join(testRoot, 'jobs');
 const resumeDir = path.join(testRoot, 'resumes');
 process.env.JOB_APPLICATION_JOBS_DIR = jobsDir;
 process.env.JOB_APPLICATION_RESUME_DIR = resumeDir;
+// Employer stage changes can write journal tasks (online assessments).
+process.env.BACKEND_DATA_DIR = path.join(testRoot, 'backend');
 process.env.OPENCLAW_CLI_PATH = path.join(testRoot, 'missing-openclaw-cli.mjs');
 
 let store: typeof import('../src/app/api/jobs/application-store-utils');
@@ -1346,6 +1348,46 @@ describe('job application state', () => {
     assert.equal(application.simplifySync?.targetStatus, 'Rejected');
     // The posting itself keeps its four-value status; the stage lives on the application.
     assert.equal(jobStore.readJobListings().listings.find((entry) => entry.id === 'applied')?.status, 'applied');
+  });
+
+  test('an online assessment becomes a have-to-do task at the top of Current', async () => {
+    await seedSubmitted();
+    const tasksDir = path.join(testRoot, 'backend', 'tasks');
+    const readTasks = () => JSON.parse(readFileSync(path.join(tasksDir, 'have-to-do.json'), 'utf-8')).tasks as Array<Record<string, string>>;
+    const readCurrent = () => JSON.parse(readFileSync(path.join(tasksDir, 'current', 'have-to-do.json'), 'utf-8')).taskIds as string[];
+    // Earlier tests in this suite moved postings into assessment too.
+    rmSync(path.join(testRoot, 'backend'), { recursive: true, force: true });
+    const deadline = '2026-07-24T20:00:00.000Z';
+    const local = new Date(deadline);
+    const dueDate = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
+
+    await postEmailUpdates({ action: 'record', emails: [email('oa-task', {
+      stage: 'assessment', assessmentType: 'Coding assessment', provider: 'HackerRank', deadline,
+    })] });
+    let application = store.readJobApplicationsStore().applications.applied;
+    const taskId = application.assessmentTask?.taskId;
+    assert.ok(taskId);
+    const task = readTasks().find((entry) => entry.id === taskId);
+    assert.equal(task?.text, 'Complete Example OA (Applied Engineer)');
+    assert.equal(task?.dueDate, dueDate);
+    assert.match(task?.notesMarkdown ?? '', /HackerRank/);
+    assert.match(task?.notesMarkdown ?? '', /#all\/oa-task/);
+    assert.equal(readCurrent()[0], taskId);
+
+    // A reminder, or bouncing through another stage, never duplicates an open OA task.
+    await postEmailUpdates({ action: 'record', emails: [email('oa-reminder', { stage: undefined, eventKind: 'assessment-reminder' })] });
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'interview' });
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'assessment' });
+    assert.equal(readTasks().filter((entry) => entry.text.includes('OA')).length, 1);
+
+    // Once that task is gone (done or removed), a new OA gets a new task.
+    writeFileSync(path.join(tasksDir, 'have-to-do.json'), JSON.stringify({ _comment: '', tasks: [] }));
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'interview' });
+    await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'assessment' });
+    application = store.readJobApplicationsStore().applications.applied;
+    assert.notEqual(application.assessmentTask?.taskId, taskId);
+    assert.deepEqual(readTasks().map((entry) => entry.id), [application.assessmentTask?.taskId]);
+    assert.equal(readCurrent()[0], application.assessmentTask?.taskId);
   });
 
   test('tracker sync hands the agent the target column and parks a permanent failure', async () => {

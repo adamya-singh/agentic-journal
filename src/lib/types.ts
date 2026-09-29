@@ -354,6 +354,8 @@ export interface JobApplicationRecord {
   simplifySync?: JobApplicationSimplifySync;
   employerStage?: JobEmployerStage;
   employerUpdates?: JobEmployerUpdate[];
+  /** The journal task created when the employer sent an online assessment. */
+  assessmentTask?: { taskId: string; createdAt: string };
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;

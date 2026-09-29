@@ -1371,6 +1371,11 @@ function normalizeApplicationRecord(
   const employerUpdates = normalizeEmployerUpdates(value.employerUpdates);
   if (employerUpdates.length > 0) record.employerUpdates = employerUpdates;
   if (isJobEmployerStage(value.employerStage)) record.employerStage = value.employerStage;
+  if (isRecord(value.assessmentTask)) {
+    const taskId = normalizeString(value.assessmentTask.taskId);
+    const createdAt = normalizeString(value.assessmentTask.createdAt);
+    if (taskId && createdAt) record.assessmentTask = { taskId, createdAt };
+  }
   if (isRecord(value.progress)) {
     const step = normalizeString(value.progress.step);
     const label = normalizeString(value.progress.label);

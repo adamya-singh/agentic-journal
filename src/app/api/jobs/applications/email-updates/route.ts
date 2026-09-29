@@ -20,6 +20,7 @@ import {
   markEmailProcessed,
   toEmailUpdatesView,
 } from '../../email-update-utils';
+import { ensureAssessmentTask } from '../../assessment-task-utils';
 import {
   syncJobEmailUpdatesCron,
   wakeJobApplicationWorkerIfEnabled,
@@ -173,7 +174,17 @@ export async function POST(request: NextRequest) {
       };
       const apply = (listingId: string, update: Parameters<typeof applyEmployerUpdate>[1]) => {
         const application = materializeJobApplication(store, listingId);
+        const previousStage = application.employerStage;
         if (applyEmployerUpdate(application, update, now)) stageChanged = true;
+        const listing = listings.find((candidate) => candidate.id === listingId);
+        if (listing && previousStage !== 'assessment' && application.employerStage === 'assessment') {
+          try {
+            ensureAssessmentTask(application, listing, update, now);
+          } catch (error) {
+            // The stage change still stands; the task can be added by hand.
+            console.error('Failed to add the online assessment task:', error);
+          }
+        }
         changed.set(listingId, application);
       };
 
