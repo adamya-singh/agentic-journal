@@ -16,6 +16,15 @@ export const EventDetailsSchema = z.object({
   outcomeReason: safeText.optional(),
   supportingParaphrase: safeText.optional(),
   automation: z.enum(['explicit', 'unknown']).optional(),
+  // The one link kept from an email: where Adamya starts the assessment. It is
+  // shown on his OA task only, never sent to the AI report or opened by an agent.
+  assessmentUrl: z
+    .string()
+    .trim()
+    .max(2000)
+    .url()
+    .refine((s) => s.startsWith('https://'), 'The assessment link must be https')
+    .optional(),
 });
 export function eventDetails(value: unknown) {
   const result = EventDetailsSchema.safeParse(value);

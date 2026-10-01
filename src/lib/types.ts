@@ -241,6 +241,7 @@ export interface JobEmployerUpdate {
   outcomeReason?: string;
   supportingParaphrase?: string;
   automation?: 'explicit' | 'unknown';
+  assessmentUrl?: string;
   id: string;
   source: 'email' | 'manual';
   /** null records a manual reset back to plain "applied". */
@@ -259,7 +260,7 @@ export interface JobEmployerUpdate {
 /** An email OpenClaw could not confidently tie to one posting and stage. */
 export interface JobEmailUpdateCandidate {
   enrichedAt?: string;
-  details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation'>>;
+  details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation' | 'assessmentUrl'>>;
   id: string;
   gmailMessageId: string;
   gmailThreadId?: string;

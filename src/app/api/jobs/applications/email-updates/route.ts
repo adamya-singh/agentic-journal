@@ -20,7 +20,7 @@ import {
   markEmailProcessed,
   toEmailUpdatesView,
 } from '../../email-update-utils';
-import { ensureAssessmentTask } from '../../assessment-task-utils';
+import { ensureAssessmentTask, syncAssessmentTask } from '../../assessment-task-utils';
 import {
   syncJobEmailUpdatesCron,
   wakeJobApplicationWorkerIfEnabled,
@@ -177,18 +177,21 @@ export async function POST(request: NextRequest) {
         const previousStage = application.employerStage;
         if (applyEmployerUpdate(application, update, now)) stageChanged = true;
         const listing = listings.find((candidate) => candidate.id === listingId);
-        if (listing && previousStage !== 'assessment' && application.employerStage === 'assessment') {
-          try {
-            ensureAssessmentTask(application, listing, update, now);
-          } catch (error) {
-            // The stage change still stands; the task can be added by hand.
-            console.error('Failed to add the online assessment task:', error);
+        try {
+          if (listing && previousStage !== 'assessment' && application.employerStage === 'assessment') {
+            ensureAssessmentTask(application, listing, now);
+          } else if (listing && (update.stage === 'assessment' || update.eventKind === 'assessment-reminder')) {
+            syncAssessmentTask(application, listing);
           }
+        } catch (error) {
+          // The stage change still stands; the task can be added by hand.
+          console.error('Failed to update the online assessment task:', error);
         }
         changed.set(listingId, application);
       };
 
       if (input.action === 'enrich') {
+        const enriched = new Set<JobApplicationRecord>();
         for (const item of input.emails) {
           const known =
             state.pending.some((e) => e.gmailMessageId === item.gmailMessageId) ||
@@ -198,8 +201,10 @@ export async function POST(request: NextRequest) {
           if (!known) throw new Error('Enrichment requires a known relevant message ID');
           for (const application of Object.values(store.applications)) {
             for (const event of application.employerUpdates ?? []) {
-              if (event.gmailMessageId === item.gmailMessageId)
+              if (event.gmailMessageId === item.gmailMessageId) {
                 Object.assign(event, eventDetails(item), { enrichedAt: now });
+                enriched.add(application);
+              }
             }
           }
           for (const candidate of state.pending) {
@@ -207,6 +212,15 @@ export async function POST(request: NextRequest) {
               candidate.details = { ...candidate.details, ...eventDetails(item) };
               candidate.enrichedAt = now;
             }
+          }
+        }
+        // Late details (a deadline, the OA link) belong on an open OA task too.
+        for (const application of enriched) {
+          const listing = listings.find((candidate) => candidate.id === application.listingId);
+          try {
+            if (listing) syncAssessmentTask(application, listing);
+          } catch (error) {
+            console.error('Failed to update the online assessment task:', error);
           }
         }
         return { emailUpdates: toEmailUpdatesView(state), applications: [] };

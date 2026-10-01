@@ -15,9 +15,15 @@ Deploy the new API/normalizers before running backfills. Older running servers c
 
 1. Run `node --import ./scripts/test-register.mjs scripts/backfill-job-snapshots.mjs` to preview and add `--apply` to persist reconstructed snapshots. It uses the application-store lock and never guesses historical resume hashes. Rerunning skips existing snapshots.
 2. The external worker skill is `/home/openclaw/.openclaw/workspace/skills/agentic-journal-job-email-updates/SKILL.md`; its CLI now supports `enrichment-context` and `enrich --file`. These changes live outside this repository and must travel with deployments to a different host.
-3. Request the skill's historical enrichment mode. Context returns at most 50 known relevant message IDs with no `enrichedAt`; the worker rereads only those IDs, reports structured paraphrases, and continues until empty. No mailbox search, raw bodies, links, or attachments are involved. The endpoint does not replay stages, reset the poll cursor/processed ledger, or move Simplify cards. Failed reads remain resumable.
+3. Request the skill's historical enrichment mode. Context returns at most 50 known relevant message IDs with no `enrichedAt`; the worker rereads only those IDs, reports structured paraphrases, and continues until empty. No mailbox search, raw bodies, or attachments are involved; the only link kept is `assessmentUrl` (below). The endpoint does not replay stages, reset the poll cursor/processed ledger, or move Simplify cards. Failed reads remain resumable.
 
 Submission snapshots are captured once through both submission paths. Manually confirmed historical submissions retain an unknown baseline. Prospective automated snapshots contain the effective resume hash; reconstructed snapshots never derive it from today's file.
+
+## Online assessment tasks
+
+When an application moves into the assessment stage (confident email, confirmed pending email, or manual stage change), `src/app/api/jobs/assessment-task-utils.ts` adds a have-to-do task, "Complete {Company} OA ({Role})", at the top of Current, due on the email's deadline when one is stated. Its notes carry the OA start link, deadline, type, platform, role, posting and application links, and each invitation/reminder email (subject, sender, time, summary, Gmail link). The task id is stored as `assessmentTask` on the application: while that task is open, reminders and enrichment refresh the notes above the marker line (text below it is kept) and fill in a missing due date; a new task is created only after the previous one is completed or removed.
+
+`assessmentUrl` is the one URL the email agent may report: an https start link from an assessment invitation or reminder, which the agent never opens. It is shown only on the OA task and is not part of the AI report input. Set `JOB_EMAIL_GMAIL_ACCOUNT` in `.env` to the inbox the agent reads so Gmail links open in that account. `scripts/backfill-assessment-tasks.ts` adds missing tasks for applications already in assessment and refreshes open ones (preview by default, `--apply` to write).
 
 ## Interpretation
 

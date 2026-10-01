@@ -1,11 +1,11 @@
 // Adds the online-assessment journal task to applications that reached the
-// assessment stage before OA tasks existed. Safe to re-run: an application
-// whose OA task is still open is skipped.
+// assessment stage before OA tasks existed, and refreshes the notes of OA
+// tasks that are still open. Safe to re-run.
 //
 //   node --import ./scripts/test-register.mjs scripts/backfill-assessment-tasks.ts          # preview
 //   node --import ./scripts/test-register.mjs scripts/backfill-assessment-tasks.ts --apply  # write
 import { mutateJobApplicationsStore } from '../src/app/api/jobs/application-store-utils';
-import { ensureAssessmentTask } from '../src/app/api/jobs/assessment-task-utils';
+import { ensureAssessmentTask, syncAssessmentTask } from '../src/app/api/jobs/assessment-task-utils';
 import { readJobListings } from '../src/app/api/jobs/job-store-utils';
 import { readGeneralTasks } from '../src/app/api/tasks/today/today-store-utils';
 
@@ -28,14 +28,15 @@ const run = async () => {
         continue;
       }
       if (application.assessmentTask && openTaskIds.has(application.assessmentTask.taskId)) {
-        console.log(`skip (OA task already open): ${label}`);
+        if (!apply) console.log(`would refresh notes: ${label}`);
+        else console.log(`${syncAssessmentTask(application, listing) ? 'refreshed' : 'up to date'}: ${label}`);
         continue;
       }
       if (!apply) {
         console.log(`would add: ${label}`);
         continue;
       }
-      ensureAssessmentTask(application, listing, update, now);
+      ensureAssessmentTask(application, listing, now);
       console.log(`added ${application.assessmentTask?.taskId}: ${label}`);
     }
     // Preview: the unchanged store is rewritten as-is by the locked mutation.

@@ -1361,21 +1361,49 @@ describe('job application state', () => {
     const local = new Date(deadline);
     const dueDate = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
 
+    // Only an https link is kept, and only in its own field.
+    assert.equal((await postEmailUpdates({ action: 'record', emails: [email('oa-http', {
+      stage: 'assessment', assessmentUrl: 'http://example.com/oa',
+    })] })).status, 400);
+
+    process.env.JOB_EMAIL_GMAIL_ACCOUNT = 'me@example.edu';
     await postEmailUpdates({ action: 'record', emails: [email('oa-task', {
       stage: 'assessment', assessmentType: 'Coding assessment', provider: 'HackerRank', deadline,
+      assessmentUrl: 'https://hackerrank.com/test/abc(1)',
     })] });
     let application = store.readJobApplicationsStore().applications.applied;
     const taskId = application.assessmentTask?.taskId;
     assert.ok(taskId);
-    const task = readTasks().find((entry) => entry.id === taskId);
+    let task = readTasks().find((entry) => entry.id === taskId);
     assert.equal(task?.text, 'Complete Example OA (Applied Engineer)');
     assert.equal(task?.dueDate, dueDate);
-    assert.match(task?.notesMarkdown ?? '', /HackerRank/);
-    assert.match(task?.notesMarkdown ?? '', /#all\/oa-task/);
+    const notes = task?.notesMarkdown ?? '';
+    assert.match(notes, /\*\*Start the assessment:\*\* \[open the OA\]\(<https:\/\/hackerrank\.com\/test\/abc\(1\)>\)/);
+    assert.match(notes, /\*\*Platform:\*\* HackerRank/);
+    assert.match(notes, /\*\*Type:\*\* Coding assessment/);
+    assert.match(notes, /\[job posting\]\(<https:\/\/example\.com\/applied>\)/);
+    assert.match(notes, /\/jobs\?application=applied/);
+    assert.match(notes, /"Update oa-task" · from Example Recruiting/);
+    assert.match(notes, /mail\/\?authuser=me%40example\.edu#all\/thread-oa-task/);
+    assert.match(notes, /One-sentence summary\./);
     assert.equal(readCurrent()[0], taskId);
+    delete process.env.JOB_EMAIL_GMAIL_ACCOUNT;
 
-    // A reminder, or bouncing through another stage, never duplicates an open OA task.
-    await postEmailUpdates({ action: 'record', emails: [email('oa-reminder', { stage: undefined, eventKind: 'assessment-reminder' })] });
+    // A reminder refreshes the open task (keeping what Adamya wrote below the marker) instead of duplicating it.
+    const tasks = readTasks();
+    tasks[0].notesMarkdown += '\n\nUse Python.';
+    writeFileSync(path.join(tasksDir, 'have-to-do.json'), JSON.stringify({ _comment: '', tasks }));
+    await postEmailUpdates({ action: 'record', emails: [email('oa-reminder', {
+      stage: undefined, eventKind: 'assessment-reminder', receivedAt: '2026-07-23T09:00:00.000Z',
+      assessmentUrl: 'https://hackerrank.com/test/new',
+    })] });
+    task = readTasks().find((entry) => entry.id === taskId);
+    assert.match(task?.notesMarkdown ?? '', /open the OA\]\(<https:\/\/hackerrank\.com\/test\/new>\)/);
+    assert.match(task?.notesMarkdown ?? '', /\*\*Reminder\*\* · "Update oa-reminder"/);
+    assert.ok(task?.notesMarkdown?.endsWith('kept._\n\nUse Python.'));
+
+    // Bouncing through another stage never duplicates an open OA task.
+
     await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'interview' });
     await postEmailUpdates({ action: 'set-stage', listingId: 'applied', stage: 'assessment' });
     assert.equal(readTasks().filter((entry) => entry.text.includes('OA')).length, 1);
@@ -1388,6 +1416,19 @@ describe('job application state', () => {
     assert.notEqual(application.assessmentTask?.taskId, taskId);
     assert.deepEqual(readTasks().map((entry) => entry.id), [application.assessmentTask?.taskId]);
     assert.equal(readCurrent()[0], application.assessmentTask?.taskId);
+
+    // The link found later by historical enrichment reaches the open task.
+    await postEmailUpdates({ action: 'record', emails: [email('oa-late', {
+      listingId: 'starred', stage: 'assessment', receivedAt: '2026-07-26T09:00:00.000Z',
+    })] });
+    const starredTask = () => readTasks().find((entry) =>
+      entry.id === store.readJobApplicationsStore().applications.starred.assessmentTask?.taskId);
+    assert.match(starredTask()?.notesMarkdown ?? '', /use the link in the invitation email/);
+    assert.equal((await postEmailUpdates({ action: 'enrich', emails: [{
+      gmailMessageId: 'oa-late', assessmentUrl: 'https://codesignal.com/invite/xyz', deadline,
+    }] })).status, 200);
+    assert.match(starredTask()?.notesMarkdown ?? '', /\[open the OA\]\(<https:\/\/codesignal\.com\/invite\/xyz>\)/);
+    assert.equal(starredTask()?.dueDate, dueDate);
   });
 
   test('tracker sync hands the agent the target column and parks a permanent failure', async () => {
