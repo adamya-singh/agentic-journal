@@ -1361,9 +1361,9 @@ describe('job application state', () => {
     const local = new Date(deadline);
     const dueDate = `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`;
 
-    // Only an https link is kept, and only in its own field.
-    assert.equal((await postEmailUpdates({ action: 'record', emails: [email('oa-http', {
-      stage: 'assessment', assessmentUrl: 'http://example.com/oa',
+    // Only a web link is kept, and only in its own field.
+    assert.equal((await postEmailUpdates({ action: 'record', emails: [email('oa-ftp', {
+      stage: 'assessment', assessmentUrl: 'ftp://example.com/oa',
     })] })).status, 400);
 
     process.env.JOB_EMAIL_GMAIL_ACCOUNT = 'me@example.edu';
@@ -1395,10 +1395,10 @@ describe('job application state', () => {
     writeFileSync(path.join(tasksDir, 'have-to-do.json'), JSON.stringify({ _comment: '', tasks }));
     await postEmailUpdates({ action: 'record', emails: [email('oa-reminder', {
       stage: undefined, eventKind: 'assessment-reminder', receivedAt: '2026-07-23T09:00:00.000Z',
-      assessmentUrl: 'https://hackerrank.com/test/new',
+      assessmentUrl: 'http://url1234.hackerrank.com/ls/click?upn=new',
     })] });
     task = readTasks().find((entry) => entry.id === taskId);
-    assert.match(task?.notesMarkdown ?? '', /open the OA\]\(<https:\/\/hackerrank\.com\/test\/new>\)/);
+    assert.match(task?.notesMarkdown ?? '', /open the OA\]\(<http:\/\/url1234\.hackerrank\.com\/ls\/click\?upn=new>\)/);
     assert.match(task?.notesMarkdown ?? '', /\*\*Reminder\*\* · "Update oa-reminder"/);
     assert.ok(task?.notesMarkdown?.endsWith('kept._\n\nUse Python.'));
 

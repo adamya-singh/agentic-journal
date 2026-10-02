@@ -23,7 +23,8 @@ export const EventDetailsSchema = z.object({
     .trim()
     .max(2000)
     .url()
-    .refine((s) => s.startsWith('https://'), 'The assessment link must be https')
+    // Many invitations use an http click-tracking redirect for the start button.
+    .refine((s) => /^https?:\/\//.test(s), 'The assessment link must be http or https')
     .optional(),
 });
 export function eventDetails(value: unknown) {
