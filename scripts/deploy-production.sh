@@ -108,7 +108,7 @@ test -s "${MASTRA_OUTPUT_DIR}/package.json"
 
 echo
 echo "Installing Mastra generated production dependencies..."
-pnpm --dir "$MASTRA_OUTPUT_DIR" install --prod
+npm --prefix "$MASTRA_OUTPUT_DIR" install --omit=dev
 
 echo
 echo "Starting Agentic Journal service..."
