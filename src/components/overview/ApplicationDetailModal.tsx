@@ -264,6 +264,7 @@ export function ApplicationDetailModal({
                             {entry.event.subject}
                           </p>
                         )}
+                        {(entry.event.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {entry.event.emailMessageIds!.length} emails; folded into one update.</p>}
                         {entry.event.summary && (
                           <p className="mt-0.5 break-words text-sm text-slate-600 dark:text-slate-300">
                             {entry.event.summary}

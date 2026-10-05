@@ -152,7 +152,9 @@ function CandidateCard({
         </time>
       </div>
       <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{candidate.from}</p>
+      {(candidate.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {candidate.emailMessageIds!.length} emails; folded into one update.</p>}
       {candidate.summary && <p className="mt-1.5 text-slate-700 dark:text-slate-300">{candidate.summary}</p>}
+      {(candidate.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {candidate.emailMessageIds!.length} emails; folded into one update.</p>}
       {candidate.reason && (
         <p className="mt-1 text-sky-800 dark:text-sky-300">
           <span className="text-xs font-semibold uppercase tracking-wide">Why it’s here </span>

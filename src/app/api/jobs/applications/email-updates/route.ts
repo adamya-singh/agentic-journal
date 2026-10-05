@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { emailMessageIds, foldEmployerEmail, sameEmployerEmail, sameCandidateEmail } from '../../email-duplicate-utils';
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EventDetailsSchema, eventDetails } from '@/lib/job-event-details';
@@ -20,7 +21,7 @@ import {
   markEmailProcessed,
   toEmailUpdatesView,
 } from '../../email-update-utils';
-import { ensureAssessmentTask, syncAssessmentTask } from '../../assessment-task-utils';
+import { ensureAssessmentTask, syncAssessmentTask, foldSharedAssessmentTasks } from '../../assessment-task-utils';
 import {
   syncJobEmailUpdatesCron,
   wakeJobApplicationWorkerIfEnabled,
@@ -48,9 +49,10 @@ const EmailSchema = EventDetailsSchema.extend({
 });
 
 const ActionSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('fold-duplicates') }),
   z.object({
     action: z.literal('enrich'),
-    emails: z.array(EventDetailsSchema.extend({ gmailMessageId: z.string().min(1) })).max(200),
+    emails: z.array(EventDetailsSchema.extend({ gmailMessageId: z.string().min(1), gmailThreadId: z.string().min(1).max(200).optional() })).max(200),
   }),
   z.object({ action: z.literal('record'), emails: z.array(EmailSchema).max(200) }),
   z.object({ action: z.literal('poll-failed'), error: z.string().trim().min(1).max(500) }),
@@ -138,7 +140,7 @@ export async function GET(request: NextRequest) {
       since,
       autoApplyConfidence: JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE,
       receivedAutoApplyConfidence: JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE,
-      knownMessageIds: Object.keys(state.processed),
+      knownMessageIds: [...new Set([...Object.keys(state.processed), ...state.pending.flatMap(emailMessageIds), ...Object.values(store.applications).flatMap(a => (a.employerUpdates ?? []).flatMap(emailMessageIds))])],
       listings,
     });
   } catch (error) {
@@ -194,23 +196,24 @@ export async function POST(request: NextRequest) {
         const enriched = new Set<JobApplicationRecord>();
         for (const item of input.emails) {
           const known =
-            state.pending.some((e) => e.gmailMessageId === item.gmailMessageId) ||
+            state.pending.some((e) => emailMessageIds(e).includes(item.gmailMessageId)) ||
             Object.values(store.applications).some((a) =>
-              (a.employerUpdates ?? []).some((e) => e.gmailMessageId === item.gmailMessageId),
+              (a.employerUpdates ?? []).some((e) => emailMessageIds(e).includes(item.gmailMessageId)),
             );
           if (!known) throw new Error('Enrichment requires a known relevant message ID');
           for (const application of Object.values(store.applications)) {
             for (const event of application.employerUpdates ?? []) {
-              if (event.gmailMessageId === item.gmailMessageId) {
-                Object.assign(event, eventDetails(item), { enrichedAt: now });
+              if (emailMessageIds(event).includes(item.gmailMessageId)) {
+                Object.assign(event, eventDetails(item), { enrichedAt: now }, item.gmailThreadId ? { gmailThreadId: item.gmailThreadId } : {});
                 enriched.add(application);
               }
             }
           }
           for (const candidate of state.pending) {
-            if (candidate.gmailMessageId === item.gmailMessageId) {
+            if (emailMessageIds(candidate).includes(item.gmailMessageId)) {
               candidate.details = { ...candidate.details, ...eventDetails(item) };
               candidate.enrichedAt = now;
+              if (item.gmailThreadId) candidate.gmailThreadId = item.gmailThreadId;
             }
           }
         }
@@ -223,7 +226,8 @@ export async function POST(request: NextRequest) {
             console.error('Failed to update the online assessment task:', error);
           }
         }
-        return { emailUpdates: toEmailUpdatesView(state), applications: [] };
+        foldSharedAssessmentTasks(store.applications, listings, now);
+        return { emailUpdates: toEmailUpdatesView(state), applications: [...enriched] };
       }
 
       if (input.action === 'record') {
@@ -272,7 +276,7 @@ export async function POST(request: NextRequest) {
           const suggestedListingIds = [...new Set([email.listingId, ...email.alternatives])].filter(
             (id): id is string => trackable(id) !== undefined,
           );
-          state.pending.push({
+          const candidate = {
             ...(email.eventKind ? { enrichedAt: now } : {}),
             details: eventDetails(email),
             id: randomUUID(),
@@ -287,9 +291,18 @@ export async function POST(request: NextRequest) {
             confidence: email.confidence,
             reason: email.reason,
             createdAt: now,
-          });
+          };
+          const duplicate = state.pending.find(entry => sameCandidateEmail(entry, candidate));
+          if (duplicate) {
+            duplicate.emailMessageIds = [...new Set([...emailMessageIds(duplicate), email.gmailMessageId])];
+            duplicate.details = { ...candidate.details, ...duplicate.details };
+          } else state.pending.push(candidate);
           markEmailProcessed(state, email.gmailMessageId, { at: now, outcome: 'queued' });
           summary.queued += 1;
+        }
+        foldSharedAssessmentTasks(store.applications, listings, now);
+        for (const application of Object.values(store.applications)) {
+          if (application.updatedAt === now) changed.set(application.listingId, application);
         }
         state.lastPolledAt = now;
         delete state.lastError;
@@ -319,21 +332,45 @@ export async function POST(request: NextRequest) {
             stage: informational ? null : resolution.stage!,
             receivedAt: candidate.receivedAt,
             gmailMessageId: candidate.gmailMessageId,
+            emailMessageIds: candidate.emailMessageIds,
             ...(candidate.gmailThreadId ? { gmailThreadId: candidate.gmailThreadId } : {}),
             from: candidate.from,
             subject: candidate.subject,
             summary: candidate.summary,
             confidence: candidate.confidence,
           });
-          markEmailProcessed(state, candidate.gmailMessageId, {
+          for (const id of emailMessageIds(candidate)) markEmailProcessed(state, id, {
             at: now,
             outcome: 'applied',
             listingId: resolution.listingId,
           });
         } else {
-          markEmailProcessed(state, candidate.gmailMessageId, { at: now, outcome: 'ignored' });
+          for (const id of emailMessageIds(candidate)) markEmailProcessed(state, id, { at: now, outcome: 'ignored' });
         }
         state.pending = state.pending.filter((entry) => entry.id !== candidate.id);
+      }
+
+      if (input.action === 'fold-duplicates') {
+        for (const application of Object.values(store.applications)) {
+          const retained: NonNullable<JobApplicationRecord['employerUpdates']> = [];
+          for (const event of application.employerUpdates ?? []) {
+            const duplicate = event.source === 'email' && retained.find(item => item.source === 'email' && sameEmployerEmail(item, event));
+            if (duplicate) foldEmployerEmail(duplicate, event);
+            else retained.push(event);
+          }
+          if (application.employerUpdates && retained.length !== application.employerUpdates.length) {
+            application.employerUpdates = retained;
+            application.updatedAt = now;
+            changed.set(application.listingId, application);
+          }
+        }
+        const pending: typeof state.pending = [];
+        for (const candidate of state.pending) {
+          const duplicate = pending.find(item => sameCandidateEmail(item, candidate));
+          if (duplicate) duplicate.emailMessageIds = [...new Set([...emailMessageIds(duplicate), ...emailMessageIds(candidate)])];
+          else pending.push(candidate);
+        }
+        state.pending = pending;
       }
 
       if (input.action === 'set-stage') {
@@ -346,6 +383,12 @@ export async function POST(request: NextRequest) {
         state.enabled = input.enabled;
       }
 
+      if (['resolve', 'fold-duplicates', 'set-stage'].includes(input.action)) {
+        foldSharedAssessmentTasks(store.applications, listings, now);
+        for (const application of Object.values(store.applications)) {
+          if (application.updatedAt === now) changed.set(application.listingId, application);
+        }
+      }
       return { emailUpdates: toEmailUpdatesView(state), applications: [...changed.values()] };
     });
 

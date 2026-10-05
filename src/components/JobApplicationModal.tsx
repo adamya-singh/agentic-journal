@@ -1157,6 +1157,7 @@ function EmployerUpdatesSection({
               </div>
               {update.subject && <p className="mt-0.5 break-words font-medium text-slate-800 dark:text-slate-200">{update.subject}</p>}
               {update.from && <p className="truncate text-xs text-slate-500 dark:text-slate-400">{update.from}</p>}
+              {(update.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {update.emailMessageIds!.length} emails; folded into one update.</p>}
               {update.summary && <p className="mt-0.5 break-words text-slate-600 dark:text-slate-300">{update.summary}</p>}
             </li>
           ))}

@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { emailMessageIds, foldEmployerEmail, sameEmployerEmail } from './email-duplicate-utils';
 import { eventDetails } from '@/lib/job-event-details';
 import type {
   JobApplicationRecord,
@@ -108,6 +109,13 @@ export function applyEmployerUpdate(
   now: string,
 ): boolean {
   const previous = application.employerStage;
+  const duplicate = update.source === 'email' && (application.employerUpdates ?? []).find(event =>
+    event.source === 'email' && sameEmployerEmail(event, update));
+  if (duplicate) {
+    foldEmployerEmail(duplicate, update);
+    application.updatedAt = now;
+    return false;
+  }
   application.employerUpdates = [
     ...(application.employerUpdates ?? []),
     { ...update, id: randomUUID(), appliedAt: now },
@@ -130,7 +138,7 @@ export function markEmailProcessed(
   state.processed[gmailMessageId] = entry;
   const ids = Object.keys(state.processed);
   if (ids.length <= PROCESSED_LEDGER_LIMIT) return;
-  const pending = new Set(state.pending.map((candidate) => candidate.gmailMessageId));
+  const pending = new Set(state.pending.flatMap(emailMessageIds));
   ids
     .filter((id) => !pending.has(id))
     .sort((first, second) => state.processed[first].at.localeCompare(state.processed[second].at))
@@ -168,6 +176,7 @@ export function normalizeEmployerUpdates(value: unknown): JobEmployerUpdate[] {
     return [{
       ...eventDetails(entry),
       ...(text(entry.enrichedAt) ? {enrichedAt:text(entry.enrichedAt)} : {}),
+      ...(Array.isArray(entry.emailMessageIds) ? { emailMessageIds: emailMessageIds({ gmailMessageId: text(entry.gmailMessageId), emailMessageIds: entry.emailMessageIds.filter((id): id is string => typeof id === 'string' && !!id) }) } : {}),
       id,
       source: entry.source === 'manual' ? 'manual' : 'email',
       stage,
@@ -195,6 +204,7 @@ function normalizeCandidate(value: unknown): JobEmailUpdateCandidate[] {
     ...(text(value.enrichedAt) ? {enrichedAt:text(value.enrichedAt)} : {}),
     id,
     gmailMessageId,
+    ...(Array.isArray(value.emailMessageIds) ? { emailMessageIds: emailMessageIds({ gmailMessageId, emailMessageIds: value.emailMessageIds.filter((id): id is string => typeof id === 'string' && !!id) }) } : {}),
     ...(text(value.gmailThreadId) ? { gmailThreadId: text(value.gmailThreadId) } : {}),
     receivedAt,
     from: text(value.from),

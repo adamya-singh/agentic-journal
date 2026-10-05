@@ -1,9 +1,11 @@
 import { randomUUID } from 'crypto';
+import { emailMessageIds, sameEmployerEmail, foldEmployerEmail } from './email-duplicate-utils';
 import type { JobApplicationRecord, JobEmployerUpdate, JobListing, Task } from '@/lib/types';
-import { readGeneralTasks, writeGeneralTasks } from '../tasks/today/today-store-utils';
+import { readGeneralTasks, writeGeneralTasks, removeTaskIdsFromTodayOverrides } from '../tasks/today/today-store-utils';
 import { handleDueDateSetup } from '../tasks/due-date-utils';
 import {
   addTaskToCurrent,
+  removeTaskIdsFromCurrent,
   ensureCurrentSystemThroughToday,
   refreshActiveDailySnapshots,
 } from '../tasks/current/current-store-utils';
@@ -92,6 +94,7 @@ export function buildAssessmentNotes(listing: AssessmentListing, application: Jo
     return [
       `- ${heading}${gmail ? ` — ${link('open in Gmail', gmail)}` : ''}`,
       ...(email.summary ? [`  - ${email.summary}`] : []),
+      ...(emailMessageIds(email).length > 1 ? [`  - Received ${emailMessageIds(email).length} emails; folded into one assessment.`] : []),
       ...(email.supportingParaphrase && email.supportingParaphrase !== email.summary
         ? [`  - ${email.supportingParaphrase}`]
         : []),
@@ -174,4 +177,63 @@ export function syncAssessmentTask(application: JobApplicationRecord, listing: A
   if (task.dueDate && task.dueDate !== previous.dueDate) handleDueDateSetup(task.dueDate, LIST_TYPE, task, previous);
   refreshActiveDailySnapshots();
   return true;
+}
+
+/** One OA task for matching invitations across roles at the same employer. Each role keeps its stage. */
+export function foldSharedAssessmentTasks(
+  applications: Record<string, JobApplicationRecord>, listings: JobListing[], now: string,
+): number {
+  const groups: Array<{ application: JobApplicationRecord; listing: JobListing; invitation: JobEmployerUpdate }[]> = [];
+  for (const application of Object.values(applications)) {
+    const listing = listings.find(item => item.id === application.listingId);
+    const invitation = assessmentEmails(application)[0];
+    if (!listing || !invitation || application.employerStage !== 'assessment') continue;
+    const group = groups.find(items => items.some(item =>
+      item.listing.company.toLowerCase().trim() === listing.company.toLowerCase().trim() &&
+      sameEmployerEmail(item.invitation, invitation, true)));
+    if (group) group.push({ application, listing, invitation });
+    else groups.push([{ application, listing, invitation }]);
+  }
+  let removed = 0;
+  for (const group of groups.filter(items => items.length > 1)) {
+    const general = readGeneralTasks(LIST_TYPE);
+    const open = group.flatMap(item => {
+      const task = openAssessmentTask(item.application, general.tasks);
+      return task ? [{ ...item, task }] : [];
+    });
+    if (!open.length) continue;
+    const retained = open[0];
+    const ids = [...new Set(group.flatMap(item => emailMessageIds(item.invitation)))];
+    for (const item of group) foldEmployerEmail(retained.invitation, item.invitation);
+    for (const item of group) {
+      item.invitation.emailMessageIds = ids;
+      item.application.assessmentTask = { ...retained.application.assessmentTask! };
+    }
+    const roleNotes = group.map(item => `- ${item.listing.positionTitle}: ${link('open application', `/jobs?application=${encodeURIComponent(item.listing.id)}`)}`).join('\n');
+    const generated = buildAssessmentNotes(retained.listing, retained.application)
+      .replace(`\n${ASSESSMENT_NOTES_MARKER}`, `\n**Applications sharing this assessment**\n\n${roleNotes}\n\n${ASSESSMENT_NOTES_MARKER}`);
+    let notes = mergeNotes(generated, retained.task.notesMarkdown);
+    const duplicateTasks = [...new Map(open.filter(item => item.task.id !== retained.task.id).map(item => [item.task.id, item.task])).values()];
+    for (const task of duplicateTasks) {
+      const markerAt = task.notesMarkdown?.indexOf(ASSESSMENT_NOTES_MARKER) ?? -1;
+      const userNotes = markerAt >= 0 ? task.notesMarkdown!.slice(markerAt + ASSESSMENT_NOTES_MARKER.length).trim() : task.notesMarkdown?.trim();
+      if (userNotes && !notes.includes(userNotes)) notes += `\n\n${userNotes}`;
+    }
+    retained.task.notesMarkdown = notes;
+    if (!retained.task.dueDate) {
+      const dates = open.flatMap(item => item.task.dueDate ? [item.task.dueDate] : []).sort();
+      if (dates[0]) retained.task.dueDate = dates[0];
+    }
+    const removedIds = new Set(duplicateTasks.map(task => task.id));
+    if (removedIds.size) {
+      removeTaskIdsFromCurrent(LIST_TYPE, [...removedIds]);
+      removeTaskIdsFromTodayOverrides([...removedIds], LIST_TYPE);
+    }
+    general.tasks = general.tasks.filter(task => !removedIds.has(task.id));
+    writeGeneralTasks(general, LIST_TYPE);
+    refreshActiveDailySnapshots();
+    removed += removedIds.size;
+    for (const item of group) item.application.updatedAt = now;
+  }
+  return removed;
 }

@@ -250,6 +250,8 @@ export interface JobEmployerUpdate {
   receivedAt: string;
   appliedAt: string;
   gmailMessageId?: string;
+  /** All Gmail IDs folded into this event, including the primary ID. */
+  emailMessageIds?: string[];
   gmailThreadId?: string;
   from?: string;
   subject?: string;
@@ -263,6 +265,7 @@ export interface JobEmailUpdateCandidate {
   details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation' | 'assessmentUrl'>>;
   id: string;
   gmailMessageId: string;
+  emailMessageIds?: string[];
   gmailThreadId?: string;
   receivedAt: string;
   from: string;

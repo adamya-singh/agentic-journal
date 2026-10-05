@@ -1431,6 +1431,37 @@ describe('job application state', () => {
     assert.equal(starredTask()?.dueDate, dueDate);
   });
 
+  test('folds repeated OA mail and shares one task across roles without losing application stages', async () => {
+    await seedSubmitted();
+    const invitation = { stage: 'assessment', subject: 'Your Example assessment', gmailThreadId: 'shared-oa-thread', provider: 'Coderbyte' };
+    const result = await (await postEmailUpdates({ action: 'record', emails: [
+      email('oa-first', invitation),
+      email('oa-copy', { ...invitation, receivedAt: '2026-07-21T09:01:00.000Z' }),
+      email('oa-other-role', { ...invitation, listingId: 'starred', receivedAt: '2026-07-21T09:32:00.000Z' }),
+    ] })).json();
+    assert.equal(result.success, true);
+    let data = store.readJobApplicationsStore();
+    assert.equal(data.applications.applied.employerUpdates!.length, 1);
+    assert.equal(data.applications.starred.employerStage, 'assessment');
+    assert.equal(data.applications.applied.assessmentTask!.taskId, data.applications.starred.assessmentTask!.taskId);
+    assert.deepEqual([...data.applications.applied.employerUpdates![0].emailMessageIds!].sort(), ['oa-first', 'oa-copy', 'oa-other-role'].sort());
+    const taskId = data.applications.applied.assessmentTask!.taskId;
+    const todayStore = await import('../src/app/api/tasks/today/today-store-utils');
+    const general = todayStore.readGeneralTasks('have-to-do');
+    const task = general.tasks.find(item => item.id === taskId)!;
+    assert.match(task.notesMarkdown!, /Received 3 emails/);
+    assert.match(task.notesMarkdown!, /Applications sharing this assessment/);
+    task.notesMarkdown += '\n\nKeep my preparation notes.';
+    todayStore.writeGeneralTasks(general, 'have-to-do');
+    await postEmailUpdates({ action: 'fold-duplicates' });
+    await postEmailUpdates({ action: 'fold-duplicates' });
+    data = store.readJobApplicationsStore();
+    assert.equal(data.applications.applied.assessmentTask!.taskId, taskId);
+    assert.match(todayStore.readGeneralTasks('have-to-do').tasks.find(item => item.id === taskId)!.notesMarkdown!, /Keep my preparation notes/);
+    const context = await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json();
+    for (const id of ['oa-first', 'oa-copy', 'oa-other-role']) assert.ok(context.knownMessageIds.includes(id));
+  });
+
   test('tracker sync hands the agent the target column and parks a permanent failure', async () => {
     await seedSubmitted();
     await postEmailUpdates({ action: 'record', emails: [email('invite')] });
