@@ -296,7 +296,7 @@ export function JobApplicationModal({
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
-              {STATUS_LABELS[application.status]}
+              {application.cancelledAt ? 'Cancelled by you' : STATUS_LABELS[application.status]}
             </p>
             <h2
               id="job-application-title"
@@ -405,7 +405,7 @@ export function JobApplicationModal({
           {application.status === 'closed' && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950/40 dark:text-slate-300">
               <strong className="text-slate-700 dark:text-slate-200">
-                Closed
+                {application.cancelledAt ? 'Cancelled by you' : 'Closed'}
                 {application.closedAt ? ` ${formatDateTime(application.closedAt)}` : ''}
               </strong>
               {application.closedReason && (

@@ -3,7 +3,8 @@
 /* eslint-disable @next/next/no-img-element -- screenshots use private dynamic URLs and must retain original resolution. */
 
 import React from 'react';
-import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
+import { isApplicationSubmissionInFlight } from '@/lib/job-application-cancellation';
+import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
 import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
@@ -16,7 +17,7 @@ const COLLAPSED_STORAGE_KEY = 'jobs.reviewPanel.collapsed';
 const LOW_CONFIDENCE = 0.7;
 const RELEASED_NOTICE_MS = 6000;
 
-type ResolveHandler = (reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer) => Promise<void>;
+type ResolveHandler = (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
 
 interface ReviewGroup {
   listingId: string;
@@ -27,7 +28,9 @@ interface ReviewGroup {
   /** Review deadline while OpenClaw is holding the submission for this review. */
   holdUntil?: string;
   submittedAt?: string;
+  submitted: boolean;
   closed: boolean;
+  submissionStarted: boolean;
   /** Full-page screenshots of the filled application exist (opens the gallery). */
   hasFullScreenshots: boolean;
 }
@@ -38,12 +41,14 @@ export function ApplicationReviewPanel({
   onConfirmAll,
   onOpenApplication,
   onExtend,
+  onCancel,
 }: {
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
   onConfirmAll?: (listingId: string) => Promise<void>;
   onOpenApplication?: (listingId: string) => void;
   onExtend?: (listingId: string) => Promise<void>;
+  onCancel?: (listingId: string, reason: string) => Promise<void>;
 }) {
   // The fold state is remembered so a long queue doesn't push the rest of the
   // page down on every visit (it matters most on mobile).
@@ -68,11 +73,17 @@ export function ApplicationReviewPanel({
     return () => window.clearInterval(timer);
   }, []);
 
-  const groups = React.useMemo(() => buildGroups(applications), [applications]);
+  const groups = React.useMemo(() => buildGroups(applications, now), [applications, now]);
 
   // undefined = follow the default (only the first group is open).
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
   const [released, setReleased] = React.useState<{ listingId: string; label: string } | null>(null);
+  const [cancelled, setCancelled] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!cancelled) return;
+    const timer = window.setTimeout(() => setCancelled(null), RELEASED_NOTICE_MS);
+    return () => window.clearTimeout(timer);
+  }, [cancelled]);
   React.useEffect(() => {
     if (!released) return;
     const timer = window.setTimeout(() => setReleased(null), RELEASED_NOTICE_MS);
@@ -80,7 +91,7 @@ export function ApplicationReviewPanel({
   }, [released]);
 
   const pendingCount = groups.reduce((sum, group) => sum + group.items.length, 0);
-  if (pendingCount === 0 && !released) return null;
+  if (pendingCount === 0 && !released && !cancelled) return null;
 
   const heldCount = groups.filter((group) => group.holdUntil).length;
   const noteReleased = (group: ReviewGroup, resolving: number) => {
@@ -115,6 +126,9 @@ export function ApplicationReviewPanel({
         </button>
       </h3>
       <div id="application-review-items" hidden={collapsed} className="mt-3 space-y-2">
+        {cancelled && (
+          <p role="status" className="flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"><Ban className="h-4 w-4 shrink-0" />Cancelled {cancelled}. Your reason is saved; OpenClaw won’t continue this application.</p>
+        )}
         {released && (
           <p role="status" className="flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
             <Send className="h-4 w-4 shrink-0" />
@@ -143,6 +157,10 @@ export function ApplicationReviewPanel({
             })}
             onOpenApplication={onOpenApplication && (() => onOpenApplication(group.listingId))}
             onExtend={onExtend && (() => onExtend(group.listingId))}
+            onCancel={onCancel && (async (reason) => {
+              await onCancel(group.listingId, reason);
+              setCancelled(`${group.company} · ${group.role}`);
+            })}
           />
         ))}
       </div>
@@ -160,6 +178,7 @@ function ReviewGroupCard({
   onConfirmAll,
   onOpenApplication,
   onExtend,
+  onCancel,
 }: {
   group: ReviewGroup;
   now: number;
@@ -170,9 +189,12 @@ function ReviewGroupCard({
   onConfirmAll?: () => Promise<void>;
   onOpenApplication?: () => void;
   onExtend?: () => Promise<void>;
+  onCancel?: (reason: string) => Promise<void>;
 }) {
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState<{ id: string; message: string } | null>(null);
+  const [cancelling, setCancelling] = React.useState(false);
+  const [cancelReason, setCancelReason] = React.useState('');
   const bodyId = `application-review-group-${group.listingId}`;
   const reviewed = group.total - group.items.length;
 
@@ -237,7 +259,18 @@ function ReviewGroupCard({
               <span className="hidden sm:inline">Full screenshots</span>
             </button>
           )}
-          {onConfirmAll && group.items.length > 1 && (
+          {onCancel && !group.submittedAt && !group.closed && (
+            <button
+              type="button"
+              disabled={busy !== null || group.submissionStarted}
+              title={group.submissionStarted ? 'OpenClaw is completing a submission. Wait for its result before cancelling.' : undefined}
+              onClick={() => { setCancelling(true); onToggle(true); }}
+              className="inline-flex min-h-9 items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40"
+            >
+              <Ban className="h-3.5 w-3.5" /> Cancel application
+            </button>
+          )}
+          {!cancelling && onConfirmAll && group.items.length > 1 && (
             <button
               type="button"
               disabled={busy !== null}
@@ -260,8 +293,30 @@ function ReviewGroupCard({
       >
         <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${(reviewed / group.total) * 100}%` }} />
       </div>
-      {(error?.id === 'all' || error?.id === 'extend') && <p role="alert" className="px-3 pt-2 text-sm text-red-700 dark:text-red-300">{error.message}</p>}
-      {open && (
+      {(error?.id === 'all' || error?.id === 'extend' || error?.id === 'cancel') && <p role="alert" className="px-3 pt-2 text-sm text-red-700 dark:text-red-300">{error.message}</p>}
+      {open && cancelling && (
+        <form id={bodyId} className="space-y-3 border-t border-red-100 bg-red-50/50 px-3 py-3 dark:border-red-950 dark:bg-red-950/20" onSubmit={async (event) => {
+          event.preventDefault();
+          if (!cancelReason.trim() || !onCancel || group.submissionStarted) return;
+          if (await run('cancel', () => onCancel(cancelReason.trim()))) setCancelling(false);
+        }}>
+          <div>
+            <label htmlFor={`${bodyId}-cancel-reason`} className="font-semibold text-slate-900 dark:text-slate-100">Why should OpenClaw cancel this application?</label>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">Stops this application and saves your reason for OpenClaw. These answers won’t be added to your answer bank.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {['Outside the US', 'PhD only', 'Not a fit'].map((reason) => (
+              <button key={reason} type="button" disabled={busy !== null} onClick={() => setCancelReason(reason)} aria-pressed={cancelReason === reason} className={`min-h-9 rounded-full border px-3 text-xs font-medium disabled:opacity-50 ${cancelReason === reason ? 'border-red-400 bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-200' : 'border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'}`}>{reason}</button>
+            ))}
+          </div>
+          <textarea id={`${bodyId}-cancel-reason`} required maxLength={2000} rows={2} autoFocus value={cancelReason} disabled={busy !== null} onChange={(event) => setCancelReason(event.target.value)} placeholder="Choose a reason above or explain in your own words…" className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" />
+          <div className="flex gap-2">
+            <button type="submit" disabled={busy !== null || group.submissionStarted || !cancelReason.trim()} className="min-h-9 rounded bg-red-600 px-3 py-1 font-semibold text-white disabled:opacity-50">{busy === 'cancel' ? 'Cancelling…' : 'Cancel application'}</button>
+            <button type="button" disabled={busy !== null} onClick={() => { setCancelling(false); setError(null); }} className="min-h-9 rounded px-3 py-1 font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">Keep application</button>
+          </div>
+        </form>
+      )}
+      {open && !cancelling && (
         <ul id={bodyId} className="divide-y divide-violet-100 dark:divide-violet-900/50">
           {group.items.map((item) => (
             <ReviewRow
@@ -274,6 +329,8 @@ function ReviewGroupCard({
               error={error?.id === item.id ? error.message : null}
               onConfirm={() => run(item.id, () => onResolve!(item.id, 'confirm'))}
               onCorrect={(answer) => run(item.id, () => onResolve!(item.id, 'correct', answer))}
+              onLeaveBlank={!group.submitted && !group.submittedAt && !group.closed && !group.submissionStarted
+                ? () => run(item.id, () => onResolve!(item.id, 'leave-blank')) : undefined}
             />
           ))}
         </ul>
@@ -326,6 +383,7 @@ function ReviewRow({
   error,
   onConfirm,
   onCorrect,
+  onLeaveBlank,
 }: {
   listingId: string;
   item: JobApplicationReviewItem;
@@ -335,6 +393,7 @@ function ReviewRow({
   error: string | null;
   onConfirm: () => Promise<boolean>;
   onCorrect: (answer: JobApplicationAnswer) => Promise<boolean>;
+  onLeaveBlank?: () => Promise<boolean>;
 }) {
   const [draft, setDraft] = React.useState<JobApplicationAnswer | null>(null);
   const used = formatAnswer(item.answerUsed, question);
@@ -344,6 +403,18 @@ function ReviewRow({
     item.clarificationPrompt.endsWith('What should I use in future?');
   const lowConfidence = item.confidence < LOW_CONFIDENCE;
   const draftEmpty = draft === null || (Array.isArray(draft) ? draft.length === 0 : !draft.trim());
+
+  const leaveBlankButton = question && !question.required && question.kind !== 'action' && onLeaveBlank ? (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={async () => { if (await onLeaveBlank()) setDraft(null); }}
+      title="Tell OpenClaw to clear this optional field and leave it empty"
+      className="min-h-9 rounded border border-slate-300 px-3 py-1 font-medium text-slate-700 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+    >
+      Leave blank
+    </button>
+  ) : null;
 
   const screenshot = question?.answerScreenshot;
   // The capture predates any correction; say so rather than imply it is current.
@@ -382,7 +453,7 @@ function ReviewRow({
       )}
       <div className="min-w-0 sm:col-start-1 sm:row-start-2">
         {draft === null ? (
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
               disabled={disabled}
@@ -399,6 +470,7 @@ function ReviewRow({
             >
               <Pencil className="h-3.5 w-3.5" /> Correct
             </button>
+            {leaveBlankButton}
           </div>
         ) : (
           <form
@@ -410,7 +482,7 @@ function ReviewRow({
             }}
           >
             <CorrectionEditor question={question} value={draft} onChange={setDraft} label={item.question} />
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
                 disabled={draftEmpty || disabled}
@@ -418,6 +490,7 @@ function ReviewRow({
               >
                 {busy ? 'Saving…' : 'Save correction'}
               </button>
+              {leaveBlankButton}
               <button
                 type="button"
                 disabled={busy}
@@ -529,7 +602,7 @@ function CorrectionEditor({
     : <input aria-label={label} value={text} onChange={(event) => onChange(event.target.value)} className={field} autoFocus />;
 }
 
-function buildGroups(applications: JobApplicationsViewData | null): ReviewGroup[] {
+function buildGroups(applications: JobApplicationsViewData | null, now: number): ReviewGroup[] {
   const byListing = new Map<string, ReviewGroup>();
   for (const item of applications?.reviewItems ?? []) {
     let group = byListing.get(item.listingId);
@@ -543,7 +616,9 @@ function buildGroups(applications: JobApplicationsViewData | null): ReviewGroup[
         total: 0,
         holdUntil: application?.reviewHoldSince ? application.autoSubmitEligibleAt : undefined,
         submittedAt: application?.submittedAt ?? item.submittedAt,
+        submitted: application?.status === 'submitted',
         closed: application?.status === 'closed',
+        submissionStarted: isApplicationSubmissionInFlight(application, now),
         hasFullScreenshots: (application?.screenshotCapture?.screenshots.length ?? 0) > 0,
       };
       byListing.set(item.listingId, group);

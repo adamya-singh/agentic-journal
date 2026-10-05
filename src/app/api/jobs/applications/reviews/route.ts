@@ -1,7 +1,11 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { isApplicationSubmissionInFlight } from '@/lib/job-application-cancellation';
 import {
   findAnswerBankMatch,
+  failApplicationScreenshotCapture,
+  releaseApplicationLease,
+  setApplicationStatus,
   mutateJobApplicationsStore,
   normalizePrompt,
   releaseReviewHoldIfComplete,
@@ -17,12 +21,17 @@ export const runtime = 'nodejs';
 const ReviewSchema = z.union([
   z.object({
     reviewId: z.string().min(1),
-    action: z.enum(['confirm', 'correct']),
+    action: z.enum(['confirm', 'correct', 'leave-blank']),
     answer: z.union([z.string(), z.array(z.string())]).optional(),
   }),
   z.object({
     listingId: z.string().min(1),
     action: z.literal('confirm-all'),
+  }),
+  z.object({
+    listingId: z.string().min(1),
+    action: z.literal('cancel-application'),
+    reason: z.string().trim().min(1).max(2000),
   }),
 ]);
 
@@ -37,6 +46,32 @@ export async function POST(request: NextRequest) {
     }
     const input = parsed.data;
     const result = await mutateJobApplicationsStore<JobReviewResult & { released: boolean }>((store) => {
+      if (input.action === 'cancel-application') {
+        const application = store.applications[input.listingId];
+        if (!application) throw new Error('Application not found');
+        if (application.status === 'submitted' || application.submittedAt || isApplicationSubmissionInFlight(application)) {
+          throw new Error('Submission has already started; this application cannot be cancelled');
+        }
+        if (application.status === 'closed') throw new Error('Application has already been closed');
+        const now = new Date().toISOString();
+        if (application.incompleteScreenshotCapture) {
+          failApplicationScreenshotCapture(application, application.incompleteScreenshotCapture.id, `Cancelled by you: ${input.reason}`);
+        }
+        setApplicationStatus(application, 'closed', now);
+        application.closedAt = now;
+        application.cancelledAt = now;
+        application.closedReason = input.reason;
+        delete application.nextRetryAt;
+        delete application.resumeRequestedAt;
+        delete application.progress;
+        releaseApplicationLease(application);
+        const reviews = store.reviewItems.filter((item) => item.listingId === input.listingId && item.status === 'pending');
+        for (const item of reviews) {
+          item.status = 'dismissed';
+          item.resolvedAt = now;
+        }
+        return { reviews, application, answerBank: store.answerBank, bankMatches: [], released: false };
+      }
       const items = input.action === 'confirm-all'
         ? store.reviewItems.filter((candidate) => candidate.listingId === input.listingId && candidate.status === 'pending')
         : store.reviewItems.filter((candidate) => candidate.id === input.reviewId);
@@ -48,6 +83,25 @@ export async function POST(request: NextRequest) {
         const application = store.applications[item.listingId];
         const question = application?.questions.find((candidate) => candidate.id === item.questionId);
         if (!application || !question) throw new Error('Review question not found');
+        if (input.action === 'leave-blank') {
+          if (question.required || question.kind === 'action') {
+            throw new ReviewAnswerError('Only optional form fields can be left blank');
+          }
+          if (application.status === 'submitted' || application.submittedAt || application.status === 'closed'
+            || isApplicationSubmissionInFlight(application)) {
+            throw new Error('Submission has already started or the application is already closed; this field cannot be changed');
+          }
+          delete question.answer;
+          delete question.suggestion;
+          delete question.eligibilityReviewedAnswer;
+          question.resolution = 'skipped';
+          question.answeredAt = now;
+          application.updatedAt = now;
+          item.status = 'left-blank';
+          item.resolvedAt = now;
+          // An explicit blank is local to this application, never a reusable answer.
+          continue;
+        }
         let answer: JobApplicationAnswer = item.answerUsed;
         if (input.action === 'correct') {
           answer = normalizeCorrection(question, input.answer!);
@@ -66,6 +120,7 @@ export async function POST(request: NextRequest) {
           }
           item.correctedAnswer = answer;
         }
+        question.eligibilityReviewedAnswer = answer;
         upsertConfirmedAnswer({ store, listingId: item.listingId, question, answer, confirmedAt: now });
         item.status = input.action === 'correct' ? 'corrected' : 'confirmed';
         item.resolvedAt = now;

@@ -165,6 +165,8 @@ export interface JobApplicationQuestion {
   discoveredAt: string;
   answeredAt?: string;
   generatedAnswer?: JobApplicationGeneratedAnswer;
+  /** Set only by the human answer/review endpoints, never by a worker update. */
+  eligibilityReviewedAnswer?: JobApplicationAnswer;
   /** Element screenshot of this question with its answer entered on the live form. */
   answerScreenshot?: JobApplicationQuestionScreenshot;
   /** View-time enrichment (never persisted): a matching saved answer from the bank. */
@@ -348,6 +350,8 @@ export interface JobApplicationRecord {
   submittedAt?: string;
   closedAt?: string;
   closedReason?: string;
+  /** Human cancellation; closedReason records the explanation for OpenClaw. */
+  cancelledAt?: string;
   submissionEvidence?: JobApplicationSubmissionEvidence;
   awaitingInputSince?: string;
   /** When autopilot may draft the remaining answers (awaitingInputSince + 24h). */
@@ -381,7 +385,7 @@ export interface JobApplicationReviewItem {
   role: string;
   createdAt: string;
   submittedAt?: string;
-  status: 'pending' | 'confirmed' | 'corrected';
+  status: 'pending' | 'confirmed' | 'corrected' | 'left-blank' | 'dismissed';
   correctedAnswer?: JobApplicationAnswer;
   resolvedAt?: string;
 }

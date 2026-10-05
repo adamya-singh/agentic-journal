@@ -975,6 +975,73 @@ describe('job application state', () => {
     });
   }
 
+  test('leaving an optional draft blank persists through rediscovery and releases the final review', async () => {
+    await seedDraft('blank-lease');
+    let data = store.readJobApplicationsStore();
+    const optionalReview = data.reviewItems.find((item) => item.listingId === 'saved-new' && item.questionId === 'why')!;
+    const requiredReview = data.reviewItems.find((item) => item.listingId === 'saved-new' && item.questionId === 'phone-type')!;
+    await store.mutateJobApplicationsStore((mutable) => {
+      const question = mutable.applications['saved-new'].questions.find((q) => q.id === 'why')!;
+      question.eligibilityReviewedAnswer = 'I like it.';
+      question.suggestion = { answer: 'Old suggestion', confidence: 1, sourceAnswerId: 'old' };
+    });
+    const response = await postReview({ reviewId: optionalReview.id, action: 'leave-blank' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.reviews[0].status, 'left-blank');
+    assert.deepEqual(body.answerBank, []);
+    data = store.readJobApplicationsStore();
+    const application = data.applications['saved-new'];
+    const question = application.questions.find((q) => q.id === 'why')!;
+    assert.equal(question.resolution, 'skipped');
+    assert.equal(question.answer, undefined);
+    assert.equal(question.suggestion, undefined);
+    assert.equal(question.eligibilityReviewedAnswer, undefined);
+    assert.ok(question.answeredAt);
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(data.reviewItems.find((item) => item.id === optionalReview.id)!.status, 'left-blank');
+    const merged = store.mergeApplicationQuestions(application.questions, [{ ...question, resolution: 'pending', answer: 'Autofilled again' }]);
+    assert.equal(merged.find((q) => q.id === 'why')!.resolution, 'skipped');
+    assert.equal(merged.find((q) => q.id === 'why')!.answer, undefined);
+    assert.equal((await postReview({ reviewId: requiredReview.id, action: 'confirm' })).status, 200);
+    data = store.readJobApplicationsStore();
+    assert.equal(data.applications['saved-new'].status, 'in-progress');
+    assert.ok(data.applications['saved-new'].resumeRequestedAt);
+    assert.equal(data.applications['saved-new'].questions.find((q) => q.id === 'why')!.resolution, 'skipped');
+    assert.equal(data.answerBank.length, 1);
+    // A blank can also be the final review that releases a hold.
+    await seedDraft('final-blank-lease');
+    data = store.readJobApplicationsStore();
+    const reviews = data.reviewItems.filter((item) => item.listingId === 'saved-new');
+    await postReview({ reviewId: reviews.find((item) => item.questionId === 'phone-type')!.id, action: 'confirm' });
+    const finalBlank = await postReview({ reviewId: reviews.find((item) => item.questionId === 'why')!.id, action: 'leave-blank' });
+    assert.equal(finalBlank.status, 200);
+    assert.equal((await finalBlank.json()).application.status, 'in-progress');
+  });
+
+  test('leave blank rejects required fields and finished or actively submitting applications atomically', async () => {
+    await seedDraft('required-blank-lease');
+    let data = store.readJobApplicationsStore();
+    const required = data.reviewItems.find((item) => item.listingId === 'saved-new' && item.questionId === 'phone-type')!;
+    const before = JSON.stringify(data);
+    assert.equal((await postReview({ reviewId: required.id, action: 'leave-blank' })).status, 400);
+    assert.equal(JSON.stringify(store.readJobApplicationsStore()), before);
+    for (const overrides of [
+      { status: 'submitted', submittedAt: now },
+      { status: 'closed' },
+      { submissionAttemptedAt: new Date().toISOString(),
+        lease: { token: 'live', claimedAt: '2020-01-01T00:00:00.000Z', expiresAt: '2100-01-01T00:00:00.000Z' } },
+    ]) {
+      await seedDraft('blocked-blank-lease');
+      await store.mutateJobApplicationsStore((mutable) => Object.assign(mutable.applications['saved-new'], overrides));
+      data = store.readJobApplicationsStore();
+      const review = data.reviewItems.find((item) => item.listingId === 'saved-new' && item.questionId === 'why')!;
+      const snapshot = JSON.stringify(data);
+      assert.equal((await postReview({ reviewId: review.id, action: 'leave-blank' })).status, 409);
+      assert.equal(JSON.stringify(store.readJobApplicationsStore()), snapshot);
+    }
+  });
+
   test('holds a fully drafted application for review and blocks submission until the deadline', async () => {
     const before = Date.now();
     const response = await seedDraft('hold-lease');
@@ -1064,6 +1131,69 @@ describe('job application state', () => {
     assert.equal(data.reviewItems.some((item) => item.listingId === 'saved-new' && item.status === 'pending'), false);
     assert.ok(data.applications['saved-new'].resumeRequestedAt);
     assert.equal((await postReview({ listingId: 'saved-new', action: 'confirm-all' })).status, 409);
+  });
+
+  test('cancelling a review records the reason, dismisses drafts, and invalidates worker updates', async () => {
+    await seedDraft('cancel-lease');
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-new'];
+      application.lease = { token: 'cancel-lease', claimedAt: now, expiresAt: '2099-01-01T00:00:00.000Z' };
+      application.submissionAttemptedAt = '2026-07-19T12:00:00.000Z';
+      application.nextRetryAt = now;
+      application.resumeRequestedAt = now;
+      store.startApplicationScreenshotCapture(application);
+    });
+    const bankBefore = store.readJobApplicationsStore().answerBank;
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: '  ' })).status, 400);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].status, 'awaiting-user-input');
+    const response = await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: '  Outside the US — Canada only  ' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.reviews.length, 2);
+    assert.ok(body.reviews.every((item: { status: string }) => item.status === 'dismissed'));
+    const saved = store.readJobApplicationsStore();
+    const application = saved.applications['saved-new'];
+    assert.equal(application.status, 'closed');
+    assert.equal(application.closedReason, 'Outside the US — Canada only');
+    assert.ok(application.cancelledAt);
+    assert.equal(application.statusHistory.at(-1)?.status, 'closed');
+    assert.equal(application.lease, undefined);
+    assert.equal(application.nextRetryAt, undefined);
+    assert.equal(application.resumeRequestedAt, undefined);
+    assert.equal(application.reviewHoldSince, undefined);
+    assert.equal(application.autoSubmitEligibleAt, undefined);
+    assert.ok(application.incompleteScreenshotCapture?.failedAt);
+    assert.equal(store.isApplicationClaimable(application, new Date('2099-01-01')), false);
+    assert.deepEqual(saved.answerBank, bankBefore);
+    assert.ok(saved.reviewItems.filter((item) => item.listingId === 'saved-new').every((item) => item.status === 'dismissed'));
+    assert.equal((await postUpdate({ listingId: 'saved-new', leaseToken: 'cancel-lease', action: 'submission-attempted' })).status, 409);
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'confirm-all' })).status, 409);
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: 'PhD only' })).status, 409);
+  });
+
+  test('a stalled historical submission attempt without a lease can be cancelled', async () => {
+    await seedDraft('historical-attempt');
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-new'];
+      application.submissionAttemptedAt = '2026-09-19T01:40:50.549Z';
+      delete application.lease;
+    });
+    const response = await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: 'Outside the US' });
+    assert.equal(response.status, 200);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].closedReason, 'Outside the US');
+  });
+
+  test('cancellation rejects submitted applications and applications whose submission started', async () => {
+    await seedDraft('cannot-cancel');
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-new'];
+      application.submissionAttemptedAt = now;
+      application.lease = { token: 'cannot-cancel', claimedAt: now, expiresAt: '2099-01-01T00:00:00.000Z' };
+    });
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: 'PhD only' })).status, 409);
+    await store.mutateJobApplicationsStore((data) => { data.applications['saved-new'].status = 'submitted'; });
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'cancel-application', reason: 'PhD only' })).status, 409);
+    assert.equal(store.readJobApplicationsStore().applications['saved-new'].cancelledAt, undefined);
   });
 
   test('claiming after the review deadline clears the hold but keeps the deadline', async () => {

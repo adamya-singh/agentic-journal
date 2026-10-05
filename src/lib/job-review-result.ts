@@ -24,7 +24,7 @@ async function postJobReview(body: Record<string, unknown>, request: typeof fetc
 }
 
 export function saveJobReview(
-  reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer,
+  reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer,
   request: typeof fetch = fetch,
 ): Promise<JobReviewResult> {
   return postJobReview({ reviewId, action, ...(answer !== undefined ? { answer } : {}) }, request);
@@ -33,6 +33,10 @@ export function saveJobReview(
 /** Confirms every pending review of one application in a single transaction. */
 export function saveJobReviewConfirmAll(listingId: string, request: typeof fetch = fetch): Promise<JobReviewResult> {
   return postJobReview({ listingId, action: 'confirm-all' }, request);
+}
+
+export function saveJobApplicationCancellation(listingId: string, reason: string, request: typeof fetch = fetch): Promise<JobReviewResult> {
+  return postJobReview({ listingId, action: 'cancel-application', reason }, request);
 }
 
 export function applyJobReviewResult(current: JobApplicationsViewData, result: JobReviewResult): JobApplicationsViewData {

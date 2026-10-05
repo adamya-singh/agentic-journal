@@ -1058,6 +1058,7 @@ export function mergeApplicationQuestions(
         resolution: existing.resolution,
         answeredAt: existing.answeredAt,
         generatedAnswer: existing.generatedAnswer,
+        eligibilityReviewedAnswer: existing.eligibilityReviewedAnswer,
         ...(existing.answerScreenshot ? { answerScreenshot: existing.answerScreenshot } : {}),
       };
     }
@@ -1088,7 +1089,7 @@ function normalizeReviewItem(value: unknown): JobApplicationReviewItem[] {
     role: normalizeString(value.role),
     createdAt: normalizeString(value.createdAt),
     status:
-      status === 'confirmed' || status === 'corrected' ? status : 'pending',
+      status === 'confirmed' || status === 'corrected' || status === 'left-blank' || status === 'dismissed' ? status : 'pending',
   };
   if (
     !item.id || !item.listingId || !item.questionId || !item.question ||
@@ -1294,6 +1295,7 @@ function normalizeApplicationRecord(
   if (normalizeString(value.submissionAttemptedAt))
     record.submissionAttemptedAt = normalizeString(value.submissionAttemptedAt);
   if (normalizeString(value.submittedAt)) record.submittedAt = normalizeString(value.submittedAt);
+  if (normalizeString(value.cancelledAt)) record.cancelledAt = normalizeString(value.cancelledAt);
   if (normalizeString(value.closedAt)) record.closedAt = normalizeString(value.closedAt);
   if (normalizeString(value.closedReason))
     record.closedReason = normalizeString(value.closedReason);
@@ -1527,6 +1529,8 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
   if (value.multiline === true) question.multiline = true;
   const answer = normalizeAnswer(value.answer);
   if (answer !== undefined) question.answer = answer;
+  const reviewedAnswer = normalizeAnswer(value.eligibilityReviewedAnswer);
+  if (reviewedAnswer !== undefined) question.eligibilityReviewedAnswer = reviewedAnswer;
   if (normalizeString(value.answeredAt)) question.answeredAt = normalizeString(value.answeredAt);
   if (isRecord(value.answerScreenshot)) {
     const shot = value.answerScreenshot;

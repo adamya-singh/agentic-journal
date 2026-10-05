@@ -20,6 +20,7 @@ export default function JobsPage() {
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
     confirmAllJobApplicationReviews,
+    cancelJobApplication,
     updateJobEmailUpdates,
     extendJobApplicationAutopilot,
   } = useJobBoardState({ refetchOnFocus: true, pollWhileActive: true });
@@ -63,6 +64,7 @@ export default function JobsPage() {
           onApplicationSave={saveJobApplicationAnswers}
           onApplicationReview={resolveJobApplicationReview}
           onApplicationReviewConfirmAll={confirmAllJobApplicationReviews}
+          onApplicationCancel={cancelJobApplication}
           onEmailUpdate={updateJobEmailUpdates}
           onExtendAutopilot={extendJobApplicationAutopilot}
         />

@@ -41,7 +41,8 @@ interface JobListingsProps {
     application?: JobApplicationRecord;
     worker?: { queued?: boolean; enabled?: boolean };
   } | void>;
-  onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct', answer?: JobApplicationAnswer) => Promise<void>;
+  onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
+  onApplicationCancel?: (listingId: string, reason: string) => Promise<void>;
   onApplicationReviewConfirmAll?: (listingId: string) => Promise<void>;
   onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
   /** Pushes an application's next autopilot date (draft or auto-submit) back by a day. */
@@ -133,6 +134,7 @@ export function JobListings({
   onApplicationSave,
   onApplicationReview,
   onApplicationReviewConfirmAll,
+  onApplicationCancel,
   onEmailUpdate,
   onExtendAutopilot,
 }: JobListingsProps) {
@@ -328,6 +330,7 @@ export function JobListings({
             applications={applications ?? null}
             onResolve={onApplicationReview}
             onConfirmAll={onApplicationReviewConfirmAll}
+            onCancel={onApplicationCancel}
             onExtend={onExtendAutopilot}
             onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
           />
@@ -860,7 +863,7 @@ function ApplicationStatusButton({
     application.employerStage && application.employerStage !== 'received'
       ? application.employerStage
       : undefined;
-  const label = stage
+  const label = application.cancelledAt ? 'Cancelled' : stage
     ? JOB_EMPLOYER_STAGE_LABELS[stage]
     : application.status === 'awaiting-user-input' && application.reviewHoldSince && pendingCount === 0
       ? 'Review answers'

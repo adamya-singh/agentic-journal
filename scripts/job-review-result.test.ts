@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll, type JobReviewResult } from '../src/lib/job-review-result';
+import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll, saveJobApplicationCancellation, type JobReviewResult } from '../src/lib/job-review-result';
 import type { JobApplicationsViewData } from '../src/lib/types';
 
 test('review waits for successful save and makes exactly one request', async () => {
@@ -81,4 +81,33 @@ test('a finished review swaps in the released application and keeps pending sugg
   assert.equal(next.applications.app.questions[1].answer, 'Yes');
   assert.equal(next.applications.unrelated, current.applications.unrelated);
   assert.equal(current.applications.app.status, 'awaiting-user-input');
+});
+
+test('cancellation saves one listing-scoped request with its reason and propagates errors', async () => {
+  const bodies: unknown[] = [];
+  const request = (async (_url, options) => {
+    bodies.push(JSON.parse(options!.body as string));
+    return Response.json({ success: true, reviews: [], answerBank: [], bankMatches: [] });
+  }) as typeof fetch;
+  await saveJobApplicationCancellation('listing', 'PhD only', request);
+  assert.deepEqual(bodies, [{ listingId: 'listing', action: 'cancel-application', reason: 'PhD only' }]);
+  await assert.rejects(saveJobApplicationCancellation('listing', 'PhD only',
+    (async () => Response.json({ success: false, error: 'Submission has already started' }, { status: 409 })) as typeof fetch), /already started/);
+});
+
+
+test('leave blank posts an explicit decision without an answer and applies the committed skip', async () => {
+  const current = { reviewItems: [{ id: 'review', status: 'pending' }], answerBank: [],
+    applications: { app: { listingId: 'app', questions: [{ id: 'question', answer: 'Old draft', resolution: 'auto-resolved' }] } },
+  } as unknown as JobApplicationsViewData;
+  const request = (async (_url, options) => {
+    assert.deepEqual(JSON.parse(options!.body as string), { reviewId: 'review', action: 'leave-blank' });
+    return Response.json({ success: true, reviews: [{ id: 'review', status: 'left-blank' }], answerBank: [], bankMatches: [],
+      application: { listingId: 'app', questions: [{ id: 'question', resolution: 'skipped' }] } });
+  }) as typeof fetch;
+  const next = applyJobReviewResult(current, await saveJobReview('review', 'leave-blank', undefined, request));
+  assert.equal(next.reviewItems[0].status, 'left-blank');
+  assert.equal(next.applications.app.questions[0].resolution, 'skipped');
+  assert.equal(next.applications.app.questions[0].answer, undefined);
+  assert.equal(current.applications.app.questions[0].answer, 'Old draft');
 });
