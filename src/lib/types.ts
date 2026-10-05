@@ -237,6 +237,7 @@ export interface JobEmployerUpdate {
   assessmentType?: string;
   provider?: string;
   deadline?: string;
+  deadlineWindow?: import('./assessment-deadline').AssessmentDeadlineWindow;
   interviewRound?: string;
   outcomeReason?: string;
   supportingParaphrase?: string;
@@ -262,7 +263,7 @@ export interface JobEmployerUpdate {
 /** An email OpenClaw could not confidently tie to one posting and stage. */
 export interface JobEmailUpdateCandidate {
   enrichedAt?: string;
-  details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation' | 'assessmentUrl'>>;
+  details?: Partial<Pick<JobEmployerUpdate, 'eventKind' | 'assessmentType' | 'provider' | 'deadline' | 'deadlineWindow' | 'interviewRound' | 'outcomeReason' | 'supportingParaphrase' | 'automation' | 'assessmentUrl'>>;
   id: string;
   gmailMessageId: string;
   emailMessageIds?: string[];
@@ -359,7 +360,7 @@ export interface JobApplicationRecord {
   employerStage?: JobEmployerStage;
   employerUpdates?: JobEmployerUpdate[];
   /** The journal task created when the employer sent an online assessment. */
-  assessmentTask?: { taskId: string; createdAt: string };
+  assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string };
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;

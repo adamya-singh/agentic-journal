@@ -204,14 +204,14 @@ export async function POST(request: NextRequest) {
           for (const application of Object.values(store.applications)) {
             for (const event of application.employerUpdates ?? []) {
               if (emailMessageIds(event).includes(item.gmailMessageId)) {
-                Object.assign(event, eventDetails(item), { enrichedAt: now }, item.gmailThreadId ? { gmailThreadId: item.gmailThreadId } : {});
+                Object.assign(event, eventDetails(item, event.receivedAt), { enrichedAt: now }, item.gmailThreadId ? { gmailThreadId: item.gmailThreadId } : {});
                 enriched.add(application);
               }
             }
           }
           for (const candidate of state.pending) {
             if (emailMessageIds(candidate).includes(item.gmailMessageId)) {
-              candidate.details = { ...candidate.details, ...eventDetails(item) };
+              candidate.details = { ...candidate.details, ...eventDetails(item, candidate.receivedAt) };
               candidate.enrichedAt = now;
               if (item.gmailThreadId) candidate.gmailThreadId = item.gmailThreadId;
             }

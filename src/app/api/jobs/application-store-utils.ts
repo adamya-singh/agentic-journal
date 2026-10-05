@@ -1374,7 +1374,9 @@ function normalizeApplicationRecord(
   if (isRecord(value.assessmentTask)) {
     const taskId = normalizeString(value.assessmentTask.taskId);
     const createdAt = normalizeString(value.assessmentTask.createdAt);
-    if (taskId && createdAt) record.assessmentTask = { taskId, createdAt };
+    if (taskId && createdAt) record.assessmentTask = { taskId, createdAt,
+      ...(normalizeString(value.assessmentTask.emailDueDate) ? { emailDueDate: normalizeString(value.assessmentTask.emailDueDate) } : {}),
+    };
   }
   if (isRecord(value.progress)) {
     const step = normalizeString(value.progress.step);

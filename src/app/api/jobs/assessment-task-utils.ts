@@ -18,13 +18,14 @@ export const ASSESSMENT_NOTES_MARKER =
 
 type AssessmentListing = Pick<JobListing, 'id' | 'company' | 'positionTitle' | 'link'>;
 
-const pad = (value: number) => String(value).padStart(2, '0');
 // Task due dates are local calendar days, like everything else in the journal.
-const localDate = (date: Date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+const localDate = (date: Date) => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(date);
 const displayTime = (date: Date) =>
   date.toLocaleString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short', timeZone: 'America/New_York',
   });
 const validDate = (value: string | undefined) => {
   const date = value ? new Date(value) : undefined;
@@ -67,12 +68,15 @@ export function buildAssessmentNotes(listing: AssessmentListing, application: Jo
   const assessmentType = latest(emails, 'assessmentType');
   const provider = latest(emails, 'provider');
   const deadline = validDate(latest(emails, 'deadline'));
+  const window = emails.findLast(email => email.deadline)?.deadlineWindow;
   const assessmentUrl = latest(emails, 'assessmentUrl');
   const invitation = emails[0];
 
   const facts = [
     assessmentUrl ? `- **Start the assessment:** ${link('open the OA', assessmentUrl)}` : '- **Start the assessment:** use the link in the invitation email',
-    `- **Deadline:** ${deadline ? displayTime(deadline) : 'not stated in the email'}`,
+    `- **Deadline:** ${deadline ? window && window.unit !== 'hours'
+      ? `${localDate(deadline)} (${window.count} ${window.unit.replace('-', ' ')} from invitation; no clock time stated${window.unit === 'business-days' ? '; weekends excluded' : ''})`
+      : displayTime(deadline) : 'not stated in the email'}`,
     ...(assessmentType ? [`- **Type:** ${assessmentType}`] : []),
     ...(provider ? [`- **Platform:** ${provider}`] : []),
     `- **Role:** ${listing.positionTitle} at ${listing.company}`,
@@ -153,7 +157,7 @@ export function ensureAssessmentTask(
   if (task.dueDate) handleDueDateSetup(task.dueDate, LIST_TYPE, task);
   addTaskToCurrent(LIST_TYPE, task.id, 0);
   refreshActiveDailySnapshots();
-  application.assessmentTask = { taskId: task.id, createdAt: now };
+  application.assessmentTask = { taskId: task.id, createdAt: now, ...(task.dueDate ? { emailDueDate: task.dueDate } : {}) };
   return true;
 }
 
@@ -168,7 +172,12 @@ export function syncAssessmentTask(application: JobApplicationRecord, listing: A
   if (!task) return false;
   const notes = mergeNotes(buildAssessmentNotes(listing, application), task.notesMarkdown);
   const deadline = validDate(latest(assessmentEmails(application), 'deadline'));
-  const dueDate = task.dueDate ?? (deadline ? localDate(deadline) : undefined);
+  const emailDueDate = deadline ? localDate(deadline) : undefined;
+  const managed = !task.dueDate || task.dueDate === application.assessmentTask?.emailDueDate ||
+    (!application.assessmentTask?.emailDueDate && task.dueDate === emailDueDate &&
+      !!task.notesMarkdown?.includes(ASSESSMENT_NOTES_MARKER));
+  const dueDate = managed ? emailDueDate ?? task.dueDate : task.dueDate;
+  if (managed && emailDueDate && application.assessmentTask) application.assessmentTask.emailDueDate = emailDueDate;
   if (notes === task.notesMarkdown && dueDate === task.dueDate) return false;
   const previous = { ...task };
   task.notesMarkdown = notes;

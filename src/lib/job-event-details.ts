@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolveAssessmentDeadline } from './assessment-deadline';
 const safeText = z
   .string()
   .trim()
@@ -12,6 +13,13 @@ export const EventDetailsSchema = z.object({
   assessmentType: safeText.optional(),
   provider: safeText.optional(),
   deadline: z.string().datetime({ offset: true }).optional(),
+  deadlineWindow: z.object({
+    count: z.number().int().min(1).max(365),
+    unit: z.enum(['business-days', 'calendar-days', 'hours']),
+    timeZone: z.string().refine(zone => {
+      try { new Intl.DateTimeFormat('en', { timeZone: zone }); return true; } catch { return false; }
+    }, 'Invalid deadline timezone').optional(),
+  }).optional(),
   interviewRound: safeText.optional(),
   outcomeReason: safeText.optional(),
   supportingParaphrase: safeText.optional(),
@@ -27,7 +35,13 @@ export const EventDetailsSchema = z.object({
     .refine((s) => /^https?:\/\//.test(s), 'The assessment link must be http or https')
     .optional(),
 });
-export function eventDetails(value: unknown) {
+export function eventDetails(value: unknown, receivedAt?: string) {
   const result = EventDetailsSchema.safeParse(value);
-  return result.success ? result.data : {};
+  if (!result.success) return {};
+  const details = result.data;
+  const origin = receivedAt ?? (value && typeof value === 'object' && 'receivedAt' in value ? String(value.receivedAt) : undefined);
+  if (!details.deadline && details.deadlineWindow && origin) {
+    details.deadline = resolveAssessmentDeadline(origin, details.deadlineWindow);
+  }
+  return details;
 }

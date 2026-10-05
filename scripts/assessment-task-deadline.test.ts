@@ -1,0 +1,34 @@
+import { test, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import type { JobApplicationRecord, JobListing } from '../src/lib/types';
+import { eventDetails } from '../src/lib/job-event-details';
+const root = mkdtempSync(path.join(tmpdir(), 'oa-deadline-task-'));
+process.env.BACKEND_DATA_DIR = root;
+after(() => rmSync(root, { recursive: true, force: true }));
+test('relative email deadline reaches the task and later updates preserve user edits', async () => {
+  const { ensureAssessmentTask, syncAssessmentTask } = await import('../src/app/api/jobs/assessment-task-utils');
+  const { readGeneralTasks, writeGeneralTasks } = await import('../src/app/api/tasks/today/today-store-utils');
+  const receivedAt = '2026-10-04T17:38:13Z';
+  const invitation = { id: 'event', source: 'email', stage: 'assessment', receivedAt, appliedAt: '2026-10-05T18:00:00Z', ...eventDetails({ deadlineWindow: { count: 5, unit: 'business-days' } }, receivedAt) };
+  const application = { listingId: 'confido', employerStage: 'assessment', employerUpdates: [invitation] } as JobApplicationRecord;
+  const listing = { id: 'confido', company: 'Confido', positionTitle: 'New Grad SWE', link: 'https://example.com/job' } as JobListing;
+  ensureAssessmentTask(application, listing, '2026-10-05T18:00:00Z');
+  const read = () => readGeneralTasks('have-to-do').tasks.find(t => t.id === application.assessmentTask!.taskId)!;
+  assert.equal(read().dueDate, '2026-10-09');
+  // Existing tasks predate emailDueDate metadata; adopt a matching generated date.
+  delete application.assessmentTask!.emailDueDate;
+  syncAssessmentTask(application, listing);
+  assert.equal(application.assessmentTask!.emailDueDate, '2026-10-09');
+  assert.match(read().notesMarkdown!, /5 business days from invitation; no clock time stated/);
+  application.employerUpdates!.push({ ...application.employerUpdates![0], id: 'reminder', stage: null, eventKind: 'assessment-reminder', receivedAt: '2026-10-06T12:00:00Z', deadlineWindow: undefined, deadline: '2026-10-13T03:59:59Z' });
+  syncAssessmentTask(application, listing);
+  assert.equal(read().dueDate, '2026-10-12');
+  const general = readGeneralTasks('have-to-do');
+  general.tasks.find(t => t.id === application.assessmentTask!.taskId)!.dueDate = '2026-10-07';
+  writeGeneralTasks(general, 'have-to-do');
+  syncAssessmentTask(application, listing);
+  assert.equal(read().dueDate, '2026-10-07');
+});

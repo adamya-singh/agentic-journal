@@ -200,7 +200,7 @@ function normalizeCandidate(value: unknown): JobEmailUpdateCandidate[] {
   const createdAt = text(value.createdAt);
   if (!id || !gmailMessageId || !receivedAt || !createdAt) return [];
   return [{
-    details: eventDetails(value.details),
+    details: eventDetails(value.details, receivedAt),
     ...(text(value.enrichedAt) ? {enrichedAt:text(value.enrichedAt)} : {}),
     id,
     gmailMessageId,
