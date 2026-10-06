@@ -8,6 +8,7 @@ const NAV_LINKS = [
   { href: '/', label: 'Journal' },
   { href: '/library', label: 'Library' },
   { href: '/bookmarks', label: 'Bookmarks' },
+  { href: '/media', label: 'Media' },
   { href: '/projects', label: 'Projects' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/omi-transcripts', label: 'Transcripts' },

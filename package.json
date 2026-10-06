@@ -29,7 +29,9 @@
     "pretty": "npx prettier --write .",
     "test": "node --test --import ./scripts/test-register.mjs scripts/*.test.ts",
     "bookmarks": "node --env-file-if-exists=.env scripts/bookmarks.ts",
-    "bookmarks:worker": "node --env-file-if-exists=.env scripts/bookmarks-worker.ts"
+    "bookmarks:worker": "node --env-file-if-exists=.env scripts/bookmarks-worker.ts",
+    "media": "node --env-file-if-exists=.env scripts/media.ts",
+    "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",
@@ -59,6 +61,7 @@
     "motion": "^12.23.12",
     "motion-plus-react": "^1.5.1",
     "next": "15.4.4",
+    "playwright-core": "1.63.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-markdown": "^10.1.0",
