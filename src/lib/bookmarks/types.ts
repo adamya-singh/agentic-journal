@@ -36,6 +36,11 @@ export interface BookmarkFolderStore {
   syncedAt?: string;
   folders: { id: string; name: string }[];
   membership: Record<string, string[]>;
+  /**
+   * Full folder contents read from the x.com website, keyed by folder ID. The API returns only
+   * the newest 20 posts per folder, so these are merged with `membership` and survive API refreshes.
+   */
+  web?: Record<string, { syncedAt: string; ids: string[] }>;
 }
 export const BOOKMARK_SORTS = [
   'saved',

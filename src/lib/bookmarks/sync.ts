@@ -9,6 +9,7 @@ import {
   withLock,
   readJson,
   ensureSavedRanks,
+  readFolders,
 } from './store.ts';
 import {
   credentials,
@@ -377,7 +378,18 @@ export async function importFolders(fetcher: typeof fetch = fetch) {
         if (!list.includes(folder.id)) list.push(folder.id);
       }
     const syncedAt = new Date().toISOString();
-    await withLock(() => writeJson('folders.json', { accountId, syncedAt, folders, membership }));
+    await withLock(() => {
+      const previous = readFolders();
+      // Website-read folder lists are complete where the API is capped at 20; keep them.
+      const web = previous.accountId === accountId ? previous.web : undefined;
+      writeJson('folders.json', {
+        accountId,
+        syncedAt,
+        folders,
+        membership,
+        ...(web ? { web } : {}),
+      });
+    });
     return { folders: folders.length, assigned: Object.keys(membership).length, syncedAt };
   }, '.folders-lock');
 }

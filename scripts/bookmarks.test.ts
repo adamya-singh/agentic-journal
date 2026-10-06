@@ -698,3 +698,26 @@ test('a failed folder import keeps the previous folders and stops at the local a
   });
   await assert.rejects(importFolders(folderFetch({})), /allowance is exhausted/);
 });
+
+test('folder lists read from x.com merge with API membership and survive an API refresh', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([page(['3', '2', '1'])]));
+  const routes = () => ({
+    '/': [{ data: [{ id: '100', name: 'Aesthetics' }] }],
+    '/100': [{ data: [{ id: '3' }] }],
+  });
+  await importFolders(folderFetch(routes()));
+  await withLock(() => {
+    const f = JSON.parse(fs.readFileSync(path.join(dataRoot(), 'folders.json'), 'utf8'));
+    f.web = {
+      '100': { syncedAt: 'now', ids: ['3', '2', '1'] },
+      '999': { syncedAt: 'now', ids: ['1'] },
+    };
+    writeJson('folders.json', f);
+  });
+  assert.equal(listBookmarks().folders[0].count, 3);
+  await importFolders(folderFetch(routes()));
+  assert.equal(listBookmarks().folders[0].count, 3);
+  assert.deepEqual(getBookmark('42:1')!.folders, ['100']);
+});

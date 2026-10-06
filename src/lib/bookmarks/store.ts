@@ -109,6 +109,21 @@ export const readAnnotations = () =>
   readJson<Record<string, BookmarkAnnotation>>('annotations.json', {});
 export const readFolders = () =>
   readJson<BookmarkFolderStore>('folders.json', { folders: [], membership: {} });
+/** Post ID → folder IDs, combining the API's newest-20 lists with full lists read from x.com. */
+export function folderMembership(store: BookmarkFolderStore, account?: string) {
+  if (store.accountId !== account) return {};
+  const merged: Record<string, string[]> = {};
+  const add = (postId: string, folderId: string) => {
+    const list = (merged[postId] ||= []);
+    if (!list.includes(folderId)) list.push(folderId);
+  };
+  for (const [postId, folderIds] of Object.entries(store.membership))
+    for (const folderId of folderIds) add(postId, folderId);
+  for (const [folderId, web] of Object.entries(store.web || {}))
+    if (store.folders.some((f) => f.id === folderId))
+      for (const postId of web.ids) add(postId, folderId);
+  return merged;
+}
 /**
  * Gives every source a savedRank (higher = bookmarked more recently), in place.
  * Imports before ranks existed stamped each page with its import time, so X's order is
@@ -161,7 +176,7 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
     account = readState().accountId,
     folderStore = readFolders();
   ensureSavedRanks(sources);
-  const membership = folderStore.accountId === account ? folderStore.membership : {};
+  const membership = folderMembership(folderStore, account);
   let items: Bookmark[] = Object.entries(sources)
     .filter(([, s]) => s.accountId === account)
     .map(([key, s]) => ({
@@ -242,7 +257,7 @@ export function getBookmark(key: string): Bookmark | undefined {
     ...(readAnnotations()[key] || { favorite: false, read: false, tags: [] }),
     key,
     journalUrl: journalLink(key),
-    folders: (folderStore.accountId === account && folderStore.membership[source.id]) || [],
+    folders: folderMembership(folderStore, account)[source.id] || [],
   };
 }
 export async function updateBookmark(
