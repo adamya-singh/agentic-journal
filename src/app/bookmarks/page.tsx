@@ -560,7 +560,7 @@ export default function BookmarksPage() {
     : filters.unread
       ? 'Unread'
       : filters.folder === 'none'
-        ? 'Not in a folder'
+        ? 'Other bookmarks'
         : filters.folder
           ? folderNames.get(filters.folder) || 'Folder'
           : 'All bookmarks';
@@ -632,12 +632,19 @@ export default function BookmarksPage() {
                   <NavItem
                     active={filters.folder === 'none'}
                     icon={<Inbox size={16} />}
-                    label="Not in a folder"
+                    label="Other bookmarks"
                     count={unsortedCount}
                     onClick={() => set({ ...collection, folder: 'none' })}
                   />
                 </nav>
-              ) : (
+              ) : null}
+              {hasFolders && (
+                <p className="mt-2 px-2.5 text-[11px] leading-4 text-gray-400">
+                  X&apos;s API only shares the 20 most recent posts in each folder, so older folder
+                  posts appear under Other bookmarks.
+                </p>
+              )}
+              {!hasFolders && (
                 <div className="rounded-xl border border-dashed border-gray-300 p-3.5 text-xs leading-5 text-gray-500 dark:border-gray-700">
                   Bring in the folders you made on X to browse by them here.
                   <button
@@ -754,7 +761,7 @@ export default function BookmarksPage() {
             {hasFolders ? (
               <Pill
                 active={filters.folder === 'none'}
-                label="Not in a folder"
+                label="Other bookmarks"
                 count={unsortedCount}
                 onClick={() => set({ ...collection, folder: 'none' })}
               />
