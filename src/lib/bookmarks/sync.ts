@@ -1,12 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { dataRoot, readState, readSources, writeJson, withLock, readJson } from './store.ts';
+import {
+  dataRoot,
+  readState,
+  readSources,
+  writeJson,
+  withLock,
+  readJson,
+  ensureSavedRanks,
+} from './store.ts';
 import {
   credentials,
   configured,
   callbackUrl,
   fetchPage,
+  fetchFolderPage,
   normalizePost,
   XError,
 } from './x-client.ts';
@@ -20,6 +29,9 @@ const PAGE_UNIT_RESERVE = 0.051;
 // with author and media expansions billed as 282 events ($0.29). Expansions were not billed.
 const POST_COST = 0.001;
 const EXPANSION_COST = 0;
+// A folder page returns up to 100 resources; settled per returned folder or post ID.
+const FOLDER_PAGE_RESERVE = 0.1;
+const MAX_FOLDER_PAGES = 200;
 export const billingMonth = () => new Date().toISOString().slice(0, 7);
 export function status(): BookmarkStatus {
   const s = readState(),
@@ -193,6 +205,14 @@ export async function processJob(fetcher: typeof fetch = fetch) {
         if (!job || job.id !== id) return false;
         const sources = readSources(),
           known = new Set(job.knownIds);
+        ensureSavedRanks(sources);
+        const ranks = Object.values(sources).map((v) => v.savedRank!);
+        // History pages extend the oldest end; recent pages sit above everything already known.
+        let bottom = ranks.length ? Math.min(...ranks) : 1;
+        if (reservation.job.phase === 'recent' && job.rankTop === undefined) {
+          job.rankTop = (ranks.length ? Math.max(...ranks) : 0) + 1_000_000;
+          job.rankUsed = 0;
+        }
         const allKnown =
           page.data.length > 0 &&
           page.data.every((p: { id: string }) => known.has(`${reservation.accountId}:${p.id}`));
@@ -203,17 +223,23 @@ export async function processJob(fetcher: typeof fetch = fetch) {
           const key = `${reservation.accountId}:${post.id}`,
             previous = sources[key];
           if (!previous) added++;
-          sources[key] = normalizePost(
-            post,
-            page.includes,
-            reservation.accountId,
-            previous?.importedAt || new Date(importedBase - index).toISOString(),
-          );
+          sources[key] = {
+            ...normalizePost(
+              post,
+              page.includes,
+              reservation.accountId,
+              previous?.importedAt || new Date(importedBase - index).toISOString(),
+            ),
+            savedRank:
+              previous?.savedRank ??
+              (reservation.job.phase === 'history' ? --bottom : job.rankTop! - job.rankUsed!++),
+          };
         });
         writeJson('sources.json', sources);
         const estimate =
           page.data.length * POST_COST +
-          ((page.includes.users?.length || 0) + (page.includes.media?.length || 0)) * EXPANSION_COST;
+          ((page.includes.users?.length || 0) + (page.includes.media?.length || 0)) *
+            EXPANSION_COST;
         s.usage[reservation.month] = Math.max(
           0,
           s.usage[reservation.month] - reservation.reserved + Math.max(estimate, 0),
@@ -286,6 +312,74 @@ export async function processJob(fetcher: typeof fetch = fetch) {
       return;
     }
   }
+}
+/**
+ * Imports X bookmark folder names and which saved posts are in each, on explicit request.
+ * Each page reserves budget before the request and settles to the returned resource count.
+ * Membership is replaced only after every folder was read, so a failure leaves the old copy.
+ */
+export async function importFolders(fetcher: typeof fetch = fetch) {
+  return withLock(async () => {
+    const accountId = await withLock(() => {
+      const s = readState();
+      if (!s.accountId || !credentials().accessToken)
+        throw new Error('Connect X before importing folders.');
+      if (!s.budgetConfirmed)
+        throw new Error(
+          'Confirm the $5 spending limit and disabled auto-recharge in connection settings.',
+        );
+      return s.accountId;
+    });
+    const reserve = () =>
+      withLock(() => {
+        const s = readState(),
+          month = billingMonth();
+        if ((s.usage[month] || 0) + FOLDER_PAGE_RESERVE > MONTHLY_LIMIT)
+          throw new Error('The local monthly allowance is exhausted. Folders were not updated.');
+        s.usage[month] = (s.usage[month] || 0) + FOLDER_PAGE_RESERVE;
+        writeJson('state.json', s);
+        return month;
+      });
+    const settle = (month: string, count: number) =>
+      withLock(() => {
+        const s = readState();
+        s.usage[month] = Math.max(
+          0,
+          (s.usage[month] || 0) - FOLDER_PAGE_RESERVE + count * POST_COST,
+        );
+        writeJson('state.json', s);
+      });
+    const readAll = async (folderId?: string) => {
+      const out: { id: string; name?: string }[] = [],
+        seen = new Set<string>();
+      let cursor: string | undefined;
+      for (let n = 0; n < MAX_FOLDER_PAGES; n++) {
+        const month = await reserve();
+        const page = await fetchFolderPage(accountId, folderId, cursor, fetcher);
+        await settle(month, page.data.length);
+        out.push(...page.data);
+        if (!page.next) return out;
+        if (seen.has(page.next))
+          throw new XError(
+            'invalid_request',
+            'X repeated a folder pagination cursor. Folders were not updated.',
+          );
+        seen.add(page.next);
+        cursor = page.next;
+      }
+      throw new XError('invalid_request', 'A bookmark folder is too large to import.');
+    };
+    const folders = (await readAll()).map((f) => ({ id: f.id, name: f.name! }));
+    const membership: Record<string, string[]> = {};
+    for (const folder of folders)
+      for (const post of await readAll(folder.id)) {
+        const list = (membership[post.id] ||= []);
+        if (!list.includes(folder.id)) list.push(folder.id);
+      }
+    const syncedAt = new Date().toISOString();
+    await withLock(() => writeJson('folders.json', { accountId, syncedAt, folders, membership }));
+    return { folders: folders.length, assigned: Object.keys(membership).length, syncedAt };
+  }, '.folders-lock');
 }
 export async function runWorker() {
   await withLock(async () => {

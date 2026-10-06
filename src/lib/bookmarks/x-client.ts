@@ -57,6 +57,18 @@ const pageSchema = z.object({
   }),
   errors: z.array(z.unknown()).optional(),
 });
+const folderPageSchema = z.object({
+  data: z
+    .array(z.object({ id: z.string().regex(/^\d{1,19}$/), name: z.string().optional() }))
+    .optional(),
+  meta: z
+    .object({
+      result_count: z.number().int().min(0).optional(),
+      next_token: z.string().min(1).optional(),
+    })
+    .optional(),
+  errors: z.array(z.unknown()).optional(),
+});
 const tokenSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1).optional(),
@@ -410,6 +422,33 @@ export async function fetchPage(
   if (data.length !== parsed.meta.result_count || data.length > limit)
     throw new XError('malformed', 'X returned invalid bookmark records.');
   return { data, includes: parsed.includes || {}, next: parsed.meta.next_token };
+}
+/**
+ * One page of bookmark folders (no folderId) or of the post IDs in a folder.
+ * Folder contents are IDs only; post bodies come from the main bookmark import.
+ */
+export async function fetchFolderPage(
+  accountId: string,
+  folderId: string | undefined,
+  cursor: string | undefined,
+  fetcher: typeof fetch = fetch,
+) {
+  const token = await accessToken(fetcher);
+  const url = new URL(
+    `https://api.x.com/2/users/${accountId}/bookmarks/folders${folderId ? `/${folderId}` : ''}`,
+  );
+  url.search = new URLSearchParams({
+    max_results: '100',
+    ...(cursor ? { pagination_token: cursor } : {}),
+  }).toString();
+  const body = await xRequest(url.href, { headers: { Authorization: `Bearer ${token}` } }, fetcher);
+  const parsed = folderPageSchema.safeParse(body);
+  if (!parsed.success || parsed.data.errors?.length)
+    throw new XError('malformed', 'X returned an incomplete folder page. Nothing was saved.');
+  const data = parsed.data.data || [];
+  if (data.length > 100 || (!folderId && data.some((f) => !f.name)))
+    throw new XError('malformed', 'X returned invalid bookmark folders.');
+  return { data, next: parsed.data.meta?.next_token };
 }
 export function normalizePost(
   post: XPost,

@@ -15,13 +15,36 @@ export interface BookmarkSource {
     height?: number;
   }[];
   links: { url: string; title?: string; description?: string; image?: string; domain: string }[];
+  /** Position in X's bookmark order; higher means bookmarked more recently. */
+  savedRank?: number;
 }
 export interface BookmarkAnnotation {
   favorite: boolean;
   read: boolean;
   tags: string[];
 }
-export type Bookmark = BookmarkSource & BookmarkAnnotation & { key: string; journalUrl: string };
+export type Bookmark = BookmarkSource &
+  BookmarkAnnotation & { key: string; journalUrl: string; folders: string[] };
+export interface BookmarkFolder {
+  id: string;
+  name: string;
+  count: number;
+}
+/** Folder names and post membership from X; IDs are X post IDs. */
+export interface BookmarkFolderStore {
+  accountId?: string;
+  syncedAt?: string;
+  folders: { id: string; name: string }[];
+  membership: Record<string, string[]>;
+}
+export const BOOKMARK_SORTS = [
+  'saved',
+  'saved-oldest',
+  'posted',
+  'posted-oldest',
+  'author',
+] as const;
+export type BookmarkSort = (typeof BOOKMARK_SORTS)[number];
 export interface SyncJob {
   id: string;
   status: 'queued' | 'running' | 'paused' | 'completed' | 'cancelled';
@@ -36,6 +59,9 @@ export interface SyncJob {
   reason?: string;
   cancelRequested?: boolean;
   scanComplete?: boolean;
+  /** Ranks handed out to new bookmarks found ahead of the known ones. */
+  rankTop?: number;
+  rankUsed?: number;
 }
 export interface BookmarkState {
   version: 1;
@@ -74,4 +100,8 @@ export interface BookmarkList {
   total: number;
   tags: string[];
   nextOffset: number | null;
+  folders: BookmarkFolder[];
+  unsortedCount: number;
+  collectionTotal: number;
+  folderSyncedAt?: string;
 }

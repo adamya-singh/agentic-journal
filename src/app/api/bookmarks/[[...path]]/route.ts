@@ -18,7 +18,7 @@ import {
   safeReason,
   XError,
 } from '@/lib/bookmarks/x-client';
-import { status, startSync, cancelSync, settings } from '@/lib/bookmarks/sync';
+import { status, startSync, cancelSync, settings, importFolders } from '@/lib/bookmarks/sync';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const result = (data: unknown, code = 200) =>
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
     }
     if (action === 'sync' || action === 'resume')
       return result({ jobId: await startSync(action === 'resume') }, 202);
+    if (action === 'folders') return result(await importFolders());
     if (action === 'cancel') {
       await cancelSync();
       return result(status());

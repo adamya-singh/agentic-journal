@@ -24,6 +24,12 @@ Stages: `authorize` (denied on X), `state` (expired/mismatched request; reason s
 
 There are no X write scopes. Reconnect uses the same account; switching accounts is intentionally blocked to avoid mixing private collections.
 
+## Folders and sorting
+
+X bookmark folders are imported only when you press **Import folders** (sidebar or settings) or run `npm run bookmarks -- folders`. It reads the folder list and each folder's post IDs (`GET /2/users/:id/bookmarks/folders` and `/folders/:folder_id`), stored in `folders.json`. Post bodies come from the regular import, so sync bookmarks first. Each request reserves $0.10 against the local allowance and settles to $0.001 per returned folder or post ID; X deduplicates resources requested within the same UTC day. Membership is replaced only after every folder is read, so a failed import keeps the previous folders. Nothing is written to X.
+
+"Recently saved" follows X's bookmark order (`savedRank`; X does not expose the time a post was bookmarked). Imports made before ranks existed are ordered from their per-page import timestamps. Other sorts: oldest saved, post date (newest/oldest) and author. Filters (folder, author, tag, type, unread, favorites, search) are kept in the page URL. Opening a post marks it read.
+
 ## Worker and commands
 
 Requires Node 24 (installed on this host; native TypeScript stripping is used).
@@ -34,6 +40,8 @@ npm run bookmarks -- status
 npm run bookmarks -- sync
 npm run bookmarks -- resume
 npm run bookmarks -- cancel
+npm run bookmarks -- folders
+npm run bookmarks -- list --folder <id|none> --sort saved|saved-oldest|posted|posted-oldest|author
 npm run bookmarks -- search --q "research"
 npm run bookmarks -- get --key 123:456
 npm run bookmarks -- update --key 123:456 --favorite true --tags research,reading

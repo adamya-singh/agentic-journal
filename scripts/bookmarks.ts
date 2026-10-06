@@ -14,16 +14,17 @@ if (command === 'help') {
     JSON.stringify(
       {
         commands: [
-          'list [--q text] [--tag tag] [--unread true] [--favorite true] [--media photo|video|link|text] [--offset N] [--limit N]',
+          'list [--q text] [--tag tag] [--folder id|none] [--author username] [--sort saved|saved-oldest|posted|posted-oldest|author] [--unread true] [--favorite true] [--media photo|video|link|text] [--offset N] [--limit N]',
           'search --q text',
           'get --key account:post',
           'update --key account:post [--favorite true|false] [--read true|false] [--tags tag1,tag2]',
           'sync',
+          'folders',
           'status',
           'cancel',
           'resume',
         ],
-        note: 'Only sync/resume call X. Configure connection and billing at /bookmarks.',
+        note: 'Only sync/resume/folders call X. Configure connection and billing at /bookmarks.',
       },
       null,
       2,
@@ -32,7 +33,17 @@ if (command === 'help') {
 } else {
   try {
     if (
-      !['list', 'search', 'get', 'update', 'sync', 'status', 'cancel', 'resume'].includes(command)
+      ![
+        'list',
+        'search',
+        'get',
+        'update',
+        'sync',
+        'folders',
+        'status',
+        'cancel',
+        'resume',
+      ].includes(command)
     )
       throw new Error('Unknown command. Use help.');
     const base = process.env.AGENTIC_JOURNAL_URL || 'http://127.0.0.1:3000';
@@ -43,7 +54,7 @@ if (command === 'help') {
           ? '/item'
           : `/${command}`;
     const url = new URL(`/api/bookmarks${endpoint}`, base);
-    const write = ['update', 'sync', 'cancel', 'resume'].includes(command);
+    const write = ['update', 'sync', 'folders', 'cancel', 'resume'].includes(command);
     let body: Record<string, unknown> | undefined;
     if (command === 'update') {
       body = { key: options.get('key') };
@@ -67,7 +78,7 @@ if (command === 'help') {
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(command === 'folders' ? 300_000 : 15_000),
     });
     const data = await response.json();
     console.log(JSON.stringify(data, null, 2));

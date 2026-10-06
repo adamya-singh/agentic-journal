@@ -13,6 +13,7 @@ import {
   updateBookmark,
   dataRoot,
   withLock,
+  ensureSavedRanks,
 } from '../src/lib/bookmarks/store.ts';
 import {
   startSync,
@@ -22,6 +23,7 @@ import {
   cancelSync,
   recoverInterrupted,
   billingMonth,
+  importFolders,
 } from '../src/lib/bookmarks/sync.ts';
 import {
   credentials,
@@ -35,6 +37,7 @@ import {
 } from '../src/lib/bookmarks/x-client.ts';
 import { GET, POST } from '../src/app/api/bookmarks/[[...path]]/route.ts';
 import { NextRequest } from 'next/server';
+import type { BookmarkSource } from '../src/lib/bookmarks/types.ts';
 let dir: string, oldDir: string | undefined;
 beforeEach(() => {
   oldDir = process.env.BACKEND_DATA_DIR;
@@ -556,4 +559,142 @@ test('cyclic pagination pauses instead of repeatedly charging for duplicate page
   assert.equal(readState().job?.status, 'paused');
   assert.match(readState().job!.reason!, /pagination/);
   assert.equal(listBookmarks().total, 2);
+});
+
+test('saved order follows X across history pages and puts new saves on top', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([page(['9', '8'], 'older'), page(['7', '6'])]));
+  const order = () => listBookmarks().items.map((i) => i.id);
+  assert.deepEqual(order(), ['9', '8', '7', '6']);
+  assert.deepEqual(
+    listBookmarks(new URLSearchParams({ sort: 'saved-oldest' })).items.map((i) => i.id),
+    ['6', '7', '8', '9'],
+  );
+  await startSync();
+  await processJob(fake([page(['11', '10', '9'], 'next')]));
+  assert.deepEqual(order(), ['11', '10', '9', '8', '7', '6']);
+});
+test('legacy imports recover X order from per-page import timestamps', () => {
+  const at = (ms: number) => new Date(Date.UTC(2026, 9, 6) + ms).toISOString();
+  const src = (id: string, ms: number): BookmarkSource => ({
+    id,
+    accountId: '42',
+    text: id,
+    url: '',
+    importedAt: at(ms),
+    author: { id: '7', name: 'A', username: 'a' },
+    media: [],
+    links: [],
+  });
+  // Page one at t=0 (posts 9, 8), page two imported a second later (posts 7, 6).
+  const sources = {
+    '42:9': src('9', 0),
+    '42:8': src('8', -1),
+    '42:7': src('7', 1000),
+    '42:6': src('6', 999),
+  };
+  assert.equal(ensureSavedRanks(sources), true);
+  const ranked = Object.values(sources).sort((a, b) => b.savedRank! - a.savedRank!);
+  assert.deepEqual(
+    ranked.map((v) => v.id),
+    ['9', '8', '7', '6'],
+  );
+  assert.equal(ensureSavedRanks(sources), false);
+});
+test('sorting by posted date and author, and filtering by author', async () => {
+  await reviewed();
+  await startSync();
+  const p = page(['3', '2', '1']);
+  p.data[0].created_at = '2026-03-01T00:00:00Z';
+  p.data[1].created_at = '2026-01-01T00:00:00Z';
+  p.data[2].created_at = '2026-02-01T00:00:00Z';
+  p.data[1].author_id = '8';
+  p.includes.users.push({ id: '8', name: 'Another Voice', username: 'another' });
+  await processJob(fake([p]));
+  const ids = (q: Record<string, string>) =>
+    listBookmarks(new URLSearchParams(q)).items.map((i) => i.id);
+  assert.deepEqual(ids({ sort: 'posted' }), ['3', '1', '2']);
+  assert.deepEqual(ids({ sort: 'posted-oldest' }), ['2', '1', '3']);
+  assert.deepEqual(ids({ sort: 'author' }), ['2', '3', '1']);
+  assert.deepEqual(ids({ author: 'Another' }), ['2']);
+});
+function folderFetch(routes: Record<string, unknown[]>, urls: string[] = []) {
+  return (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    urls.push(url.href);
+    const key = url.pathname.replace('/2/users/42/bookmarks/folders', '') || '/';
+    assert.ok(routes[key]?.length, `unexpected paid request ${key}`);
+    return Response.json(routes[key].shift());
+  }) as typeof fetch;
+}
+test('folder import stores membership, filters by folder and settles cost to returned items', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([page(['3', '2', '1'])]));
+  const before = readState().usage[billingMonth()];
+  const urls: string[] = [];
+  const result = await importFolders(
+    folderFetch(
+      {
+        '/': [
+          {
+            data: [
+              { id: '100', name: 'Research' },
+              { id: '200', name: 'Recipes' },
+            ],
+          },
+        ],
+        '/100': [
+          { data: [{ id: '3' }], meta: { result_count: 1, next_token: 'more' } },
+          { data: [{ id: '2' }], meta: { result_count: 1 } },
+        ],
+        '/200': [{ data: [{ id: '2' }], meta: { result_count: 1 } }],
+      },
+      urls,
+    ),
+  );
+  assert.equal(urls.length, 4);
+  assert.equal(new URL(urls[2]).searchParams.get('pagination_token'), 'more');
+  assert.deepEqual(
+    { folders: result.folders, assigned: result.assigned },
+    { folders: 2, assigned: 2 },
+  );
+  assert.ok(Math.abs(readState().usage[billingMonth()] - before - 0.005) < 1e-9);
+  const list = listBookmarks();
+  assert.deepEqual(
+    list.folders.map((f) => [f.name, f.count]),
+    [
+      ['Research', 2],
+      ['Recipes', 1],
+    ],
+  );
+  assert.equal(list.unsortedCount, 1);
+  assert.deepEqual(getBookmark('42:2')!.folders, ['100', '200']);
+  const ids = (folder: string) =>
+    listBookmarks(new URLSearchParams({ folder })).items.map((i) => i.id);
+  assert.deepEqual(ids('100'), ['3', '2']);
+  assert.deepEqual(ids('none'), ['1']);
+});
+test('a failed folder import keeps the previous folders and stops at the local allowance', async () => {
+  await reviewed();
+  writeJson('folders.json', {
+    accountId: '42',
+    syncedAt: 'old',
+    folders: [{ id: '1', name: 'Kept' }],
+    membership: {},
+  });
+  await assert.rejects(
+    importFolders(
+      folderFetch({ '/': [{ data: [{ id: '100', name: 'New' }] }], '/100': [{ data: 'bad' }] }),
+    ),
+    /incomplete folder page/,
+  );
+  assert.equal(listBookmarks().folders[0].name, 'Kept');
+  await withLock(() => {
+    const s = readState();
+    s.usage[billingMonth()] = 4.95;
+    writeJson('state.json', s);
+  });
+  await assert.rejects(importFolders(folderFetch({})), /allowance is exhausted/);
 });

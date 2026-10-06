@@ -6,7 +6,9 @@ import type {
   BookmarkSource,
   BookmarkState,
   Bookmark,
+  BookmarkFolderStore,
   BookmarkList,
+  BookmarkSort,
 } from './types.ts';
 
 export const dataRoot = () =>
@@ -105,6 +107,45 @@ export const readState = () => readJson('state.json', initialState());
 export const readSources = () => readJson<Record<string, BookmarkSource>>('sources.json', {});
 export const readAnnotations = () =>
   readJson<Record<string, BookmarkAnnotation>>('annotations.json', {});
+export const readFolders = () =>
+  readJson<BookmarkFolderStore>('folders.json', { folders: [], membership: {} });
+/**
+ * Gives every source a savedRank (higher = bookmarked more recently), in place.
+ * Imports before ranks existed stamped each page with its import time, so X's order is
+ * pages in import order (>100 ms apart) and, within a page, descending importedAt (1 ms steps).
+ * Unranked sources are placed below any ranked ones, since they came from history pages.
+ */
+export function ensureSavedRanks(sources: Record<string, BookmarkSource>) {
+  const unranked = Object.values(sources).filter((v) => v.savedRank === undefined);
+  if (!unranked.length) return false;
+  const time = (v: BookmarkSource) => Date.parse(v.importedAt);
+  unranked.sort((a, b) => time(a) - time(b));
+  const pages: BookmarkSource[][] = [];
+  for (const v of unranked) {
+    const page = pages.at(-1);
+    if (page && time(v) - time(page.at(-1)!) <= 100) page.push(v);
+    else pages.push([v]);
+  }
+  const ranked = Object.values(sources).flatMap((v) =>
+    v.savedRank === undefined ? [] : [v.savedRank],
+  );
+  let rank = ranked.length ? Math.min(...ranked) - 1 : 0;
+  for (const page of pages)
+    for (const v of page.sort((a, b) => time(b) - time(a) || b.id.localeCompare(a.id)))
+      v.savedRank = rank--;
+  return true;
+}
+const sorters: Record<BookmarkSort, (a: Bookmark, b: Bookmark) => number> = {
+  saved: (a, b) => b.savedRank! - a.savedRank!,
+  'saved-oldest': (a, b) => a.savedRank! - b.savedRank!,
+  posted: (a, b) => (b.publishedAt || '').localeCompare(a.publishedAt || ''),
+  'posted-oldest': (a, b) => (a.publishedAt || '9').localeCompare(b.publishedAt || '9'),
+  author: (a, b) =>
+    a.author.name.localeCompare(b.author.name, undefined, {
+      sensitivity: 'base',
+      ignorePunctuation: true,
+    }) || b.savedRank! - a.savedRank!,
+};
 export function safeUrl(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   try {
@@ -117,7 +158,10 @@ export function safeUrl(value: unknown): string | undefined {
 export function listBookmarks(params = new URLSearchParams()): BookmarkList {
   const annotations = readAnnotations(),
     sources = readSources(),
-    account = readState().accountId;
+    account = readState().accountId,
+    folderStore = readFolders();
+  ensureSavedRanks(sources);
+  const membership = folderStore.accountId === account ? folderStore.membership : {};
   let items: Bookmark[] = Object.entries(sources)
     .filter(([, s]) => s.accountId === account)
     .map(([key, s]) => ({
@@ -125,8 +169,17 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
       ...(annotations[key] || { favorite: false, read: false, tags: [] }),
       key,
       journalUrl: journalLink(key),
+      folders: membership[s.id] || [],
     }));
+  const collectionTotal = items.length;
   const tags = [...new Set(items.flatMap((i) => i.tags))].sort();
+  const folders = (folderStore.accountId === account ? folderStore.folders : []).map((f) => ({
+    ...f,
+    count: items.filter((i) => i.folders.includes(f.id)).length,
+  }));
+  const unsortedCount = items.filter((i) => !i.folders.length).length;
+  const folder = params.get('folder') || '',
+    author = (params.get('author') || '').toLowerCase();
   const q = (params.get('q') || '').toLowerCase().trim();
   items = items.filter(
     (i) =>
@@ -148,6 +201,8 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
       (params.get('unread') !== 'true' || !i.read) &&
       (params.get('favorite') !== 'true' || i.favorite) &&
       (!params.get('tag') || i.tags.includes(params.get('tag')!)) &&
+      (!folder || (folder === 'none' ? !i.folders.length : i.folders.includes(folder))) &&
+      (!author || i.author.username.toLowerCase() === author) &&
       (!params.get('media') ||
         (params.get('media') === 'text'
           ? !i.media.length && !i.links.length
@@ -157,7 +212,8 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
                 params.get('media') === 'photo' ? m.type === 'photo' : m.type !== 'photo',
               ))),
   );
-  items.sort((a, b) => b.importedAt.localeCompare(a.importedAt) || b.id.localeCompare(a.id));
+  const sort = params.get('sort') as BookmarkSort;
+  items.sort((a, b) => (sorters[sort] || sorters.saved)(a, b) || b.id.localeCompare(a.id));
   const parsedOffset = Number(params.get('offset')),
     parsedLimit = Number(params.get('limit'));
   const offset = Number.isFinite(parsedOffset) ? Math.max(0, Math.floor(parsedOffset)) : 0;
@@ -170,16 +226,23 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
     total: items.length,
     tags,
     nextOffset: offset + limit < items.length ? offset + limit : null,
+    folders,
+    unsortedCount,
+    collectionTotal,
+    folderSyncedAt: folderStore.accountId === account ? folderStore.syncedAt : undefined,
   };
 }
 export function getBookmark(key: string): Bookmark | undefined {
-  const source = readSources()[key];
-  if (!source || source.accountId !== readState().accountId) return undefined;
+  const source = readSources()[key],
+    account = readState().accountId;
+  if (!source || source.accountId !== account) return undefined;
+  const folderStore = readFolders();
   return {
     ...source,
     ...(readAnnotations()[key] || { favorite: false, read: false, tags: [] }),
     key,
     journalUrl: journalLink(key),
+    folders: (folderStore.accountId === account && folderStore.membership[source.id]) || [],
   };
 }
 export async function updateBookmark(
