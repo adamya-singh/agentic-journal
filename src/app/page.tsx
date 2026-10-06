@@ -8,7 +8,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { MobileClock } from '@/components/MobileClock';
 import { SettingsPopover } from '@/components/SettingsPopover';
 import { MiscNotesSection } from '@/components/MiscNotesSection';
-import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
+import { HorizonHero } from '@/components/horizon/HorizonHero';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
@@ -1264,10 +1264,8 @@ export default function HomePage() {
         settings={<SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />}
       />
 
-      {/* Quick capture bar */}
-      <div className="max-w-2xl mx-auto px-3 pt-3">
-        <QuickCaptureInput variant="inline" />
-      </div>
+      {/* Priority horizon (holds the quick capture bar) */}
+      <HorizonHero />
 
       {/* Week View */}
       <div className="pt-2 sm:pt-4 pb-4">

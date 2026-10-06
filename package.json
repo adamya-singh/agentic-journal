@@ -52,6 +52,7 @@
     "@tiptap/markdown": "^3.20.0",
     "@tiptap/react": "^3.20.0",
     "@tiptap/starter-kit": "^3.20.0",
+    "@types/three": "0.169.0",
     "ai": "^5.0.44",
     "cedar-os": "^0.1.18",
     "class-variance-authority": "^0.7.1",
@@ -69,6 +70,7 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.3.1",
+    "three": "0.169.0",
     "uuid": "^11.1.0",
     "zod": "^3.25.76"
   },
