@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
 import { DateSourceSchema } from '@/lib/employment-dates';
+import { JOB_APPLICATION_CANDIDATE_CONTEXT, needsEligibilityReview } from '@/lib/application-eligibility';
 import * as fs from 'fs';
 import * as path from 'path';
 import type {
@@ -88,6 +89,7 @@ const OPAQUE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ClaimedJobApplication {
+  candidateContext: typeof JOB_APPLICATION_CANDIDATE_CONTEXT;
   listing: JobListing;
   application: JobApplicationRecord;
   leaseToken: string;
@@ -396,6 +398,7 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
 
     store.applications[selected.listing.id] = application;
     return {
+      candidateContext: JOB_APPLICATION_CANDIDATE_CONTEXT,
       listing: selected.listing,
       application,
       leaseToken,
@@ -614,7 +617,8 @@ export function holdApplicationForReview(
       Date.parse(now) + JOB_APPLICATION_REVIEW_WINDOW_MS,
     ).toISOString();
   }
-  if (Date.parse(application.autoSubmitEligibleAt) <= Date.parse(now)) {
+  if (Date.parse(application.autoSubmitEligibleAt) <= Date.parse(now)
+    && !application.questions.some(needsEligibilityReview)) {
     return null;
   }
   application.reviewHoldSince = now;
@@ -630,9 +634,10 @@ export function isSubmissionBlockedByReview(
   now: Date,
 ): boolean {
   return Boolean(
-    application.autoSubmitEligibleAt &&
+    application.questions.some(needsEligibilityReview) ||
+    (application.autoSubmitEligibleAt &&
       Date.parse(application.autoSubmitEligibleAt) > now.getTime() &&
-      hasPendingReviewItems(store, application.listingId),
+      hasPendingReviewItems(store, application.listingId)),
   );
 }
 
@@ -1164,6 +1169,7 @@ export function isApplicationClaimable(application: JobApplicationRecord, now: D
   ) {
     return false;
   }
+  if (application.questions.some(needsEligibilityReview)) return false;
   if (
     application.status === 'awaiting-user-input' &&
     (!application.autoCompleteEligibleAt ||

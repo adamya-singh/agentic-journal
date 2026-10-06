@@ -258,9 +258,12 @@ export async function POST(request: NextRequest) {
         if (application.submissionAttemptedAt) {
           throw new Error('Submission has already been attempted for this application');
         }
+        if (application.questions.some((question) => question.resolution === 'pending')) {
+          throw new Error('Questions are still awaiting review or answers; release the lease and stop');
+        }
         if (isSubmissionBlockedByReview(store, application, new Date(now))) {
           throw new Error(
-            `Auto-answers are still awaiting review until ${application.autoSubmitEligibleAt}; release the lease and stop`,
+            'Auto-answers are still awaiting review; eligibility answers require explicit human review even after the deadline; release the lease and stop',
           );
         }
         if (!hasCurrentCompleteScreenshotCapture(application)) {

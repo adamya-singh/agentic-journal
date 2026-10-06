@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
 
         const answer = validateAnswer(question, response.answer);
         question.answer = answer;
+        question.eligibilityReviewedAnswer = answer;
         question.resolution = 'answered';
         question.answeredAt = now;
         if (question.kind !== 'action') {

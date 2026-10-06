@@ -1042,6 +1042,75 @@ describe('job application state', () => {
     }
   });
 
+  test('eligibility review cannot expire and confirmation survives rediscovery', async () => {
+    await seedDraft('eligibility-lease');
+    const prompt = "This role is only open to candidates who have already completed their bachelor's degree and are no longer enrolled. Does this apply to you?";
+    await store.mutateJobApplicationsStore((data) => {
+      data.reviewItems = data.reviewItems.filter((item) => item.listingId !== 'saved-new');
+      const application = data.applications['saved-new'];
+      application.status = 'in-progress';
+      application.questions = [{ id: 'eligibility', prompt, kind: 'single-select', required: true,
+        options: [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }],
+        resolution: 'pending', discoveredAt: now }];
+      application.autoSubmitEligibleAt = '2026-01-01T00:00:00.000Z';
+      application.lease = { token: 'eligibility-lease', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' };
+    });
+    const drafted = await postUpdate({ action: 'record-auto-answers', listingId: 'saved-new',
+      leaseToken: 'eligibility-lease', answers: [draftAnswer('eligibility', prompt, 'No')] });
+    assert.equal(drafted.status, 200);
+    assert.ok((await drafted.json()).reviewHold, 'eligibility holds persist past the deadline');
+    let data = store.readJobApplicationsStore();
+    let application = data.applications['saved-new'];
+    assert.equal(store.isApplicationClaimable(application, new Date('2099-01-01')), false);
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date('2099-01-01')), true);
+    await store.mutateJobApplicationsStore((mutable) => {
+      mutable.applications['saved-new'].lease = { token: 'rogue', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' };
+    });
+    const blocked = await postUpdate({ action: 'submission-attempted', listingId: 'saved-new', leaseToken: 'rogue' });
+    assert.equal(blocked.status, 409);
+    assert.match((await blocked.json()).error, /eligibility answers require explicit human review/);
+    const review = data.reviewItems.find((item) => item.questionId === 'eligibility')!;
+    const confirmed = await postReview({ reviewId: review.id, action: 'confirm' });
+    assert.equal(confirmed.status, 200);
+    data = store.readJobApplicationsStore();
+    application = data.applications['saved-new'];
+    assert.equal(application.questions[0].eligibilityReviewedAnswer, 'No');
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date('2099-01-01')), false);
+    assert.equal(store.isApplicationClaimable(application, new Date()), true);
+    const rediscovered = store.mergeApplicationQuestions(application.questions, [{ ...application.questions[0],
+      eligibilityReviewedAnswer: undefined, resolution: 'pending' }]);
+    assert.equal(rediscovered[0].eligibilityReviewedAnswer, 'No');
+    rediscovered[0].answer = 'Yes';
+    assert.equal(store.isApplicationClaimable({ ...application, questions: rediscovered }, new Date()), false);
+  });
+
+  test('refreshes stale graduation context without changing submitted evidence', async () => {
+    const route = await import('../src/app/api/jobs/applications/candidate-context/route');
+    await seedDraft('context-lease');
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-new'];
+      delete application.lease;
+      application.questions = [{ id: 'grad', prompt: 'Graduation Date', kind: 'text', required: true,
+        resolution: 'answered', answer: '05/01/27', discoveredAt: now }];
+      data.applications['applied'] = { ...application, listingId: 'applied', status: 'submitted',
+        questions: [{ ...application.questions[0] }] };
+      data.answerBank = [{ id: 'old-grad', prompt: 'Graduation Date', normalizedPrompt: 'graduation date',
+        kind: 'text', answer: '05/01/27', confirmedAt: now, sourceListingId: 'saved-new' }];
+    });
+    const response = await route.POST(new NextRequest('http://localhost/api/jobs/applications/candidate-context', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'refresh' }),
+    }));
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.candidateContext.expectedGraduation, '2027-01');
+    assert.equal(body.removedStaleBankAnswers, 1);
+    assert.equal(body.invalidated.length, 1);
+    const data = store.readJobApplicationsStore();
+    assert.equal(data.applications['saved-new'].questions[0].resolution, 'pending');
+    assert.equal(data.applications['saved-new'].questions[0].answer, undefined);
+    assert.equal(data.applications['applied'].questions[0].answer, '05/01/27');
+  });
+
   test('holds a fully drafted application for review and blocks submission until the deadline', async () => {
     const before = Date.now();
     const response = await seedDraft('hold-lease');
