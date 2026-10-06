@@ -6,6 +6,7 @@ SYSTEMD_DIR="${ROOT_DIR}/systemd"
 PROD_SERVICE="agentic-journal.service"
 DEV_SERVICE="agentic-journal-dev.service"
 OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
+BOOKMARKS_WORKER_SERVICE="agentic-journal-bookmarks-worker.service"
 
 systemctl_cmd() {
   if [[ "${EUID}" -eq 0 ]]; then
@@ -47,9 +48,11 @@ install_units() {
   install_unit_if_changed "$PROD_SERVICE"
   install_unit_if_changed "$DEV_SERVICE"
   install_unit_if_changed "$OMI_WORKER_SERVICE"
+  install_unit_if_changed "$BOOKMARKS_WORKER_SERVICE"
   systemctl_cmd daemon-reload
   systemctl_cmd enable "$PROD_SERVICE" >/dev/null
   systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
+  systemctl_cmd enable "$BOOKMARKS_WORKER_SERVICE" >/dev/null
   systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 }
 
@@ -110,6 +113,7 @@ print_status() {
   service_state "$PROD_SERVICE"
   service_state "$DEV_SERVICE"
   service_state "$OMI_WORKER_SERVICE"
+  service_state "$BOOKMARKS_WORKER_SERVICE"
   echo
   echo "Endpoint probes"
   echo "---------------"
@@ -124,6 +128,7 @@ switch_to_dev() {
   echo "Switching Agentic Journal to dev mode..."
   systemctl_cmd stop "$PROD_SERVICE" || true
   systemctl_cmd start "$DEV_SERVICE"
+  systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
   echo
   echo "Verifying dev endpoints..."
   wait_for_http "Next root" "http://127.0.0.1:3000/"
@@ -140,6 +145,7 @@ switch_to_prod() {
   systemctl_cmd stop "$DEV_SERVICE" || true
   systemctl_cmd start "$PROD_SERVICE"
   systemctl_cmd start "$OMI_WORKER_SERVICE"
+  systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
   echo
   echo "Verifying production endpoints..."
   wait_for_http "Next root" "http://127.0.0.1:3000/"
@@ -151,6 +157,10 @@ switch_to_prod() {
 }
 
 follow_logs() {
+  if [[ "${1:-}" == "bookmarks" ]]; then
+    journalctl_cmd -u "$BOOKMARKS_WORKER_SERVICE" -f
+    return
+  fi
   if [[ "${1:-}" == "worker" || "${1:-}" == "omi" ]]; then
     journalctl_cmd -u "$OMI_WORKER_SERVICE" -f
     return
@@ -168,7 +178,7 @@ follow_logs() {
 
 usage() {
   echo "Usage: npm run journal:dev|journal:prod|journal:status|journal:logs"
-  echo "       bash scripts/journal-mode.sh dev|prod|status|logs [worker]"
+  echo "       bash scripts/journal-mode.sh dev|prod|status|logs [worker|bookmarks]"
 }
 
 require_command systemctl

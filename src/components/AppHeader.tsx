@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation';
 const NAV_LINKS = [
   { href: '/', label: 'Journal' },
   { href: '/library', label: 'Library' },
+  { href: '/bookmarks', label: 'Bookmarks' },
   { href: '/projects', label: 'Projects' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/omi-transcripts', label: 'Transcripts' },
@@ -36,9 +37,7 @@ export function AppHeader({ title, subtitle, actions, settings }: AppHeaderProps
               <h1 className="text-lg sm:text-xl font-semibold text-gray-900 dark:text-gray-100 leading-tight">
                 {title}
               </h1>
-              {subtitle && (
-                <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>
-              )}
+              {subtitle && <p className="text-xs text-gray-500 dark:text-gray-400">{subtitle}</p>}
             </>
           ) : null}
         </div>

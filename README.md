@@ -23,6 +23,7 @@ Agentic Journal is an AI-assisted personal journal and planning workspace:
 - **Project view**: tasks are grouped by project so active, scheduled, completed, and unassigned work can be scanned outside the daily view.
 - **Job tracker**: save, star, apply, or archive fall co-op, spring co-op, and new-grad listings with structured source and status history.
 - **Agentic UI control**: the Mastra journal agent can create journal files, append planned/logged entries, update tasks, reorder priorities, complete tasks, and maintain job listings.
+- **X bookmarks**: a visual reading collection with manual-only X imports, local search, tags, favorites and read status. See [setup and recovery](docs/x-bookmarks.md).
 - **Pi-first operations**: production runs as `agentic-journal.service`; development mode can temporarily take over the same Tailscale URL.
 
 ## Architecture

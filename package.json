@@ -27,7 +27,9 @@
     "start:production:mastra": "cd src/backend/.mastra/output && HOST=127.0.0.1 PORT=4111 node ./index.mjs",
     "lint": "next lint",
     "pretty": "npx prettier --write .",
-    "test": "node --test --import ./scripts/test-register.mjs scripts/*.test.ts"
+    "test": "node --test --import ./scripts/test-register.mjs scripts/*.test.ts",
+    "bookmarks": "node --env-file-if-exists=.env scripts/bookmarks.ts",
+    "bookmarks:worker": "node --env-file-if-exists=.env scripts/bookmarks-worker.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",

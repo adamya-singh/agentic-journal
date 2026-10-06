@@ -17,6 +17,8 @@
 /.next
 /.next-dev/
 /.next-overview/
+# Throwaway build/test instances (NEXT_DIST_DIR=.next-<name>)
+/.next-*/
 /out/
 
 # production
@@ -51,3 +53,6 @@ src/backend/data
 
 # Google Cloud service account keys
 *-*.json
+
+# Isolated bookmark build verification
+/.next-bookmarks-verify/

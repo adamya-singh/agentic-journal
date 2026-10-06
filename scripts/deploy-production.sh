@@ -7,6 +7,7 @@ MASTRA_OUTPUT_DIR="${BACKEND_DIR}/.mastra/output"
 PROD_SERVICE="agentic-journal.service"
 DEV_SERVICE="agentic-journal-dev.service"
 OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
+BOOKMARKS_WORKER_SERVICE="agentic-journal-bookmarks-worker.service"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
@@ -59,6 +60,25 @@ wait_for_http() {
   return 1
 }
 
+# Hash of everything that decides whether an install or build is still current.
+inputs_hash() {
+  { node --version; cat "$@"; } | sha256sum | cut -d' ' -f1
+}
+
+backend_inputs_hash() {
+  {
+    node --version
+    cd "$BACKEND_DIR"
+    find src package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json -type f -print0 \
+      | sort -z | xargs -0 sha256sum
+  } | sha256sum | cut -d' ' -f1
+}
+
+# Stamps live inside the directories they describe, so deleting a directory also invalidates its stamp.
+stamp_matches() {
+  [[ -f "$1" && "$(cat "$1")" == "$2" ]]
+}
+
 require_command npm
 require_command pnpm
 require_command curl
@@ -75,26 +95,50 @@ echo "Installing Agentic Journal service units..."
 install_unit_if_changed "$PROD_SERVICE"
 install_unit_if_changed "$DEV_SERVICE"
 install_unit_if_changed "$OMI_WORKER_SERVICE"
+install_unit_if_changed "$BOOKMARKS_WORKER_SERVICE"
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$PROD_SERVICE" >/dev/null
 systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
+systemctl_cmd enable "$BOOKMARKS_WORKER_SERVICE" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."
 systemctl_cmd stop "$DEV_SERVICE" || true
 systemctl_cmd stop "$OMI_WORKER_SERVICE" || true
+systemctl_cmd stop "$BOOKMARKS_WORKER_SERVICE" || true
 systemctl_cmd stop "$PROD_SERVICE" || true
 
 echo
-echo "Installing root dependencies..."
-npm ci
+ROOT_DEPS_HASH="$(inputs_hash package-lock.json)"
+ROOT_DEPS_STAMP="${ROOT_DIR}/node_modules/.deploy-inputs-hash"
+if stamp_matches "$ROOT_DEPS_STAMP" "$ROOT_DEPS_HASH"; then
+  echo "Root dependencies unchanged; skipping npm ci."
+else
+  echo "Installing root dependencies..."
+  npm ci
+  echo "$ROOT_DEPS_HASH" > "$ROOT_DEPS_STAMP"
+fi
 
 echo
-echo "Building Next.js from a clean output directory..."
-rm -rf "${ROOT_DIR}/.next"
-rm -rf "${BACKEND_DIR}/.mastra"
-# next build exceeds Node's default ~2 GB heap on this project; raise it.
-NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
+echo "Building Next.js (keeping .next/cache for incremental webpack builds)..."
+# A cold build takes ~8 minutes on this host; a warm webpack cache cuts it to ~1.5.
+# Clear the old build output but keep the cache, and drop the cache if it grows past ~4 GB.
+if [[ -d "${ROOT_DIR}/.next/cache" ]] && (( $(du -sm "${ROOT_DIR}/.next/cache" | cut -f1) > 4096 )); then
+  echo "Next cache exceeds 4 GB; clearing it."
+  rm -rf "${ROOT_DIR}/.next/cache"
+fi
+if [[ -d "${ROOT_DIR}/.next" ]]; then
+  find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec rm -rf {} +
+fi
+# Combine a bounded heap with Next's compiler memory optimizations on the shared host.
+if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemd-run --user --wait --pipe --collect \
+    -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
+    -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
+    /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-5120}" npm run build
+else
+  NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-5120}" npm run build
+fi
 test -s "${ROOT_DIR}/.next/BUILD_ID"
 
 echo
@@ -102,22 +146,32 @@ echo "Installing backend dependencies with pnpm..."
 pnpm --dir "$BACKEND_DIR" install --frozen-lockfile
 
 echo
-echo "Building Mastra from a clean output directory..."
-pnpm --dir "$BACKEND_DIR" run build
-test -s "${MASTRA_OUTPUT_DIR}/package.json"
+BACKEND_HASH="$(backend_inputs_hash)"
+BACKEND_STAMP="${MASTRA_OUTPUT_DIR}/.deploy-inputs-hash"
+if stamp_matches "$BACKEND_STAMP" "$BACKEND_HASH" && [[ -s "${MASTRA_OUTPUT_DIR}/package.json" && -d "${MASTRA_OUTPUT_DIR}/node_modules" ]]; then
+  echo "Mastra backend unchanged; reusing the existing build."
+else
+  echo "Building Mastra from a clean output directory..."
+  rm -rf "${BACKEND_DIR}/.mastra"
+  pnpm --dir "$BACKEND_DIR" run build
+  test -s "${MASTRA_OUTPUT_DIR}/package.json"
 
-echo
-echo "Installing Mastra generated production dependencies..."
-npm --prefix "$MASTRA_OUTPUT_DIR" install --omit=dev
+  echo
+  echo "Installing Mastra generated production dependencies..."
+  npm --prefix "$MASTRA_OUTPUT_DIR" install --omit=dev
+  echo "$BACKEND_HASH" > "$BACKEND_STAMP"
+fi
 
 echo
 echo "Starting Agentic Journal service..."
 systemctl_cmd start "$PROD_SERVICE"
 systemctl_cmd start "$OMI_WORKER_SERVICE"
+systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
 
 echo
 echo "Verifying local endpoints..."
 wait_for_http "Next root" "http://127.0.0.1:3000/"
+wait_for_http "Bookmarks API" "http://127.0.0.1:3000/api/bookmarks/status"
 wait_for_http "Jobs API" "http://127.0.0.1:3000/api/jobs/list"
 wait_for_http "Mastra direct" "http://127.0.0.1:4111/"
 wait_for_http "Mastra proxy" "http://127.0.0.1:3000/mastra"
@@ -126,3 +180,5 @@ echo
 echo "Service status:"
 systemctl --no-pager --full status "$PROD_SERVICE"
 systemctl --no-pager --full status "$OMI_WORKER_SERVICE"
+
+systemctl --no-pager --full status "$BOOKMARKS_WORKER_SERVICE"

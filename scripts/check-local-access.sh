@@ -29,6 +29,7 @@ print_system_status tailscaled
 print_system_status agentic-journal
 print_system_status agentic-journal-dev
 print_system_status agentic-journal-omi-worker
+print_system_status agentic-journal-bookmarks-worker
 print_user_status openclaw-gateway
 
 echo
@@ -45,6 +46,7 @@ echo "Agentic Journal endpoint probes"
 echo "-------------------------------"
 for probe in \
   "Next root|http://127.0.0.1:3000/" \
+  "Bookmarks|http://127.0.0.1:3000/api/bookmarks/status" \
   "Jobs API|http://127.0.0.1:3000/api/jobs/list" \
   "Mastra direct|http://127.0.0.1:4111/" \
   "Mastra proxy|http://127.0.0.1:3000/mastra"; do

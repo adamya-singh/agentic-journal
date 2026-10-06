@@ -1,0 +1,20 @@
+[Unit]
+Description=Agentic Journal manually requested X bookmark imports
+After=network-online.target agentic-journal.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+Environment=NODE_ENV=production
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStart=/usr/bin/env node scripts/bookmarks-worker.ts
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=35
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
