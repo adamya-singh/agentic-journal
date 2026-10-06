@@ -31,6 +31,7 @@
     "bookmarks": "node --env-file-if-exists=.env scripts/bookmarks.ts",
     "bookmarks:worker": "node --env-file-if-exists=.env scripts/bookmarks-worker.ts",
     "bookmarks:videos": "node --env-file-if-exists=.env scripts/bookmarks-videos.ts",
+    "bookmarks:transcripts": "node --env-file-if-exists=.env scripts/bookmarks-transcribe.ts",
     "media": "node --env-file-if-exists=.env scripts/media.ts",
     "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts"
   },

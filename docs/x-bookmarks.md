@@ -34,6 +34,8 @@ X bookmark folders are imported only when you press **Import folders** (sidebar 
 
 `npm run bookmarks:videos -- --folder <folderId>` (or `--all`; add `--dry-run` to only count) keeps local copies of videos and GIFs. Syncs request X's media `variants`, and each media item stores the highest-bitrate MP4 from `video.twimg.com` as `video`. Posts imported before that are looked up once with `GET /2/tweets` (up to 100 IDs per request; reserved and settled at $0.005 per returned post against the local allowance). The MP4 downloads are free and sequential, written to `media/<postId>-<index>.mp4` via a temp file, capped at 1 GB each, and indexed in `media.json`. `/api/bookmarks/media/<postId>/<index>` streams them with Range support, and the reader plays saved videos inline instead of linking to X. Stills can be extracted later with ffmpeg if needed.
 
+`npm run bookmarks:transcripts -- --folder <folderId>` (or `--all`; `--dry-run` shows minutes and estimated cost; `--force` redoes existing ones) transcribes saved videos with Google Speech-to-Text, reusing the Omi settings (`OMI_STT_LOCATION`, `OMI_STT_MODEL` = chirp_3, `OMI_STT_GCS_BUCKET`, `GOOGLE_APPLICATION_CREDENTIALS`). Audio is extracted with ffmpeg to 16 kHz mono FLAC, staged in the bucket, recognized with automatic language detection (one file per BatchRecognize request, four in parallel, since inline results allow a single file) and deleted from GCS. Google bills about $0.016 per audio minute. Results are stored in `transcripts.json` (`''` for no speech; videos with no audio track are recorded without a request), shown under each saved video in the reader and included in search.
+
 ## Worker and commands
 
 Requires Node 24 (installed on this host; native TypeScript stripping is used).
@@ -75,6 +77,7 @@ Data resides under `src/backend/data/bookmarks` (or `BACKEND_DATA_DIR/bookmarks`
 - `worker.json`: local worker heartbeat.
 - `folders.json`: folder names, API folder membership and full lists read from x.com (`web`).
 - `media.json` and `media/`: downloaded videos.
+- `transcripts.json`: video speech transcripts.
 
 Back up the collection privately. Do not commit credentials or data. Removing a bookmark on X does not delete it here. Images remain remote URLs and can expire; the original X link stays available. Threads, article extraction, permanent media downloads and automatic AI enrichment are outside v1.
 

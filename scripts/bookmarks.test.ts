@@ -802,3 +802,19 @@ test('video links are looked up within budget and downloaded copies stream with 
   const missing = await GET(new NextRequest('http://127.0.0.1:3000/api/bookmarks/media/6/0'));
   assert.equal(missing.status, 404);
 });
+test('video transcripts attach to saved media and are searchable', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([videoPage(), page(['4'])].slice(0, 1)));
+  writeJson('media.json', {
+    '5:0': { file: '5-0.mp4', bytes: 1, contentType: 'video/mp4', savedAt: 'now', source: 'x' },
+  });
+  writeJson('transcripts.json', {
+    '5:0': { text: 'the secret ingredient is patience', model: 'chirp_3', transcribedAt: 'now' },
+  });
+  assert.equal(getBookmark('42:5')!.media[0].transcript, 'the secret ingredient is patience');
+  assert.deepEqual(
+    listBookmarks(new URLSearchParams({ q: 'secret ingredient' })).items.map((i) => i.id),
+    ['5'],
+  );
+});

@@ -9,6 +9,7 @@ import type {
   BookmarkFolderStore,
   BookmarkList,
   BookmarkMediaIndex,
+  BookmarkTranscripts,
   BookmarkSort,
 } from './types.ts';
 
@@ -111,12 +112,23 @@ export const readAnnotations = () =>
 export const readMediaIndex = () => readJson<BookmarkMediaIndex>('media.json', {});
 export const mediaKey = (postId: string, index: number) => `${postId}:${index}`;
 /** Adds `localUrl` to media that have a downloaded copy (see media.ts). */
-export function withLocalMedia(source: BookmarkSource, index: BookmarkMediaIndex) {
-  return source.media.map((m, i) =>
-    index[mediaKey(source.id, i)]
-      ? { ...m, localUrl: `/api/bookmarks/media/${source.id}/${i}` }
-      : m,
-  );
+export const readTranscripts = () => readJson<BookmarkTranscripts>('transcripts.json', {});
+/** Adds `localUrl` (downloaded copy, see media.ts) and `transcript` to each media item. */
+export function withLocalMedia(
+  source: BookmarkSource,
+  index: BookmarkMediaIndex,
+  transcripts: BookmarkTranscripts = {},
+) {
+  return source.media.map((m, i) => {
+    const key = mediaKey(source.id, i);
+    return index[key]
+      ? {
+          ...m,
+          localUrl: `/api/bookmarks/media/${source.id}/${i}`,
+          ...(transcripts[key] ? { transcript: transcripts[key].text } : {}),
+        }
+      : m;
+  });
 }
 export const readFolders = () =>
   readJson<BookmarkFolderStore>('folders.json', { folders: [], membership: {} });
@@ -186,7 +198,8 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
     sources = readSources(),
     account = readState().accountId,
     folderStore = readFolders(),
-    mediaIndex = readMediaIndex();
+    mediaIndex = readMediaIndex(),
+    transcripts = readTranscripts();
   ensureSavedRanks(sources);
   const membership = folderMembership(folderStore, account);
   let items: Bookmark[] = Object.entries(sources)
@@ -194,7 +207,7 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
     .map(([key, s]) => ({
       ...s,
       ...(annotations[key] || { favorite: false, read: false, tags: [] }),
-      media: withLocalMedia(s, mediaIndex),
+      media: withLocalMedia(s, mediaIndex, transcripts),
       key,
       journalUrl: journalLink(key),
       folders: membership[s.id] || [],
@@ -221,6 +234,7 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
               i.author.username,
               ...i.tags,
               ...i.links.flatMap((l) => [l.title, l.domain, l.description]),
+              ...i.media.map((m) => m.transcript),
             ]
               .join(' ')
               .toLowerCase()
@@ -268,7 +282,7 @@ export function getBookmark(key: string): Bookmark | undefined {
   return {
     ...source,
     ...(readAnnotations()[key] || { favorite: false, read: false, tags: [] }),
-    media: withLocalMedia(source, readMediaIndex()),
+    media: withLocalMedia(source, readMediaIndex(), readTranscripts()),
     key,
     journalUrl: journalLink(key),
     folders: folderMembership(folderStore, account)[source.id] || [],

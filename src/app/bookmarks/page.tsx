@@ -1230,40 +1230,61 @@ export default function BookmarksPage() {
                     {displayText(selected.text)}
                   </p>
                   {selected.media.map((m, i) => (
-                    <div key={i} className="overflow-hidden rounded-2xl">
-                      {m.type === 'photo' ? (
-                        <PreviewImage src={m.url} alt={m.alt || 'Post image'} className="w-full" />
-                      ) : m.localUrl ? (
-                        <video
-                          src={m.localUrl}
-                          poster={m.preview}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          loop={m.type === 'animated_gif'}
-                          autoPlay={m.type === 'animated_gif'}
-                          muted={m.type === 'animated_gif'}
-                          aria-label={m.alt || 'Saved video'}
-                          className="w-full bg-black"
-                        />
-                      ) : (
-                        <a
-                          href={selected.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="relative block"
-                        >
+                    <div key={i}>
+                      <div className="overflow-hidden rounded-2xl">
+                        {m.type === 'photo' ? (
                           <PreviewImage
-                            src={m.preview}
-                            alt={m.alt || 'Video preview'}
+                            src={m.url}
+                            alt={m.alt || 'Post image'}
                             className="w-full"
                           />
-                          <span className="absolute inset-0 flex items-center justify-center">
-                            <span className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-3 text-sm text-white">
-                              <Play size={18} /> Watch on X
+                        ) : m.localUrl ? (
+                          <video
+                            src={m.localUrl}
+                            poster={m.preview}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            loop={m.type === 'animated_gif'}
+                            autoPlay={m.type === 'animated_gif'}
+                            muted={m.type === 'animated_gif'}
+                            aria-label={m.alt || 'Saved video'}
+                            className="w-full bg-black"
+                          />
+                        ) : (
+                          <a
+                            href={selected.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="relative block"
+                          >
+                            <PreviewImage
+                              src={m.preview}
+                              alt={m.alt || 'Video preview'}
+                              className="w-full"
+                            />
+                            <span className="absolute inset-0 flex items-center justify-center">
+                              <span className="flex items-center gap-2 rounded-full bg-black/70 px-4 py-3 text-sm text-white">
+                                <Play size={18} /> Watch on X
+                              </span>
                             </span>
-                          </span>
-                        </a>
+                          </a>
+                        )}
+                      </div>
+                      {m.transcript !== undefined && (
+                        <details
+                          open={!!m.transcript}
+                          className="mt-3 rounded-xl bg-gray-50 px-4 py-3 text-sm dark:bg-gray-800/60"
+                        >
+                          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wider text-gray-500">
+                            {m.transcript ? 'Transcript' : 'Transcript · no speech detected'}
+                          </summary>
+                          {m.transcript && (
+                            <p className="mt-2 whitespace-pre-wrap leading-6 text-gray-700 dark:text-gray-300">
+                              {m.transcript}
+                            </p>
+                          )}
+                        </details>
                       )}
                     </div>
                   ))}

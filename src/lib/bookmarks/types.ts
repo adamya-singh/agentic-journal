@@ -18,6 +18,8 @@ export interface BookmarkSource {
     durationMs?: number;
     /** Journal URL of the downloaded copy; set when listing, never stored in sources. */
     localUrl?: string;
+    /** Speech transcript of the saved copy; set when listing ('' means no speech found). */
+    transcript?: string;
   }[];
   links: { url: string; title?: string; description?: string; image?: string; domain: string }[];
   /** Position in X's bookmark order; higher means bookmarked more recently. */
@@ -51,6 +53,11 @@ export interface BookmarkFolderStore {
 export type BookmarkMediaIndex = Record<
   string,
   { file: string; bytes: number; contentType: string; savedAt: string; source: string }
+>;
+/** Video speech transcripts, keyed `${postId}:${mediaIndex}`. */
+export type BookmarkTranscripts = Record<
+  string,
+  { text: string; language?: string; model: string; transcribedAt: string }
 >;
 export const BOOKMARK_SORTS = [
   'saved',
