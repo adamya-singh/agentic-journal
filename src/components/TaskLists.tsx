@@ -733,7 +733,7 @@ function TaskList({
   return (
     <div className="flex-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 overflow-hidden">
       {headerContent}
-      <div className="p-4 min-h-[120px] max-h-[300px] overflow-y-auto">
+      <div className="p-4 min-h-[120px] max-h-[420px] overflow-y-auto">
         {reorderError && (
           <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs text-red-600 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
             {reorderError}
@@ -835,6 +835,7 @@ function TaskList({
 
 interface TodayTaskListProps {
   title: string;
+  expandToFit?: boolean;
   tasks: Task[];
   automaticTasks?: Task[];
   loading: boolean;
@@ -854,7 +855,7 @@ interface TodayTaskListProps {
   taskMap: Map<string, Task>;
 }
 
-function TodayTaskList({ title, tasks, automaticTasks = [], loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, onAddToToday, onPrioritize, onReorder, selectedTodayTaskIds, expandedNotesTaskIds, onToggleNotes, taskMap }: TodayTaskListProps) {
+function TodayTaskList({ title, expandToFit = false, tasks, automaticTasks = [], loading, error, accentColor, bgColor, onRemove, onComplete, onAddToPlan, onStartTask, onAddToToday, onPrioritize, onReorder, selectedTodayTaskIds, expandedNotesTaskIds, onToggleNotes, taskMap }: TodayTaskListProps) {
   const orderedTasks = tasks;
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const renderTaskItem = (task: Task, index: number, taskCount: number, options?: { automatic?: boolean }) => {
@@ -1029,7 +1030,7 @@ function TodayTaskList({ title, tasks, automaticTasks = [], loading, error, acce
       <div className={`px-4 py-3 ${bgColor} border-b border-gray-200 dark:border-gray-700`}>
         <h3 className={`font-semibold ${accentColor}`}>{title}</h3>
       </div>
-      <div className="p-4 min-h-[80px] max-h-[200px] overflow-y-auto">
+      <div className={`p-4 min-h-[80px] ${expandToFit ? '' : 'max-h-[200px] overflow-y-auto'}`}>
         {orderedTasks.length > 0 || automaticTasks.length > 0 ? (
           <div className="space-y-3">
             {orderedTasks.length > 0 && (
@@ -1667,6 +1668,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
       <div className="flex flex-col gap-4 mb-4 sm:flex-row">
         <TodayTaskList
           title="Have to Do Current"
+          expandToFit
           tasks={haveToDoCurrent}
           loading={loadingHaveCurrent}
           error={errorHaveCurrent}
@@ -1690,6 +1692,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         />
         <TodayTaskList
           title="Want to Do Current"
+          expandToFit
           tasks={wantToDoCurrent}
           loading={loadingWantCurrent}
           error={errorWantCurrent}
