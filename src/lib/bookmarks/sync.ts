@@ -16,6 +16,10 @@ export const MONTHLY_LIMIT = 5;
 // Deliberately conservative: one post, one author, up to four media resources.
 // These are estimates, not invoice amounts; X's console cap is authoritative.
 const PAGE_UNIT_RESERVE = 0.051;
+// Settled per-page cost, calibrated against the X console on 2026-10-06: 282 bookmarked posts
+// with author and media expansions billed as 282 events ($0.29). Expansions were not billed.
+const POST_COST = 0.001;
+const EXPANSION_COST = 0;
 export const billingMonth = () => new Date().toISOString().slice(0, 7);
 export function status(): BookmarkStatus {
   const s = readState(),
@@ -208,9 +212,8 @@ export async function processJob(fetcher: typeof fetch = fetch) {
         });
         writeJson('sources.json', sources);
         const estimate =
-          page.data.length * 0.001 +
-          (page.includes.users?.length || 0) * 0.01 +
-          (page.includes.media?.length || 0) * 0.01;
+          page.data.length * POST_COST +
+          ((page.includes.users?.length || 0) + (page.includes.media?.length || 0)) * EXPANSION_COST;
         s.usage[reservation.month] = Math.max(
           0,
           s.usage[reservation.month] - reservation.reserved + Math.max(estimate, 0),
