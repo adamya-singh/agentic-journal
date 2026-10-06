@@ -19,6 +19,9 @@ import {
   XError,
 } from '@/lib/bookmarks/x-client';
 import { status, startSync, cancelSync, settings, importFolders } from '@/lib/bookmarks/sync';
+import { localMediaFile } from '@/lib/bookmarks/media';
+import fs from 'node:fs';
+import { Readable } from 'node:stream';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const result = (data: unknown, code = 200) =>
@@ -32,6 +35,35 @@ function authorized(req: NextRequest) {
     return [appOrigin(), 'http://127.0.0.1:3000', 'http://localhost:3000'].includes(origin);
   const token = credentials().localKey;
   return !!token && equal(req.headers.get('authorization') || '', `Bearer ${token}`);
+}
+/** Streams a downloaded video, honoring Range so the player can seek. */
+function serveMedia(req: NextRequest, postId: string, index: number) {
+  const media = localMediaFile(postId, index);
+  if (!media)
+    return NextResponse.json({ success: false, error: 'Media not saved.' }, { status: 404 });
+  const headers: Record<string, string> = {
+    'Content-Type': media.contentType,
+    'Accept-Ranges': 'bytes',
+    'Cache-Control': 'private, max-age=86400',
+  };
+  const range = req.headers.get('range')?.match(/^bytes=(\d*)-(\d*)$/);
+  let start = 0,
+    end = media.size - 1,
+    status = 200;
+  if (range && (range[1] || range[2])) {
+    start = range[1] ? Number(range[1]) : Math.max(0, media.size - Number(range[2]));
+    end = range[1] && range[2] ? Math.min(Number(range[2]), media.size - 1) : media.size - 1;
+    if (start > end || start >= media.size)
+      return new Response(null, {
+        status: 416,
+        headers: { 'Content-Range': `bytes */${media.size}` },
+      });
+    status = 206;
+    headers['Content-Range'] = `bytes ${start}-${end}/${media.size}`;
+  }
+  headers['Content-Length'] = String(end - start + 1);
+  const stream = Readable.toWeb(fs.createReadStream(media.file, { start, end })) as ReadableStream;
+  return new Response(stream, { status, headers });
 }
 export async function GET(req: NextRequest) {
   const action = req.nextUrl.pathname.replace('/api/bookmarks', '').replace(/^\//, '');
@@ -85,6 +117,8 @@ export async function GET(req: NextRequest) {
       });
       return response;
     }
+    const mediaMatch = action.match(/^media\/(\d{1,19})\/(\d)$/);
+    if (mediaMatch) return serveMedia(req, mediaMatch[1], Number(mediaMatch[2]));
     if (!action) return result(listBookmarks(req.nextUrl.searchParams));
     if (action === 'status') return result(status());
     if (action === 'item') {

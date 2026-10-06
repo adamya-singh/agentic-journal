@@ -1044,7 +1044,8 @@ export default function BookmarksPage() {
                                 />
                                 {cover && cover.type !== 'photo' && (
                                   <span className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[10px] text-white backdrop-blur">
-                                    <Play size={11} fill="currentColor" /> Video
+                                    <Play size={11} fill="currentColor" />{' '}
+                                    {cover.localUrl ? 'Saved video' : 'Video'}
                                   </span>
                                 )}
                                 {item.media.length > 1 && (
@@ -1232,6 +1233,19 @@ export default function BookmarksPage() {
                     <div key={i} className="overflow-hidden rounded-2xl">
                       {m.type === 'photo' ? (
                         <PreviewImage src={m.url} alt={m.alt || 'Post image'} className="w-full" />
+                      ) : m.localUrl ? (
+                        <video
+                          src={m.localUrl}
+                          poster={m.preview}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          loop={m.type === 'animated_gif'}
+                          autoPlay={m.type === 'animated_gif'}
+                          muted={m.type === 'animated_gif'}
+                          aria-label={m.alt || 'Saved video'}
+                          className="w-full bg-black"
+                        />
                       ) : (
                         <a
                           href={selected.url}

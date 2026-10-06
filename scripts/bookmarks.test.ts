@@ -24,7 +24,9 @@ import {
   recoverInterrupted,
   billingMonth,
   importFolders,
+  refreshVideoLinks,
 } from '../src/lib/bookmarks/sync.ts';
+import { downloadVideos } from '../src/lib/bookmarks/media.ts';
 import {
   credentials,
   beginOAuth,
@@ -34,6 +36,7 @@ import {
   xRequest,
   safeReason,
   XError,
+  bestVideo,
 } from '../src/lib/bookmarks/x-client.ts';
 import { GET, POST } from '../src/app/api/bookmarks/[[...path]]/route.ts';
 import { NextRequest } from 'next/server';
@@ -720,4 +723,82 @@ test('folder lists read from x.com merge with API membership and survive an API 
   await importFolders(folderFetch(routes()));
   assert.equal(listBookmarks().folders[0].count, 3);
   assert.deepEqual(getBookmark('42:1')!.folders, ['100']);
+});
+
+function videoPage() {
+  const p = page(['5']) as ReturnType<typeof page> & {
+    data: { attachments?: { media_keys: string[] } }[];
+    includes: { media?: unknown[] };
+  };
+  p.data[0].attachments = { media_keys: ['m1'] };
+  p.includes.media = [
+    { media_key: 'm1', type: 'video', preview_image_url: 'https://pbs.twimg.com/p.jpg' },
+  ];
+  return p;
+}
+test('the highest-bitrate MP4 from X video host is chosen', () => {
+  assert.equal(
+    bestVideo({
+      variants: [
+        { content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/a.m3u8' },
+        { content_type: 'video/mp4', bit_rate: 256000, url: 'https://video.twimg.com/low.mp4' },
+        { content_type: 'video/mp4', bit_rate: 2176000, url: 'https://evil.example/high.mp4' },
+        { content_type: 'video/mp4', bit_rate: 832000, url: 'https://video.twimg.com/mid.mp4' },
+      ],
+    }),
+    'https://video.twimg.com/mid.mp4',
+  );
+});
+test('video links are looked up within budget and downloaded copies stream with ranges', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([videoPage()]));
+  assert.equal(readSources()['42:5'].media[0].video, undefined);
+  const before = readState().usage[billingMonth()] || 0;
+  const urls: string[] = [];
+  const result = await refreshVideoLinks(
+    ['5'],
+    fake(
+      [
+        {
+          data: [{ id: '5', text: 'x', attachments: { media_keys: ['m1'] } }],
+          includes: {
+            media: [
+              {
+                media_key: 'm1',
+                type: 'video',
+                variants: [
+                  { content_type: 'video/mp4', bit_rate: 1, url: 'https://video.twimg.com/v.mp4' },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+      urls,
+    ),
+  );
+  assert.equal(result.withVideo, 1);
+  assert.equal(new URL(urls[0]).searchParams.get('ids'), '5');
+  assert.ok(Math.abs(readState().usage[billingMonth()] - before - 0.005) < 1e-9);
+  const bytes = new Uint8Array(1000).map((_, i) => i % 256);
+  const saved = await downloadVideos(['5'], (async (input: string | URL | Request) => {
+    assert.equal(String(input), 'https://video.twimg.com/v.mp4');
+    return new Response(bytes);
+  }) as typeof fetch);
+  assert.deepEqual({ saved: saved.saved, bytes: saved.bytes }, { saved: 1, bytes: 1000 });
+  const again = await downloadVideos(['5'], fake([]));
+  assert.equal(again.skipped, 1);
+  const item = getBookmark('42:5')!;
+  assert.equal(item.media[0].localUrl, '/api/bookmarks/media/5/0');
+  const res = await GET(
+    new NextRequest('http://127.0.0.1:3000/api/bookmarks/media/5/0', {
+      headers: { range: 'bytes=10-19' },
+    }),
+  );
+  assert.equal(res.status, 206);
+  assert.equal(res.headers.get('content-range'), 'bytes 10-19/1000');
+  assert.deepEqual([...new Uint8Array(await res.arrayBuffer())], [...bytes.slice(10, 20)]);
+  const missing = await GET(new NextRequest('http://127.0.0.1:3000/api/bookmarks/media/6/0'));
+  assert.equal(missing.status, 404);
 });

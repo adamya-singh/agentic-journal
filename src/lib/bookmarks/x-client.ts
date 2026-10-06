@@ -44,9 +44,36 @@ const includesSchema = z.object({
         alt_text: z.string().optional(),
         width: z.number().optional(),
         height: z.number().optional(),
+        duration_ms: z.number().optional(),
+        variants: z
+          .array(
+            z.object({
+              bit_rate: z.number().optional(),
+              content_type: z.string().optional(),
+              url: z.string(),
+            }),
+          )
+          .optional(),
       }),
     )
     .optional(),
+});
+type XMedia = NonNullable<z.infer<typeof includesSchema>['media']>[number];
+/** The highest-bitrate MP4 variant, served only from X's video host. */
+export function bestVideo(m: Pick<XMedia, 'variants'>) {
+  const mp4 = (m.variants || [])
+    .filter((v) => v.content_type === 'video/mp4')
+    .sort((a, b) => (b.bit_rate || 0) - (a.bit_rate || 0));
+  for (const v of mp4) {
+    const url = safeUrl(v.url);
+    if (url && new URL(url).hostname === 'video.twimg.com') return url;
+  }
+  return undefined;
+}
+const lookupSchema = z.object({
+  data: z.array(postSchema).optional(),
+  includes: includesSchema.optional(),
+  errors: z.array(z.unknown()).optional(),
 });
 const pageSchema = z.object({
   data: z.array(postSchema).optional(),
@@ -407,7 +434,7 @@ export async function fetchPage(
     'post.fields': 'created_at,text,note_post,entities,attachments',
     expansions: 'author_id,attachments.media_keys',
     'user.fields': 'name,username,profile_image_url',
-    'media.fields': 'type,url,preview_image_url,alt_text,width,height',
+    'media.fields': 'type,url,preview_image_url,alt_text,width,height,variants,duration_ms',
     ...(cursor ? { pagination_token: cursor } : {}),
   }).toString();
   const body = await xRequest(url.href, { headers: { Authorization: `Bearer ${token}` } }, fetcher);
@@ -422,6 +449,31 @@ export async function fetchPage(
   if (data.length !== parsed.meta.result_count || data.length > limit)
     throw new XError('malformed', 'X returned invalid bookmark records.');
   return { data, includes: parsed.includes || {}, next: parsed.meta.next_token };
+}
+/**
+ * Looks up up to 100 posts (GET /2/tweets) for their media, including MP4 variants.
+ * Deleted or protected posts come back as per-post errors and are simply missing from the map.
+ */
+export async function fetchPostMedia(ids: string[], fetcher: typeof fetch = fetch) {
+  if (!ids.length || ids.length > 100 || ids.some((id) => !/^\d{1,19}$/.test(id)))
+    throw new XError('invalid_request', 'Look up between 1 and 100 valid post IDs.');
+  const token = await accessToken(fetcher);
+  const url = new URL('https://api.x.com/2/tweets');
+  url.search = new URLSearchParams({
+    ids: ids.join(','),
+    'tweet.fields': 'attachments',
+    expansions: 'attachments.media_keys',
+    'media.fields': 'type,url,preview_image_url,alt_text,width,height,variants,duration_ms',
+  }).toString();
+  const body = await xRequest(url.href, { headers: { Authorization: `Bearer ${token}` } }, fetcher);
+  const parsed = lookupSchema.safeParse(body);
+  if (!parsed.success) throw new XError('malformed', 'X returned an invalid post lookup.');
+  const media = new Map<string, BookmarkSource['media']>();
+  for (const post of parsed.data.data || []) {
+    if (!ids.includes(post.id)) continue;
+    media.set(post.id, normalizePost(post, parsed.data.includes || {}, '', '').media);
+  }
+  return media;
 }
 /**
  * One page of bookmark folders (no folderId) or of the post IDs in a folder.
@@ -496,6 +548,8 @@ export function normalizePost(
               alt: typeof m.alt_text === 'string' ? m.alt_text : undefined,
               width: m.width,
               height: m.height,
+              video: bestVideo(m),
+              durationMs: m.duration_ms,
             },
           ]
         : [];

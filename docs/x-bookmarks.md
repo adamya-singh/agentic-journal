@@ -30,6 +30,10 @@ X bookmark folders are imported only when you press **Import folders** (sidebar 
 
 "Recently saved" follows X's bookmark order (`savedRank`; X does not expose the time a post was bookmarked). Imports made before ranks existed are ordered from their per-page import timestamps. Other sorts: oldest saved, post date (newest/oldest) and author. Filters (folder, author, tag, type, unread, favorites, search) are kept in the page URL. Opening a post marks it read.
 
+## Saved videos
+
+`npm run bookmarks:videos -- --folder <folderId>` (or `--all`; add `--dry-run` to only count) keeps local copies of videos and GIFs. Syncs request X's media `variants`, and each media item stores the highest-bitrate MP4 from `video.twimg.com` as `video`. Posts imported before that are looked up once with `GET /2/tweets` (up to 100 IDs per request; reserved and settled at $0.005 per returned post against the local allowance). The MP4 downloads are free and sequential, written to `media/<postId>-<index>.mp4` via a temp file, capped at 1 GB each, and indexed in `media.json`. `/api/bookmarks/media/<postId>/<index>` streams them with Range support, and the reader plays saved videos inline instead of linking to X. Stills can be extracted later with ffmpeg if needed.
+
 ## Worker and commands
 
 Requires Node 24 (installed on this host; native TypeScript stripping is used).
@@ -69,6 +73,8 @@ Data resides under `src/backend/data/bookmarks` (or `BACKEND_DATA_DIR/bookmarks`
 - `state.json`: account identity, checkpoints, jobs, pilot controls and cost estimates.
 - `credentials.json`: OAuth credentials and local CLI token, mode 0600; never returned by APIs.
 - `worker.json`: local worker heartbeat.
+- `folders.json`: folder names, API folder membership and full lists read from x.com (`web`).
+- `media.json` and `media/`: downloaded videos.
 
 Back up the collection privately. Do not commit credentials or data. Removing a bookmark on X does not delete it here. Images remain remote URLs and can expire; the original X link stays available. Threads, article extraction, permanent media downloads and automatic AI enrichment are outside v1.
 

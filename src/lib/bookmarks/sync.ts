@@ -17,6 +17,7 @@ import {
   callbackUrl,
   fetchPage,
   fetchFolderPage,
+  fetchPostMedia,
   normalizePost,
   XError,
 } from './x-client.ts';
@@ -314,6 +315,70 @@ export async function processJob(fetcher: typeof fetch = fetch) {
     }
   }
 }
+/** Holds `amount` against the local monthly allowance before a paid request. */
+function reserveBudget(amount: number, exhausted: string) {
+  return withLock(() => {
+    const s = readState(),
+      month = billingMonth();
+    if ((s.usage[month] || 0) + amount > MONTHLY_LIMIT) throw new Error(exhausted);
+    s.usage[month] = (s.usage[month] || 0) + amount;
+    writeJson('state.json', s);
+    return month;
+  });
+}
+/** Replaces a reservation with the request's estimated actual cost. */
+function settleBudget(month: string, reserved: number, actual: number) {
+  return withLock(() => {
+    const s = readState();
+    s.usage[month] = Math.max(0, (s.usage[month] || 0) - reserved + actual);
+    writeJson('state.json', s);
+  });
+}
+// Post lookup (GET /2/tweets) is billed per returned post at X's listed post-read rate.
+const LOOKUP_COST = 0.005;
+/**
+ * Fetches MP4 links for saved posts imported before video variants were requested.
+ * Only video/GIF media gain a `video` URL; everything else in the source is kept.
+ */
+export async function refreshVideoLinks(postIds: string[], fetcher: typeof fetch = fetch) {
+  const accountId = await withLock(() => {
+    const s = readState();
+    if (!s.accountId || !credentials().accessToken) throw new Error('Connect X first.');
+    if (!s.budgetConfirmed)
+      throw new Error(
+        'Confirm the $5 spending limit and disabled auto-recharge in connection settings.',
+      );
+    return s.accountId;
+  });
+  let updated = 0;
+  for (let i = 0; i < postIds.length; i += 100) {
+    const batch = postIds.slice(i, i + 100);
+    const month = await reserveBudget(
+      batch.length * LOOKUP_COST,
+      'The local monthly allowance is exhausted. Video links were not fetched.',
+    );
+    const found = await fetchPostMedia(batch, fetcher);
+    await settleBudget(month, batch.length * LOOKUP_COST, found.size * LOOKUP_COST);
+    updated += await withLock(() => {
+      const sources = readSources();
+      let n = 0;
+      for (const [postId, media] of found) {
+        const source = sources[`${accountId}:${postId}`];
+        if (!source) continue;
+        source.media = source.media.map((m, index) => {
+          const fresh = media[index];
+          return fresh?.video && fresh.type === m.type
+            ? { ...m, video: fresh.video, durationMs: fresh.durationMs }
+            : m;
+        });
+        if (source.media.some((m) => m.video)) n++;
+      }
+      writeJson('sources.json', sources);
+      return n;
+    });
+  }
+  return { requested: postIds.length, withVideo: updated };
+}
 /**
  * Imports X bookmark folder names and which saved posts are in each, on explicit request.
  * Each page reserves budget before the request and settles to the returned resource count.
@@ -332,24 +397,12 @@ export async function importFolders(fetcher: typeof fetch = fetch) {
       return s.accountId;
     });
     const reserve = () =>
-      withLock(() => {
-        const s = readState(),
-          month = billingMonth();
-        if ((s.usage[month] || 0) + FOLDER_PAGE_RESERVE > MONTHLY_LIMIT)
-          throw new Error('The local monthly allowance is exhausted. Folders were not updated.');
-        s.usage[month] = (s.usage[month] || 0) + FOLDER_PAGE_RESERVE;
-        writeJson('state.json', s);
-        return month;
-      });
+      reserveBudget(
+        FOLDER_PAGE_RESERVE,
+        'The local monthly allowance is exhausted. Folders were not updated.',
+      );
     const settle = (month: string, count: number) =>
-      withLock(() => {
-        const s = readState();
-        s.usage[month] = Math.max(
-          0,
-          (s.usage[month] || 0) - FOLDER_PAGE_RESERVE + count * POST_COST,
-        );
-        writeJson('state.json', s);
-      });
+      settleBudget(month, FOLDER_PAGE_RESERVE, count * POST_COST);
     const readAll = async (folderId?: string) => {
       const out: { id: string; name?: string }[] = [],
         seen = new Set<string>();

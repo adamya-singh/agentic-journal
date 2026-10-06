@@ -8,6 +8,7 @@ import type {
   Bookmark,
   BookmarkFolderStore,
   BookmarkList,
+  BookmarkMediaIndex,
   BookmarkSort,
 } from './types.ts';
 
@@ -107,6 +108,16 @@ export const readState = () => readJson('state.json', initialState());
 export const readSources = () => readJson<Record<string, BookmarkSource>>('sources.json', {});
 export const readAnnotations = () =>
   readJson<Record<string, BookmarkAnnotation>>('annotations.json', {});
+export const readMediaIndex = () => readJson<BookmarkMediaIndex>('media.json', {});
+export const mediaKey = (postId: string, index: number) => `${postId}:${index}`;
+/** Adds `localUrl` to media that have a downloaded copy (see media.ts). */
+export function withLocalMedia(source: BookmarkSource, index: BookmarkMediaIndex) {
+  return source.media.map((m, i) =>
+    index[mediaKey(source.id, i)]
+      ? { ...m, localUrl: `/api/bookmarks/media/${source.id}/${i}` }
+      : m,
+  );
+}
 export const readFolders = () =>
   readJson<BookmarkFolderStore>('folders.json', { folders: [], membership: {} });
 /** Post ID → folder IDs, combining the API's newest-20 lists with full lists read from x.com. */
@@ -174,7 +185,8 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
   const annotations = readAnnotations(),
     sources = readSources(),
     account = readState().accountId,
-    folderStore = readFolders();
+    folderStore = readFolders(),
+    mediaIndex = readMediaIndex();
   ensureSavedRanks(sources);
   const membership = folderMembership(folderStore, account);
   let items: Bookmark[] = Object.entries(sources)
@@ -182,6 +194,7 @@ export function listBookmarks(params = new URLSearchParams()): BookmarkList {
     .map(([key, s]) => ({
       ...s,
       ...(annotations[key] || { favorite: false, read: false, tags: [] }),
+      media: withLocalMedia(s, mediaIndex),
       key,
       journalUrl: journalLink(key),
       folders: membership[s.id] || [],
@@ -255,6 +268,7 @@ export function getBookmark(key: string): Bookmark | undefined {
   return {
     ...source,
     ...(readAnnotations()[key] || { favorite: false, read: false, tags: [] }),
+    media: withLocalMedia(source, readMediaIndex()),
     key,
     journalUrl: journalLink(key),
     folders: folderMembership(folderStore, account)[source.id] || [],

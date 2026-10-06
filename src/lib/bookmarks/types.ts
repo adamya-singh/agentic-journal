@@ -13,6 +13,11 @@ export interface BookmarkSource {
     alt?: string;
     width?: number;
     height?: number;
+    /** Highest-bitrate MP4 for videos and GIFs, from X's media variants. */
+    video?: string;
+    durationMs?: number;
+    /** Journal URL of the downloaded copy; set when listing, never stored in sources. */
+    localUrl?: string;
   }[];
   links: { url: string; title?: string; description?: string; image?: string; domain: string }[];
   /** Position in X's bookmark order; higher means bookmarked more recently. */
@@ -42,6 +47,11 @@ export interface BookmarkFolderStore {
    */
   web?: Record<string, { syncedAt: string; ids: string[] }>;
 }
+/** Downloaded media files, keyed `${postId}:${mediaIndex}`. */
+export type BookmarkMediaIndex = Record<
+  string,
+  { file: string; bytes: number; contentType: string; savedAt: string; source: string }
+>;
 export const BOOKMARK_SORTS = [
   'saved',
   'saved-oldest',
