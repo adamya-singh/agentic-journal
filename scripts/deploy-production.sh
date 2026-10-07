@@ -135,7 +135,7 @@ fi
 
 echo
 echo "Building Next.js (keeping .next/cache for incremental webpack builds)..."
-# A cold build takes ~8 minutes on this host; a warm webpack cache cuts it to ~1.5.
+# A cold build takes ~8 minutes on this host and needs a ~6 GB heap (5 GB ran out on 2026-10-07); a warm webpack cache cuts it to ~1.5.
 # Clear the old build output but keep the cache, and drop the cache if it grows past ~4 GB.
 if [[ -d "${ROOT_DIR}/.next/cache" ]] && (( $(du -sm "${ROOT_DIR}/.next/cache" | cut -f1) > 4096 )); then
   echo "Next cache exceeds 4 GB; clearing it."
@@ -149,9 +149,9 @@ if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl 
   systemd-run --user --wait --pipe --collect \
     -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
     -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
-    /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-5120}" npm run build
+    /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
 else
-  NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-5120}" npm run build
+  NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
 fi
 test -s "${ROOT_DIR}/.next/BUILD_ID"
 
