@@ -1,6 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# One deploy at a time. Overlapping deploys stop each other's services, delete each other's build
+# output and run out of memory together, which keeps the Journal down (seen 2026-10-07).
+DEPLOY_LOCK="${XDG_RUNTIME_DIR:-/tmp}/agentic-journal-deploy.lock"
+exec 9>"$DEPLOY_LOCK"
+if ! flock -n 9; then
+  echo "Another Agentic Journal deploy is already running; not starting a second one." >&2
+  echo "Wait for it to finish (the Journal is down while it builds), then check: systemctl status agentic-journal" >&2
+  exit 75
+fi
+
 ROOT_DIR="/home/openclaw/projects/agentic-journal"
 BACKEND_DIR="${ROOT_DIR}/src/backend"
 MASTRA_OUTPUT_DIR="${BACKEND_DIR}/.mastra/output"
