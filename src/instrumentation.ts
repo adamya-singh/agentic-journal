@@ -40,4 +40,13 @@ export async function register(): Promise<void> {
     });
   }, RECONCILE_INTERVAL_MS);
   interval.unref();
+
+  // Uptime history is only as good as its samples, so check whether or not
+  // anyone has the Status page open.
+  const { checkUptime, SAMPLE_INTERVAL_MS } = await import('./lib/uptime/monitor');
+  const runUptimeCheck = () => {
+    checkUptime().catch((error) => console.error('Uptime check failed:', error));
+  };
+  setTimeout(runUptimeCheck, 30_000).unref();
+  setInterval(runUptimeCheck, SAMPLE_INTERVAL_MS).unref();
 }

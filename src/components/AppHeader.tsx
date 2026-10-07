@@ -12,6 +12,7 @@ const NAV_LINKS = [
   { href: '/projects', label: 'Projects' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/omi-transcripts', label: 'Transcripts' },
+  { href: '/uptime', label: 'Status' },
 ] as const;
 
 interface AppHeaderProps {
