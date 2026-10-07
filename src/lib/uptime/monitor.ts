@@ -245,10 +245,23 @@ function componentDefs(store: UptimeStore): ComponentDef[] {
 
 // --- command helpers ---------------------------------------------------------
 
+/**
+ * systemd services get no login session, so `systemctl --user` / `journalctl
+ * --user` can't find the user manager unless we point them at its runtime dir.
+ */
+function userSessionEnv(): NodeJS.ProcessEnv {
+  const runtimeDir = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`;
+  return {
+    ...process.env,
+    XDG_RUNTIME_DIR: runtimeDir,
+    DBUS_SESSION_BUS_ADDRESS: process.env.DBUS_SESSION_BUS_ADDRESS || `unix:path=${runtimeDir}/bus`,
+  };
+}
+
 /** Runs a command and returns stdout even when it exits non-zero (systemctl is-active does). */
 function runQuiet(command: string, args: string[], timeoutMs = 15_000): Promise<string> {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (_error, stdout) => {
+    execFile(command, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: userSessionEnv() }, (_error, stdout) => {
       resolve(typeof stdout === 'string' ? stdout : '');
     });
   });
@@ -263,7 +276,8 @@ async function unitStates(units: string[], user: boolean): Promise<Map<string, s
 function statusFromUnitState(state: string): ComponentStatus {
   if (state === 'active') return 'operational';
   if (state === 'activating' || state === 'reloading' || state === 'deactivating') return 'degraded';
-  return 'major';
+  if (state === 'inactive' || state === 'failed') return 'major';
+  return 'unknown';
 }
 
 async function httpProbe(url: string): Promise<{ ok: boolean; ms: number; detail: string }> {
