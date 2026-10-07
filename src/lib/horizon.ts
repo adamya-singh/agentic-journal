@@ -11,6 +11,7 @@ export interface HorizonItem {
   title: string;
   short: string;
   label: string;
+  group: string;          // the direction it sits in: a course, Jobs, Life or Other
   weight: number;
   due: string;            // ISO timestamp
   implied: boolean;       // due time assumed (OA invite + 3 days), not stated
@@ -40,6 +41,7 @@ export interface HorizonData {
   undated: HorizonUndated[];
   cleared: HorizonCleared[];
   hiddenStale: number;
+  bounds: { climb: number; altitude: number };   // hours from now to next Monday and the Monday after
 }
 
 const HOLD_WINDOW_DAYS = 7;       // overdue longer than this is treated as stale and left off the horizon
@@ -95,6 +97,16 @@ function dayLabel(due: Date, now: Date, implied: boolean): string {
   if (n === -1) return 'Yesterday';
   if (n > 1 && n < 7) return DAY[due.getDay()];
   return `${DAY[due.getDay()]} ${MON[due.getMonth()]} ${due.getDate()}`;
+}
+
+export const GROUP_JOBS = 'Jobs', GROUP_LIFE = 'Life', GROUP_OTHER = 'Other';
+
+// The direction a task points in: its course tag, or Jobs / Life / Other.
+function groupFor(text: string, label: string, listType: string): string {
+  if (/\bOA\b|online assessment|take-home|interview|recruit|job application/i.test(text)) return GROUP_JOBS;
+  if (label) return label;
+  if (listType === 'want-to-do') return GROUP_LIFE;
+  return GROUP_OTHER;
 }
 
 function zoneFor(due: Date, hours: number, now: Date): HorizonZone {
@@ -184,6 +196,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
       title: task.text,
       short,
       label: label || (listType === 'want-to-do' ? 'Want to do' : ''),
+      group: groupFor(task.text, label, listType),
       weight,
       due: due.toISOString(),
       implied,
@@ -195,6 +208,14 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
   };
   flatten(input.haveToDo).filter(pending).forEach((t) => add(t, 'have-to-do'));
   flatten(input.wantToDo).filter(pending).forEach((t) => add(t, 'want-to-do'));
+
+  // Untagged tasks that name a course ("…with Regression notes") point in that course's direction.
+  const courses = [...new Set(items.map((i) => i.label).filter((l) => l && l !== 'Want to do'))];
+  items.forEach((i) => {
+    if (i.group !== GROUP_OTHER) return;
+    const hit = courses.find((c) => i.title.toLowerCase().includes(c.toLowerCase()));
+    if (hit) i.group = hit;
+  });
 
   items.sort((a, b) => a.hours - b.hours);
   const holds = items
@@ -226,7 +247,13 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
     .map((c) => ({ id: c.id, short: shortenTask(c.text).short, day: DAY[new Date(c.completedAt as string).getDay()] }));
 
-  return { now: now.toISOString(), items: ringItems, holds, undated, cleared, hiddenStale };
+  const today = startOfDay(now);
+  const nextMonday = new Date(today.getTime() + (((8 - today.getDay()) % 7) || 7) * 864e5);
+  const bounds = {
+    climb: (nextMonday.getTime() - now.getTime()) / 36e5,
+    altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
+  };
+  return { now: now.toISOString(), items: ringItems, holds, undated, cleared, hiddenStale, bounds };
 }
 
 // The three answers the hero leads with.

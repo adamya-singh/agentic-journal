@@ -2,7 +2,7 @@
 // and a pill for each task on the ring of its zone. Returns where each pill landed so the 3D view
 // can rebuild the exact same layout.
 import type { HorizonData, HorizonItem } from '@/lib/horizon';
-import { HORIZON_RING_ZONES } from '@/lib/horizon';
+import { HORIZON_RING_ZONES, GROUP_JOBS, GROUP_LIFE, GROUP_OTHER } from '@/lib/horizon';
 
 export const DAWN = {
   W: 1200, H: 560, G: 70, X: 600,
@@ -70,9 +70,55 @@ function place(boxes: Box[], cands: [number, number][], w: number, bounds: Box):
   return null;
 }
 
+export interface Sector { group: string; a0: number; a1: number; mid: number }
+
+const FAN_LEFT = 174, FAN_RIGHT = 6, SECTOR_GAP = 2;
+
+// One slice of the fan per group, in a fixed order so each subject keeps its direction from day to day:
+// courses alphabetically from the left, then Jobs, Other and Life on the right.
+export function sectorsFor(data: HorizonData): Sector[] {
+  const counts = new Map<string, number>();
+  data.holds.forEach((it) => counts.set(it.group, counts.get(it.group) || 0));
+  data.items.forEach((it) => counts.set(it.group, (counts.get(it.group) || 0) + 1));
+  const tail = [GROUP_JOBS, GROUP_OTHER, GROUP_LIFE];
+  const groups = [...counts.keys()].sort((a, b) => {
+    const ta = tail.indexOf(a), tb = tail.indexOf(b);
+    if (ta !== tb) return ta - tb;
+    return a.localeCompare(b);
+  });
+  const weights = groups.map((g) => Math.max(1.3, counts.get(g) as number));
+  const total = weights.reduce((a, b) => a + b, 0);
+  const span = FAN_LEFT - FAN_RIGHT - SECTOR_GAP * Math.max(0, groups.length - 1);
+  let a = FAN_LEFT;
+  return groups.map((group, i) => {
+    const w = span * weights[i] / total;
+    const sec = { group, a0: a, a1: a - w, mid: a - w / 2 };
+    a -= w + SECTOR_GAP;
+    return sec;
+  });
+}
+
+// Distance from the sun grows with the due date: each zone fills its own ring, and inside the ring
+// a later due time sits farther out.
+export function radiusFor(it: HorizonItem, data: HorizonData): number {
+  const R = DAWN.R, pad = 18;
+  const span = (lo: number, hi: number, r0: number, r1: number, h: number) => {
+    const f = hi > lo ? Math.max(0, Math.min(1, (h - lo) / (hi - lo))) : 0.5;
+    return r0 + pad + (r1 - r0 - 2 * pad) * f;
+  };
+  const { climb, altitude } = data.bounds;
+  const h = it.hours;
+  if (it.zone === 'ignition') return span(0, Math.min(48, climb), R[0], R[1], h);
+  if (it.zone === 'climb') return span(48, climb, R[1], R[2], h);
+  if (it.zone === 'altitude') return span(Math.max(48, climb), altitude, R[2], R[3], h);
+  // Later: logarithmic over the next couple of months so far-off dates still spread out.
+  const f = Math.log1p(Math.max(0, h - altitude) / 24) / Math.log1p(60);
+  return R[3] + pad + (R[4] - R[3] - 2 * pad) * Math.min(1, f);
+}
+
 export interface PillSpot { item: HorizonItem; x: number; y: number }
 
-export function drawDawn(svg: SVGSVGElement, data: HorizonData): PillSpot[] {
+export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSpot[]; sectors: Sector[] } {
   const { W, H, G, X, R } = DAWN;
   const pt = (r: number, deg: number): [number, number] => {
     const a = deg * Math.PI / 180;
@@ -93,7 +139,18 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): PillSpot[] {
     s += `<circle cx="${X}" cy="${H}" r="${R[idx + 1]}" fill="${DAWN.bands[idx]}" stroke="${DAWN.ring}"${idx === 3 ? ' stroke-dasharray="2 6"' : ''}/>`;
   }
   s += `<circle cx="${X}" cy="${H}" r="${R[2]}" fill="url(#hz-haze)"/>`;
+  const sectors = sectorsFor(data);
+  // Faint rays between slices, and each slice's name just outside the last ring.
+  sectors.slice(1).forEach((sec) => {
+    const a = sec.a0 + SECTOR_GAP / 2, p0 = pt(R[0] + 8, a), p1 = pt(R[4] + 6, a);
+    s += `<line x1="${p0[0].toFixed(1)}" y1="${p0[1].toFixed(1)}" x2="${p1[0].toFixed(1)}" y2="${p1[1].toFixed(1)}" stroke="rgba(255,255,255,.09)"/>`;
+  });
   s += `<circle cx="${X}" cy="${H}" r="${R[0]}" fill="url(#hz-sun)"/></g>`;
+  sectors.forEach((sec) => {
+    const p = pt(R[4] + 16, sec.mid), c = Math.cos(sec.mid * Math.PI / 180);
+    const anchor = c > 0.25 ? 'start' : c < -0.25 ? 'end' : 'middle';
+    s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 3).toFixed(1)}" text-anchor="${anchor}" style="font-family:${MONO}" font-size="10" letter-spacing="1.6" fill="#d6dde8" opacity=".7">${esc(sec.group.toUpperCase())}</text>`;
+  });
   s += `<text x="${X}" y="${H - 20}" text-anchor="middle" style="font-family:${MONO}" font-size="10" letter-spacing="2" fill="${DAWN.sunText}">YOU</text>`;
   s += `<rect y="${H}" width="${W}" height="${G}" fill="url(#hz-gr)"/>`;
   s += `<rect x="0" y="${H - 1}" width="${W}" height="1.5" fill="${DAWN.line}"/>`;
@@ -104,24 +161,29 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): PillSpot[] {
     s += `<text x="${x}" y="${H + 46}" text-anchor="middle" style="font-family:${MONO}" font-size="9.5" letter-spacing="1.4" fill="${DAWN.groundInk}" opacity=".7">${nm[1].toUpperCase()}</text>`;
   });
   const boxes: Box[] = [[X - R[0] - 8, H - R[0] - 8, X + R[0] + 8, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
-  HORIZON_RING_ZONES.forEach((k, i) => {
-    const list = data.items.filter((it) => it.zone === k), n = list.length, mid = (R[i] + R[i + 1]) / 2;
-    list.forEach((it, j) => {
-      const deg = n === 1 ? 90 : 160 - 140 * j / (n - 1);
-      const fw = it.weight >= 4 ? 600 : 500;
-      const w = textWidth(it.short, fw) + 24;
-      const cands: [number, number][] = [];
-      [0, 6, -6, 12, -12, 18, -18].forEach((d) => { [0, 20, -20].forEach((dr) => { cands.push(pt(mid + dr, deg + d)); }); });
-      const p = place(boxes, cands, w, [4, 4, W - 4, H - 4]) || pt(mid, deg);
-      const st = DAWN.pills[k], x0 = p[0] - w / 2;
-      if (st[3]) s += `<rect x="${(x0 - 4).toFixed(1)}" y="${p[1] - 18}" width="${(w + 8).toFixed(1)}" height="36" rx="18" fill="${st[3]}" opacity=".35" filter="url(#hz-blur)"/>`;
-      s += `<rect x="${x0.toFixed(1)}" y="${p[1] - 14}" width="${w.toFixed(1)}" height="28" rx="14" fill="${st[0]}" stroke="${st[1]}"/>`;
-      s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 4.6).toFixed(1)}" text-anchor="middle" style="font-family:${SANS}" font-size="13" font-weight="${fw}" fill="${st[2]}">${esc(it.short)}</text>`;
-      s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 25).toFixed(1)}" text-anchor="middle" style="font-family:${MONO}" font-size="10.5" fill="${DAWN.date}" opacity="${k === 'orbit' ? 0.55 : 0.8}">${esc(it.day)}</text>`;
-      spots.push({ item: it, x: p[0], y: p[1] });
-    });
+  // Place pills nearest-due first, so the most urgent ones keep their ideal spot.
+  const secBy = new Map(sectors.map((sec) => [sec.group, sec]));
+  data.items.slice().sort((a, b) => a.hours - b.hours).forEach((it) => {
+    const sec = secBy.get(it.group) as Sector;
+    const k = it.zone;
+    const r = radiusFor(it, data);
+    const fw = it.weight >= 4 ? 600 : 500;
+    const w = textWidth(it.short, fw) + 24;
+    const half = (sec.a0 - sec.a1) / 2;
+    const cands: [number, number][] = [];
+    // Slide along the slice first (same distance, so the due-date order holds), then nudge in or out a little.
+    const inSlice = [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9];
+    [0, 8, -8, 16, -16, 24, -24].forEach((dr) => inSlice.forEach((f) => cands.push(pt(r + dr, sec.mid + f * half))));
+    [1.2, -1.2, 1.6, -1.6, 2.2, -2.2].forEach((f) => [0, 12, -12].forEach((dr) => cands.push(pt(r + dr, sec.mid + f * half))));
+    const p = place(boxes, cands, w, [4, 4, W - 4, H - 4]) || pt(r, sec.mid);
+    const st = DAWN.pills[k], x0 = p[0] - w / 2;
+    if (st[3]) s += `<rect x="${(x0 - 4).toFixed(1)}" y="${p[1] - 18}" width="${(w + 8).toFixed(1)}" height="36" rx="18" fill="${st[3]}" opacity=".35" filter="url(#hz-blur)"/>`;
+    s += `<rect x="${x0.toFixed(1)}" y="${p[1] - 14}" width="${w.toFixed(1)}" height="28" rx="14" fill="${st[0]}" stroke="${st[1]}"/>`;
+    s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 4.6).toFixed(1)}" text-anchor="middle" style="font-family:${SANS}" font-size="13" font-weight="${fw}" fill="${st[2]}">${esc(it.short)}</text>`;
+    s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 25).toFixed(1)}" text-anchor="middle" style="font-family:${MONO}" font-size="10.5" fill="${DAWN.date}" opacity="${k === 'orbit' ? 0.55 : 0.8}">${esc(it.day)}</text>`;
+    spots.push({ item: it, x: p[0], y: p[1] });
   });
   svg.setAttribute('viewBox', `0 0 ${W} ${H + G}`);
   svg.innerHTML = s;
-  return spots;
+  return { spots, sectors };
 }

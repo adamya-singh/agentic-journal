@@ -6,7 +6,7 @@ import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput'
 import { useRefresh } from '@/lib/RefreshContext';
 import { getCurrentDateISO } from '@/lib/current-date';
 import { horizonAnswers, type HorizonData } from '@/lib/horizon';
-import { drawDawn, type PillSpot } from './dawn-svg';
+import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
@@ -79,7 +79,7 @@ export function HorizonHero() {
   const skyRef = React.useRef<HTMLDivElement>(null);
   const svgRef = React.useRef<SVGSVGElement>(null);
   const spaceRef = React.useRef<DawnSpace | null>(null);
-  const layoutRef = React.useRef<{ spots: PillSpot[]; data: HorizonData } | null>(null);
+  const layoutRef = React.useRef<{ spots: PillSpot[]; sectors: Sector[]; data: HorizonData } | null>(null);
   const [data, setData] = React.useState<HorizonData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [completing, setCompleting] = React.useState<string | null>(null);
@@ -104,7 +104,7 @@ export function HorizonHero() {
       if (disposed || !skyRef.current || !svgRef.current) return;
       try {
         spaceRef.current = new Space(skyRef.current, svgRef.current);
-        if (layoutRef.current) spaceRef.current.setLayout(layoutRef.current.spots, layoutRef.current.data);
+        if (layoutRef.current) spaceRef.current.setLayout(layoutRef.current.spots, layoutRef.current.data, layoutRef.current.sectors);
       } catch (err) {
         console.warn('Horizon 3D unavailable:', err);
       }
@@ -117,9 +117,9 @@ export function HorizonHero() {
     if (!data || !svgRef.current) return;
     const draw = () => {
       if (!svgRef.current) return;
-      const spots = drawDawn(svgRef.current, data);
-      layoutRef.current = { spots, data };
-      spaceRef.current?.setLayout(spots, data);
+      const { spots, sectors } = drawDawn(svgRef.current, data);
+      layoutRef.current = { spots, sectors, data };
+      spaceRef.current?.setLayout(spots, data, sectors);
     };
     draw();
     let alive = true;

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import type { HorizonData, HorizonItem } from '@/lib/horizon';
 import { HORIZON_RING_ZONES } from '@/lib/horizon';
-import { DAWN, ZONE_NAMES, esc, starField, type PillSpot } from './dawn-svg';
+import { DAWN, ZONE_NAMES, esc, starField, type PillSpot, type Sector } from './dawn-svg';
 
 const U = 10;                                     // 1 world unit = 10 SVG px
 const R = DAWN.R.map((r) => r / U);
@@ -68,6 +68,8 @@ export class DawnSpace {
   private youEl: HTMLDivElement | null = null;
   private spots: PillSpot[] = [];
   private holds: HorizonItem[] = [];
+  private sectors: Sector[] = [];
+  private rays: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null;
   private mode: 'flat' | 'live' = 'flat';
   private t = 0;
   private tTarget = 0;
@@ -165,9 +167,11 @@ export class DawnSpace {
   }
 
   /** New data or a redraw of the flat view: keep the pill positions for the next time we step inside. */
-  setLayout(spots: PillSpot[], data: HorizonData) {
+  setLayout(spots: PillSpot[], data: HorizonData, sectors: Sector[]) {
     this.spots = spots;
     this.holds = data.holds;
+    this.sectors = sectors;
+    this.buildRays();
     if (this.mode === 'live') this.buildNodes();
   }
 
@@ -209,6 +213,19 @@ export class DawnSpace {
     return b.querySelector('.hz3-below') as SVGGElement;
   }
 
+  private buildRays() {
+    if (this.rays) { this.disk.remove(this.rays); this.rays.geometry.dispose(); this.rays.material.dispose(); this.rays = null; }
+    const pts: THREE.Vector3[] = [];
+    this.sectors.slice(1).forEach((sec) => {
+      const a = (sec.a0 + 1) * Math.PI / 180;
+      pts.push(new THREE.Vector3(Math.cos(a) * (R[0] + 0.8), Math.sin(a) * (R[0] + 0.8), 0), new THREE.Vector3(Math.cos(a) * (R[4] + 0.6), Math.sin(a) * (R[4] + 0.6), 0));
+    });
+    if (!pts.length) return;
+    this.rays = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.09, fog: false, clippingPlanes: this.above }));
+    this.disk.add(this.rays);
+  }
+
   private clearNodes() {
     this.nodes.forEach((n) => { this.scene.remove(n.dot); n.dot.geometry.dispose(); n.dot.material.dispose(); });
     this.nodes = [];
@@ -231,9 +248,15 @@ export class DawnSpace {
       this.nodes.push(n);
     };
     this.spots.forEach((sp) => add(sp.item, sp.item.zone, (sp.x - DAWN.X) / U, (DAWN.H - sp.y) / U));
-    this.holds.forEach((it, j, a) => {
-      const deg = (150 - 120 * j / Math.max(1, a.length - 1)) * Math.PI / 180;
-      add(it, 'hold', Math.cos(deg) * 5.4, Math.sin(deg) * 5.4);
+    // Holds sit on the pad in their slice's direction; several in one slice fan out a little.
+    const perGroup = new Map<string, number>();
+    this.holds.forEach((it) => {
+      const sec = this.sectors.find((x) => x.group === it.group);
+      const n = perGroup.get(it.group) || 0; perGroup.set(it.group, n + 1);
+      const base = sec ? sec.mid : 90;
+      const deg = (base + (n % 2 ? -1 : 1) * Math.ceil(n / 2) * 24) * Math.PI / 180;
+      const r = 5.4 + (n % 2) * 1.6;
+      add(it, 'hold', Math.cos(deg) * r, Math.sin(deg) * r);
     });
     this.stemGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(Math.max(1, this.nodes.length) * 6), 3));
     HORIZON_RING_ZONES.forEach((k, i) => {
@@ -404,6 +427,7 @@ export class DawnSpace {
     fog.color.setHex(0xe39a5f).lerp(this.skyLow, e);
     fog.near = 30 + (1 - e) * 900; fog.far = 170 + (1 - e) * 1800;
     this.stems.material.opacity = a * 0.32;
+    if (this.rays) this.rays.material.opacity = 0.09 + e * 0.1;
     this.bandMats.forEach((m, i) => { m.opacity = rgba(DAWN.bands[3 - i]).a * (1 - e * 0.85); });
     this.ground.material.opacity = 1 - e; this.ground.visible = e < 0.999;
     this.ground.material.color.setHex(0xc7a07a).lerp(this.skyLow, Math.min(1, e * 1.6));
