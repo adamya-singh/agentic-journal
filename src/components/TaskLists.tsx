@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
-import { Play, CheckCircle, Clock, Pencil, GripVertical, ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+import { Play, CheckCircle, Clock, Pencil, GripVertical, ChevronDown, ChevronRight, Plus, Wind } from 'lucide-react';
 import {
   DndContext,
   PointerSensor,
@@ -85,6 +85,7 @@ interface TaskListProps {
   clickedTasks?: Set<string>;
   onAddClick?: () => void;
   onDelete?: (task: Task) => void;
+  onLetGo?: (task: Task) => void;
   onEdit?: (task: Task) => void;
   onAddSubtask?: (task: Task) => void;
   sortMode?: DueSortMode;
@@ -399,6 +400,7 @@ function TaskList({
   clickedTasks,
   onAddClick,
   onDelete,
+  onLetGo,
   onEdit,
   onAddSubtask,
   sortMode = 'off',
@@ -624,6 +626,20 @@ function TaskList({
             </button>
           )}
           
+          {/* Let go: no longer worth doing, without counting it as done */}
+          {onLetGo && !task.isDaily && !task.completed && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onLetGo(task);
+              }}
+              className="ml-1 p-1 text-slate-400 hover:text-slate-600 dark:text-slate-400 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700/40 rounded transition-colors opacity-0 group-hover:opacity-100"
+              title="Let go: no longer worth doing (not counted as done, can be undone)"
+            >
+              <Wind className="h-4 w-4" />
+            </button>
+          )}
+
           {/* Delete button */}
           {onDelete && (
             <button
@@ -1064,7 +1080,9 @@ function TodayTaskList({ title, expandToFit = false, tasks, automaticTasks = [],
  */
 export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const currentDate = useCurrentDateISO();
-  const { taskRefreshCounter, refreshJournal } = useRefresh();
+  const { taskRefreshCounter, refreshJournal, refreshTasks } = useRefresh();
+  const [letGoUndo, setLetGoUndo] = useState<{ id: string; text: string } | null>(null);
+  const letGoTimer = useRef<number | null>(null);
   
   // Modal state
   const [showTaskModal, setShowTaskModal] = useState(false);
@@ -1528,6 +1546,41 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     setShowEditModal(true);
   };
 
+  // Let go: takes the task (and its subtasks) off General, Current and Today without completing it.
+  const handleLetGo = async (task: Task, listType: ListType) => {
+    try {
+      const response = await fetch('/api/tasks/let-go', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: task.id, listType }),
+      });
+      const data = await response.json();
+      if (data.success) {
+        setLetGoUndo({ id: task.id, text: task.text });
+        if (letGoTimer.current) window.clearTimeout(letGoTimer.current);
+        letGoTimer.current = window.setTimeout(() => setLetGoUndo(null), 8000);
+        refreshTasks();
+      }
+    } catch (error) {
+      console.error('Failed to let task go:', error);
+    }
+  };
+
+  const handleUndoLetGo = async () => {
+    if (!letGoUndo) return;
+    const { id } = letGoUndo;
+    setLetGoUndo(null);
+    try {
+      await fetch('/api/tasks/let-go/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId: id }),
+      });
+    } finally {
+      refreshTasks();
+    }
+  };
+
   // Handler to actually delete the task after confirmation
   const handleDeleteTask = async () => {
     if (!taskToDelete) return;
@@ -1624,6 +1677,14 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
 
   return (
     <div className="w-full max-w-7xl mx-auto px-2 sm:px-4 pb-4">
+      {letGoUndo && (
+        <div role="status" className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-full bg-gray-900 px-4 py-2 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900">
+          <span className="max-w-[60vw] truncate">Let go of &ldquo;{letGoUndo.text}&rdquo;</span>
+          <button type="button" onClick={handleUndoLetGo} className="font-semibold text-indigo-300 hover:text-indigo-200 dark:text-indigo-600 dark:hover:text-indigo-700">
+            Undo
+          </button>
+        </div>
+      )}
       <h2 className="text-xl sm:text-2xl font-semibold text-gray-700 dark:text-gray-200 mb-4 text-center">Tasks</h2>
       
       {/* Dated Today selections */}
@@ -1732,6 +1793,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             openAddTaskModal('have-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
+          onLetGo={(task) => handleLetGo(task, 'have-to-do')}
           onEdit={(task) => handleEditTask(task, 'have-to-do')}
           onAddSubtask={(task) => openAddSubtaskModal(task, 'have-to-do')}
           sortMode={haveSortMode}
@@ -1757,6 +1819,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             openAddTaskModal('want-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
+          onLetGo={(task) => handleLetGo(task, 'want-to-do')}
           onEdit={(task) => handleEditTask(task, 'want-to-do')}
           onAddSubtask={(task) => openAddSubtaskModal(task, 'want-to-do')}
           sortMode={wantSortMode}

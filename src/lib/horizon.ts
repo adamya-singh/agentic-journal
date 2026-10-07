@@ -41,6 +41,7 @@ export interface HorizonData {
   undated: HorizonUndated[];
   cleared: HorizonCleared[];
   hiddenStale: number;
+  letGoThisWeek: number;
   bounds: { climb: number; altitude: number };   // hours from now to next Monday and the Monday after
 }
 
@@ -166,6 +167,7 @@ export interface HorizonInputs {
   wantToDo: Task[];
   currentHaveToDoIds: string[];
   completed: { id: string; text: string; completedAt?: string }[];
+  letGoThisWeek?: number;
   now?: Date;
 }
 
@@ -253,12 +255,12 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     climb: (nextMonday.getTime() - now.getTime()) / 36e5,
     altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
   };
-  return { now: now.toISOString(), items: ringItems, holds, undated, cleared, hiddenStale, bounds };
+  return { now: now.toISOString(), items: ringItems, holds, undated, cleared, hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds };
 }
 
 // The three answers the hero leads with.
 export function horizonAnswers(data: HorizonData) {
   const next = data.items.find((i) => i.zone === 'ignition') || data.items[0] || null;
   const big = data.items.find((i) => i.weight >= 5 && i.hours > 0 && i.hours < 24 * 14) || null;
-  return { next, big, holds: data.holds, cleared: data.cleared.length };
+  return { next, big, holds: data.holds, cleared: data.cleared.length, letGo: data.letGoThisWeek };
 }

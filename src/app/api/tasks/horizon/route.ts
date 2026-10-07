@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { buildHorizon } from '@/lib/horizon';
 import { getCurrentTasks } from '../current/current-store-utils';
 import { readCompletedTaskIndex, readGeneralTasks } from '../today/today-store-utils';
+import { letGoSince, readLetGo } from '../let-go/let-go-store';
 
 /**
  * GET /api/tasks/horizon
@@ -21,6 +22,7 @@ export async function GET() {
       wantToDo: readGeneralTasks('want-to-do').tasks,
       currentHaveToDoIds,
       completed,
+      letGoThisWeek: letGoSince(readLetGo(), new Date(Date.now() - 7 * 864e5)).length,
     });
     return NextResponse.json({ success: true, data });
   } catch (error) {

@@ -68,6 +68,9 @@ const CSS = `
 .hz-hold button{font:500 11px var(--hz-mono);color:#f3e3cf;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:2px 9px;cursor:pointer}
 .hz-hold button:hover,.hz-hold button:focus-visible{border-color:#ffd2a8;outline:none}
 .hz-hold button:disabled{opacity:.5;cursor:default}
+.hz-hold .hz-letgo{background:transparent;border-color:rgba(255,255,255,.12);color:#c9b8a6}
+.hz-undo{display:inline-flex;align-items:center;gap:10px;font:12.5px var(--hz-sans);color:#f3e3cf;background:rgba(10,14,24,.55);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:4px 6px 4px 12px}
+.hz-undo button{font:500 11px var(--hz-mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
 .hz-undated{border:1px dashed rgba(243,239,231,.35);border-radius:999px;padding:4px 12px;font:12.5px var(--hz-sans);color:#f3efe7}
 .hz-undated span{font:11px var(--hz-mono);color:#a9b4c4;margin-left:6px}
 .hz-none{font:13px var(--hz-sans);color:#d6c4ae}
@@ -83,6 +86,8 @@ export function HorizonHero() {
   const [data, setData] = React.useState<HorizonData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [completing, setCompleting] = React.useState<string | null>(null);
+  const [undo, setUndo] = React.useState<{ id: string; short: string } | null>(null);
+  const undoTimer = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -141,12 +146,46 @@ export function HorizonHero() {
     }
   }, [refreshTasks]);
 
+  // Let go: no longer worth doing. Not a completion; restorable from the Undo chip for a few seconds.
+  const letGo = React.useCallback(async (taskId: string, listType: string, short: string) => {
+    setCompleting(taskId);
+    try {
+      const res = await fetch('/api/tasks/let-go', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ taskId, listType }),
+      });
+      if ((await res.json()).success) {
+        setUndo({ id: taskId, short });
+        if (undoTimer.current) window.clearTimeout(undoTimer.current);
+        undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
+      }
+      refreshTasks();
+    } finally {
+      setCompleting(null);
+    }
+  }, [refreshTasks]);
+
+  const undoLetGo = React.useCallback(async () => {
+    if (!undo) return;
+    const { id } = undo;
+    setUndo(null);
+    await fetch('/api/tasks/let-go/restore', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: id }),
+    });
+    refreshTasks();
+  }, [undo, refreshTasks]);
+
+  React.useEffect(() => () => { if (undoTimer.current) window.clearTimeout(undoTimer.current); }, []);
+
   const answers = data ? horizonAnswers(data) : null;
   const headline = answers?.next
     ? (answers.holds.length ? <>Clear the pad, then <em>{answers.next.short}</em>.</> : <>Next up: <em>{answers.next.short}</em>.</>)
     : <>Clear skies.</>;
   const sub = answers
-    ? [`${answers.cleared} cleared this week.`, answers.big ? `Next big launch: ${answers.big.short} · ${answers.big.day}.` : '']
+    ? [`${answers.cleared} cleared${answers.letGo ? `, ${answers.letGo} let go` : ''} this week.`, answers.big ? `Next big launch: ${answers.big.short} · ${answers.big.day}.` : '']
       .filter(Boolean).join(' ')
     : '';
 
@@ -173,11 +212,18 @@ export function HorizonHero() {
         <div className="hz-row">
           <b>Pad</b>
           {data && data.holds.length === 0 && <span className="hz-none">Nothing overdue. The pad is clear.</span>}
+          {undo && (
+            <span className="hz-undo" role="status">Let go of {undo.short}.<button type="button" onClick={undoLetGo}>Undo</button></span>
+          )}
           {data?.holds.map((h) => (
             <span key={h.id} className="hz-hold" title={h.title}>
               HOLD · {h.short} · {h.left}
               <button type="button" disabled={completing === h.id} onClick={() => completeHold(h.id, h.listType)}>
                 {completing === h.id ? 'Saving…' : 'Done'}
+              </button>
+              <button type="button" className="hz-letgo" disabled={completing === h.id} onClick={() => letGo(h.id, h.listType, h.short)}
+                title="No longer worth doing. Takes it off your lists without counting it as done.">
+                Let go
               </button>
             </span>
           ))}
