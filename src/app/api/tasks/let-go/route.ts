@@ -35,7 +35,8 @@ export async function GET() {
  * Lets a task go: it is no longer worth doing. The task and its subtasks leave General, Current and
  * Today, and are kept in tasks/let-go.json (restorable via /api/tasks/let-go/restore). Not a completion.
  *
- * Body: { taskId: string, listType?: 'have-to-do' | 'want-to-do', reason?: string }
+ * Body: { taskId: string, listType?: 'have-to-do' | 'want-to-do', reason: string }
+ * A reason is required: letting a task go always records why.
  */
 export async function POST(request: NextRequest) {
   try {
@@ -46,8 +47,8 @@ export async function POST(request: NextRequest) {
     if (!taskId || typeof taskId !== 'string' || !taskId.trim()) {
       return NextResponse.json({ success: false, error: 'taskId is required' }, { status: 400 });
     }
-    if (reason !== undefined && typeof reason !== 'string') {
-      return NextResponse.json({ success: false, error: 'reason must be a string' }, { status: 400 });
+    if (typeof reason !== 'string' || !reason.trim()) {
+      return NextResponse.json({ success: false, error: 'Say why you are letting it go' }, { status: 400 });
     }
 
     ensureCurrentSystemThroughToday();

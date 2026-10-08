@@ -8,6 +8,7 @@ import { horizonAnswers, type HorizonData } from '@/lib/horizon';
 import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { BriefLayer } from './BriefLayer';
+import { LetGoReasonModal } from '@/components/LetGoReasonModal';
 import { DONE_CSS, DoneTray } from './DoneTray';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
@@ -184,24 +185,29 @@ export function HorizonHero() {
   }, [doneUndo, refreshTasks]);
 
   // Let go: no longer worth doing. Not a completion; restorable from the Undo chip for a few seconds.
-  const letGo = React.useCallback(async (taskId: string, listType: string, short: string) => {
+  // Asks why first; the reason is required.
+  const [letGoAsk, setLetGoAsk] = React.useState<{ id: string; listType: string; short: string; title: string } | null>(null);
+  const letGo = React.useCallback(async (reason: string): Promise<string | void> => {
+    if (!letGoAsk) return;
+    const { id: taskId, listType, short } = letGoAsk;
     setCompleting(taskId);
     try {
       const res = await fetch('/api/tasks/let-go', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, listType }),
+        body: JSON.stringify({ taskId, listType, reason }),
       });
-      if ((await res.json()).success) {
-        setUndo({ id: taskId, short });
-        if (undoTimer.current) window.clearTimeout(undoTimer.current);
-        undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
-      }
+      const json = await res.json();
+      if (!json.success) return json.error || 'Could not let the task go.';
+      setLetGoAsk(null);
+      setUndo({ id: taskId, short });
+      if (undoTimer.current) window.clearTimeout(undoTimer.current);
+      undoTimer.current = window.setTimeout(() => setUndo(null), 8000);
       refreshTasks();
     } finally {
       setCompleting(null);
     }
-  }, [refreshTasks]);
+  }, [letGoAsk, refreshTasks]);
 
   const undoLetGo = React.useCallback(async () => {
     if (!undo) return;
@@ -265,7 +271,7 @@ export function HorizonHero() {
               key={h.id}
               target={{ id: h.id, listType: h.listType, short: h.short, title: h.title, due: h.due, implied: h.implied, left: h.left }}
               record={proposals.find((p) => p.taskId === h.id) ?? null}
-              onLetGo={() => letGo(h.id, h.listType, h.short)}
+              onLetGo={() => setLetGoAsk({ id: h.id, listType: h.listType, short: h.short, title: h.title })}
               letGoBusy={completing === h.id}
               onDone={onDone(h.short)}
               onChanged={loadProposals}
@@ -294,6 +300,10 @@ export function HorizonHero() {
             ))}
           </div>
         )}
+      </div>
+      {/* Above the brief overlay, which can be open when a hold's Let go is clicked. */}
+      <div style={{ position: 'relative', zIndex: 70 }}>
+        <LetGoReasonModal taskText={letGoAsk?.title ?? null} onCancel={() => setLetGoAsk(null)} onConfirm={letGo} />
       </div>
       <BriefLayer heroRef={heroRef} svgRef={svgRef} space={space} data={data} spots={spots} onChanged={refreshTasks} />
     </section>

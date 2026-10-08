@@ -25,6 +25,7 @@ import { AddToPlanModal } from './AddToPlanModal';
 import { EditTaskModal } from './EditTaskModal';
 import { TaskResortModal } from './TaskResortModal';
 import { ModalShell } from './ModalShell';
+import { LetGoReasonModal } from './LetGoReasonModal';
 import { TaskNotesPreview } from './TaskNotesPreview';
 import { TaskTextWithProjectBadges } from './TaskTextWithProjectBadges';
 import { Task, ListType } from '@/lib/types';
@@ -1082,6 +1083,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   const currentDate = useCurrentDateISO();
   const { taskRefreshCounter, refreshJournal, refreshTasks } = useRefresh();
   const [letGoUndo, setLetGoUndo] = useState<{ id: string; text: string } | null>(null);
+  const [letGoAsk, setLetGoAsk] = useState<{ task: Task; listType: ListType } | null>(null);
   const letGoTimer = useRef<number | null>(null);
   
   // Modal state
@@ -1547,23 +1549,20 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
   };
 
   // Let go: takes the task (and its subtasks) off General, Current and Today without completing it.
-  const handleLetGo = async (task: Task, listType: ListType) => {
-    try {
-      const response = await fetch('/api/tasks/let-go', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: task.id, listType }),
-      });
-      const data = await response.json();
-      if (data.success) {
-        setLetGoUndo({ id: task.id, text: task.text });
-        if (letGoTimer.current) window.clearTimeout(letGoTimer.current);
-        letGoTimer.current = window.setTimeout(() => setLetGoUndo(null), 8000);
-        refreshTasks();
-      }
-    } catch (error) {
-      console.error('Failed to let task go:', error);
-    }
+  // Asks why first; the reason is required.
+  const handleLetGo = async (task: Task, listType: ListType, reason: string): Promise<string | void> => {
+    const response = await fetch('/api/tasks/let-go', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: task.id, listType, reason }),
+    });
+    const data = await response.json();
+    if (!data.success) return data.error || 'Could not let the task go.';
+    setLetGoAsk(null);
+    setLetGoUndo({ id: task.id, text: task.text });
+    if (letGoTimer.current) window.clearTimeout(letGoTimer.current);
+    letGoTimer.current = window.setTimeout(() => setLetGoUndo(null), 8000);
+    refreshTasks();
   };
 
   const handleUndoLetGo = async () => {
@@ -1793,7 +1792,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             openAddTaskModal('have-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'have-to-do')}
-          onLetGo={(task) => handleLetGo(task, 'have-to-do')}
+          onLetGo={(task) => setLetGoAsk({ task, listType: 'have-to-do' })}
           onEdit={(task) => handleEditTask(task, 'have-to-do')}
           onAddSubtask={(task) => openAddSubtaskModal(task, 'have-to-do')}
           sortMode={haveSortMode}
@@ -1819,7 +1818,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
             openAddTaskModal('want-to-do');
           }}
           onDelete={(task) => confirmDeleteTask(task, 'want-to-do')}
-          onLetGo={(task) => handleLetGo(task, 'want-to-do')}
+          onLetGo={(task) => setLetGoAsk({ task, listType: 'want-to-do' })}
           onEdit={(task) => handleEditTask(task, 'want-to-do')}
           onAddSubtask={(task) => openAddSubtaskModal(task, 'want-to-do')}
           sortMode={wantSortMode}
@@ -1858,6 +1857,12 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         task={planTask}
         listType={planListType}
         date={currentDate}
+      />
+
+      <LetGoReasonModal
+        taskText={letGoAsk?.task.text ?? null}
+        onCancel={() => setLetGoAsk(null)}
+        onConfirm={(reason) => (letGoAsk ? handleLetGo(letGoAsk.task, letGoAsk.listType, reason) : Promise.resolve())}
       />
 
       {/* Delete Confirmation Modal */}
