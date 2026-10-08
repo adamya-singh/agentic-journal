@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
 
-// The retry route resolves its data directory from process.cwd() at import
-// time, so point cwd at a scratch project root before importing it.
-const originalCwd = process.cwd();
+// Point the backend data dir at a scratch directory so the real transcripts
+// are never touched.
 const testRoot = mkdtempSync(path.join(tmpdir(), 'agentic-journal-omi-retry-'));
-const transcriptDir = path.join(testRoot, 'src/backend/data/omi-transcripts');
+process.env.BACKEND_DATA_DIR = testRoot;
+const transcriptDir = path.join(testRoot, 'omi-transcripts');
 const date = '2026-09-14';
 const statusPath = path.join(transcriptDir, `${date}.status.json`);
 
@@ -17,12 +17,10 @@ let retryRoute: typeof import('../src/app/api/omi/transcripts/retry/route');
 
 before(async () => {
   mkdirSync(transcriptDir, { recursive: true });
-  process.chdir(testRoot);
   retryRoute = await import('../src/app/api/omi/transcripts/retry/route');
 });
 
 after(() => {
-  process.chdir(originalCwd);
   rmSync(testRoot, { recursive: true, force: true });
 });
 

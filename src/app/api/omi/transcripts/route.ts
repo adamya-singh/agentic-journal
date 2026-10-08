@@ -1,15 +1,28 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { backendDataDir } from '@/lib/backend-data';
 import { createHash } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const TRANSCRIPT_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcripts');
-const AUDIO_DIR = path.join(process.cwd(), 'src/backend/data/omi-audio');
-const QUEUE_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcription-queue');
-const JOURNAL_LINK_DIR = path.join(process.cwd(), 'src/backend/data/omi-journal-links');
+
+function transcriptDir(): string {
+  return path.join(backendDataDir(), 'omi-transcripts');
+}
+
+function audioDir(): string {
+  return path.join(backendDataDir(), 'omi-audio');
+}
+
+function queueDir(): string {
+  return path.join(backendDataDir(), 'omi-transcription-queue');
+}
+
+function journalLinkDir(): string {
+  return path.join(backendDataDir(), 'omi-journal-links');
+}
 const DEFAULT_TIMEZONE = 'America/New_York';
 const NON_CONTENT_TRANSCRIPTS = new Set([
   '[background]',
@@ -217,8 +230,8 @@ function getRequestedDates(searchParams: URLSearchParams): string[] {
 }
 
 function readTranscriptDay(date: string): OmiTranscriptDay {
-  const rawPath = path.join(TRANSCRIPT_DIR, `${date}.raw.json`);
-  const markdownPath = path.join(TRANSCRIPT_DIR, `${date}.md`);
+  const rawPath = path.join(transcriptDir(), `${date}.raw.json`);
+  const markdownPath = path.join(transcriptDir(), `${date}.md`);
   const status = readStatusFile(date);
   const manifestEntries = readManifestEntries(date);
   const queue = readQueueFile(date);
@@ -588,11 +601,11 @@ function compareBatches(a: OmiTranscriptBatch, b: OmiTranscriptBatch): number {
 }
 
 function readStatusFile(date: string): RawStatusFile | null {
-  return readJsonFile(path.join(TRANSCRIPT_DIR, `${date}.status.json`));
+  return readJsonFile(path.join(transcriptDir(), `${date}.status.json`));
 }
 
 function readManifestEntries(date: string): RawManifestEntry[] {
-  const manifestPath = path.join(AUDIO_DIR, date, 'manifest.jsonl');
+  const manifestPath = path.join(audioDir(), date, 'manifest.jsonl');
   if (!fs.existsSync(manifestPath)) {
     return [];
   }
@@ -611,11 +624,11 @@ function readManifestEntries(date: string): RawManifestEntry[] {
 }
 
 function readQueueFile(date: string): RawQueueFile | null {
-  return readJsonFile(path.join(QUEUE_DIR, `${date}.json`));
+  return readJsonFile(path.join(queueDir(), `${date}.json`));
 }
 
 function readJournalLinksFile(date: string): RawJournalLinksFile | null {
-  return readJsonFile(path.join(JOURNAL_LINK_DIR, `${date}.json`));
+  return readJsonFile(path.join(journalLinkDir(), `${date}.json`));
 }
 
 function readJsonFile<T>(filePath: string): T | null {

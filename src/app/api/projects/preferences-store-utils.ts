@@ -1,23 +1,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { projectsDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import type { ProjectPreferencesData } from '@/lib/types';
 import { normalizeProjectSlug } from '@/lib/projects';
 
-const PROJECTS_DIR = path.join(process.cwd(), 'src/backend/data/projects');
-const PREFERENCES_PATH = path.join(PROJECTS_DIR, 'preferences.json');
+function getPreferencesPath(): string {
+  return path.join(projectsDataDir(), 'preferences.json');
+}
 
 const DEFAULT_PREFERENCES_DATA: ProjectPreferencesData = {
   _comment: 'Project preferences keyed by normalized project slug',
   schemaVersion: 1,
   pinnedProjects: [],
 };
-
-function ensureDirExists(filePath: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -60,31 +55,23 @@ function normalizeData(value: unknown): ProjectPreferencesData {
 }
 
 export function readProjectPreferences(): ProjectPreferencesData {
-  if (!fs.existsSync(PREFERENCES_PATH)) {
+  const preferencesPath = getPreferencesPath();
+  if (!fs.existsSync(preferencesPath)) {
     return { ...DEFAULT_PREFERENCES_DATA, pinnedProjects: [] };
   }
 
   try {
-    return normalizeData(JSON.parse(fs.readFileSync(PREFERENCES_PATH, 'utf-8')) as unknown);
+    return normalizeData(JSON.parse(fs.readFileSync(preferencesPath, 'utf-8')) as unknown);
   } catch {
     return { ...DEFAULT_PREFERENCES_DATA, pinnedProjects: [] };
   }
 }
 
 export function writeProjectPreferences(data: ProjectPreferencesData): void {
-  ensureDirExists(PREFERENCES_PATH);
-  fs.writeFileSync(
-    PREFERENCES_PATH,
-    JSON.stringify(
-      {
-        ...DEFAULT_PREFERENCES_DATA,
-        pinnedProjects: normalizePinnedProjects(data.pinnedProjects),
-      },
-      null,
-      2
-    ) + '\n',
-    'utf-8'
-  );
+  writeJsonFileAtomic(getPreferencesPath(), {
+    ...DEFAULT_PREFERENCES_DATA,
+    pinnedProjects: normalizePinnedProjects(data.pinnedProjects),
+  });
 }
 
 export function setProjectPinned(project: string, pinned: boolean): ProjectPreferencesData {

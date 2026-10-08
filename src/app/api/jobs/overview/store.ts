@@ -5,9 +5,9 @@ import { z } from 'zod';
 import { overview, milestoneKinds, type OverviewExtras } from '@/lib/job-overview';
 import { readJobApplicationsStore } from '../application-store-utils';
 import { readJobListings } from '../job-store-utils';
+import { jobsDataDir } from '@/lib/backend-data';
 
-export const directory = () =>
-  process.env.JOB_APPLICATION_JOBS_DIR || path.join(process.cwd(), 'src/backend/data/jobs');
+export const directory = () => jobsDataDir();
 export function readJson<T>(name: string, fallback: T): T {
   const file = path.join(directory(), name);
   return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : fallback;

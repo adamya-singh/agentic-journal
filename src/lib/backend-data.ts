@@ -16,6 +16,15 @@ export function journalDataDir(): string {
   return path.join(backendDataDir(), 'journal');
 }
 
+export function projectsDataDir(): string {
+  return path.join(backendDataDir(), 'projects');
+}
+
+// JOB_APPLICATION_JOBS_DIR predates BACKEND_DATA_DIR and still wins when set.
+export function jobsDataDir(): string {
+  return process.env.JOB_APPLICATION_JOBS_DIR || path.join(backendDataDir(), 'jobs');
+}
+
 // Atomic replace: concurrent readers (the CLI peer, parallel requests) must
 // never observe a torn JSON file. Trailing newline matches the CLI's writer
 // so files don't churn bytes when ownership alternates.

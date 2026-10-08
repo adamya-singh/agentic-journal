@@ -4,6 +4,7 @@ import { DateSourceSchema } from '@/lib/employment-dates';
 import { JOB_APPLICATION_CANDIDATE_CONTEXT, needsEligibilityReview } from '@/lib/application-eligibility';
 import * as fs from 'fs';
 import * as path from 'path';
+import { jobsDataDir } from '@/lib/backend-data';
 import type {
   JobApplicationCategory,
   JobApplicationCategoryCounts,
@@ -34,8 +35,7 @@ import {
   toEmailUpdatesView,
 } from './email-update-utils';
 
-const JOBS_DIR =
-  process.env.JOB_APPLICATION_JOBS_DIR || path.join(process.cwd(), 'src/backend/data/jobs');
+const JOBS_DIR = jobsDataDir();
 const APPLICATIONS_FILE = path.join(JOBS_DIR, 'applications.json');
 const APPLICATIONS_LOCK_FILE = path.join(JOBS_DIR, '.applications.lock');
 const SCREENSHOTS_DIR =

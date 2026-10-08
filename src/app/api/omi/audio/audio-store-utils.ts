@@ -1,13 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { backendDataDir } from '@/lib/backend-data';
 
 const DEFAULT_TIMEZONE = 'America/New_York';
 const DEFAULT_MAX_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SAMPLE_RATES = new Set([8000, 16000]);
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const TRANSCRIPTION_QUEUE_DIR = 'src/backend/data/omi-transcription-queue';
-const TRANSCRIPT_DIR = 'src/backend/data/omi-transcripts';
 
 export type OmiAudioChunkMetadata = {
   chunkId: string;
@@ -92,7 +91,15 @@ export function isValidDate(value: string): boolean {
 }
 
 export function getOmiAudioDataDir(): string {
-  return path.join(process.cwd(), 'src/backend/data/omi-audio');
+  return path.join(backendDataDir(), 'omi-audio');
+}
+
+// Chunk metadata records paths relative to the project root, which the
+// transcription worker resolves against it. A data dir outside the project
+// (BACKEND_DATA_DIR) is recorded as an absolute path instead.
+function toRecordedPath(absolutePath: string): string {
+  const relativePath = path.relative(process.cwd(), absolutePath);
+  return relativePath.startsWith('..') || path.isAbsolute(relativePath) ? absolutePath : relativePath;
 }
 
 export function getLocalDateString(date = new Date(), timezone = getConfiguredTimezone()): string {
@@ -111,12 +118,11 @@ export function saveOmiAudioChunk(params: {
   const localParts = getLocalDateParts(receivedAt, timezone);
   const chunkId = randomUUID();
   const baseName = `${localParts.time}-${chunkId}`;
-  const relativeDayDir = path.join('src/backend/data/omi-audio', localParts.date);
-  const absoluteDayDir = path.join(process.cwd(), relativeDayDir);
+  const absoluteDayDir = path.join(getOmiAudioDataDir(), localParts.date);
   const wavPath = path.join(absoluteDayDir, `${baseName}.wav`);
   const metadataPath = path.join(absoluteDayDir, `${baseName}.json`);
-  const relativeWavPath = path.join(relativeDayDir, `${baseName}.wav`);
-  const relativeMetadataPath = path.join(relativeDayDir, `${baseName}.json`);
+  const relativeWavPath = toRecordedPath(wavPath);
+  const relativeMetadataPath = toRecordedPath(metadataPath);
   const durationSeconds = params.audioBytes.length / (params.sampleRate * 2);
 
   fs.mkdirSync(absoluteDayDir, { recursive: true });
@@ -195,7 +201,7 @@ export function readOmiAudioStatus(date: string): OmiAudioStatus {
 
 export function readOmiTranscriptionStatus(date: string): OmiTranscriptionStatus {
   const queue = readTranscriptionQueue(date);
-  const statusPath = path.join(process.cwd(), TRANSCRIPT_DIR, `${date}.status.json`);
+  const statusPath = path.join(backendDataDir(), 'omi-transcripts', `${date}.status.json`);
   if (!fs.existsSync(statusPath)) {
     return {
       enabled: process.env.OMI_TRANSCRIBE_ENABLED !== 'false',
@@ -314,7 +320,7 @@ function writeTranscriptionQueue(date: string, queue: ReturnType<typeof readTran
 }
 
 function transcriptionQueuePath(date: string): string {
-  return path.join(process.cwd(), TRANSCRIPTION_QUEUE_DIR, `${date}.json`);
+  return path.join(backendDataDir(), 'omi-transcription-queue', `${date}.json`);
 }
 
 function createPcm16MonoWav(audioBytes: Buffer, sampleRate: number): Buffer {

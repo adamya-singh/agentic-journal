@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { projectsDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import { randomUUID } from 'crypto';
 import {
   ListType,
@@ -11,21 +12,15 @@ import {
 } from '@/lib/types';
 import { normalizeProjectSlug } from '@/lib/projects';
 
-const PROJECTS_DIR = path.join(process.cwd(), 'src/backend/data/projects');
-const ROADMAPS_PATH = path.join(PROJECTS_DIR, 'roadmaps.json');
+function getRoadmapsPath(): string {
+  return path.join(projectsDataDir(), 'roadmaps.json');
+}
 
 const DEFAULT_ROADMAPS_DATA: ProjectRoadmapsData = {
   _comment: 'Project roadmaps keyed by normalized project slug',
   schemaVersion: 1,
   roadmaps: {},
 };
-
-function ensureDirExists(filePath: string): void {
-  const dir = path.dirname(filePath);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -163,24 +158,20 @@ export function taskRefKey(ref: RoadmapTaskRef): string {
 }
 
 export function readProjectRoadmaps(): ProjectRoadmapsData {
-  if (!fs.existsSync(ROADMAPS_PATH)) {
+  const roadmapsPath = getRoadmapsPath();
+  if (!fs.existsSync(roadmapsPath)) {
     return { ...DEFAULT_ROADMAPS_DATA, roadmaps: {} };
   }
 
   try {
-    return normalizeData(JSON.parse(fs.readFileSync(ROADMAPS_PATH, 'utf-8')) as unknown);
+    return normalizeData(JSON.parse(fs.readFileSync(roadmapsPath, 'utf-8')) as unknown);
   } catch {
     return { ...DEFAULT_ROADMAPS_DATA, roadmaps: {} };
   }
 }
 
 export function writeProjectRoadmaps(data: ProjectRoadmapsData): void {
-  ensureDirExists(ROADMAPS_PATH);
-  fs.writeFileSync(
-    ROADMAPS_PATH,
-    JSON.stringify({ ...DEFAULT_ROADMAPS_DATA, roadmaps: data.roadmaps }, null, 2) + '\n',
-    'utf-8'
-  );
+  writeJsonFileAtomic(getRoadmapsPath(), { ...DEFAULT_ROADMAPS_DATA, roadmaps: data.roadmaps });
 }
 
 export function getRoadmap(project: string): ProjectRoadmap | null {
