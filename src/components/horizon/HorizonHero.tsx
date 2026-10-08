@@ -8,15 +8,17 @@ import { getCurrentDateISO } from '@/lib/current-date';
 import { horizonAnswers, type HorizonData } from '@/lib/horizon';
 import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
+import { BriefLayer } from './BriefLayer';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
 
 const CSS = `
 .hz-hero{--hz-ink:#f3efe7;--hz-dim:#a9b4c4;--hz-em:#ffd2a8;--hz-serif:var(--font-instrument-serif),'Instrument Serif',serif;--hz-sans:var(--font-geist-sans),Geist,sans-serif;--hz-mono:var(--font-geist-mono),'Geist Mono',monospace;background:#05070d;color:var(--hz-ink)}
-.hz-sky{position:relative;overflow:hidden;cursor:pointer;outline:none;background:#05070d}
+.hz-sky{position:relative;overflow:hidden;outline:none;background:#05070d}
 .hz-sky:focus-visible{box-shadow:inset 0 0 0 2px #ffd2a8}
 .hz-sky>svg.hz-flat{position:relative;z-index:3;display:block;width:100%;height:auto;transition:opacity .28s ease}
 .hz-sky.hz-live{cursor:crosshair}
+.hz-on3d>svg.hz-flat{pointer-events:none}
 .hz-say{position:absolute;left:3%;top:24px;max-width:34%;z-index:6;pointer-events:none}
 .hz-say h1{margin:0;font:400 clamp(22px,3.2vw,44px)/1.04 var(--hz-serif);letter-spacing:-.005em;color:var(--hz-ink)}
 .hz-say h1 em{font-style:normal;color:var(--hz-em)}
@@ -45,10 +47,11 @@ const CSS = `
 .hz3d-zl b{display:block;font:italic 400 24px var(--hz-serif);line-height:1}
 .hz3d-zl small{display:block;font:9.5px var(--hz-mono);letter-spacing:1.4px;opacity:.7;margin-top:4px}
 .hz3d-you{position:absolute;left:0;top:0;font:10px var(--hz-mono);letter-spacing:2px;color:#5a2a08;pointer-events:none}
-.hz3d-enter{position:absolute;right:24px;bottom:22px;z-index:7;display:flex;align-items:center;gap:9px;font:500 13px var(--hz-sans);color:#f3efe7;background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 16px;pointer-events:none;transition:opacity .3s ease,transform .2s ease}
+.hz3d-enter{position:absolute;right:24px;bottom:22px;z-index:7;display:flex;align-items:center;gap:9px;font:500 13px var(--hz-sans);color:#f3efe7;background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 16px;cursor:pointer;transition:opacity .3s ease,transform .2s ease}
 .hz3d-enter i{width:8px;height:8px;border-radius:50%;background:#ffd2a8;box-shadow:0 0 0 4px rgba(255,210,168,.2)}
-.hz-sky:not(.hz-live):hover .hz3d-enter{transform:translateY(-2px);border-color:#ffd2a8}
-.hz-live .hz3d-enter{opacity:0}
+.hz3d-enter:hover,.hz3d-enter:focus-visible{transform:translateY(-2px);border-color:#ffd2a8;outline:none}
+.hz-live .hz3d-enter{opacity:0;pointer-events:none}
+.hz-sky:not(.hz-settled) .hz3d-btns{pointer-events:none}
 .hz3d-hud{position:absolute;left:0;right:0;bottom:0;z-index:7;display:flex;justify-content:space-between;align-items:flex-end;gap:10px;padding:14px 18px;pointer-events:none;flex-wrap:wrap;opacity:0;transition:opacity .4s ease}
 .hz-live.hz-settled .hz3d-hud{opacity:1}
 .hz3d-where{background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px 13px;min-width:200px;color:#f3efe7}
@@ -82,6 +85,9 @@ export function HorizonHero() {
   const skyRef = React.useRef<HTMLDivElement>(null);
   const svgRef = React.useRef<SVGSVGElement>(null);
   const spaceRef = React.useRef<DawnSpace | null>(null);
+  const heroRef = React.useRef<HTMLElement>(null);
+  const [space, setSpace] = React.useState<DawnSpace | null>(null);
+  const [spots, setSpots] = React.useState<PillSpot[]>([]);
   const layoutRef = React.useRef<{ spots: PillSpot[]; sectors: Sector[]; data: HorizonData } | null>(null);
   const [data, setData] = React.useState<HorizonData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -109,6 +115,7 @@ export function HorizonHero() {
       if (disposed || !skyRef.current || !svgRef.current) return;
       try {
         spaceRef.current = new Space(skyRef.current, svgRef.current);
+        setSpace(spaceRef.current);
         if (layoutRef.current) spaceRef.current.setLayout(layoutRef.current.spots, layoutRef.current.data, layoutRef.current.sectors);
       } catch (err) {
         console.warn('Horizon 3D unavailable:', err);
@@ -125,6 +132,7 @@ export function HorizonHero() {
       const { spots, sectors } = drawDawn(svgRef.current, data);
       layoutRef.current = { spots, sectors, data };
       spaceRef.current?.setLayout(spots, data, sectors);
+      setSpots(spots);
     };
     draw();
     let alive = true;
@@ -190,13 +198,13 @@ export function HorizonHero() {
     : '';
 
   return (
-    <section className={`hz-hero ${serif.variable}`} aria-label="Priority horizon">
+    <section ref={heroRef} className={`hz-hero ${serif.variable}`} aria-label="Priority horizon">
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div
         ref={skyRef}
         className="hz-sky"
         tabIndex={0}
-        aria-label="Priority horizon. Press Enter or click to step inside in 3D; Escape returns to the flat view."
+        aria-label="Priority horizon. Click a task to see its brief. Press Enter to step inside in 3D; Escape returns to the flat view."
       >
         <svg ref={svgRef} className="hz-flat" viewBox="0 0 1200 630" role="img" aria-label="Tasks arranged on rings by how soon they are due" />
         {!data && <div className="hz-loading">{error || 'Loading your horizon…'}</div>}
@@ -208,7 +216,7 @@ export function HorizonHero() {
           <QuickCaptureInput variant="inline" />
         </div>
       </div>
-      <div className="hz-ground">
+      <div className="hz-ground hz-keep">
         <div className="hz-row">
           <b>Pad</b>
           {data && data.holds.length === 0 && <span className="hz-none">Nothing overdue. The pad is clear.</span>}
@@ -237,6 +245,7 @@ export function HorizonHero() {
           </div>
         )}
       </div>
+      <BriefLayer heroRef={heroRef} svgRef={svgRef} space={space} data={data} spots={spots} onChanged={refreshTasks} />
     </section>
   );
 }

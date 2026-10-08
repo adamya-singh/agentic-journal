@@ -62,7 +62,7 @@ function dayDiff(a: Date, b: Date): number {
   return Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / 864e5);
 }
 
-function parseDue(task: Task): Date | null {
+export function parseDue(task: Task): Date | null {
   if (!task.dueDate) return null;
   const [y, m, d] = task.dueDate.split('-').map(Number);
   if (!y || !m || !d) return null;
@@ -71,7 +71,7 @@ function parseDue(task: Task): Date | null {
 }
 
 // OA tasks generated from employer email say "Deadline: not stated" and carry the invite time.
-function impliedOaDue(task: Task): Date | null {
+export function impliedOaDue(task: Task): Date | null {
   const notes = task.notesMarkdown || '';
   if (!/\*\*Deadline:\*\*\s*not stated/i.test(notes)) return null;
   const m = /\*\*Invited:\*\*\s*(?:\w{3},\s*)?(\w{3})\s+(\d{1,2}),\s*(\d{4}),\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i.exec(notes);
@@ -84,13 +84,13 @@ function impliedOaDue(task: Task): Date | null {
   return new Date(invited.getTime() + OA_ASSUMED_WINDOW_DAYS * 864e5);
 }
 
-function fmtLeft(hours: number): string {
+export function fmtLeft(hours: number): string {
   const a = Math.abs(hours);
   const s = a < 36 ? `${Math.max(1, Math.round(a))}h` : `${Math.round(a / 24)}d`;
   return hours < 0 ? `${s} over` : s;
 }
 
-function dayLabel(due: Date, now: Date, implied: boolean): string {
+export function dayLabel(due: Date, now: Date, implied: boolean): string {
   if (implied) return `assumed ${MON[due.getMonth()]} ${due.getDate()}`;
   const n = dayDiff(due, now);
   if (n === 0) return due.getHours() < 18 ? 'Today' : 'Tonight';
@@ -103,14 +103,14 @@ function dayLabel(due: Date, now: Date, implied: boolean): string {
 export const GROUP_JOBS = 'Jobs', GROUP_LIFE = 'Life', GROUP_OTHER = 'Other';
 
 // The direction a task points in: its course tag, or Jobs / Life / Other.
-function groupFor(text: string, label: string, listType: string): string {
+export function groupFor(text: string, label: string, listType: string): string {
   if (/\bOA\b|online assessment|take-home|interview|recruit|job application/i.test(text)) return GROUP_JOBS;
   if (label) return label;
   if (listType === 'want-to-do') return GROUP_LIFE;
   return GROUP_OTHER;
 }
 
-function zoneFor(due: Date, hours: number, now: Date): HorizonZone {
+export function zoneFor(due: Date, hours: number, now: Date): HorizonZone {
   if (hours < 0) return 'hold';
   if (hours <= 48) return 'ignition';
   const today = startOfDay(now);
@@ -147,7 +147,7 @@ export function shortenTask(text: string): { short: string; label: string } {
   return { short, label: label || '' };
 }
 
-function weightFor(text: string, listType: string): number {
+export function weightFor(text: string, listType: string): number {
   if (listType === 'want-to-do') return 2;
   if (/\bOA\b|online assessment|take-home|midterm|final exam|\bexam\b/i.test(text)) return 5;
   if (/presentation|diploma|interview/i.test(text)) return 4;

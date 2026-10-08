@@ -76,7 +76,7 @@ export class DawnSpace {
   private settled = false;
   private nav = { x: 0, z: SPAWN, yaw: 0, pitch: PITCH0, vel: 0 };
   private look = { yaw: 0, pitch: PITCH0 };
-  private fly: { x0: number; z0: number; x1: number; z1: number; t: number } | null = null;
+  private fly: { x0: number; z0: number; x1: number; z1: number; t: number; n?: SpaceNode } | null = null;
   private lookLock = 0;
   private backPush = 0;
   private touch: { x: number; y: number; yaw: number } | null = null;
@@ -87,6 +87,15 @@ export class DawnSpace {
   private tmp = new THREE.Vector3();
   private lastWhere = '';
   private resizeObs: ResizeObserver | null = null;
+  private pending: string | null = null;
+  private arrived: SpaceNode | null = null;
+  // Hooks for the task brief: arriving at a task, leaving it, every frame, and Escape (return true when handled).
+  onArrive: ((item: HorizonItem) => void) | null = null;
+  onLeave: (() => void) | null = null;
+  onFrame: (() => void) | null = null;
+  onEscape: (() => boolean) | null = null;
+  // While set, the cursor no longer swings the view: a small parallax around this heading, or none when still.
+  private focus: { yaw: number; pitch: number; still: boolean } | null = null;
 
   constructor(sky: HTMLElement, svg: SVGSVGElement) {
     this.sky = sky;
@@ -99,9 +108,10 @@ export class DawnSpace {
     this.wrap.className = 'hz3d';
     this.wrap.innerHTML = '<div class="hz3d-bg"><svg preserveAspectRatio="none"></svg></div><canvas></canvas><div class="hz3d-lab"></div>';
     sky.insertBefore(this.wrap, svg);
-    const enter = document.createElement('div');
+    const enter = document.createElement('button');
+    enter.type = 'button';
     enter.className = 'hz3d-enter';
-    enter.innerHTML = '<i></i>Click to step inside · explore in 3D';
+    enter.innerHTML = '<i></i>Step inside · explore in 3D';
     sky.appendChild(enter);
     this.hud = document.createElement('div');
     this.hud.className = 'hz3d-hud';
@@ -244,7 +254,7 @@ export class DawnSpace {
       const dot = new THREE.Mesh(new THREE.SphereGeometry(k === 'hold' ? 0.09 : 0.08 + item.weight * 0.025, 16, 12), new THREE.MeshBasicMaterial({ color: DOT[k], transparent: true, opacity: 0 }));
       this.scene.add(dot);
       const n: SpaceNode = { item, k, x2, y2, lift: k === 'hold' ? 0.45 : 0.6 + y2 * 0.22, phase: Math.random() * 6.28, el, dot, world: new THREE.Vector3() };
-      el.addEventListener('click', (e) => { e.stopPropagation(); if (this.mode === 'live') this.flyTo(n); });
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (this.mode === 'live') { this.onLeave?.(); this.flyTo(n); } });
       this.nodes.push(n);
     };
     this.spots.forEach((sp) => add(sp.item, sp.item.zone, (sp.x - DAWN.X) / U, (DAWN.H - sp.y) / U));
@@ -284,6 +294,7 @@ export class DawnSpace {
     } else {
       this.sky.classList.remove('hz-live', 'hz-settled');
       this.tTarget = 0; this.fly = null; this.nav.vel = 0;
+      this.focus = null; this.arrived = null; this.pending = null; this.onLeave?.();
     }
     if (this.reduced) this.t = this.tTarget;
   }
@@ -293,12 +304,12 @@ export class DawnSpace {
     const sky = this.sky;
     sky.addEventListener('click', (e) => {
       const target = e.target as HTMLElement;
-      if (this.mode === 'flat' && !target.closest('.hz-nointeract,.hz3d-btns')) this.setMode('live');
+      if (this.mode === 'flat' && target.closest('.hz3d-enter')) this.setMode('live');
     }, sig);
     sky.addEventListener('keydown', (e) => {
       if (e.target !== sky) return;
       if (this.mode === 'flat') { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.setMode('live'); } return; }
-      if (e.key === 'Escape') { this.setMode('flat'); return; }
+      if (e.key === 'Escape') { if (!this.onEscape?.()) this.setMode('flat'); return; }
       if (e.key === 'ArrowLeft') { this.look.yaw = Math.min(YAW_MAX, this.look.yaw + 0.15); this.lookLock = performance.now() + 1500; }
       else if (e.key === 'ArrowRight') { this.look.yaw = Math.max(-YAW_MAX, this.look.yaw - 0.15); this.lookLock = performance.now() + 1500; }
       else if (e.key === 'ArrowUp') this.nav.vel += 0.55;
@@ -306,8 +317,10 @@ export class DawnSpace {
       else return;
       e.preventDefault(); this.fly = null;
     }, sig);
-    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && this.mode === 'live') this.setMode('flat'); }, sig);
-    document.addEventListener('pointerdown', (e) => { if (this.mode === 'live' && !sky.contains(e.target as Node)) this.setMode('flat'); }, sig);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.mode === 'live' && e.target !== sky && !this.onEscape?.()) this.setMode('flat');
+    }, sig);
+    document.addEventListener('pointerdown', (e) => { if (this.mode === 'live' && !sky.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.hz-keep')) this.setMode('flat'); }, sig);
     sky.addEventListener('pointermove', (e) => {
       if (this.touch && e.pointerType === 'touch') {
         const b = sky.getBoundingClientRect();
@@ -319,6 +332,8 @@ export class DawnSpace {
       const b = sky.getBoundingClientRect();
       const nx = Math.max(-1, Math.min(1, ((e.clientX - b.left) / b.width) * 2 - 1));
       const ny = Math.max(-1, Math.min(1, ((e.clientY - b.top) / b.height) * 2 - 1));
+      if (this.focus?.still) return;
+      if (this.focus) { this.look.yaw = this.focus.yaw - nx * 0.06; this.look.pitch = this.focus.pitch - ny * 0.03; return; }
       this.look.yaw = -nx * YAW_MAX; this.look.pitch = PITCH0 - ny * 0.14;
     }, sig);
     sky.addEventListener('pointerdown', (e) => {
@@ -328,6 +343,7 @@ export class DawnSpace {
     sky.addEventListener('wheel', (e) => {
       if (this.mode !== 'live') return;           // flat: the page scrolls normally
       e.preventDefault(); this.fly = null;
+      if (this.focus || this.arrived) { this.focus = null; this.arrived = null; this.onLeave?.(); }
       const px = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
       const r = Math.hypot(this.nav.x, Math.min(0, this.nav.z - SPAWN));
       if (px < 0 && r < 0.8) { this.backPush += -px; if (this.backPush > 380) { this.backPush = 0; this.setMode('flat'); } return; }
@@ -354,11 +370,46 @@ export class DawnSpace {
 
   private flyTo(n: SpaceNode) {
     const p = this.nodeWorld(n, 1, this.tmp);
-    const dx = p.x - this.nav.x, dz = p.z - this.nav.z, d = Math.hypot(dx, dz) || 1, stop = Math.max(0, d - 4.5);
-    this.fly = { x0: this.nav.x, z0: this.nav.z, x1: this.nav.x + dx / d * stop, z1: this.nav.z + dz / d * stop, t: 0 };
+    // Arrive on the line from the spawn point, so you face the task without having to look behind you.
+    const sx = -p.x, sz = SPAWN - p.z, sd = Math.hypot(sx, sz) || 1, back = Math.min(4.5, sd);
+    const x1 = p.x + sx / sd * back, z1 = p.z + sz / sd * back;
+    const dx = p.x - x1, dz = p.z - z1;
+    this.fly = { x0: this.nav.x, z0: this.nav.z, x1, z1, t: 0, n };
+    this.arrived = null; this.focus = null;
     this.look.yaw = Math.max(-YAW_MAX, Math.min(YAW_MAX, Math.atan2(-dx, -dz))); this.look.pitch = PITCH0 + 0.06;
     this.lookLock = performance.now() + 2400; this.nav.vel = 0;
   }
+
+  get isLive(): boolean { return this.mode === 'live'; }
+
+  /** Step inside if needed, then fly to the task. */
+  focusTask(id: string) {
+    if (this.mode !== 'live' || !this.settled) { this.pending = id; this.setMode('live'); return; }
+    const n = this.nodes.find((x) => x.item.id === id);
+    if (n) { this.onLeave?.(); this.flyTo(n); }
+  }
+
+  hasNode(id: string): boolean { return this.nodes.some((x) => x.item.id === id); }
+
+  /** Where a task's label is on screen, in sky pixels; on is false when it is off screen or faded out. */
+  nodeScreen(id: string): { x: number; y: number; on: boolean; world: THREE.Vector3 } | null {
+    const n = this.nodes.find((x) => x.item.id === id);
+    if (!n) return null;
+    const v = n.world.clone().project(this.camera);
+    const on = v.z < 1 && Math.abs(v.x) < 1.1 && Math.abs(v.y) < 1.1 && parseFloat(n.el.style.opacity || '0') > 0.2;
+    return { x: (v.x * 0.5 + 0.5) * this.W, y: (-v.y * 0.5 + 0.5) * this.H, on, world: n.world.clone() };
+  }
+
+  /** Turn so a world point sits at fraction yf from the top of the view, centred, and hold it there. */
+  aim(p: THREE.Vector3, yf: number, still = true) {
+    const dx = p.x - this.nav.x, dz = p.z - this.nav.z;
+    const yaw = Math.max(-YAW_MAX, Math.min(YAW_MAX, Math.atan2(-dx, -dz)));
+    const pitch = Math.atan2(p.y - EYE, Math.hypot(dx, dz)) - Math.atan((0.5 - yf) * 2 * Math.tan(FOV1 / 2));
+    this.focus = { yaw, pitch, still };
+    this.look.yaw = yaw; this.look.pitch = pitch;
+  }
+
+  release() { this.focus = null; }
 
   private resize() {
     this.W = this.sky.clientWidth || 1; this.H = this.sky.clientHeight || 1;
@@ -388,7 +439,10 @@ export class DawnSpace {
     if (this.t !== this.tTarget) {
       this.t = Math.max(0, Math.min(1, this.t + (this.tTarget > this.t ? 1 : -1) * dt / 1.6));
       if (this.reduced) this.t = this.tTarget;
-      if (this.t === 1 && this.mode === 'live') { this.settled = true; this.sky.classList.add('hz-settled'); }
+      if (this.t === 1 && this.mode === 'live') {
+        this.settled = true; this.sky.classList.add('hz-settled');
+        if (this.pending) { const id = this.pending; this.pending = null; window.setTimeout(() => this.focusTask(id), 250); }
+      }
       if (this.t === 0 && this.mode === 'flat') {
         this.svg.style.opacity = '';
         window.setTimeout(() => { if (this.mode === 'flat' && this.t === 0) this.sky.classList.remove('hz-on3d'); }, 300);
@@ -402,7 +456,7 @@ export class DawnSpace {
       if (this.fly) {
         const f = this.fly; f.t = Math.min(1, f.t + dt / 1.4); const q = ease(f.t);
         nav.x = f.x0 + (f.x1 - f.x0) * q; nav.z = f.z0 + (f.z1 - f.z0) * q;
-        if (f.t >= 1) this.fly = null;
+        if (f.t >= 1) { this.fly = null; if (f.n) { this.arrived = f.n; this.onArrive?.(f.n.item); } }
       } else {
         nav.x += -Math.sin(nav.yaw) * nav.vel; nav.z += -Math.cos(nav.yaw) * nav.vel;
         nav.vel *= this.reduced ? 0 : Math.pow(0.03, dt);
@@ -490,6 +544,7 @@ export class DawnSpace {
       this.youEl.style.transform = `translate(${((tmp.x * 0.5 + 0.5) * W).toFixed(1)}px,${((-tmp.y * 0.5 + 0.5) * H).toFixed(1)}px) translate(-50%,-50%) scale(${kFlat.toFixed(3)})`;
       this.youEl.style.opacity = Math.max(0, 1 - e * 2.5).toFixed(2);
     }
+    this.onFrame?.();
     if (this.mode === 'live') {
       const r = Math.hypot(nav.x, Math.min(0, nav.z));
       const zones: [string, string, number][] = [['Pad', 'clear these first', 0], ['Ignition', 'next 48 hours', R[0]], ['Climb', 'this week', R[1]], ['Altitude', 'next week', R[2]], ['Orbit', 'later', R[3]]];
