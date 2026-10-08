@@ -797,3 +797,103 @@ export function replanTaskEntryInJournal(
 
   return { oldPlanId: fromPlanId, newPlanId };
 }
+
+export type DoneJournalSlot =
+  | { kind: 'hour'; date: string; hour: string }
+  | { kind: 'range'; date: string; start: string; end: string };
+
+function slotLogRef(slot: DoneJournalSlot): PlanLogRef {
+  return slot.kind === 'hour'
+    ? { date: slot.date, hour: slot.hour }
+    : { date: slot.date, range: { start: slot.start, end: slot.end } };
+}
+
+/**
+ * Logs that a task was done at a slot (an hour, or a range when we know how long it took) and
+ * completes that task's earliest open plan in the same journal. An existing logged entry for the
+ * task at the same slot is reused, so retries do not stack entries.
+ * Returns the journalEntryId of the logged entry, which is what undo removes.
+ */
+export function logTaskDoneInJournal(
+  journal: DayJournalWithRanges,
+  slot: DoneJournalSlot,
+  taskId: string,
+  listType: TaskJournalEntry['listType'],
+  nowIso: string = new Date().toISOString()
+): { journalEntryId: string; created: boolean } {
+  const existing = getAllTaskRefs(journal).find((ref) =>
+    ref.entry.taskId === taskId &&
+    ref.entry.entryMode === 'logged' &&
+    (slot.kind === 'hour'
+      ? ref.kind === 'hour' && ref.hour === slot.hour
+      : ref.kind === 'range' && ref.entry.start === slot.start && ref.entry.end === slot.end)
+  );
+  if (existing?.entry.journalEntryId) {
+    return { journalEntryId: existing.entry.journalEntryId, created: false };
+  }
+
+  const journalEntryId = `done-${crypto.randomUUID()}`;
+  if (existing) {
+    // Adopt the id-less entry so undo can find it.
+    if (existing.kind === 'hour') {
+      updateHourEntry(journal, existing.hour, (entry) => entry === existing.entry, (entry) => ({ ...(entry as TaskJournalEntry), journalEntryId }));
+    } else {
+      const ranges = journal.ranges ?? [];
+      ranges[existing.rangeIndex] = { ...existing.entry, journalEntryId };
+      journal.ranges = ranges;
+    }
+    return { journalEntryId, created: false };
+  }
+
+  if (slot.kind === 'hour') {
+    appendEntryToHour(journal, slot.hour, { taskId, listType, entryMode: 'logged', journalEntryId });
+  } else {
+    const ranges = journal.ranges ?? [];
+    ranges.push({ start: slot.start, end: slot.end, taskId, listType, entryMode: 'logged', journalEntryId });
+    journal.ranges = ranges;
+  }
+  completeEarliestActiveTaskPlanInPlace(journal, slot.date, taskId, slotLogRef(slot), nowIso);
+  return { journalEntryId, created: true };
+}
+
+/**
+ * Undoes logTaskDoneInJournal: removes the logged entry and reopens any plan it completed
+ * (markMissedPlansForDate marks it missed again on the next pass if its time has passed).
+ */
+export function unlogTaskDoneInJournal(
+  journal: DayJournalWithRanges,
+  slot: DoneJournalSlot,
+  taskId: string,
+  journalEntryId: string,
+  nowIso: string = new Date().toISOString()
+): boolean {
+  let changed = false;
+  for (const hour of VALID_HOURS) {
+    const slotValue = journal[hour];
+    if (!slotValue) continue;
+    const entries = isJournalEntryArray(slotValue) ? slotValue : [slotValue];
+    const kept = entries.filter((entry) => !(isTaskJournalEntry(entry) && entry.journalEntryId === journalEntryId));
+    if (kept.length !== entries.length) {
+      journal[hour] = kept.length === 0 ? '' : kept.length === 1 ? kept[0] : kept;
+      changed = true;
+    }
+  }
+  if (journal.ranges) {
+    const kept = journal.ranges.filter((entry) => !(isTaskJournalRangeEntry(entry) && entry.journalEntryId === journalEntryId));
+    if (kept.length !== journal.ranges.length) {
+      journal.ranges = kept;
+      changed = true;
+    }
+  }
+
+  const logRef = slotLogRef(slot);
+  for (const ref of getAllPlannedRefs(journal)) {
+    if (ref.entryType !== 'task') continue;
+    const entry = ref.entry as TaskJournalEntry | TaskJournalRangeEntry;
+    if (entry.taskId !== taskId || entry.planStatus !== 'completed' || !samePlanLogRef(entry.completedByLogRef, logRef)) continue;
+    const { completedByLogRef: _completedBy, ...rest } = entry;
+    void _completedBy;
+    changed = setPlanRefEntry(journal, ref, { ...rest, planStatus: 'active', planUpdatedAt: nowIso } as PlannableEntry) || changed;
+  }
+  return changed;
+}

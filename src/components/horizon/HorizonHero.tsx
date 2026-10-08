@@ -4,11 +4,13 @@ import React from 'react';
 import { Instrument_Serif } from 'next/font/google';
 import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
 import { useRefresh } from '@/lib/RefreshContext';
-import { getCurrentDateISO } from '@/lib/current-date';
 import { horizonAnswers, type HorizonData } from '@/lib/horizon';
 import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { BriefLayer } from './BriefLayer';
+import { DONE_CSS, DoneTray } from './DoneTray';
+import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
+import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
 
@@ -71,6 +73,8 @@ const CSS = `
 .hz-hold button{font:500 11px var(--hz-mono);color:#f3e3cf;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:2px 9px;cursor:pointer}
 .hz-hold button:hover,.hz-hold button:focus-visible{border-color:#ffd2a8;outline:none}
 .hz-hold button:disabled{opacity:.5;cursor:default}
+.hz-row-b{align-items:flex-start}
+.hz-row-b>b{line-height:30px}
 .hz-hold .hz-letgo{background:transparent;border-color:rgba(255,255,255,.12);color:#c9b8a6}
 .hz-undo{display:inline-flex;align-items:center;gap:10px;font:12.5px var(--hz-sans);color:#f3e3cf;background:rgba(10,14,24,.55);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:4px 6px 4px 12px}
 .hz-undo button{font:500 11px var(--hz-mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
@@ -94,6 +98,9 @@ export function HorizonHero() {
   const [completing, setCompleting] = React.useState<string | null>(null);
   const [undo, setUndo] = React.useState<{ id: string; short: string } | null>(null);
   const undoTimer = React.useRef<number | null>(null);
+  const [proposals, setProposals] = React.useState<DoneProposalRecord[]>([]);
+  const [doneUndo, setDoneUndo] = React.useState<{ short: string; label: string; receipt: DoneReceipt } | null>(null);
+  const doneUndoTimer = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -107,6 +114,23 @@ export function HorizonHero() {
       .catch(() => { if (!cancelled) setError('Could not load the horizon'); });
     return () => { cancelled = true; };
   }, [taskRefreshCounter]);
+
+  const loadProposals = React.useCallback(() => {
+    fetch('/api/tasks/done-proposals')
+      .then((r) => r.json())
+      .then((json) => { if (json.success) setProposals(json.records as DoneProposalRecord[]); })
+      .catch(() => {});
+  }, []);
+
+  React.useEffect(() => { loadProposals(); }, [loadProposals, taskRefreshCounter]);
+
+  // While OpenClaw is answering, check back every few seconds; stop once nothing is pending.
+  const thinking = proposals.some((p) => p.status === 'thinking');
+  React.useEffect(() => {
+    if (!thinking) return;
+    const timer = window.setInterval(loadProposals, 3000);
+    return () => window.clearInterval(timer);
+  }, [thinking, loadProposals]);
 
   // The 3D world lives for the life of the component; it is loaded on demand so three.js stays out of the first paint.
   React.useEffect(() => {
@@ -140,19 +164,24 @@ export function HorizonHero() {
     return () => { alive = false; };
   }, [data]);
 
-  const completeHold = React.useCallback(async (taskId: string, listType: string) => {
-    setCompleting(taskId);
-    try {
-      await fetch('/api/tasks/today/complete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId, listType, date: getCurrentDateISO() }),
-      });
-      refreshTasks();
-    } finally {
-      setCompleting(null);
-    }
+  const onDone = React.useCallback((short: string) => (receipt: DoneReceipt, label: string) => {
+    setDoneUndo({ short, label, receipt });
+    if (doneUndoTimer.current) window.clearTimeout(doneUndoTimer.current);
+    doneUndoTimer.current = window.setTimeout(() => setDoneUndo(null), 8000);
+    refreshTasks();
   }, [refreshTasks]);
+
+  const undoDone = React.useCallback(async () => {
+    if (!doneUndo) return;
+    const { receipt } = doneUndo;
+    setDoneUndo(null);
+    await fetch('/api/tasks/done-at/undo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(receipt),
+    });
+    refreshTasks();
+  }, [doneUndo, refreshTasks]);
 
   // Let go: no longer worth doing. Not a completion; restorable from the Undo chip for a few seconds.
   const letGo = React.useCallback(async (taskId: string, listType: string, short: string) => {
@@ -186,8 +215,13 @@ export function HorizonHero() {
     refreshTasks();
   }, [undo, refreshTasks]);
 
-  React.useEffect(() => () => { if (undoTimer.current) window.clearTimeout(undoTimer.current); }, []);
+  React.useEffect(() => () => {
+    if (undoTimer.current) window.clearTimeout(undoTimer.current);
+    if (doneUndoTimer.current) window.clearTimeout(doneUndoTimer.current);
+  }, []);
 
+  // A proposal whose task is no longer one of the pad's holds still needs an answer.
+  const waiting = data ? proposals.filter((p) => !data.holds.some((h) => h.id === p.taskId)) : [];
   const answers = data ? horizonAnswers(data) : null;
   const headline = answers?.next
     ? (answers.holds.length ? <>Clear the pad, then <em>{answers.next.short}</em>.</> : <>Next up: <em>{answers.next.short}</em>.</>)
@@ -199,7 +233,7 @@ export function HorizonHero() {
 
   return (
     <section ref={heroRef} className={`hz-hero ${serif.variable}`} aria-label="Priority horizon">
-      <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: CSS + DONE_CSS }} />
       <div
         ref={skyRef}
         className="hz-sky"
@@ -217,25 +251,41 @@ export function HorizonHero() {
         </div>
       </div>
       <div className="hz-ground hz-keep">
-        <div className="hz-row">
+        <div className="hz-row hz-row-b">
           <b>Pad</b>
           {data && data.holds.length === 0 && <span className="hz-none">Nothing overdue. The pad is clear.</span>}
           {undo && (
             <span className="hz-undo" role="status">Let go of {undo.short}.<button type="button" onClick={undoLetGo}>Undo</button></span>
           )}
+          {doneUndo && (
+            <span className="hz-undo" role="status">Done: {doneUndo.short} · {doneUndo.label}.<button type="button" onClick={undoDone}>Undo</button></span>
+          )}
           {data?.holds.map((h) => (
-            <span key={h.id} className="hz-hold" title={h.title}>
-              HOLD · {h.short} · {h.left}
-              <button type="button" disabled={completing === h.id} onClick={() => completeHold(h.id, h.listType)}>
-                {completing === h.id ? 'Saving…' : 'Done'}
-              </button>
-              <button type="button" className="hz-letgo" disabled={completing === h.id} onClick={() => letGo(h.id, h.listType, h.short)}
-                title="No longer worth doing. Takes it off your lists without counting it as done.">
-                Let go
-              </button>
-            </span>
+            <DoneTray
+              key={h.id}
+              target={{ id: h.id, listType: h.listType, short: h.short, title: h.title, due: h.due, implied: h.implied, left: h.left }}
+              record={proposals.find((p) => p.taskId === h.id) ?? null}
+              onLetGo={() => letGo(h.id, h.listType, h.short)}
+              letGoBusy={completing === h.id}
+              onDone={onDone(h.short)}
+              onChanged={loadProposals}
+            />
           ))}
         </div>
+        {waiting.length > 0 && (
+          <div className="hz-row hz-row-b">
+            <b>Waiting</b>
+            {waiting.map((p) => (
+              <DoneTray
+                key={p.id}
+                target={{ id: p.taskId, listType: p.listType, short: p.short, title: p.title, due: p.due, implied: p.dueIsImplied }}
+                record={p}
+                onDone={onDone(p.short)}
+                onChanged={loadProposals}
+              />
+            ))}
+          </div>
+        )}
         {data && data.undated.length > 0 && (
           <div className="hz-row">
             <b>No date</b>

@@ -7,6 +7,9 @@ import {
   readCompletedTaskSnapshots,
   readGeneralTasks,
   readTodayOverrides,
+  refreshCompletedTaskIndexForTask,
+  removeCompletedTaskIndexSnapshot,
+  removeCompletedTaskSnapshot,
   upsertCompletedTaskIndexSnapshot,
   upsertCompletedTaskSnapshot,
   writeGeneralTasks,
@@ -14,6 +17,7 @@ import {
 import {
   findTaskInDailySnapshot,
   removeTaskFromCurrent,
+  restoreUncompletedTask,
   syncStagedJournalFromSnapshots,
 } from '../current/current-store-utils';
 import { buildChildrenByParentId } from '@/lib/tasks';
@@ -41,12 +45,16 @@ export type CompleteTaskResult =
   | { status: 'not-found' }
   | { status: 'blocked'; openSubtasks: OpenSubtask[] };
 
-export function buildCompletionSnapshot(task: Task, listType: ListType): TaskCompletionSnapshot {
+export function buildCompletionSnapshot(
+  task: Task,
+  listType: ListType,
+  completedAt: string = new Date().toISOString()
+): TaskCompletionSnapshot {
   const snapshot: TaskCompletionSnapshot = {
     id: task.id,
     text: task.text,
     completed: true,
-    completedAt: new Date().toISOString(),
+    completedAt,
     listType,
   };
 
@@ -103,7 +111,14 @@ function collectOpenDescendants(
   return results;
 }
 
-export function completeTaskForDate(date: string, listType: ListType, taskId: string): CompleteTaskResult {
+// `completedAt` defaults to now; the Horizon "done, but when?" flow passes the real finish time
+// (with `date` set to that time's day) so stats and the journal reflect when the work happened.
+export function completeTaskForDate(
+  date: string,
+  listType: ListType,
+  taskId: string,
+  options: { completedAt?: string } = {}
+): CompleteTaskResult {
   const generalData = readGeneralTasks(listType);
   const completedSnapshots = readCompletedTaskSnapshots(date, listType);
   if (completedSnapshots.some((snapshot) => snapshot.id === taskId)) {
@@ -139,7 +154,7 @@ export function completeTaskForDate(date: string, listType: ListType, taskId: st
     }
   }
 
-  const completionSnapshot = buildCompletionSnapshot(taskToComplete, listType);
+  const completionSnapshot = buildCompletionSnapshot(taskToComplete, listType, options.completedAt);
   upsertCompletedTaskSnapshot(date, listType, completionSnapshot);
   upsertCompletedTaskIndexSnapshot(taskId, completionSnapshot, date);
 
@@ -164,4 +179,67 @@ export function completeTaskForDate(date: string, listType: ListType, taskId: st
     childrenByParentId,
     completedTodayIds,
   };
+}
+
+function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
+  const task: Task = {
+    id: snapshot.id,
+    text: snapshot.text,
+  };
+
+  if (snapshot.projects && snapshot.projects.length > 0) {
+    task.projects = normalizeProjectList(snapshot.projects);
+  }
+
+  if (snapshot.notesMarkdown && snapshot.notesMarkdown.length > 0) {
+    task.notesMarkdown = snapshot.notesMarkdown;
+  }
+
+  if (snapshot.parentTaskId && snapshot.parentTaskId.length > 0) {
+    task.parentTaskId = snapshot.parentTaskId;
+  }
+
+  if (snapshot.dueDate) {
+    task.dueDate = snapshot.dueDate;
+  }
+  if (snapshot.dueTimeStart) {
+    task.dueTimeStart = snapshot.dueTimeStart;
+  }
+  if (snapshot.dueTimeEnd) {
+    task.dueTimeEnd = snapshot.dueTimeEnd;
+  }
+
+  if (snapshot.isDaily) {
+    task.isDaily = true;
+  }
+
+  return task;
+}
+
+export type UncompleteTaskResult = { status: 'not-found' } | { status: 'uncompleted'; wasDaily: boolean };
+
+// Reverses completeTaskForDate for one date: drops the snapshot, puts a non-daily task back at the
+// top of General and back into Current. Shared by today/complete (toggle) and done-at undo.
+export function uncompleteTaskForDate(date: string, listType: ListType, taskId: string): UncompleteTaskResult {
+  const existingSnapshot = readCompletedTaskSnapshots(date, listType).find((snapshot) => snapshot.id === taskId) ?? null;
+  const { removed, removedSnapshot } = removeCompletedTaskSnapshot(date, listType, taskId);
+  if (!removed) {
+    return { status: 'not-found' };
+  }
+
+  const snapshotToRestore = removedSnapshot ?? existingSnapshot;
+  const wasDaily = snapshotToRestore?.isDaily === true;
+  removeCompletedTaskIndexSnapshot(taskId);
+  refreshCompletedTaskIndexForTask(taskId);
+
+  if (!wasDaily && snapshotToRestore) {
+    const generalData = readGeneralTasks(listType);
+    if (!generalData.tasks.some((task) => task.id === taskId)) {
+      generalData.tasks.unshift(toRestoredTask(snapshotToRestore));
+      writeGeneralTasks(generalData, listType);
+    }
+  }
+  restoreUncompletedTask(date, listType, taskId);
+
+  return { status: 'uncompleted', wasDaily };
 }

@@ -1,27 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import type { ListType, Task } from '@/lib/types';
-import { normalizeProjectList } from '@/lib/projects';
+import type { ListType } from '@/lib/types';
 import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import type { DayJournalWithRanges } from '../../../journal/plan-lifecycle-utils';
 import { markMissedPlansForDate } from '../../../journal/plan-lifecycle-utils';
-import type { TaskCompletionSnapshot } from '../today-store-utils';
-import {
-  findLegacyDailyTaskById,
-  refreshCompletedTaskIndexForTask,
-  removeCompletedTaskIndexSnapshot,
-  readCompletedTaskSnapshots,
-  readGeneralTasks,
-  removeCompletedTaskSnapshot,
-  writeGeneralTasks,
-} from '../today-store-utils';
+import { findLegacyDailyTaskById, readCompletedTaskSnapshots } from '../today-store-utils';
 import { getDescendantTaskIds } from '@/lib/tasks';
-import {
-  ensureCurrentSystemThroughToday,
-  restoreUncompletedTask,
-} from '../../current/current-store-utils';
-import { completeTaskForDate } from '../completion-utils';
+import { ensureCurrentSystemThroughToday } from '../../current/current-store-utils';
+import { completeTaskForDate, uncompleteTaskForDate } from '../completion-utils';
 
 function markMissedPlansIfJournalExists(date: string): void {
   const journalFilePath = path.join(journalDataDir(), `${date}.json`);
@@ -38,41 +25,6 @@ function markMissedPlansIfJournalExists(date: string): void {
   } catch {
     // Non-critical best-effort sync.
   }
-}
-
-function toRestoredTask(snapshot: TaskCompletionSnapshot): Task {
-  const task: Task = {
-    id: snapshot.id,
-    text: snapshot.text,
-  };
-
-  if (snapshot.projects && snapshot.projects.length > 0) {
-    task.projects = normalizeProjectList(snapshot.projects);
-  }
-
-  if (snapshot.notesMarkdown && snapshot.notesMarkdown.length > 0) {
-    task.notesMarkdown = snapshot.notesMarkdown;
-  }
-
-  if (snapshot.parentTaskId && snapshot.parentTaskId.length > 0) {
-    task.parentTaskId = snapshot.parentTaskId;
-  }
-
-  if (snapshot.dueDate) {
-    task.dueDate = snapshot.dueDate;
-  }
-  if (snapshot.dueTimeStart) {
-    task.dueTimeStart = snapshot.dueTimeStart;
-  }
-  if (snapshot.dueTimeEnd) {
-    task.dueTimeEnd = snapshot.dueTimeEnd;
-  }
-
-  if (snapshot.isDaily) {
-    task.isDaily = true;
-  }
-
-  return task;
 }
 
 /**
@@ -113,38 +65,23 @@ export async function POST(request: NextRequest) {
     const typedListType = listType as ListType;
     ensureCurrentSystemThroughToday();
     markMissedPlansIfJournalExists(date);
-    const generalData = readGeneralTasks(typedListType);
     const completedSnapshots = readCompletedTaskSnapshots(date, typedListType);
     const existingSnapshot = completedSnapshots.find((snapshot) => snapshot.id === taskId) ?? null;
 
     if (existingSnapshot) {
       // UNCOMPLETE
-      const { removed, removedSnapshot } = removeCompletedTaskSnapshot(date, typedListType, taskId);
-      if (!removed) {
+      const result = uncompleteTaskForDate(date, typedListType, taskId);
+      if (result.status === 'not-found') {
         return NextResponse.json({
           success: false,
           error: 'Task completion record not found for this day',
         });
       }
 
-      const snapshotToRestore = removedSnapshot ?? existingSnapshot;
-      const wasDaily = snapshotToRestore.isDaily === true;
-      removeCompletedTaskIndexSnapshot(taskId);
-      refreshCompletedTaskIndexForTask(taskId);
-
-      if (!wasDaily) {
-        const alreadyInGeneral = generalData.tasks.some((task) => task.id === taskId);
-        if (!alreadyInGeneral) {
-          generalData.tasks.unshift(toRestoredTask(snapshotToRestore));
-          writeGeneralTasks(generalData, typedListType);
-        }
-      }
-      restoreUncompletedTask(date, typedListType, taskId);
-
       return NextResponse.json({
         success: true,
         completed: false,
-        message: wasDaily
+        message: result.wasDaily
           ? 'Daily task marked as incomplete'
           : 'Task marked as incomplete and added back to general list',
       });
