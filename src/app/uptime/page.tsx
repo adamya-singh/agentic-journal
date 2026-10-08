@@ -7,6 +7,8 @@ import type { BarLevel, ComponentStatus, DayBar } from '@/lib/uptime/history';
 import type { UptimeComponentView, UptimeGroupView, UptimeView } from '@/lib/uptime/monitor';
 
 const REFRESH_MS = 60_000;
+/** Rows are ranked by use, so show them; the long automation list starts folded. */
+const DEFAULT_EXPANDED = (groupId: string) => groupId !== 'automations';
 /** Phones show the last 30 days so each bar stays tappable, like Statuspage does. */
 const MOBILE_DAYS = 30;
 
@@ -278,8 +280,10 @@ export default function UptimePage() {
               key={group.id}
               group={group}
               days={view.windowDays}
-              expanded={expanded[group.id] ?? false}
-              onToggle={() => setExpanded((current) => ({ ...current, [group.id]: !current[group.id] }))}
+              expanded={expanded[group.id] ?? DEFAULT_EXPANDED(group.id)}
+              onToggle={() =>
+                setExpanded((current) => ({ ...current, [group.id]: !(current[group.id] ?? DEFAULT_EXPANDED(group.id)) }))
+              }
             />
           ))}
         </div>

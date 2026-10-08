@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { backendDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import { parseJsonObjectOutput, runOpenClawCli } from '@/lib/openclaw-cron';
@@ -12,6 +13,7 @@ import {
   buildBars,
   classifyUnitMessage,
   combineBars,
+  dayUptime,
   formatClock,
   localDateKey,
   recentDateKeys,
@@ -52,6 +54,8 @@ interface ComponentDef {
   history: HistorySource;
   units?: string[];
   userUnits?: boolean;
+  /** Probed over HTTP; with units too, the row shows the worse of the two. */
+  url?: string;
 }
 
 interface CurrentCheck {
@@ -104,85 +108,71 @@ export interface UptimeView {
   groups: UptimeGroupView[];
 }
 
+/**
+ * Display order is the ranking. Groups: OpenClaw first, then the Journal,
+ * then the machine under both. Within OpenClaw and the Journal, rows follow
+ * how much each feature actually gets used (30 days to 2026-10-08: dashboard
+ * chat ≈420 messages vs ≈65 iOS and ≈50 Telegram; browser ≈2.6k tool calls;
+ * jobs, tasks and Omi dominate Journal data writes). Automations are sorted
+ * live by run volume instead, so they never need re-ranking by hand.
+ */
 const GROUPS = [
-  { id: 'app', name: 'Journal App' },
-  { id: 'workers', name: 'Background Workers' },
-  { id: 'openclaw', name: 'OpenClaw' },
-  { id: 'automations', name: 'Automations' },
+  { id: 'openclaw', name: 'OpenClaw Gateway' },
+  { id: 'automations', name: 'OpenClaw Automations' },
+  { id: 'journal', name: 'Agentic Journal' },
   { id: 'host', name: 'Host' },
 ] as const;
 
+const JOURNAL_ORIGIN = 'http://127.0.0.1:3000';
+
 const STATIC_COMPONENTS: ComponentDef[] = [
-  {
-    id: 'web',
-    group: 'app',
-    name: 'Web app',
-    description: 'Next.js on 127.0.0.1:3000, production or development mode',
-    history: 'journal',
-    units: ['agentic-journal.service', 'agentic-journal-dev.service'],
-  },
-  {
-    id: 'mastra',
-    group: 'app',
-    name: 'Journal agent (Mastra)',
-    description: 'Chat agent backend on 127.0.0.1:4111',
-    history: 'samples',
-  },
-  {
-    id: 'tailnet',
-    group: 'app',
-    name: 'Tailnet HTTPS access',
-    description: `${PUBLIC_ORIGIN} through Tailscale Serve`,
-    history: 'samples',
-  },
-  {
-    id: 'omi-worker',
-    group: 'workers',
-    name: 'Omi transcription worker',
-    description: 'Transcribes Omi audio into journal transcripts',
-    history: 'journal',
-    units: ['agentic-journal-omi-worker.service'],
-  },
-  {
-    id: 'bookmarks-worker',
-    group: 'workers',
-    name: 'X bookmarks worker',
-    description: 'Runs requested X bookmark imports',
-    history: 'journal',
-    units: ['agentic-journal-bookmarks-worker.service'],
-  },
-  {
-    id: 'media-worker',
-    group: 'workers',
-    name: 'IMDb media worker',
-    description: 'IMDb sync and requested watchlist updates',
-    history: 'journal',
-    units: ['agentic-journal-media-worker.service'],
-  },
   {
     id: 'gateway',
     group: 'openclaw',
     name: 'Gateway',
-    description: 'OpenClaw gateway that runs agents and automations',
+    description: 'The OpenClaw server every chat, tool and automation runs through',
     history: 'journal',
     units: ['openclaw-gateway.service'],
     userUnits: true,
   },
   {
-    id: 'telegram',
+    id: 'dashboard',
     group: 'openclaw',
-    name: 'Telegram channel',
-    description: 'Chat channel used for reminders and failure alerts',
+    name: 'Dashboard chat',
+    description: 'The Control UI chat on 127.0.0.1:18789, where most conversations happen',
     history: 'samples',
+    url: 'http://127.0.0.1:18789/',
   },
   {
     id: 'browser',
     group: 'openclaw',
     name: 'Managed browser',
-    description: 'Chrome profile used by job applications, Canvas and ChatGPT Web',
+    description: 'Chrome profile used for Canvas, job applications and ChatGPT Web',
     history: 'journal',
     units: ['openclaw-browser.service'],
     userUnits: true,
+  },
+  {
+    id: 'model',
+    group: 'openclaw',
+    name: 'AI model (Gemini on Vertex)',
+    description: 'The model runtime behind every agent turn',
+    history: 'samples',
+  },
+  {
+    id: 'ios',
+    group: 'openclaw',
+    name: 'iOS app access',
+    description: 'Gateway over tailnet HTTPS (:18443), used by the iOS app',
+    history: 'samples',
+    url: `${PUBLIC_ORIGIN}:18443/`,
+  },
+  {
+    id: 'telegram',
+    group: 'openclaw',
+    name: 'Telegram',
+    description: 'Chat channel used for reminders, heartbeats and failure alerts',
+    history: 'samples',
   },
   {
     id: 'vnc',
@@ -194,6 +184,103 @@ const STATIC_COMPONENTS: ComponentDef[] = [
     userUnits: true,
   },
   {
+    id: 'web',
+    group: 'journal',
+    name: 'Web app',
+    description: 'Next.js server on 127.0.0.1:3000, production or development mode',
+    history: 'journal',
+    units: ['agentic-journal.service', 'agentic-journal-dev.service'],
+  },
+  {
+    id: 'tailnet',
+    group: 'journal',
+    name: 'Tailnet access',
+    description: `${PUBLIC_ORIGIN} through Tailscale Serve`,
+    history: 'samples',
+    url: `${PUBLIC_ORIGIN}/favicon.ico`,
+  },
+  {
+    id: 'tasks',
+    group: 'journal',
+    name: 'Journal & tasks',
+    description: 'Planner, Today, Current and the horizon view',
+    history: 'samples',
+    url: `${JOURNAL_ORIGIN}/api/tasks/horizon`,
+  },
+  {
+    id: 'jobs',
+    group: 'journal',
+    name: 'Jobs',
+    description: 'Job board, application queue and email updates',
+    history: 'samples',
+    url: `${JOURNAL_ORIGIN}/api/jobs/applications/readiness`,
+  },
+  {
+    id: 'omi-worker',
+    group: 'journal',
+    name: 'Omi transcripts',
+    description: 'Transcripts page and the worker that transcribes Omi audio',
+    history: 'journal',
+    units: ['agentic-journal-omi-worker.service'],
+    url: `${JOURNAL_ORIGIN}/api/omi/transcripts`,
+  },
+  {
+    id: 'bookmarks-worker',
+    group: 'journal',
+    name: 'X bookmarks',
+    description: 'Bookmarks page and the worker that runs requested imports',
+    history: 'journal',
+    units: ['agentic-journal-bookmarks-worker.service'],
+    url: `${JOURNAL_ORIGIN}/api/bookmarks/status`,
+  },
+  {
+    id: 'mastra',
+    group: 'journal',
+    name: 'Journal agent chat',
+    description: 'Mastra chat agent backend on 127.0.0.1:4111',
+    history: 'samples',
+    url: 'http://127.0.0.1:4111/',
+  },
+  {
+    id: 'media-worker',
+    group: 'journal',
+    name: 'Media (IMDb)',
+    description: 'Media page and the worker for IMDb sync and watchlist updates',
+    history: 'journal',
+    units: ['agentic-journal-media-worker.service'],
+    url: `${JOURNAL_ORIGIN}/api/media`,
+  },
+  {
+    id: 'library',
+    group: 'journal',
+    name: 'Library',
+    description: 'Library of past journal and task history',
+    history: 'samples',
+    url: `${JOURNAL_ORIGIN}/api/library/list`,
+  },
+  {
+    id: 'projects',
+    group: 'journal',
+    name: 'Projects',
+    description: 'Project view and roadmap',
+    history: 'samples',
+    url: `${JOURNAL_ORIGIN}/api/projects/preferences`,
+  },
+  {
+    id: 'memory',
+    group: 'host',
+    name: 'Memory',
+    description: 'Available RAM; low memory gets builds and agents OOM-killed',
+    history: 'samples',
+  },
+  {
+    id: 'cpu',
+    group: 'host',
+    name: 'CPU load',
+    description: '5-minute load average per core',
+    history: 'samples',
+  },
+  {
     id: 'disk',
     group: 'host',
     name: 'Disk space',
@@ -201,10 +288,10 @@ const STATIC_COMPONENTS: ComponentDef[] = [
     history: 'samples',
   },
   {
-    id: 'memory',
+    id: 'tailscale',
     group: 'host',
-    name: 'Memory',
-    description: 'Available RAM; low memory gets builds and agents OOM-killed',
+    name: 'Tailscale',
+    description: 'This machine’s connection to the tailnet',
     history: 'samples',
   },
 ];
@@ -230,17 +317,23 @@ function cronComponentId(jobId: string): string {
   return `cron:${jobId}`;
 }
 
-function componentDefs(store: UptimeStore): ComponentDef[] {
-  return [
-    ...STATIC_COMPONENTS,
-    ...store.cronJobs.map((job) => ({
+function componentDefs(store: UptimeStore, now: number): ComponentDef[] {
+  const recent = recentDateKeys(now, 30);
+  const runVolume = (jobId: string) =>
+    recent.reduce((sum, key) => {
+      const day = store.runs[cronComponentId(jobId)]?.[key];
+      return sum + (day ? (day.ok ?? 0) + (day.error ?? 0) + (day.skipped ?? 0) : 0);
+    }, 0);
+  const automations = [...store.cronJobs]
+    .sort((a, b) => runVolume(b.id) - runVolume(a.id) || a.name.localeCompare(b.name))
+    .map((job) => ({
       id: cronComponentId(job.id),
       group: 'automations',
       name: job.name,
       description: job.description ?? 'OpenClaw automation',
       history: 'runs' as const,
-    })),
-  ];
+    }));
+  return [...STATIC_COMPONENTS, ...automations];
 }
 
 // --- command helpers ---------------------------------------------------------
@@ -304,41 +397,40 @@ function fromHttp(result: { ok: boolean; ms: number; detail: string }): Omit<Cur
 
 type Checks = Record<string, Omit<CurrentCheck, 'checkedAt'>>;
 
-async function probeSystemdComponents(checks: Checks): Promise<void> {
+async function probeServiceComponents(checks: Checks): Promise<void> {
   const systemUnits = STATIC_COMPONENTS.filter((c) => c.units && !c.userUnits).flatMap((c) => c.units!);
   const userUnits = STATIC_COMPONENTS.filter((c) => c.units && c.userUnits).flatMap((c) => c.units!);
-  const [system, user] = await Promise.all([unitStates(systemUnits, false), unitStates(userUnits, true)]);
+  const withUrl = STATIC_COMPONENTS.filter((c) => c.url);
+  const [system, user, responses] = await Promise.all([
+    unitStates(systemUnits, false),
+    unitStates(userUnits, true),
+    Promise.all(withUrl.map((c) => httpProbe(c.url!))),
+  ]);
+  const http = new Map(withUrl.map((c, index) => [c.id, fromHttp(responses[index])]));
+
   for (const def of STATIC_COMPONENTS) {
-    if (!def.units || def.id === 'web') continue;
-    const state = (def.userUnits ? user : system).get(def.units[0]) ?? 'unknown';
-    const status = statusFromUnitState(state);
-    checks[def.id] = { status, detail: status === 'operational' ? 'Running' : `Service is ${state}` };
+    if (def.id === 'web' || (!def.units && !def.url)) continue;
+    const parts: Omit<CurrentCheck, 'checkedAt'>[] = [];
+    if (def.units) {
+      const state = (def.userUnits ? user : system).get(def.units[0]) ?? 'unknown';
+      const status = statusFromUnitState(state);
+      parts.push({ status, detail: status === 'operational' ? 'Running' : `Worker is ${state}` });
+    }
+    const response = http.get(def.id);
+    if (response) parts.push(response);
+    // Show the failing half; when both are fine, the response time says more than "Running".
+    const worst = worstStatus(parts.map((part) => part.status));
+    checks[def.id] = parts.find((part) => part.status === worst && worst !== 'operational') ?? parts[parts.length - 1];
   }
+
   const prod = system.get('agentic-journal.service');
   const dev = system.get('agentic-journal-dev.service');
-  const web = fromHttp(await httpProbe('http://127.0.0.1:3000/favicon.ico'));
+  const web = fromHttp(await httpProbe(`${JOURNAL_ORIGIN}/favicon.ico`));
   const mode = prod === 'active' ? 'Production' : dev === 'active' ? 'Development mode' : null;
   checks.web = {
     status: web.status,
     detail: web.status === 'major' ? `${web.detail}; production ${prod}, dev ${dev}` : `${mode ?? 'Running'} · ${web.detail}`,
   };
-}
-
-async function probeHttpComponents(checks: Checks): Promise<void> {
-  const [mastra, tailnet, tailscale] = await Promise.all([
-    httpProbe('http://127.0.0.1:4111/'),
-    httpProbe(`${PUBLIC_ORIGIN}/favicon.ico`),
-    runQuiet('tailscale', ['status', '--json']),
-  ]);
-  checks.mastra = fromHttp(mastra);
-  const parsed = parseJsonObjectOutput(tailscale) as { BackendState?: string; Self?: { Online?: boolean } } | null;
-  if (!parsed || parsed.BackendState !== 'Running') {
-    checks.tailnet = { status: 'major', detail: `Tailscale is ${parsed?.BackendState ?? 'not responding'}` };
-  } else if (parsed.Self?.Online === false) {
-    checks.tailnet = { status: 'major', detail: 'This machine is offline on the tailnet' };
-  } else {
-    checks.tailnet = fromHttp(tailnet);
-  }
 }
 
 async function probeGateway(checks: Checks): Promise<void> {
@@ -353,12 +445,17 @@ async function probeGateway(checks: Checks): Promise<void> {
       checks.gateway = { status: 'partial', detail: 'Service is running but health checks fail' };
     }
     checks.telegram = { status: 'unknown', detail: 'Gateway health is unavailable' };
+    checks.model = { status: 'unknown', detail: 'Gateway health is unavailable' };
     return;
   }
   const eventLoop = health.eventLoop as { degraded?: boolean; reasons?: string[] } | undefined;
   if (eventLoop?.degraded && checks.gateway?.status === 'operational') {
     checks.gateway = { status: 'degraded', detail: `Event loop degraded: ${(eventLoop.reasons ?? []).join(', ') || 'busy'}` };
   }
+  const modelRuntime = health.modelRuntime as { degraded?: boolean; pendingAgents?: unknown[] } | undefined;
+  checks.model = modelRuntime?.degraded
+    ? { status: 'degraded', detail: `Model runtime degraded${modelRuntime.pendingAgents?.length ? ` · ${modelRuntime.pendingAgents.length} agents waiting` : ''}` }
+    : { status: 'operational', detail: 'Responding' };
   const channels = health.channels as Record<string, { lifecycle?: string; enabled?: boolean; lastConnectedAt?: number }> | undefined;
   const telegram = channels?.telegram;
   if (!telegram || telegram.enabled === false) {
@@ -369,6 +466,9 @@ async function probeGateway(checks: Checks): Promise<void> {
     checks.telegram = { status: 'partial', detail: `Channel is ${telegram.lifecycle ?? 'not ready'}` };
   }
 }
+
+/** Errors that mean the model, not the task, failed. */
+const MODEL_ERROR = /\b(429|503|quota|rate.?limit|resource.?exhausted|overloaded|vertex|model|provider|unavailable)\b/i;
 
 interface RawCronJob {
   id?: string;
@@ -406,6 +506,16 @@ async function probeCron(store: UptimeStore, checks: Checks, now: number): Promi
     name: job.displayName || job.name!,
     description: job.description,
   }));
+  const modelFailure = recurring.find(
+    (job) =>
+      job.enabled &&
+      job.state?.lastRunStatus === 'error' &&
+      (job.state.lastRunAtMs ?? 0) > now - 60 * 60 * 1000 &&
+      MODEL_ERROR.test(job.state.lastError ?? ''),
+  );
+  if (modelFailure && checks.model?.status !== 'unknown') {
+    checks.model = { status: 'partial', detail: `${modelFailure.displayName || modelFailure.name} failed: ${(modelFailure.state?.lastError ?? '').slice(0, 100)}` };
+  }
   for (const job of recurring) {
     const id = cronComponentId(job.id!);
     const state = job.state ?? {};
@@ -468,7 +578,25 @@ async function syncCronRuns(store: UptimeStore, job: RawCronJob): Promise<void> 
   store.cronCursor[job.id!] = newest;
 }
 
-function probeHost(checks: Checks): void {
+async function probeHost(checks: Checks): Promise<void> {
+  const [load5] = os.loadavg().slice(1, 2);
+  const perCore = load5 / Math.max(1, os.cpus().length);
+  checks.cpu = {
+    status: perCore > 1.5 ? 'partial' : perCore > 0.9 ? 'degraded' : 'operational',
+    detail: `Load ${load5.toFixed(2)} across ${os.cpus().length} cores`,
+  };
+  const tailscale = parseJsonObjectOutput(await runQuiet('tailscale', ['status', '--json'])) as {
+    BackendState?: string;
+    Self?: { Online?: boolean };
+  } | null;
+  if (!tailscale || tailscale.BackendState !== 'Running') {
+    checks.tailscale = { status: 'major', detail: `Tailscale is ${tailscale?.BackendState ?? 'not responding'}` };
+  } else if (tailscale.Self?.Online === false) {
+    checks.tailscale = { status: 'major', detail: 'This machine is offline on the tailnet' };
+  } else {
+    checks.tailscale = { status: 'operational', detail: 'Connected' };
+  }
+
   try {
     const stats = fs.statfsSync(backendDataDir());
     const free = stats.bavail / stats.blocks;
@@ -580,9 +708,8 @@ async function runCheck(): Promise<UptimeStore> {
   const store = readStore();
   const now = Date.now();
   const checks: Checks = {};
-  await probeSystemdComponents(checks);
-  await Promise.all([probeHttpComponents(checks), probeGateway(checks)]);
-  probeHost(checks);
+  await probeServiceComponents(checks);
+  await Promise.all([probeGateway(checks), probeHost(checks)]);
   await probeCron(store, checks, now);
   await refreshJournalHistory(store);
 
@@ -628,21 +755,25 @@ function historyFor(store: UptimeStore, def: ComponentDef): DayMap {
   const samples = store.samples[def.id] ?? {};
   if (def.history === 'runs') return store.runs[def.id] ?? {};
   if (def.history === 'samples') return samples;
-  // Journald wins where it observed the unit; otherwise fall back to samples
-  // (e.g. a oneshot unit that never logs, or days before journald retention).
+  // Journald knows about downtime this server never saw, but it can't see a
+  // broken page in front of a running worker, so each day shows whichever
+  // source looks worse. Days journald never observed (a oneshot unit that
+  // never logs, or before retention) fall back to samples.
   const journal = store.journal[def.id] ?? {};
   const merged: DayMap = { ...samples };
   for (const [day, stat] of Object.entries(journal)) {
-    if (stat.up + stat.down + stat.degraded > 0) {
-      merged[day] = { ...stat, notes: [...(stat.notes ?? []), ...(samples[day]?.notes ?? [])].slice(0, 6) };
-    }
+    const fromJournal = dayUptime(stat);
+    if (fromJournal === null) continue;
+    const fromSamples = dayUptime(samples[day]);
+    const worse = fromSamples !== null && fromSamples < fromJournal ? samples[day] : stat;
+    merged[day] = { ...worse, notes: [...(stat.notes ?? []), ...(samples[day]?.notes ?? [])].slice(0, 6) };
   }
   return merged;
 }
 
 export function buildView(store: UptimeStore, now: number): UptimeView {
   const dateKeys = recentDateKeys(now, WINDOW_DAYS);
-  const defs = componentDefs(store);
+  const defs = componentDefs(store, now);
   const groups: UptimeGroupView[] = GROUPS.map((group) => {
     const components = defs
       .filter((def) => def.group === group.id)
