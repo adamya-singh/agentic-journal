@@ -135,25 +135,56 @@ fi
 
 echo
 echo "Building Next.js (keeping .next/cache for incremental webpack builds)..."
-# A cold build takes ~8 minutes on this host and needs a ~6 GB heap (5 GB ran out on 2026-10-07); a warm webpack cache cuts it to ~1.5.
-# Clear the old build output but keep the cache, and drop the cache if it grows past ~4 GB.
+# Since the data dir stopped leaking into Next's file traces (see src/lib/backend-data.ts), a cold build
+# compiles in ~1.5 minutes with a 3 GB heap; 4 GB leaves headroom. Before that fix, builds traced ~145k
+# Omi audio files per route and ran out of heap at 7 GB (2026-10-08).
+# Drop the cache if it grows past ~4 GB.
 if [[ -d "${ROOT_DIR}/.next/cache" ]] && (( $(du -sm "${ROOT_DIR}/.next/cache" | cut -f1) > 4096 )); then
   echo "Next cache exceeds 4 GB; clearing it."
   rm -rf "${ROOT_DIR}/.next/cache"
 fi
-if [[ -d "${ROOT_DIR}/.next" ]]; then
+# Keep the running build aside instead of deleting it, so a failed build can put it back and the
+# Journal comes back up on the old code rather than staying down (2026-10-08: two OOMed builds kept it
+# down ~45 minutes).
+PREVIOUS_BUILD_DIR="${ROOT_DIR}/.next-previous"
+rm -rf "$PREVIOUS_BUILD_DIR"
+mkdir -p "$PREVIOUS_BUILD_DIR" "${ROOT_DIR}/.next"
+find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec mv -t "$PREVIOUS_BUILD_DIR" {} +
+
+build_next() {
+  # Combine a bounded heap with Next's compiler memory optimizations on the shared host.
+  if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+    systemd-run --user --wait --pipe --collect \
+      -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
+      -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
+      /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
+  else
+    NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
+  fi
+  test -s "${ROOT_DIR}/.next/BUILD_ID"
+}
+
+restore_previous_build() {
+  if [[ ! -s "${PREVIOUS_BUILD_DIR}/BUILD_ID" ]]; then
+    echo "No previous build to restore; the Journal stays down until a build succeeds." >&2
+    return 1
+  fi
+  echo "Restoring the previous build and restarting services..." >&2
   find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec rm -rf {} +
+  find "$PREVIOUS_BUILD_DIR" -mindepth 1 -maxdepth 1 -exec mv -t "${ROOT_DIR}/.next" {} +
+  systemctl_cmd start "$PROD_SERVICE"
+  systemctl_cmd start "$OMI_WORKER_SERVICE"
+  systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
+  systemctl_cmd start "$MEDIA_WORKER_SERVICE"
+  wait_for_http "Next root" "http://127.0.0.1:3000/" 60 || true
+}
+
+if ! build_next; then
+  echo "Next.js build failed." >&2
+  restore_previous_build || true
+  exit 1
 fi
-# Combine a bounded heap with Next's compiler memory optimizations on the shared host.
-if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
-  systemd-run --user --wait --pipe --collect \
-    -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
-    -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
-    /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
-else
-  NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-6144}" npm run build
-fi
-test -s "${ROOT_DIR}/.next/BUILD_ID"
+rm -rf "$PREVIOUS_BUILD_DIR"
 
 echo
 echo "Installing backend dependencies with pnpm..."

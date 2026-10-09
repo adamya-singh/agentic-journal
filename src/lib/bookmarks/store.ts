@@ -13,9 +13,12 @@ import type {
   BookmarkSort,
 } from './types.ts';
 
+// Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
+// dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
+const DATA_SEGMENTS = ['src', 'backend', 'data'];
 export const dataRoot = () =>
   path.join(
-    process.env.BACKEND_DATA_DIR || path.join(process.cwd(), 'src/backend/data'),
+    process.env.BACKEND_DATA_DIR || path.join(process.cwd(), ...DATA_SEGMENTS),
     'bookmarks',
   );
 export const journalOrigin = () =>
