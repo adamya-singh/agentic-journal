@@ -11,6 +11,9 @@ const AUDIO_DIR = path.join(process.cwd(), 'src/backend/data/omi-audio');
 const QUEUE_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcription-queue');
 const JOURNAL_LINK_DIR = path.join(process.cwd(), 'src/backend/data/omi-journal-links');
 const DEFAULT_TIMEZONE = 'America/New_York';
+// The worker batches up to ~2 minutes of audio and polls every 15s, so uncovered
+// chunks younger than this are still on their way to a batch, not missing.
+const BUFFERED_CHUNK_WINDOW_MS = 5 * 60 * 1000;
 const NON_CONTENT_TRANSCRIPTS = new Set([
   '[background]',
   '[background].',
@@ -97,7 +100,11 @@ type OmiTranscriptDay = {
     pendingBatchCount: number;
     runningBatchCount: number;
     missingChunkCount: number;
+    bufferedChunkCount: number;
+    audioSeconds: number;
     recoverableBatchCount: number;
+    newestAudioAt?: string;
+    bufferedSince?: string;
     generatedAt?: string;
     newestTranscriptAt?: string;
     statusUpdatedAt?: string;
@@ -147,6 +154,7 @@ type RawStatusSegment = {
 type RawManifestEntry = {
   chunkId?: unknown;
   receivedAt?: unknown;
+  durationSeconds?: unknown;
 };
 
 type RawQueueFile = {
@@ -495,6 +503,8 @@ function emptyTranscriptDay(date: string, exists: boolean): OmiTranscriptDay {
       pendingBatchCount: 0,
       runningBatchCount: 0,
       missingChunkCount: 0,
+      bufferedChunkCount: 0,
+      audioSeconds: 0,
       recoverableBatchCount: 0,
     },
   };
@@ -518,12 +528,33 @@ function mergeTranscriptStatus(
     }
   }
 
-  const missingChunkCount = manifestEntries.reduce((total, entry) => {
+  const bufferCutoffMs = Date.now() - BUFFERED_CHUNK_WINDOW_MS;
+  let missingChunkCount = 0;
+  let bufferedChunkCount = 0;
+  let bufferedSince: string | undefined;
+  let newestAudioAt: string | undefined;
+  let audioSeconds = 0;
+  for (const entry of manifestEntries) {
+    const receivedAt = stringOrNull(entry.receivedAt);
+    if (receivedAt && (!newestAudioAt || receivedAt > newestAudioAt)) {
+      newestAudioAt = receivedAt;
+    }
+    audioSeconds += numberOrZero(entry.durationSeconds);
+
     const chunkId = typeof entry.chunkId === 'string' ? entry.chunkId : null;
-    return chunkId && !knownChunkIds.has(chunkId) && !isManifestEntryCoveredByStatus(entry, statusSegments)
-      ? total + 1
-      : total;
-  }, 0);
+    if (!chunkId || knownChunkIds.has(chunkId) || isManifestEntryCoveredByStatus(entry, statusSegments)) {
+      continue;
+    }
+    const receivedAtMs = receivedAt ? new Date(receivedAt).getTime() : NaN;
+    if (Number.isFinite(receivedAtMs) && receivedAtMs >= bufferCutoffMs) {
+      bufferedChunkCount += 1;
+      if (!bufferedSince || receivedAt! < bufferedSince) {
+        bufferedSince = receivedAt!;
+      }
+    } else {
+      missingChunkCount += 1;
+    }
+  }
   const recoverableBatchCount =
     batches.filter((batch) => batch.recoverable).length + (missingChunkCount > 0 ? 1 : 0);
 
@@ -540,7 +571,11 @@ function mergeTranscriptStatus(
       pendingBatchCount: batches.filter((batch) => batch.status === 'pending').length,
       runningBatchCount: batches.filter((batch) => batch.status === 'running').length,
       missingChunkCount,
+      bufferedChunkCount,
+      audioSeconds,
       recoverableBatchCount,
+      ...(newestAudioAt ? { newestAudioAt } : {}),
+      ...(bufferedSince ? { bufferedSince } : {}),
       ...(typeof statusFile?.updatedAt === 'string' ? { statusUpdatedAt: statusFile.updatedAt } : {}),
       ...(typeof queueFile?.updatedAt === 'string' ? { queueUpdatedAt: queueFile.updatedAt } : {}),
     },
