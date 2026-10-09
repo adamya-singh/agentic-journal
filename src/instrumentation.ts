@@ -41,6 +41,11 @@ export async function register(): Promise<void> {
   }, RECONCILE_INTERVAL_MS);
   interval.unref();
 
+  // OpenClaw fills in Horizon briefs in the background; Horizon loads nudge it too, this covers idle hours.
+  const { scheduleBriefFills } = await import('./app/api/tasks/brief-agent/worker');
+  setTimeout(() => scheduleBriefFills(), 60_000).unref();
+  setInterval(() => scheduleBriefFills(), 20 * 60_000).unref();
+
   // Uptime history is only as good as its samples, so check whether or not
   // anyone has the Status page open.
   const { checkUptime, SAMPLE_INTERVAL_MS } = await import('./lib/uptime/monitor');

@@ -93,6 +93,31 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     return () => { cancelled = true; };
   }, [sel, briefs]);
 
+  // Refetch one brief without the loading state, e.g. while OpenClaw is still filling it in.
+  const reloadBrief = React.useCallback((id: string) => {
+    fetch(`/api/tasks/brief?id=${encodeURIComponent(id)}`)
+      .then((r) => r.json())
+      .then((json) => { if (json.success) setBriefs((b) => ({ ...b, [id]: json.data as TaskBrief })); })
+      .catch(() => {});
+  }, []);
+
+  const agentWorking = !!sel && (briefs[sel]?.agent?.status === 'queued' || briefs[sel]?.agent?.status === 'running');
+  React.useEffect(() => {
+    if (!sel || !agentWorking || mode === 'none') return;
+    const timer = window.setInterval(() => reloadBrief(sel), 8000);
+    return () => window.clearInterval(timer);
+  }, [sel, agentWorking, mode, reloadBrief]);
+
+  const refreshAgent = React.useCallback(async (id: string) => {
+    await fetch('/api/tasks/brief-agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'refresh', taskId: id }) });
+    reloadBrief(id);
+  }, [reloadBrief]);
+
+  const actionDone = React.useCallback(async (id: string, actionId: string) => {
+    await fetch('/api/tasks/brief-agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'action-done', taskId: id, actionId }) });
+    onChanged();
+  }, [onChanged]);
+
   const chipFor = React.useCallback((id: string): HTMLElement | null => {
     const title = titles.get(id);
     const hero = heroRef.current;
@@ -336,6 +361,8 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
                       onGoto: select,
                       busy,
                       onDone: () => act('/api/tasks/today/complete', { taskId: brief.id, listType: brief.listType, date: getCurrentDateISO() }),
+                      onRefresh: () => void refreshAgent(brief.id),
+                      onActionDone: (actionId) => void actionDone(brief.id, actionId),
                     }}
                   />
                 ) : <div className="hzb hzb-loading">{loading ? 'Gathering what the Journal knows…' : 'Could not load this task.'}</div>}

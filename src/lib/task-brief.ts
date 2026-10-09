@@ -16,18 +16,28 @@ import {
   type HorizonZone,
 } from '@/lib/horizon';
 
-export type BriefSource = 'task' | 'notes' | 'canvas' | 'email' | 'jobs' | 'journal' | 'rule';
+// 'web' and 'agent' only come from OpenClaw's fill (see brief-agent.ts): 'agent' marks an inference, not something read.
+export type BriefSource = 'task' | 'notes' | 'canvas' | 'email' | 'jobs' | 'journal' | 'rule' | 'web' | 'agent';
 export type BriefKind =
   | 'assessment' | 'exam' | 'assignment' | 'catch-up' | 'presentation' | 'reading' | 'build' | 'errand' | 'plan' | 'task';
 export type BriefLinkKind = 'start' | 'canvas' | 'slides' | 'email' | 'posting' | 'app' | 'link';
 export type BriefRelState = 'done' | 'open' | 'over' | 'target';
 
-export interface BriefFact { k: string; v: string; src: BriefSource }
-export interface BriefLink { label: string; href: string; kind: BriefLinkKind; src: BriefSource }
-export interface BriefStep { text: string; done: boolean; href?: string; src: BriefSource }
-export interface BriefFlag { level: 'warn' | 'info' | 'gap'; text: string; src: BriefSource }
-export interface BriefRelated { taskId: string; short: string; rel: string; day: string; state: BriefRelState; src: BriefSource }
-export interface BriefSection { title: string; markdown: string; src: BriefSource }
+// `oc` marks a line OpenClaw added (brief-agent.ts) rather than the rules.
+export interface BriefFact { k: string; v: string; src: BriefSource; oc?: true }
+export interface BriefLink { label: string; href: string; kind: BriefLinkKind; src: BriefSource; oc?: true }
+export interface BriefStep { text: string; done: boolean; href?: string; src: BriefSource; oc?: true }
+/** A one-press fix OpenClaw suggests alongside a flag; always confirmed before it runs. */
+export type BriefActionSpec =
+  | { kind: 'plan'; label: string; date: string; start: string; end?: string }
+  | { kind: 'add-task'; label: string; text: string; listType: 'have-to-do' | 'want-to-do'; dueDate?: string; dueTimeStart?: string; notesMarkdown?: string }
+  | { kind: 'set-due'; label: string; dueDate: string; dueTimeStart?: string }
+  | { kind: 'save-notes'; label: string; markdown: string }
+  | { kind: 'merge'; label: string; taskIds: string[]; titles: string[]; listTypes: ('have-to-do' | 'want-to-do')[] };
+export type BriefAction = BriefActionSpec & { id: string; done: boolean };
+export interface BriefFlag { level: 'warn' | 'info' | 'gap'; text: string; src: BriefSource; action?: BriefAction; oc?: true }
+export interface BriefRelated { taskId: string; short: string; rel: string; day: string; state: BriefRelState; src: BriefSource; oc?: true }
+export interface BriefSection { title: string; markdown: string; src: BriefSource; oc?: true }
 export interface BriefHistory { when: string; text: string; src: BriefSource }
 
 export interface TaskBrief {
@@ -45,10 +55,12 @@ export interface TaskBrief {
     zone: HorizonZone | 'undated';
     implied: boolean;            // assumed, not stated
     where: string | null;        // room and time window
+    whereOc?: true;              // the room/time came from OpenClaw
     note: string | null;         // why the date is what it is
   };
   stakes: string | null;         // one line: what it is and why it matters
-  next: { label: string; detail: string | null; href?: string; taskId?: string; src: BriefSource } | null;
+  stakesOc?: true;               // the stakes line came from OpenClaw
+  next: { label: string; detail: string | null; href?: string; taskId?: string; src: BriefSource; oc?: true } | null;
   steps: BriefStep[];
   facts: BriefFact[];
   links: BriefLink[];
@@ -59,6 +71,14 @@ export interface TaskBrief {
   history: BriefHistory[];
   notesMarkdown: string | null;
   generatedAt: string;
+  agent: BriefAgentStatus | null;  // OpenClaw's background fill for this task, when there is one
+}
+
+export interface BriefAgentStatus {
+  status: 'queued' | 'running' | 'done' | 'failed';
+  finishedAt: string | null;
+  summary: string | null;          // what it read, in one line
+  error: string | null;
 }
 
 export interface BriefTaskRef { task: Task; listType: 'have-to-do' | 'want-to-do' }
@@ -558,5 +578,6 @@ export function buildTaskBrief(input: BriefInputs): TaskBrief | null {
     history,
     notesMarkdown: notes || null,
     generatedAt: now.toISOString(),
+    agent: null,
   };
 }

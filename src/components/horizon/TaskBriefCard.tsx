@@ -4,7 +4,8 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { BriefLink, BriefRelated, TaskBrief } from '@/lib/task-brief';
+import type { BriefAction, BriefLink, BriefRelated, BriefSource, TaskBrief } from '@/lib/task-brief';
+import { confirmText, runBriefAction } from './brief-actions';
 
 export const BRIEF_CSS = `
 .hzb{color:var(--hz-ink);font:13.5px/1.5 var(--hz-sans)}
@@ -89,6 +90,22 @@ export const BRIEF_CSS = `
 .hzb-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.25);cursor:pointer;color:var(--hz-dim);font-size:16px;line-height:1}
 .hzb-x:hover,.hzb-x:focus-visible{color:var(--hz-ink);border-color:#ffd2a8;outline:none}
 .hzb-loading{font-size:13px;color:var(--hz-dim);padding:6px 0}
+.hzb-oc{display:inline-block;font:10px/1.5 var(--hz-mono);letter-spacing:.04em;color:#e2b88f;border:1px dashed rgba(255,210,168,.45);border-radius:5px;padding:0 5px;margin-left:6px;white-space:nowrap;vertical-align:1px}
+.hzb-agent{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin-top:12px;font:12px/1.45 var(--hz-sans);color:var(--hz-dim)}
+.hzb-agent b{font:500 10.5px var(--hz-mono);letter-spacing:.12em;text-transform:uppercase;color:#e2b88f}
+.hzb-agent .pulse{width:7px;height:7px;border-radius:50%;background:#ffd2a8;animation:hzb-pulse 1.4s ease-in-out infinite}
+@keyframes hzb-pulse{50%{opacity:.25}}
+.hzb-agent button{font:500 11px var(--hz-mono);border:1px solid rgba(255,255,255,.22);background:transparent;border-radius:999px;padding:2px 10px;cursor:pointer;color:var(--hz-ink)}
+.hzb-agent button:hover,.hzb-agent button:focus-visible{border-color:#ffd2a8;outline:none}
+.hzb-act{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:7px}
+.hzb-act button{font:500 12px var(--hz-sans);border-radius:999px;padding:3px 11px;cursor:pointer;border:1px solid rgba(255,210,168,.55);background:transparent;color:#ffd2a8}
+.hzb-act button.y{background:#ffd2a8;color:#1b0d05;border-color:#ffd2a8}
+.hzb-act button:disabled{opacity:.5;cursor:default}
+.hzb-act span{font-size:12.5px;color:var(--hz-ink)}
+.hzb-act .ok{color:#7fd1b9;font:500 12px var(--hz-sans)}
+.hzb-act .err{color:#ff8a5c;font-size:12px;width:100%}
+.hzb-act pre{width:100%;margin:2px 0 0;white-space:pre-wrap;font:11.5px/1.45 var(--hz-mono);color:var(--hz-dim);max-height:140px;overflow:auto}
+@media (prefers-reduced-motion:reduce){.hzb-agent .pulse{animation:none}}
 `;
 
 export interface BriefActions {
@@ -96,6 +113,87 @@ export interface BriefActions {
   onDone: () => void;
   onLetGo?: () => void;
   busy?: boolean;
+  /** Ask OpenClaw to fill this brief again. */
+  onRefresh?: () => void;
+  /** A suggested action ran: record it and reload. */
+  onActionDone?: (actionId: string) => void;
+}
+
+const SRC_LABEL: Partial<Record<BriefSource, string>> = { canvas: 'canvas', email: 'email', web: 'web', journal: 'journal', notes: 'notes', jobs: 'jobs' };
+
+/** Marks a line OpenClaw added: where it read it, or that it is its own guess. */
+function Oc({ item }: { item: { oc?: true; src: BriefSource } }) {
+  if (!item.oc) return null;
+  const read = SRC_LABEL[item.src];
+  return (
+    <span className="hzb-oc" title={read ? `OpenClaw read this in ${read}` : 'OpenClaw’s inference, not something it read. May be wrong.'}>
+      {read ? `OpenClaw · ${read}` : 'OpenClaw guess'}
+    </span>
+  );
+}
+
+function ago(iso: string | null): string {
+  if (!iso) return '';
+  const mins = Math.round((Date.now() - Date.parse(iso)) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`;
+  return `${Math.round(mins / 1440)}d ago`;
+}
+
+/** Where OpenClaw's background fill stands for this task. */
+function AgentStatus({ brief, onRefresh, compact }: { brief: TaskBrief; onRefresh?: () => void; compact?: boolean }) {
+  const a = brief.agent;
+  if (!a) return null;
+  const working = a.status === 'queued' || a.status === 'running';
+  if (compact && !working) return null;
+  return (
+    <div className="hzb-agent" role="status">
+      {working && <i className="pulse" aria-hidden="true" />}
+      <b>OpenClaw</b>
+      {a.status === 'running' && <span>is reading Canvas, email and your journal for this…</span>}
+      {a.status === 'queued' && <span>will fill this in shortly.</span>}
+      {a.status === 'done' && <span>{a.summary ? `${a.summary} · ` : ''}{ago(a.finishedAt)}</span>}
+      {a.status === 'failed' && <span>couldn’t fill this in{a.error ? `: ${a.error}` : '.'}</span>}
+      {!compact && !working && onRefresh && (
+        <button type="button" onClick={onRefresh}>{a.status === 'failed' ? 'Retry' : 'Refresh'}</button>
+      )}
+    </div>
+  );
+}
+
+/** A suggested fix: press, confirm, done. */
+function FlagAction({ action, brief, onActionDone }: { action: BriefAction; brief: TaskBrief; onActionDone?: (id: string) => void }) {
+  const [phase, setPhase] = React.useState<'idle' | 'confirm' | 'running' | 'done'>(action.done ? 'done' : 'idle');
+  const [error, setError] = React.useState<string | null>(null);
+  if (phase === 'done') return <div className="hzb-act"><span className="ok">Done: {action.label}</span></div>;
+  const run = async () => {
+    setPhase('running');
+    setError(null);
+    try {
+      await runBriefAction(action, brief);
+      setPhase('done');
+      onActionDone?.(action.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That didn’t work.');
+      setPhase('confirm');
+    }
+  };
+  return (
+    <div className="hzb-act">
+      {phase === 'idle' ? (
+        <button type="button" onClick={() => setPhase('confirm')}>{action.label}</button>
+      ) : (
+        <>
+          <span>{confirmText(action, brief)}</span>
+          <button type="button" className="y" disabled={phase === 'running'} onClick={() => void run()}>{phase === 'running' ? 'Working…' : 'Confirm'}</button>
+          <button type="button" disabled={phase === 'running'} onClick={() => { setPhase('idle'); setError(null); }}>Cancel</button>
+          {action.kind === 'save-notes' && <pre>{action.markdown}</pre>}
+          {error && <span className="err" role="alert">{error}</span>}
+        </>
+      )}
+    </div>
+  );
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -123,10 +221,10 @@ function Head({ brief }: { brief: TaskBrief }) {
       <div className="hzb-when">
         <span className={`hzb-zc ${zone}`}>{w.day}{w.left ? ` · ${w.left}` : ''}</span>
         {w.implied && <span className="hzb-zc undated">assumed</span>}
-        {w.where && <span className="hzb-where">{w.where}</span>}
+        {w.where && <span className="hzb-where">{w.where}{w.whereOc && <span className="hzb-oc" title="OpenClaw found this">OpenClaw</span>}</span>}
       </div>
       {w.note && <p className="hzb-note">{w.note}</p>}
-      {brief.stakes && <p className="hzb-stakes">{brief.stakes}</p>}
+      {brief.stakes && <p className="hzb-stakes">{brief.stakes}{brief.stakesOc && <span className="hzb-oc" title="OpenClaw wrote this line">OpenClaw</span>}</p>}
     </>
   );
 }
@@ -145,19 +243,28 @@ function Next({ brief, onGoto }: { brief: TaskBrief; onGoto: (id: string) => voi
       ) : (
         <span className="hzb-go">{n.label}</span>
       )}
-      {n.detail && <p>{n.detail}</p>}
+      {n.detail && <p>{n.detail}<Oc item={n} /></p>}
+      {!n.detail && n.oc && <p><Oc item={n} /></p>}
     </div>
   );
 }
 
-function Flags({ brief, max }: { brief: TaskBrief; max?: number }) {
+function Flags({ brief, max, onActionDone }: { brief: TaskBrief; max?: number; onActionDone?: (id: string) => void }) {
   const flags = brief.flags.slice(0, max ?? brief.flags.length);
   if (!flags.length) return null;
   return (
     <div className="hzb-sec">
       <h4>Heads up</h4>
       <div className="hzb-flags">
-        {flags.map((f, i) => <div key={i} className={`hzb-flag ${f.level}`}><i /><div>{f.text}</div></div>)}
+        {flags.map((f, i) => (
+          <div key={i} className={`hzb-flag ${f.level}`}>
+            <i />
+            <div>
+              {f.text}<Oc item={f} />
+              {f.action && max === undefined && <FlagAction action={f.action} brief={brief} onActionDone={onActionDone} />}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -170,7 +277,7 @@ function Facts({ brief, max }: { brief: TaskBrief; max?: number }) {
     <div className="hzb-sec">
       <h4>Facts</h4>
       <dl className="hzb-facts">
-        {facts.map((f, i) => <React.Fragment key={i}><dt>{f.k}</dt><dd>{f.v}</dd></React.Fragment>)}
+        {facts.map((f, i) => <React.Fragment key={i}><dt>{f.k}</dt><dd>{f.v}<Oc item={f} /></dd></React.Fragment>)}
       </dl>
     </div>
   );
@@ -201,7 +308,7 @@ function Related({ brief, onGoto }: { brief: TaskBrief; onGoto: (id: string) => 
           <li key={r.taskId}>
             <button type="button" onClick={() => go(r)}>
               <i className={`hzb-dot ${r.state}`} />
-              <span>{r.short}<em>{r.rel}</em></span>
+              <span>{r.short}<em>{r.rel}</em><Oc item={r} /></span>
               <span className="d">{r.day}</span>
             </button>
           </li>
@@ -219,7 +326,7 @@ function Links({ brief }: { brief: TaskBrief }) {
       <div className="hzb-links">
         {brief.links.map((l) => (
           <a key={l.href} className="hzb-lk" href={l.href} title={l.label} {...(isInternal(l.href) ? {} : { target: '_blank', rel: 'noopener noreferrer' })}>
-            <small>{LINK_KIND[l.kind]}</small><span>{l.label}</span>
+            <small>{LINK_KIND[l.kind]}</small><span>{l.label}</span>{l.oc && <small>· OpenClaw</small>}
           </a>
         ))}
       </div>
@@ -254,6 +361,7 @@ export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose }: {
             <Next brief={brief} onGoto={onGoto} />
             <Facts brief={brief} max={3} />
             <Flags brief={brief} max={1} />
+            <AgentStatus brief={brief} compact />
             <button type="button" className="hzb-more" onClick={onOpenFull}>Open full brief →</button>
           </>
         )}
@@ -268,11 +376,18 @@ export function BriefFull({ brief, actions }: { brief: TaskBrief; actions: Brief
     <div className="hzb">
       <Head brief={brief} />
       <Next brief={brief} onGoto={actions.onGoto} />
-      <Flags brief={brief} />
+      <AgentStatus brief={brief} onRefresh={actions.onRefresh} />
+      <Flags brief={brief} onActionDone={actions.onActionDone} />
       {brief.steps.length > 0 && (
         <div className="hzb-sec">
           <h4>Steps</h4>
-          <ul className="hzb-steps">{brief.steps.map((s, i) => <li key={i} className={s.done ? 'done' : undefined}>{s.text}</li>)}</ul>
+          <ul className="hzb-steps">
+            {brief.steps.map((s, i) => (
+              <li key={i} className={s.done ? 'done' : undefined}>
+                <span>{s.href ? <a href={s.href} target="_blank" rel="noopener noreferrer">{s.text}</a> : s.text}<Oc item={s} /></span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       <Related brief={brief} onGoto={actions.onGoto} />
@@ -280,7 +395,7 @@ export function BriefFull({ brief, actions }: { brief: TaskBrief; actions: Brief
       <Links brief={brief} />
       {brief.sections.map((s) => (
         <details key={s.title} open={brief.sections.length <= 2}>
-          <summary>{s.title}</summary>
+          <summary>{s.title}{s.oc && <span className="hzb-oc">{SRC_LABEL[s.src] ? `OpenClaw · ${SRC_LABEL[s.src]}` : 'OpenClaw guess'}</span>}</summary>
           <Markdown text={s.markdown} />
         </details>
       ))}
