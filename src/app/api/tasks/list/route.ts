@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
-import { TasksData, ListType } from '@/lib/types';
+import type { TasksData, ListType } from '@/lib/types';
+import { tasksDataDir } from '@/lib/backend-data';
 import { ensureCurrentSystemThroughToday } from '../current/current-store-utils';
 
 // Get the path for a specific task list
 function getTasksFilePath(listType: ListType): string {
-  return path.join(process.cwd(), `src/backend/data/tasks/${listType}.json`);
+  return path.join(tasksDataDir(), `${listType}.json`);
 }
 
 /**

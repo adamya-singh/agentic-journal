@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { backendDataDir } from '@/lib/backend-data';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   findOpenClawCronJob,
@@ -12,8 +13,14 @@ import {
 export const runtime = 'nodejs';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const TRANSCRIPT_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcripts');
-const JOURNAL_LINK_DIR = path.join(process.cwd(), 'src/backend/data/omi-journal-links');
+
+function transcriptDir(): string {
+  return path.join(backendDataDir(), 'omi-transcripts');
+}
+
+function journalLinkDir(): string {
+  return path.join(backendDataDir(), 'omi-journal-links');
+}
 const OPENCLAW_CRON_JOB_NAME = 'Omi Transcript Journal Ingestion';
 const NON_CONTENT_TRANSCRIPTS = new Set([
   '[background]',
@@ -88,7 +95,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Omi transcript segment is not completed' }, { status: 400 });
     }
 
-    const ledgerPath = path.join(JOURNAL_LINK_DIR, `${date}.json`);
+    const ledgerPath = path.join(journalLinkDir(), `${date}.json`);
     const ledger = readLedger(date);
     const existing = ledger.segments?.[segmentId];
     if (existing?.status === 'logged') {
@@ -136,7 +143,7 @@ export async function POST(request: NextRequest) {
 }
 
 function readSegment(date: string, segmentId: string): OmiSegment | null {
-  const rawPath = path.join(TRANSCRIPT_DIR, `${date}.raw.json`);
+  const rawPath = path.join(transcriptDir(), `${date}.raw.json`);
   if (!fs.existsSync(rawPath)) {
     return null;
   }
@@ -179,7 +186,7 @@ function normalizeRawSegment(raw: unknown): OmiSegment | null {
 }
 
 function readLedger(date: string): Required<Pick<RawJournalLinksFile, 'segments'>> & RawJournalLinksFile {
-  const filePath = path.join(JOURNAL_LINK_DIR, `${date}.json`);
+  const filePath = path.join(journalLinkDir(), `${date}.json`);
   if (!fs.existsSync(filePath)) {
     return { schemaVersion: 1, date, segments: {} };
   }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import {
   DayJournalWithRanges,
   markMissedPlansForDate,
@@ -8,7 +9,6 @@ import {
 } from '../plan-lifecycle-utils';
 import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const VALID_HOURS = [
   '7am', '8am', '9am', '10am', '11am', '12pm',
@@ -22,7 +22,7 @@ function isValidDateFormat(date: string): boolean {
 }
 
 function getJournalFilePath(date: string): string {
-  return path.join(JOURNAL_DIR, `${date}.json`);
+  return path.join(journalDataDir(), `${date}.json`);
 }
 
 function readJournalFile(date: string): DayJournalWithRanges {
@@ -35,7 +35,7 @@ function readJournalFile(date: string): DayJournalWithRanges {
 }
 
 function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
-  fs.writeFileSync(getJournalFilePath(date), JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(getJournalFilePath(date), journal);
 }
 
 export async function POST(request: NextRequest) {

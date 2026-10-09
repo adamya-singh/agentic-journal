@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
-
-// Path to the journal directory
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -33,7 +31,7 @@ function isValidDateFormat(date: string): boolean {
  * Helper function to get the path to a specific day's journal file
  */
 function getJournalFilePath(date: string): string {
-  return path.join(JOURNAL_DIR, `${date}.json`);
+  return path.join(journalDataDir(), `${date}.json`);
 }
 
 /**
@@ -58,7 +56,7 @@ function readJournalFile(date: string): Record<string, unknown> {
  */
 function writeJournalFile(date: string, journal: Record<string, unknown>): void {
   const filePath = getJournalFilePath(date);
-  fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(filePath, journal);
 }
 
 /**

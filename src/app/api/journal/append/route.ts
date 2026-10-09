@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import {
-  EntryMode,
-  JournalEntry,
-  JournalHourSlot,
+  type EntryMode,
+  type JournalEntry,
+  type JournalHourSlot,
   isJournalEntryArray,
   isTaskJournalEntry,
   isTextJournalEntry,
 } from '@/lib/types';
 import {
   completeEarliestActiveTaskPlanInPlace,
-  DayJournalWithRanges,
+  type DayJournalWithRanges,
   markMissedPlansForDate,
   normalizePlannedEntry,
   normalizePlannedTaskEntry,
 } from '../plan-lifecycle-utils';
 import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
-
-// Path to the journal directory
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
 
 // Valid hours of the day (7am to 6am)
 const VALID_HOURS = ['7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm', '12am', '1am', '2am', '3am', '4am', '5am', '6am'];
@@ -36,7 +34,7 @@ function isValidEntryMode(entryMode: unknown): entryMode is EntryMode {
 }
 
 function getJournalFilePath(date: string): string {
-  return path.join(JOURNAL_DIR, `${date}.json`);
+  return path.join(journalDataDir(), `${date}.json`);
 }
 
 function journalFileExists(date: string): boolean {
@@ -56,7 +54,7 @@ function readJournalFile(date: string): DayJournalWithRanges {
 
 function writeJournalFile(date: string, journal: DayJournalWithRanges): void {
   const filePath = getJournalFilePath(date);
-  fs.writeFileSync(filePath, JSON.stringify(journal, null, 2), 'utf-8');
+  writeJsonFileAtomic(filePath, journal);
 }
 
 function getEntryText(entry: JournalEntry): string {

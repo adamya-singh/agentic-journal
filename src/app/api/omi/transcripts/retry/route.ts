@@ -1,11 +1,15 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { backendDataDir } from '@/lib/backend-data';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
 
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
-const TRANSCRIPT_DIR = path.join(process.cwd(), 'src/backend/data/omi-transcripts');
+
+function transcriptDir(): string {
+  return path.join(backendDataDir(), 'omi-transcripts');
+}
 
 type RetryRequest = {
   date?: unknown;
@@ -48,7 +52,7 @@ export async function POST(request: NextRequest) {
     const batchIds = Array.isArray(payload.batchIds)
       ? payload.batchIds.filter((value): value is string => typeof value === 'string' && value.length > 0)
       : null;
-    const statusPath = path.join(TRANSCRIPT_DIR, `${date}.status.json`);
+    const statusPath = path.join(transcriptDir(), `${date}.status.json`);
 
     if (!fs.existsSync(statusPath)) {
       return NextResponse.json(

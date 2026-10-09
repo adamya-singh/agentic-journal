@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { jobsDataDir } from '@/lib/backend-data';
 import type {
   JobApplicationCategory,
   JobListing,
@@ -10,8 +11,7 @@ import type {
   LegacyJobType,
 } from '@/lib/types';
 
-const JOBS_DIR =
-  process.env.JOB_APPLICATION_JOBS_DIR || path.join(process.cwd(), 'src/backend/data/jobs');
+const JOBS_DIR = jobsDataDir();
 const JOBS_FILE = path.join(JOBS_DIR, 'listings.json');
 
 export function getEmptyJobListingsData(): JobListingsData {

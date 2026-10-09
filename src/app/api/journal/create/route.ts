@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as fs from 'fs';
 import * as path from 'path';
+import { journalDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import { ensureCurrentSystemThroughToday } from '../../tasks/current/current-store-utils';
 
-// Path to the journal directory (relative to project root)
-const JOURNAL_DIR = path.join(process.cwd(), 'src/backend/data/journal');
-const FORMAT_PATH = path.join(JOURNAL_DIR, 'format.json');
+// The blank-day template lives alongside the dated journal files.
+function getFormatPath(): string {
+  return path.join(journalDataDir(), 'format.json');
+}
 
 // Date format regex (ISO: YYYY-MM-DD)
 const DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -21,7 +23,7 @@ function isValidDateFormat(date: string): boolean {
  * Helper function to get the path to a specific day's journal file
  */
 function getJournalFilePath(date: string): string {
-  return path.join(JOURNAL_DIR, `${date}.json`);
+  return path.join(journalDataDir(), `${date}.json`);
 }
 
 /**
@@ -66,23 +68,19 @@ export async function POST(request: NextRequest) {
     }
 
     // Read the format template
-    if (!fs.existsSync(FORMAT_PATH)) {
+    const formatPath = getFormatPath();
+    if (!fs.existsSync(formatPath)) {
       return NextResponse.json(
         { success: false, error: 'Format template not found' },
         { status: 500 }
       );
     }
 
-    const template = fs.readFileSync(FORMAT_PATH, 'utf-8');
+    const template = JSON.parse(fs.readFileSync(formatPath, 'utf-8'));
     const filePath = getJournalFilePath(date);
 
-    // Ensure the journal directory exists
-    if (!fs.existsSync(JOURNAL_DIR)) {
-      fs.mkdirSync(JOURNAL_DIR, { recursive: true });
-    }
-
-    // Write the new journal file
-    fs.writeFileSync(filePath, template, 'utf-8');
+    // Write the new journal file (creates the journal directory if needed)
+    writeJsonFileAtomic(filePath, template);
 
     return NextResponse.json({
       success: true,
