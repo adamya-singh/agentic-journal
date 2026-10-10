@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { isApplicationSubmissionInFlight } from '@/lib/job-application-cancellation';
-import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Images, MessageCircleQuestion, Pencil, Send, ZoomIn } from 'lucide-react';
+import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Images, Loader2, MessageCircleQuestion, Pencil, RotateCcw, Send, ZoomIn } from 'lucide-react';
 import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
@@ -18,12 +18,15 @@ const LOW_CONFIDENCE = 0.7;
 const RELEASED_NOTICE_MS = 6000;
 
 type ResolveHandler = (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
+type RedoHandler = (reviewId: string, instructions: string) => Promise<void>;
 
 interface ReviewGroup {
   listingId: string;
   company: string;
   role: string;
   items: JobApplicationReviewItem[];
+  /** Drafts sent back with instructions that OpenClaw has not redrafted yet. */
+  redoing: JobApplicationReviewItem[];
   total: number;
   /** Review deadline while OpenClaw is holding the submission for this review. */
   holdUntil?: string;
@@ -31,6 +34,8 @@ interface ReviewGroup {
   submitted: boolean;
   closed: boolean;
   submissionStarted: boolean;
+  /** Any submission attempt, even a stalled one; OpenClaw cannot redraft after it. */
+  submissionAttempted: boolean;
   /** Full-page screenshots of the filled application exist (opens the gallery). */
   hasFullScreenshots: boolean;
 }
@@ -38,6 +43,7 @@ interface ReviewGroup {
 export function ApplicationReviewPanel({
   applications,
   onResolve,
+  onRedo,
   onConfirmAll,
   onOpenApplication,
   onExtend,
@@ -45,6 +51,7 @@ export function ApplicationReviewPanel({
 }: {
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
+  onRedo?: RedoHandler;
   onConfirmAll?: (listingId: string) => Promise<void>;
   onOpenApplication?: (listingId: string) => void;
   onExtend?: (listingId: string) => Promise<void>;
@@ -91,7 +98,8 @@ export function ApplicationReviewPanel({
   }, [released]);
 
   const pendingCount = groups.reduce((sum, group) => sum + group.items.length, 0);
-  if (pendingCount === 0 && !released && !cancelled) return null;
+  const redoingCount = groups.reduce((sum, group) => sum + group.redoing.length, 0);
+  if (pendingCount === 0 && redoingCount === 0 && !released && !cancelled) return null;
 
   const heldCount = groups.filter((group) => group.holdUntil).length;
   const noteReleased = (group: ReviewGroup, resolving: number) => {
@@ -113,6 +121,9 @@ export function ApplicationReviewPanel({
           <MessageCircleQuestion className="h-4 w-4 shrink-0 text-violet-600" />
           <span className="min-w-0 flex-1">
             Review OpenClaw’s answer choices ({pendingCount})
+            {redoingCount > 0 && (
+              <span className="ml-2 font-normal text-violet-700 dark:text-violet-300">{redoingCount} being redone</span>
+            )}
             {heldCount > 0 && (
               <span className="ml-2 font-normal text-amber-700 dark:text-amber-300">
                 {heldCount} application{heldCount === 1 ? '' : 's'} waiting to submit
@@ -151,6 +162,7 @@ export function ApplicationReviewPanel({
               await onResolve(reviewId, action, answer);
               noteReleased(group, 1);
             })}
+            onRedo={onRedo}
             onConfirmAll={onConfirmAll && (async () => {
               await onConfirmAll(group.listingId);
               noteReleased(group, group.items.length);
@@ -175,6 +187,7 @@ function ReviewGroupCard({
   onToggle,
   questions,
   onResolve,
+  onRedo,
   onConfirmAll,
   onOpenApplication,
   onExtend,
@@ -186,6 +199,7 @@ function ReviewGroupCard({
   onToggle: (open: boolean) => void;
   questions?: JobApplicationQuestion[];
   onResolve?: ResolveHandler;
+  onRedo?: RedoHandler;
   onConfirmAll?: () => Promise<void>;
   onOpenApplication?: () => void;
   onExtend?: () => Promise<void>;
@@ -197,6 +211,7 @@ function ReviewGroupCard({
   const [cancelReason, setCancelReason] = React.useState('');
   const bodyId = `application-review-group-${group.listingId}`;
   const reviewed = group.total - group.items.length;
+  const editable = !group.submitted && !group.submittedAt && !group.closed && !group.submissionStarted;
 
   const run = async (id: string, task: () => Promise<void>): Promise<boolean> => {
     if (busy) return false;
@@ -291,7 +306,7 @@ function ReviewGroupCard({
         aria-valuenow={reviewed}
         className="h-0.5 bg-violet-100 dark:bg-violet-950"
       >
-        <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${(reviewed / group.total) * 100}%` }} />
+        <div className="h-full bg-emerald-500 transition-[width]" style={{ width: `${group.total ? (reviewed / group.total) * 100 : 0}%` }} />
       </div>
       {(error?.id === 'all' || error?.id === 'extend' || error?.id === 'cancel') && <p role="alert" className="px-3 pt-2 text-sm text-red-700 dark:text-red-300">{error.message}</p>}
       {open && cancelling && (
@@ -329,9 +344,28 @@ function ReviewGroupCard({
               error={error?.id === item.id ? error.message : null}
               onConfirm={() => run(item.id, () => onResolve!(item.id, 'confirm'))}
               onCorrect={(answer) => run(item.id, () => onResolve!(item.id, 'correct', answer))}
-              onLeaveBlank={!group.submitted && !group.submittedAt && !group.closed && !group.submissionStarted
+              onLeaveBlank={editable
                 ? () => run(item.id, () => onResolve!(item.id, 'leave-blank')) : undefined}
+              onRedo={editable && !group.submissionAttempted && onRedo
+                ? (instructions) => run(item.id, () => onRedo(item.id, instructions)) : undefined}
             />
+          ))}
+          {group.redoing.map((item) => (
+            <li key={item.id} className="flex items-start gap-2 px-3 py-2.5 text-slate-600 dark:text-slate-400">
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-violet-500" aria-hidden />
+              <div className="min-w-0">
+                <p className="font-medium text-slate-800 dark:text-slate-200">{item.question}</p>
+                <p className="mt-0.5 text-xs">
+                  OpenClaw is redoing this answer and will send it back here for review.
+                </p>
+                {item.redoInstructions && (
+                  <p className="mt-1 whitespace-pre-wrap break-words text-xs">
+                    <span className="font-semibold uppercase tracking-wide text-slate-400">You said </span>
+                    {item.redoInstructions}
+                  </p>
+                )}
+              </div>
+            </li>
           ))}
         </ul>
       )}
@@ -384,6 +418,7 @@ function ReviewRow({
   onConfirm,
   onCorrect,
   onLeaveBlank,
+  onRedo,
 }: {
   listingId: string;
   item: JobApplicationReviewItem;
@@ -394,8 +429,11 @@ function ReviewRow({
   onConfirm: () => Promise<boolean>;
   onCorrect: (answer: JobApplicationAnswer) => Promise<boolean>;
   onLeaveBlank?: () => Promise<boolean>;
+  onRedo?: (instructions: string) => Promise<boolean>;
 }) {
   const [draft, setDraft] = React.useState<JobApplicationAnswer | null>(null);
+  const [redoNote, setRedoNote] = React.useState<string | null>(null);
+  const canRedo = Boolean(onRedo) && question?.kind !== 'file' && question?.kind !== 'action';
   const used = formatAnswer(item.answerUsed, question);
   // The server writes this fallback when OpenClaw had no specific doubt; it
   // only repeats the "Used" line, so leave it out.
@@ -442,6 +480,12 @@ function ReviewRow({
           {used}
         </p>
         {!genericPrompt && <p className="mt-1 text-violet-800 dark:text-violet-300">{item.clarificationPrompt}</p>}
+        {item.redoneFrom && (
+          <p className="mt-1 whitespace-pre-wrap break-words text-xs text-slate-500 dark:text-slate-400">
+            <RotateCcw className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden />
+            Redone from “{formatAnswer(item.redoneFrom.previousAnswer, question)}” after you said: {item.redoneFrom.instructions}
+          </p>
+        )}
       </div>
       {screenshot && (
         <QuestionScreenshot
@@ -452,7 +496,52 @@ function ReviewRow({
         />
       )}
       <div className="min-w-0 sm:col-start-1 sm:row-start-2">
-        {draft === null ? (
+        {redoNote !== null ? (
+          <form
+            className="mt-2 space-y-2"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              if (!redoNote.trim() || disabled || !onRedo) return;
+              if (await onRedo(redoNote.trim())) setRedoNote(null);
+            }}
+          >
+            <label htmlFor={`redo-${item.id}`} className="block font-medium text-slate-800 dark:text-slate-200">
+              How should OpenClaw redo this answer?
+            </label>
+            <textarea
+              id={`redo-${item.id}`}
+              required
+              maxLength={2000}
+              rows={3}
+              autoFocus
+              value={redoNote}
+              disabled={busy}
+              onChange={(event) => setRedoNote(event.target.value)}
+              placeholder="e.g. Make it shorter and specific to this team"
+              className="w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-slate-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+            />
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              OpenClaw redrafts it with your note and sends the new answer back here. It won’t submit until you review it.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="submit"
+                disabled={!redoNote.trim() || disabled}
+                className="inline-flex min-h-9 items-center gap-1 rounded bg-violet-600 px-3 py-1 font-semibold text-white disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" /> {busy ? 'Sending…' : 'Send to OpenClaw'}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setRedoNote(null)}
+                className="min-h-9 rounded px-3 py-1 font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : draft === null ? (
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -470,6 +559,17 @@ function ReviewRow({
             >
               <Pencil className="h-3.5 w-3.5" /> Correct
             </button>
+            {canRedo && (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => setRedoNote('')}
+                title="Tell OpenClaw how to redo this answer; the new draft comes back here for review"
+                className="inline-flex min-h-9 items-center gap-1 rounded border border-violet-300 px-3 py-1 font-semibold text-violet-700 disabled:opacity-50 dark:border-violet-700 dark:text-violet-300"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Redo
+              </button>
+            )}
             {leaveBlankButton}
           </div>
         ) : (
@@ -613,15 +713,23 @@ function buildGroups(applications: JobApplicationsViewData | null, now: number):
         company: item.company,
         role: item.role,
         items: [],
+        redoing: [],
         total: 0,
         holdUntil: application?.reviewHoldSince ? application.autoSubmitEligibleAt : undefined,
         submittedAt: application?.submittedAt ?? item.submittedAt,
         submitted: application?.status === 'submitted',
         closed: application?.status === 'closed',
         submissionStarted: isApplicationSubmissionInFlight(application, now),
+        submissionAttempted: Boolean(application?.submissionAttemptedAt),
         hasFullScreenshots: (application?.screenshotCapture?.screenshots.length ?? 0) > 0,
       };
       byListing.set(item.listingId, group);
+    }
+    if (item.status === 'redo-requested') {
+      // Until the redraft arrives as a new review, show what OpenClaw is working on.
+      const question = applications?.applications[item.listingId]?.questions.find((candidate) => candidate.id === item.questionId);
+      if (question?.resolution === 'pending' && question.redoRequest) group.redoing.push(item);
+      continue;
     }
     group.total += 1;
     if (item.status === 'pending') group.items.push(item);
@@ -630,7 +738,7 @@ function buildGroups(applications: JobApplicationsViewData | null, now: number):
   // then unsubmitted ones, then after-the-fact reviews, newest submission first.
   const rank = (group: ReviewGroup) => (group.holdUntil ? 0 : group.submittedAt || group.closed ? 2 : 1);
   return [...byListing.values()]
-    .filter((group) => group.items.length > 0)
+    .filter((group) => group.items.length > 0 || group.redoing.length > 0)
     .sort((a, b) =>
       rank(a) - rank(b) ||
       (a.holdUntil ?? '').localeCompare(b.holdUntil ?? '') ||

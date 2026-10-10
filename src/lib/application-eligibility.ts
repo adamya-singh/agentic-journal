@@ -24,6 +24,17 @@ export function needsEligibilityReview(question: JobApplicationQuestion): boolea
     && JSON.stringify(question.eligibilityReviewedAnswer) !== JSON.stringify(question.answer);
 }
 
+/** A draft Adamya sent back for a redo waits for his review; the deadline cannot waive it. */
+export function needsRedoReview(question: JobApplicationQuestion): boolean {
+  return Boolean(question.redoRequest)
+    && question.resolution !== 'pending'
+    && JSON.stringify(question.eligibilityReviewedAnswer) !== JSON.stringify(question.answer);
+}
+
+export function needsExplicitReview(question: JobApplicationQuestion): boolean {
+  return needsEligibilityReview(question) || needsRedoReview(question);
+}
+
 export function hasStaleGraduationContext(question: Pick<JobApplicationQuestion, 'prompt' | 'answer' | 'generatedAnswer'>): boolean {
   if (!/graduat|degree|bachelor|enroll/i.test(question.prompt)) return false;
   const evidence = JSON.stringify([question.answer, question.generatedAnswer?.assumptions]);

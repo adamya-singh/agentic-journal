@@ -1202,6 +1202,102 @@ describe('job application state', () => {
     assert.equal((await postReview({ listingId: 'saved-new', action: 'confirm-all' })).status, 409);
   });
 
+  test('a redo sends the draft back with instructions and its redraft needs explicit review', async () => {
+    await seedDraft('redo-lease');
+    let data = store.readJobApplicationsStore();
+    const [phone, why] = ['phone-type', 'why'].map((id) => data.reviewItems.find(
+      (item) => item.listingId === 'saved-new' && item.questionId === id)!);
+
+    assert.equal((await postReview({ reviewId: why.id, action: 'redo', instructions: '   ' })).status, 400);
+    const response = await postReview({ reviewId: why.id, action: 'redo', instructions: 'Mention the infra team.' });
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.reviews[0].status, 'redo-requested');
+    assert.equal(body.reviews[0].redoInstructions, 'Mention the infra team.');
+    assert.equal((await postReview({ reviewId: why.id, action: 'redo', instructions: 'Again' })).status, 409);
+    data = store.readJobApplicationsStore();
+    let application = data.applications['saved-new'];
+    let question = application.questions.find((candidate) => candidate.id === 'why')!;
+    assert.equal(question.resolution, 'pending');
+    assert.equal(question.answer, undefined);
+    assert.equal(question.generatedAnswer, undefined);
+    assert.deepEqual(question.redoRequest?.previousAnswer, 'I like it.');
+    assert.equal(question.redoRequest?.instructions, 'Mention the infra team.');
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.reviewHoldSince, undefined);
+    assert.ok(application.resumeRequestedAt);
+    assert.equal(store.isApplicationClaimable(application, new Date()), true);
+    assert.deepEqual(data.answerBank, []);
+
+    // Reviewing the rest does not release a submission while the redo is outstanding.
+    const confirmed = await postReview({ reviewId: phone.id, action: 'confirm' });
+    assert.equal((await confirmed.json()).application.questions.find((q: { id: string }) => q.id === 'why').resolution, 'pending');
+
+    // Rediscovery cannot resolve the redo outside record-auto-answers.
+    await store.mutateJobApplicationsStore((mutable) => {
+      mutable.applications['saved-new'].lease = { token: 'redo-run', claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' };
+    });
+    const rediscovered = await postUpdate({
+      action: 'record-questions', listingId: 'saved-new', leaseToken: 'redo-run', retainLease: true,
+      questions: [{ id: 'why', prompt: 'Why this team?', kind: 'text', required: false, answer: 'Bank answer', resolution: 'answered' }],
+    });
+    assert.equal(rediscovered.status, 200);
+    question = store.readJobApplicationsStore().applications['saved-new'].questions.find((candidate) => candidate.id === 'why')!;
+    assert.equal(question.resolution, 'pending');
+    assert.equal(question.answer, undefined);
+    assert.ok(question.redoRequest);
+
+    // The redraft is a new review even after the deadline has passed.
+    await store.mutateJobApplicationsStore((mutable) => {
+      mutable.applications['saved-new'].autoSubmitEligibleAt = '2026-01-01T00:00:00.000Z';
+    });
+    const redrafted = await postUpdate({
+      action: 'record-auto-answers', listingId: 'saved-new', leaseToken: 'redo-run',
+      answers: [draftAnswer('why', 'Why this team?', 'The infra team builds what I use.')],
+    });
+    assert.equal(redrafted.status, 200);
+    assert.ok((await redrafted.json()).reviewHold);
+    data = store.readJobApplicationsStore();
+    application = data.applications['saved-new'];
+    const items = data.reviewItems.filter((item) => item.listingId === 'saved-new' && item.questionId === 'why');
+    assert.deepEqual(items.map((item) => item.status), ['redo-requested', 'pending']);
+    assert.deepEqual(items[1].redoneFrom, { instructions: 'Mention the infra team.', previousAnswer: 'I like it.' });
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.lease, undefined);
+    assert.equal(store.isApplicationClaimable(application, new Date()), false);
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date()), true);
+
+    const released = await postReview({ reviewId: items[1].id, action: 'confirm' });
+    assert.equal(released.status, 200);
+    data = store.readJobApplicationsStore();
+    application = data.applications['saved-new'];
+    question = application.questions.find((candidate) => candidate.id === 'why')!;
+    assert.equal(question.redoRequest, undefined);
+    assert.equal(question.answer, 'The infra team builds what I use.');
+    assert.equal(application.status, 'in-progress');
+    assert.equal(store.isApplicationClaimable(application, new Date()), true);
+    assert.equal(store.isSubmissionBlockedByReview(data, application, new Date()), false);
+  });
+
+  test('a redo is refused once submission has started or the application is finished', async () => {
+    for (const overrides of [
+      { submissionAttemptedAt: now },
+      { status: 'submitted', submittedAt: now },
+    ]) {
+      await seedDraft('redo-refused-lease');
+      await store.mutateJobApplicationsStore((data) => {
+        Object.assign(data.applications['saved-new'], overrides);
+      });
+      const item = store.readJobApplicationsStore().reviewItems.find(
+        (candidate) => candidate.listingId === 'saved-new' && candidate.questionId === 'why')!;
+      const response = await postReview({ reviewId: item.id, action: 'redo', instructions: 'Shorter' });
+      assert.equal(response.status, 409);
+      const data = store.readJobApplicationsStore();
+      assert.equal(data.reviewItems.find((candidate) => candidate.id === item.id)?.status, 'pending');
+      assert.equal(data.applications['saved-new'].questions.find((q) => q.id === 'why')?.redoRequest, undefined);
+    }
+  });
+
   test('cancelling a review records the reason, dismisses drafts, and invalidates worker updates', async () => {
     await seedDraft('cancel-lease');
     await store.mutateJobApplicationsStore((data) => {

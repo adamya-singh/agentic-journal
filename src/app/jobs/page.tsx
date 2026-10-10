@@ -19,6 +19,7 @@ export default function JobsPage() {
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
+    redoJobApplicationReview,
     confirmAllJobApplicationReviews,
     cancelJobApplication,
     updateJobEmailUpdates,
@@ -63,6 +64,7 @@ export default function JobsPage() {
           onApplicationCategoriesChange={saveJobApplicationCategories}
           onApplicationSave={saveJobApplicationAnswers}
           onApplicationReview={resolveJobApplicationReview}
+          onApplicationReviewRedo={redoJobApplicationReview}
           onApplicationReviewConfirmAll={confirmAllJobApplicationReviews}
           onApplicationCancel={cancelJobApplication}
           onEmailUpdate={updateJobEmailUpdates}

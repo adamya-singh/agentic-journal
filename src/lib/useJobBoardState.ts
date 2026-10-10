@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll, saveJobApplicationCancellation } from './job-review-result';
+import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll, saveJobReviewRedo, saveJobApplicationCancellation } from './job-review-result';
 import {
   applyJobEmailUpdatesResult, normalizeEmailUpdatesView, postJobEmailUpdate, type JobEmailUpdateRequest,
 } from './job-email-updates';
@@ -287,6 +287,12 @@ export function useJobBoardState(
       : current);
   }, []);
 
+  const redoJobApplicationReview = React.useCallback(async (reviewId: string, instructions: string) => {
+    const data = await saveJobReviewRedo(reviewId, instructions);
+    reviewRevision.current += 1;
+    setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
+  }, []);
+
   const confirmAllJobApplicationReviews = React.useCallback(async (listingId: string) => {
     const data = await saveJobReviewConfirmAll(listingId);
     reviewRevision.current += 1;
@@ -316,6 +322,7 @@ export function useJobBoardState(
     saveJobApplicationCategories,
     saveJobApplicationAnswers,
     resolveJobApplicationReview,
+    redoJobApplicationReview,
     confirmAllJobApplicationReviews,
     updateJobEmailUpdates,
     extendJobApplicationAutopilot,

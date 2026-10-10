@@ -220,8 +220,10 @@ export async function POST(request: NextRequest) {
           // Every generated answer is queued for review before submission.
           const clarificationPrompt = generated.clarificationPrompt ??
             `I used “${formatAnswer(generated.answer)}”. What should I use in future?`;
+          // A draft sent back for a redo is closed; its replacement needs its own review.
           const existing = store.reviewItems.find(
-            (item) => item.listingId === application.listingId && item.questionId === question.id,
+            (item) => item.listingId === application.listingId && item.questionId === question.id
+              && item.status !== 'redo-requested',
           );
           if (!existing) {
             store.reviewItems.push({
@@ -236,6 +238,12 @@ export async function POST(request: NextRequest) {
               role: listing.positionTitle,
               createdAt: now,
               status: 'pending',
+              ...(question.redoRequest ? {
+                redoneFrom: {
+                  instructions: question.redoRequest.instructions,
+                  previousAnswer: question.redoRequest.previousAnswer,
+                },
+              } : {}),
             });
           }
         }

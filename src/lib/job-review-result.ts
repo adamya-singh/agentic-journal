@@ -30,6 +30,11 @@ export function saveJobReview(
   return postJobReview({ reviewId, action, ...(answer !== undefined ? { answer } : {}) }, request);
 }
 
+/** Sends a draft back to OpenClaw with instructions; the redraft returns as a new review. */
+export function saveJobReviewRedo(reviewId: string, instructions: string, request: typeof fetch = fetch): Promise<JobReviewResult> {
+  return postJobReview({ reviewId, action: 'redo', instructions }, request);
+}
+
 /** Confirms every pending review of one application in a single transaction. */
 export function saveJobReviewConfirmAll(listingId: string, request: typeof fetch = fetch): Promise<JobReviewResult> {
   return postJobReview({ listingId, action: 'confirm-all' }, request);

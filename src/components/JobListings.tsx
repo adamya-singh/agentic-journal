@@ -42,6 +42,7 @@ interface JobListingsProps {
     worker?: { queued?: boolean; enabled?: boolean };
   } | void>;
   onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
+  onApplicationReviewRedo?: (reviewId: string, instructions: string) => Promise<void>;
   onApplicationCancel?: (listingId: string, reason: string) => Promise<void>;
   onApplicationReviewConfirmAll?: (listingId: string) => Promise<void>;
   onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
@@ -133,6 +134,7 @@ export function JobListings({
   onApplicationCategoriesChange,
   onApplicationSave,
   onApplicationReview,
+  onApplicationReviewRedo,
   onApplicationReviewConfirmAll,
   onApplicationCancel,
   onEmailUpdate,
@@ -329,6 +331,7 @@ export function JobListings({
           <ApplicationReviewPanel
             applications={applications ?? null}
             onResolve={onApplicationReview}
+            onRedo={onApplicationReviewRedo}
             onConfirmAll={onApplicationReviewConfirmAll}
             onCancel={onApplicationCancel}
             onExtend={onExtendAutopilot}

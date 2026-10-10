@@ -25,6 +25,11 @@ const ReviewSchema = z.union([
     answer: z.union([z.string(), z.array(z.string())]).optional(),
   }),
   z.object({
+    reviewId: z.string().min(1),
+    action: z.literal('redo'),
+    instructions: z.string().trim().min(1).max(2000),
+  }),
+  z.object({
     listingId: z.string().min(1),
     action: z.literal('confirm-all'),
   }),
@@ -45,7 +50,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Invalid review response' }, { status: 400 });
     }
     const input = parsed.data;
-    const result = await mutateJobApplicationsStore<JobReviewResult & { released: boolean }>((store) => {
+    const result = await mutateJobApplicationsStore<JobReviewResult & { wake: boolean }>((store) => {
       if (input.action === 'cancel-application') {
         const application = store.applications[input.listingId];
         if (!application) throw new Error('Application not found');
@@ -70,7 +75,53 @@ export async function POST(request: NextRequest) {
           item.status = 'dismissed';
           item.resolvedAt = now;
         }
-        return { reviews, application, answerBank: store.answerBank, bankMatches: [], released: false };
+        return { reviews, application, answerBank: store.answerBank, bankMatches: [], wake: false };
+      }
+      if (input.action === 'redo') {
+        const item = store.reviewItems.find((candidate) => candidate.id === input.reviewId);
+        if (!item) throw new Error('Review item not found');
+        if (item.status !== 'pending') throw new Error('Review item has already been resolved');
+        const application = store.applications[item.listingId];
+        const question = application?.questions.find((candidate) => candidate.id === item.questionId);
+        if (!application || !question) throw new Error('Review question not found');
+        if (question.kind === 'file' || question.kind === 'action') {
+          throw new ReviewAnswerError('OpenClaw can only redo answers it can type or select');
+        }
+        // Any submission attempt makes the application unclaimable, so a redo could never run.
+        if (application.status === 'submitted' || application.submittedAt || application.status === 'closed'
+          || application.submissionAttemptedAt) {
+          throw new Error('Submission has already started or the application is already closed; this answer cannot be redone');
+        }
+        const now = new Date().toISOString();
+        // The question goes back to OpenClaw with the note; its next draft is
+        // queued as a new review that the deadline cannot skip.
+        question.redoRequest = {
+          instructions: input.instructions,
+          previousAnswer: question.answer ?? item.answerUsed,
+          requestedAt: now,
+        };
+        delete question.answer;
+        delete question.suggestion;
+        delete question.generatedAnswer;
+        delete question.eligibilityReviewedAnswer;
+        delete question.answeredAt;
+        question.resolution = 'pending';
+        item.status = 'redo-requested';
+        item.redoInstructions = input.instructions;
+        item.resolvedAt = now;
+        delete application.reviewHoldSince;
+        application.resumeRequestedAt = now;
+        delete application.nextRetryAt;
+        // A live run stops at the submission guard and the redo is claimed next.
+        const leased = Boolean(application.lease && Date.parse(application.lease.expiresAt) > Date.now());
+        // Asking for a redraft is permission to draft it now, not after a fresh 24-hour wait.
+        if (!application.autoCompleteEligibleAt) {
+          application.awaitingInputSince ??= now;
+          application.autoCompleteEligibleAt = now;
+        }
+        if (!leased) setApplicationStatus(application, 'awaiting-user-input', now);
+        application.updatedAt = now;
+        return { reviews: [item], application, answerBank: store.answerBank, bankMatches: [], wake: !leased };
       }
       const items = input.action === 'confirm-all'
         ? store.reviewItems.filter((candidate) => candidate.listingId === input.listingId && candidate.status === 'pending')
@@ -94,6 +145,7 @@ export async function POST(request: NextRequest) {
           delete question.answer;
           delete question.suggestion;
           delete question.eligibilityReviewedAnswer;
+          delete question.redoRequest;
           question.resolution = 'skipped';
           question.answeredAt = now;
           application.updatedAt = now;
@@ -121,13 +173,14 @@ export async function POST(request: NextRequest) {
           item.correctedAnswer = answer;
         }
         question.eligibilityReviewedAnswer = answer;
+        delete question.redoRequest;
         upsertConfirmedAnswer({ store, listingId: item.listingId, question, answer, confirmedAt: now });
         item.status = input.action === 'correct' ? 'corrected' : 'confirmed';
         item.resolvedAt = now;
         changed.push(question);
       }
       const listingId = items[0].listingId;
-      const released = releaseReviewHoldIfComplete(store, listingId, now);
+      const wake = releaseReviewHoldIfComplete(store, listingId, now);
       // Only the reviewed prompts/kinds can acquire a different best match. Keep
       // all choice-set variants: exact and relaxed matches can both change.
       const changedKeys = new Set(changed.map((question) => `${question.kind}\n${normalizePrompt(question.prompt)}`));
@@ -143,12 +196,12 @@ export async function POST(request: NextRequest) {
             bankMatch: findAnswerBankMatch(question, store.answerBank) ?? null,
           })),
         ),
-        released,
+        wake,
       };
     });
     // The transaction (including its atomic file replacement) has completed.
     // Waking the worker shells out to the OpenClaw CLI; never block the save on it.
-    if (result.released) {
+    if (result.wake) {
       const wake = () => wakeJobApplicationWorkerIfEnabled().catch((error) => {
         console.error('Failed to wake job application worker after review:', error);
       });
@@ -159,8 +212,8 @@ export async function POST(request: NextRequest) {
         void wake();
       }
     }
-    const { released: _released, ...payload } = result;
-    void _released;
+    const { wake: _wake, ...payload } = result;
+    void _wake;
     return NextResponse.json({ success: true, ...payload }, {
       headers: { 'Server-Timing': `review-save;dur=${(performance.now() - startedAt).toFixed(1)}` },
     });

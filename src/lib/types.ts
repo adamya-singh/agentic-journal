@@ -167,10 +167,18 @@ export interface JobApplicationQuestion {
   generatedAnswer?: JobApplicationGeneratedAnswer;
   /** Set only by the human answer/review endpoints, never by a worker update. */
   eligibilityReviewedAnswer?: JobApplicationAnswer;
+  /** Adamya asked OpenClaw to redraft this answer; its next draft needs explicit review. */
+  redoRequest?: JobApplicationRedoRequest;
   /** Element screenshot of this question with its answer entered on the live form. */
   answerScreenshot?: JobApplicationQuestionScreenshot;
   /** View-time enrichment (never persisted): a matching saved answer from the bank. */
   bankMatch?: JobApplicationAnswerBankMatch;
+}
+
+export interface JobApplicationRedoRequest {
+  instructions: string;
+  previousAnswer: JobApplicationAnswer;
+  requestedAt: string;
 }
 
 export interface JobApplicationQuestionScreenshot {
@@ -385,8 +393,12 @@ export interface JobApplicationReviewItem {
   role: string;
   createdAt: string;
   submittedAt?: string;
-  status: 'pending' | 'confirmed' | 'corrected' | 'left-blank' | 'dismissed';
+  status: 'pending' | 'confirmed' | 'corrected' | 'left-blank' | 'redo-requested' | 'dismissed';
   correctedAnswer?: JobApplicationAnswer;
+  /** What Adamya told OpenClaw when this draft was sent back (status redo-requested). */
+  redoInstructions?: string;
+  /** Set on the draft OpenClaw wrote in response to a redo request. */
+  redoneFrom?: Omit<JobApplicationRedoRequest, 'requestedAt'>;
   resolvedAt?: string;
 }
 

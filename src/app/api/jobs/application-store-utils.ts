@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
 import { DateSourceSchema } from '@/lib/employment-dates';
-import { JOB_APPLICATION_CANDIDATE_CONTEXT, needsEligibilityReview } from '@/lib/application-eligibility';
+import { JOB_APPLICATION_CANDIDATE_CONTEXT, needsExplicitReview } from '@/lib/application-eligibility';
 import * as fs from 'fs';
 import * as path from 'path';
 import { jobsDataDir } from '@/lib/backend-data';
@@ -618,7 +618,7 @@ export function holdApplicationForReview(
     ).toISOString();
   }
   if (Date.parse(application.autoSubmitEligibleAt) <= Date.parse(now)
-    && !application.questions.some(needsEligibilityReview)) {
+    && !application.questions.some(needsExplicitReview)) {
     return null;
   }
   application.reviewHoldSince = now;
@@ -634,7 +634,7 @@ export function isSubmissionBlockedByReview(
   now: Date,
 ): boolean {
   return Boolean(
-    application.questions.some(needsEligibilityReview) ||
+    application.questions.some(needsExplicitReview) ||
     (application.autoSubmitEligibleAt &&
       Date.parse(application.autoSubmitEligibleAt) > now.getTime() &&
       hasPendingReviewItems(store, application.listingId)),
@@ -1064,6 +1064,19 @@ export function mergeApplicationQuestions(
         answeredAt: existing.answeredAt,
         generatedAnswer: existing.generatedAnswer,
         eligibilityReviewedAnswer: existing.eligibilityReviewedAnswer,
+        ...(existing.redoRequest ? { redoRequest: existing.redoRequest } : {}),
+        ...(existing.answerScreenshot ? { answerScreenshot: existing.answerScreenshot } : {}),
+      };
+    }
+    if (existing.redoRequest) {
+      // A redo is answered only through record-auto-answers, which queues the
+      // new draft for review; rediscovery must not resolve it some other way.
+      const { answer: _answer, suggestion: _suggestion, ...rest } = question;
+      void _answer; void _suggestion;
+      return {
+        ...rest,
+        resolution: 'pending' as const,
+        redoRequest: existing.redoRequest,
         ...(existing.answerScreenshot ? { answerScreenshot: existing.answerScreenshot } : {}),
       };
     }
@@ -1094,7 +1107,8 @@ function normalizeReviewItem(value: unknown): JobApplicationReviewItem[] {
     role: normalizeString(value.role),
     createdAt: normalizeString(value.createdAt),
     status:
-      status === 'confirmed' || status === 'corrected' || status === 'left-blank' || status === 'dismissed' ? status : 'pending',
+      status === 'confirmed' || status === 'corrected' || status === 'left-blank' || status === 'redo-requested'
+        || status === 'dismissed' ? status : 'pending',
   };
   if (
     !item.id || !item.listingId || !item.questionId || !item.question ||
@@ -1105,6 +1119,12 @@ function normalizeReviewItem(value: unknown): JobApplicationReviewItem[] {
   if (normalizeString(value.resolvedAt)) item.resolvedAt = normalizeString(value.resolvedAt);
   const correctedAnswer = normalizeAnswer(value.correctedAnswer);
   if (correctedAnswer !== undefined) item.correctedAnswer = correctedAnswer;
+  if (normalizeString(value.redoInstructions)) item.redoInstructions = normalizeString(value.redoInstructions);
+  if (isRecord(value.redoneFrom)) {
+    const instructions = normalizeString(value.redoneFrom.instructions);
+    const previousAnswer = normalizeAnswer(value.redoneFrom.previousAnswer);
+    if (instructions && previousAnswer !== undefined) item.redoneFrom = { instructions, previousAnswer };
+  }
   return [item];
 }
 
@@ -1169,7 +1189,7 @@ export function isApplicationClaimable(application: JobApplicationRecord, now: D
   ) {
     return false;
   }
-  if (application.questions.some(needsEligibilityReview)) return false;
+  if (application.questions.some(needsExplicitReview)) return false;
   if (
     application.status === 'awaiting-user-input' &&
     (!application.autoCompleteEligibleAt ||
@@ -1537,6 +1557,14 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
   if (answer !== undefined) question.answer = answer;
   const reviewedAnswer = normalizeAnswer(value.eligibilityReviewedAnswer);
   if (reviewedAnswer !== undefined) question.eligibilityReviewedAnswer = reviewedAnswer;
+  if (isRecord(value.redoRequest)) {
+    const instructions = normalizeString(value.redoRequest.instructions);
+    const previousAnswer = normalizeAnswer(value.redoRequest.previousAnswer);
+    const requestedAt = normalizeString(value.redoRequest.requestedAt);
+    if (instructions && previousAnswer !== undefined && requestedAt) {
+      question.redoRequest = { instructions, previousAnswer, requestedAt };
+    }
+  }
   if (normalizeString(value.answeredAt)) question.answeredAt = normalizeString(value.answeredAt);
   if (isRecord(value.answerScreenshot)) {
     const shot = value.answerScreenshot;

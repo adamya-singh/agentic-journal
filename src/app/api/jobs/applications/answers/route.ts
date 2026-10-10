@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
             throw new Error(`Required question cannot be skipped: ${question.prompt}`);
           }
           delete question.answer;
+          delete question.redoRequest;
           question.resolution = 'skipped';
           question.answeredAt = now;
           continue;
@@ -79,6 +80,7 @@ export async function POST(request: NextRequest) {
         const answer = validateAnswer(question, response.answer);
         question.answer = answer;
         question.eligibilityReviewedAnswer = answer;
+        delete question.redoRequest;
         question.resolution = 'answered';
         question.answeredAt = now;
         if (question.kind !== 'action') {
