@@ -111,9 +111,9 @@ const DAY_NAMES_MON_FIRST = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const POLL_INTERVAL_MS = 10_000;
 // /api/omi/live only stats a file, so it can be polled often enough to light up right after a connect.
 const LIVE_POLL_INTERVAL_MS = 3_000;
-// The Omi app streams through silence but can hold audio and flush it in bursts
-// (gaps of ~45s, and ~110s on some days), so only call it disconnected after a longer quiet spell.
-const CONNECTED_AUDIO_MS = 2 * 60_000;
+// The Omi app streams through silence and, with its audio bytes interval at 10s, flushes at least
+// every ~40s (Oct 9: 6 of 9,598 gaps over 15s), so a minute without audio means something is wrong.
+const CONNECTED_AUDIO_MS = 60_000;
 const DISCONNECTED_AUDIO_MS = 5 * 60_000;
 const ORDER_STORAGE_KEY = 'omi-transcripts-order';
 const CLAMP_CHARS = 420;
@@ -758,7 +758,7 @@ const LIVE_COPY: Record<LiveState, { label: string; dot: string; pill: string; h
     label: 'Audio delayed',
     dot: 'bg-amber-400',
     pill: 'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300',
-    hint: 'No audio for over 2 minutes. The Omi app may be holding audio, or the Omi disconnected.',
+    hint: 'No audio for over a minute. The Omi app may be holding audio, or the Omi disconnected.',
   },
   disconnected: {
     label: 'Omi disconnected',
