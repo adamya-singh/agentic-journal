@@ -10,6 +10,7 @@ import type { TaskBrief } from '@/lib/task-brief';
 import { textWidth, type PillSpot } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { BRIEF_CSS, BriefCompact, BriefFull } from './TaskBriefCard';
+import { BriefChat, FOLD_W } from './BriefChat';
 
 const CSS = BRIEF_CSS + `
 .hz-hero{position:relative}
@@ -26,20 +27,73 @@ const CSS = BRIEF_CSS + `
 .hzb-lead{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
 .hzb-lead line{stroke:rgba(255,210,168,.75);stroke-width:1.2}
 .hzb-lead circle{fill:#ffd2a8}
-.hzb-tether{position:absolute;left:0;top:0;width:330px;max-width:calc(100% - 24px);box-sizing:border-box;background:rgba(12,17,30,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:14px 14px 12px;box-shadow:0 18px 50px rgba(0,0,0,.45);pointer-events:auto;will-change:transform}
-.hzb-tether .hzb-ttl{font-size:24px;padding-right:28px}
-.hzb-pop{position:absolute;top:16px;bottom:16px;width:min(470px,calc(100% - 32px));pointer-events:auto}
-.hzb-pop-in{position:relative;width:100%;height:100%;box-sizing:border-box;border-radius:18px;border:1px solid rgba(255,230,200,.3);background:linear-gradient(180deg,rgba(17,27,50,.96),rgba(8,12,22,.97) 320px);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 50px rgba(255,190,130,.1);animation:hzb-in .3s cubic-bezier(.2,.8,.2,1)}
+.hzb-tether{position:absolute;left:0;top:0;display:flex;align-items:stretch;max-width:calc(100% - 24px);max-height:calc(100% - 24px);pointer-events:auto;will-change:transform}
+.hzb-card{position:relative;flex:0 1 330px;width:330px;min-width:0;overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;background:rgba(12,17,30,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:14px 14px 12px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.hzb-card .hzb-ttl{font-size:24px;padding-right:28px}
+.hzb-pop{position:absolute;top:16px;bottom:16px;display:flex;align-items:stretch;max-width:calc(100% - 32px);pointer-events:auto}
+.hzb-pop-in{position:relative;display:flex;flex-direction:column;flex:0 1 470px;width:470px;min-width:0;box-sizing:border-box;border-radius:18px;border:1px solid rgba(255,230,200,.3);background:linear-gradient(180deg,rgba(17,27,50,.96),rgba(8,12,22,.97) 320px);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 50px rgba(255,190,130,.1);animation:hzb-in .3s cubic-bezier(.2,.8,.2,1)}
 @keyframes hzb-in{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
 .hzb-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px 10px 18px;border-bottom:1px solid rgba(255,255,255,.13);font:500 10px var(--hz-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--hz-dim)}
 .hzb-bar button{font:500 11.5px var(--hz-mono);letter-spacing:0;text-transform:none;border:1px solid rgba(255,255,255,.22);background:transparent;border-radius:999px;padding:3px 11px;cursor:pointer;color:var(--hz-ink)}
 .hzb-bar button:hover,.hzb-bar button:focus-visible{border-color:#ffd2a8;outline:none}
-.hzb-scroll{position:absolute;top:41px;left:0;right:0;bottom:0;overflow:auto;padding:16px 20px 20px;overscroll-behavior:contain}
+.hzb-scroll{flex:1;min-height:0;overflow:auto;padding:16px 20px 20px;overscroll-behavior:contain}
 .hzb-pop .hzb-ttl{font-size:34px}
 .hzb-capture{position:fixed;inset:0;z-index:60;cursor:default}
-@media (prefers-reduced-motion:reduce){.hzb-pop-in{animation:none}}
-@media (max-width:760px){.hzb-pop{left:8px!important;right:8px!important;width:auto;top:8px;bottom:8px}}
+/* The chat folds out of the card's far edge like a second page: r(ight), l(eft) or d(own) on narrow screens. */
+[data-fold=l]{flex-direction:row-reverse}
+[data-fold=d]{flex-direction:column}
+.hzb-tether[data-fold=d]{width:330px}
+[data-fold=d] .hzb-card{flex:0 1 auto;width:auto;min-height:0}
+.folded[data-fold=r] .hzb-card,.folded[data-fold=r] .hzb-pop-in{border-top-right-radius:4px;border-bottom-right-radius:4px}
+.folded[data-fold=l] .hzb-card,.folded[data-fold=l] .hzb-pop-in{border-top-left-radius:4px;border-bottom-left-radius:4px}
+.folded[data-fold=d] .hzb-card,.folded[data-fold=d] .hzb-pop-in{border-bottom-left-radius:4px;border-bottom-right-radius:4px}
+.hzf{position:relative;display:flex;flex-direction:column;flex:0 0 ${FOLD_W}px;width:${FOLD_W}px;min-height:360px;box-sizing:border-box;background:linear-gradient(180deg,rgba(18,26,46,.94),rgba(9,13,24,.95));backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.22);border-radius:4px 14px 14px 4px;margin-left:-1px;box-shadow:0 18px 50px rgba(0,0,0,.45);transform-origin:left center;backface-visibility:hidden;animation:hzf-r .55s cubic-bezier(.22,1,.36,1) both}
+.hzf::before,.hzf::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none}
+.hzf::before{background:linear-gradient(90deg,rgba(0,0,0,.4),rgba(0,0,0,0) 22px)}
+.hzf::after{z-index:2;background:#05070d;opacity:0;animation:hzf-shade .55s ease-out}
+[data-fold=l] .hzf{transform-origin:right center;border-radius:14px 4px 4px 14px;margin:0 -1px 0 0;animation-name:hzf-l}
+[data-fold=l] .hzf::before{background:linear-gradient(270deg,rgba(0,0,0,.4),rgba(0,0,0,0) 22px)}
+[data-fold=d] .hzf{transform-origin:center top;border-radius:4px 4px 14px 14px;margin:-1px 0 0;flex:0 1 300px;width:auto;min-height:180px;animation-name:hzf-d}
+[data-fold=d] .hzf::before{background:linear-gradient(180deg,rgba(0,0,0,.4),rgba(0,0,0,0) 22px)}
+.hzb-pop .hzf{border-color:rgba(255,230,200,.3)}
+.hzf.closing{animation:hzf-r-out .3s cubic-bezier(.55,0,.8,.3) forwards}
+[data-fold=l] .hzf.closing{animation-name:hzf-l-out}
+[data-fold=d] .hzf.closing{animation-name:hzf-d-out}
+.hzf.closing::after{animation:hzf-shade-out .3s ease-in forwards}
+@keyframes hzf-r{from{transform:perspective(1100px) rotateY(96deg)}to{transform:perspective(1100px) rotateY(0)}}
+@keyframes hzf-l{from{transform:perspective(1100px) rotateY(-96deg)}to{transform:perspective(1100px) rotateY(0)}}
+@keyframes hzf-d{from{transform:perspective(1100px) rotateX(-96deg)}to{transform:perspective(1100px) rotateX(0)}}
+@keyframes hzf-r-out{to{transform:perspective(1100px) rotateY(96deg)}}
+@keyframes hzf-l-out{to{transform:perspective(1100px) rotateY(-96deg)}}
+@keyframes hzf-d-out{to{transform:perspective(1100px) rotateX(-96deg)}}
+@keyframes hzf-shade{from{opacity:.75}to{opacity:0}}
+@keyframes hzf-shade-out{to{opacity:.75}}
+.hzb-ask{font:500 12px var(--hz-sans);border:1px solid rgba(255,210,168,.55);background:transparent;color:#ffd2a8;border-radius:999px;padding:3px 11px;cursor:pointer}
+.hzb-ask:hover,.hzb-ask:focus-visible{background:rgba(255,210,168,.1);outline:none}
+.hzb-ask[aria-expanded=true]{background:#ffd2a8;color:#1b0d05;border-color:#ffd2a8}
+.hzb-bar .hzb-ask{font:500 11.5px var(--hz-mono);letter-spacing:0;text-transform:none;padding:3px 11px}
+.hzb-bar>div{display:flex;gap:6px}
+@media (prefers-reduced-motion:reduce){.hzb-pop-in,.hzf,.hzf::after{animation:none!important}}
+@media (max-width:760px){.hzb-pop{left:8px!important;right:8px!important;max-width:none;top:8px;bottom:8px}.hzb-pop-in{flex:1 1 auto;width:auto;min-height:0}.hzb-pop .hzf{flex:0 0 46%}}
 `;
+
+type Fold = 'r' | 'l' | 'd';
+
+/**
+ * Where the card goes with its chat folded out: the chat opens on `prefer`'s side when it fits, else the
+ * other; `fw` is the chat's width now (0 while folded away), so the card itself stays put as it opens.
+ */
+function foldLayout(cardX: number, cw: number, fw: number, W: number, prefer: 'r' | 'l'): { side: Fold; cardX: number; x: number } {
+  if (W < cw + FOLD_W + 48) {
+    const x = Math.max(12, Math.min(W - cw - 12, cardX));   // too narrow to sit beside the task; stay on screen
+    return { side: 'd', cardX: x, x };
+  }
+  const fitsR = cardX + cw + FOLD_W <= W - 12, fitsL = cardX - FOLD_W >= 12;
+  const side: Fold = prefer === 'l' ? (fitsL || !fitsR ? 'l' : 'r') : (fitsR || !fitsL ? 'r' : 'l');
+  const x = side === 'l' ? cardX - fw : cardX;
+  const shift = Math.max(12 - x, 0) + Math.min(W - 12 - (x + cw + fw), 0);
+  return { side, cardX: cardX + shift, x: x + shift };
+}
 
 type Mode = 'none' | 'tether' | 'full';
 interface Anchor { x: number; y: number; half: number; on: boolean; chip: boolean; world?: import('three').Vector3 }
@@ -59,6 +113,8 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
   const [mode, setMode] = React.useState<Mode>('none');
   const [briefs, setBriefs] = React.useState<Record<string, TaskBrief | null>>({});
   const [busy, setBusy] = React.useState(false);
+  // The chat with OpenClaw that folds out of the card; 'closing' while it folds back in.
+  const [chat, setChat] = React.useState<'closed' | 'open' | 'closing'>('closed');
   const tetherRef = React.useRef<HTMLDivElement>(null);
   const popRef = React.useRef<HTMLDivElement>(null);
   const lineRef = React.useRef<SVGLineElement>(null);
@@ -158,31 +214,43 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     if (!a || !a.on) { hide(); return; }
     const W = hero.clientWidth, H = hero.clientHeight;
     let x1 = a.x, y1 = a.y, x2: number, y2: number;
+    const foldW = (el: HTMLElement) => el.querySelector<HTMLElement>(':scope > .hzf')?.offsetWidth ?? 0;
     if (space?.isLive && !a.chip) {
-      // 3D: centred under the task.
+      // 3D: centred under the task, the chat folding out to the side.
       const el = m === 'tether' ? tether : pop;
-      if (!el) return hide();
-      const w = el.offsetWidth, top = a.y + 30;
-      const x = Math.max(12, Math.min(W - w - 12, a.x - w / 2));
-      if (m === 'tether') el.style.transform = `translate(${x.toFixed(1)}px,${Math.min(top, H - el.offsetHeight - 12).toFixed(1)}px)`;
-      else { el.style.left = `${x.toFixed(1)}px`; el.style.right = ''; el.style.top = `${top.toFixed(1)}px`; }
-      y1 = a.y + 12; x2 = a.x; y2 = top;
+      const body = el?.querySelector<HTMLElement>(m === 'tether' ? '.hzb-card' : '.hzb-pop-in');
+      if (!el || !body) return hide();
+      const bw = body.offsetWidth, top = a.y + 30;
+      const f = foldLayout(Math.max(12, Math.min(W - bw - 12, a.x - bw / 2)), bw, foldW(el), W, 'r');
+      el.dataset.fold = f.side;
+      if (m === 'tether') el.style.transform = `translate(${f.x.toFixed(1)}px,${Math.min(top, H - el.offsetHeight - 12).toFixed(1)}px)`;
+      else { el.style.left = `${f.x.toFixed(1)}px`; el.style.right = ''; el.style.top = `${top.toFixed(1)}px`; }
+      y1 = a.y + 12; x2 = Math.max(f.cardX + 16, Math.min(f.cardX + bw - 16, a.x)); y2 = top;
     } else if (m === 'tether' && tether) {
-      const tw = tether.offsetWidth, th = tether.offsetHeight;
-      let x: number, y: number;
+      const card = tether.querySelector<HTMLElement>('.hzb-card');
+      if (!card) return hide();
+      const cw = card.offsetWidth, ch = card.offsetHeight, th = tether.offsetHeight, fw = foldW(tether);
+      let f: ReturnType<typeof foldLayout>, y: number;
       if (a.chip) {                      // ground chips: the card stands above the chip
-        x = Math.max(12, Math.min(W - tw - 12, a.x - tw / 2)); y = Math.max(12, a.y - 26 - th);
-        x2 = Math.max(x + 16, Math.min(x + tw - 16, a.x)); y2 = y + th; y1 = a.y - 14;
+        f = foldLayout(Math.max(12, Math.min(W - cw - 12, a.x - cw / 2)), cw, fw, W, 'r');
+        y = Math.max(12, a.y - 26 - th);
+        x2 = Math.max(f.cardX + 16, Math.min(f.cardX + cw - 16, a.x)); y2 = y + th; y1 = a.y - 14;
       } else {
-        const right = a.x + a.half + 28 + tw < W - 12;
-        x = right ? a.x + a.half + 28 : a.x - a.half - 28 - tw;
+        // Beside the task, on a side with room for the card and its chat (open or not, so it never jumps).
+        const roomR = W - 12 - (a.x + a.half + 28), roomL = a.x - a.half - 28 - 12;
+        const right = roomR >= cw + FOLD_W || (roomL < cw + FOLD_W && roomR >= cw);
+        f = foldLayout(right ? a.x + a.half + 28 : a.x - a.half - 28 - cw, cw, fw, W, right ? 'r' : 'l');
         y = Math.max(12, Math.min(H - th - 12, a.y - th * 0.35));
         x1 = a.x + (right ? a.half : -a.half);
-        x2 = right ? x : x + tw; y2 = Math.max(y + 16, Math.min(y + th - 16, a.y));
+        x2 = right ? f.cardX : f.cardX + cw; y2 = Math.max(y + 16, Math.min(y + ch - 16, a.y));
       }
-      tether.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`;
+      tether.dataset.fold = f.side;
+      tether.style.transform = `translate(${f.x.toFixed(1)}px,${y.toFixed(1)}px)`;
     } else if (m === 'full' && pop) {
-      const pr = pop.getBoundingClientRect(), hr = hero.getBoundingClientRect();
+      // The brief sits against one side of the view; its chat folds out toward the middle.
+      pop.dataset.fold = window.innerWidth <= 760 ? 'd' : pop.style.left ? 'r' : 'l';
+      const body = pop.querySelector<HTMLElement>('.hzb-pop-in') ?? pop;
+      const pr = body.getBoundingClientRect(), hr = hero.getBoundingClientRect();
       const px = pr.left - hr.left, leftOf = a.x < px;
       x2 = leftOf ? px : px + pr.width;
       y2 = Math.max(pr.top - hr.top + 24, Math.min(pr.bottom - hr.top - 24, a.y));
@@ -199,6 +267,14 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [place]);
+  // The card or brief changes size on its own (it loads, the chat folds out); keep it inside the view.
+  React.useEffect(() => {
+    const el = tetherRef.current ?? popRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => place());
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sel, mode, place]);
 
   // In 3D, aim so the task sits near the top with its window hanging below it, and hold the view still.
   const aimAt = React.useCallback((id: string, yf: number) => {
@@ -206,7 +282,11 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     if (p) space!.aim(p.world, yf, true);
   }, [space]);
 
-  const close = React.useCallback(() => { setMode('none'); setSel(null); space?.release(); }, [space]);
+  const close = React.useCallback(() => { setMode('none'); setSel(null); setChat('closed'); space?.release(); }, [space]);
+  const toggleChat = React.useCallback(() => {
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    setChat((c) => (c === 'open' ? (still ? 'closed' : 'closing') : 'open'));
+  }, []);
   const backToCard = React.useCallback(() => {
     setMode('tether');
     if (state.current.sel) aimAt(state.current.sel, TETHER_AT);
@@ -294,13 +374,22 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
 
   // Focus the brief when it opens, for keyboard users.
   React.useEffect(() => {
-    if (mode === 'full') popRef.current?.querySelector<HTMLElement>('.hzb-bar button')?.focus({ preventScroll: true });
+    if (mode === 'full') popRef.current?.querySelector<HTMLElement>('.hzb-bar .hzb-close')?.focus({ preventScroll: true });
   }, [mode, sel]);
 
   const brief = sel ? briefs[sel] ?? null : null;
   const loading = !!sel && !(sel in briefs);
   const anchorNow = sel && mode === 'full' && !space?.isLive ? anchor(sel) : null;
   const side = anchorNow && heroRef.current && anchorNow.x > heroRef.current.clientWidth * 0.55 ? 'left' : 'right';
+
+  const fold = brief && chat !== 'closed' ? (
+    <div
+      className={`hzf${chat === 'closing' ? ' closing' : ''}`}
+      onAnimationEnd={(e) => { if (e.target === e.currentTarget && e.animationName.endsWith('-out')) setChat('closed'); }}
+    >
+      <BriefChat key={brief.id} taskId={brief.id} title={brief.short} onClose={toggleChat} />
+    </div>
+  ) : null;
 
   const act = async (url: string, body: object) => {
     setBusy(true);
@@ -336,14 +425,17 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
           <circle ref={dotRef} r="3" cx="-10" cy="-10" />
         </svg>
         {sel && mode === 'tether' && (
-          <div ref={tetherRef} className="hzb-tether" role="dialog" aria-label="Task summary">
-            <BriefCompact brief={brief} loading={loading} onGoto={select} onOpenFull={openFull} onClose={close} />
+          <div ref={tetherRef} className={`hzb-tether${fold ? ' folded' : ''}`} role="dialog" aria-label="Task summary">
+            <div className="hzb-card">
+              <BriefCompact brief={brief} loading={loading} onGoto={select} onOpenFull={openFull} onClose={close} chatOpen={chat === 'open'} onToggleChat={toggleChat} />
+            </div>
+            {fold}
           </div>
         )}
         {sel && mode === 'full' && (
           <div
             ref={popRef}
-            className="hzb-pop"
+            className={`hzb-pop${fold ? ' folded' : ''}`}
             role="dialog"
             aria-label={brief ? `Brief: ${brief.short}` : 'Task brief'}
             style={space?.isLive ? undefined : side === 'left' ? { left: 16 } : { right: 16 }}
@@ -351,7 +443,10 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
             <div className="hzb-pop-in">
               <div className="hzb-bar">
                 <span>Brief · {brief?.course?.name ?? brief?.group ?? ''}</span>
-                <button type="button" onClick={backToCard}>Close · Esc</button>
+                <div>
+                  {brief && <button type="button" className="hzb-ask" aria-expanded={chat === 'open'} onClick={toggleChat}>Ask OpenClaw</button>}
+                  <button type="button" className="hzb-close" onClick={backToCard}>Close · Esc</button>
+                </div>
               </div>
               <div className="hzb-scroll">
                 {brief ? (
@@ -368,6 +463,7 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
                 ) : <div className="hzb hzb-loading">{loading ? 'Gathering what the Journal knows…' : 'Could not load this task.'}</div>}
               </div>
             </div>
+            {fold}
           </div>
         )}
       </div>

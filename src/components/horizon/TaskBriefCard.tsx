@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { BriefAction, BriefLink, BriefRelated, BriefSource, TaskBrief } from '@/lib/task-brief';
 import { confirmText, runBriefAction } from './brief-actions';
+import { CHAT_CSS } from './BriefChat';
 
 export const BRIEF_CSS = `
 .hzb{color:var(--hz-ink);font:13.5px/1.5 var(--hz-sans)}
@@ -86,7 +87,8 @@ export const BRIEF_CSS = `
 .hzb-fb{font:500 12px var(--hz-mono);border:1px solid rgba(255,255,255,.22);background:transparent;border-radius:999px;padding:4px 12px;cursor:pointer;color:var(--hz-ink)}
 .hzb-fb:hover,.hzb-fb:focus-visible{border-color:#ffd2a8;outline:none}
 .hzb-fb:disabled{opacity:.5;cursor:default}
-.hzb-more{margin-top:10px;background:transparent;border:0;color:#ffd2a8;font:500 12.5px var(--hz-sans);cursor:pointer;padding:0}
+.hzb-more{background:transparent;border:0;color:#ffd2a8;font:500 12.5px var(--hz-sans);cursor:pointer;padding:0}
+.hzb-cardfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}
 .hzb-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.25);cursor:pointer;color:var(--hz-dim);font-size:16px;line-height:1}
 .hzb-x:hover,.hzb-x:focus-visible{color:var(--hz-ink);border-color:#ffd2a8;outline:none}
 .hzb-loading{font-size:13px;color:var(--hz-dim);padding:6px 0}
@@ -106,7 +108,7 @@ export const BRIEF_CSS = `
 .hzb-act .err{color:#ff8a5c;font-size:12px;width:100%}
 .hzb-act pre{width:100%;margin:2px 0 0;white-space:pre-wrap;font:11.5px/1.45 var(--hz-mono);color:var(--hz-dim);max-height:140px;overflow:auto}
 @media (prefers-reduced-motion:reduce){.hzb-agent .pulse{animation:none}}
-`;
+` + CHAT_CSS;
 
 export interface BriefActions {
   onGoto: (taskId: string) => void;
@@ -347,9 +349,10 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
-/** The small card beside the task: what it is, the one thing to press, three facts and the top warning. */
-export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose }: {
+/** The small card beside the task: what it is, the one thing to press, three facts and the top warning. The chat with OpenClaw folds out of it. */
+export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose, chatOpen, onToggleChat }: {
   brief: TaskBrief | null; loading: boolean; onGoto: (id: string) => void; onOpenFull: () => void; onClose: () => void;
+  chatOpen: boolean; onToggleChat: () => void;
 }) {
   return (
     <>
@@ -362,7 +365,10 @@ export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose }: {
             <Facts brief={brief} max={3} />
             <Flags brief={brief} max={1} />
             <AgentStatus brief={brief} compact />
-            <button type="button" className="hzb-more" onClick={onOpenFull}>Open full brief →</button>
+            <div className="hzb-cardfoot">
+              <button type="button" className="hzb-more" onClick={onOpenFull}>Open full brief →</button>
+              <button type="button" className="hzb-ask" aria-expanded={chatOpen} onClick={onToggleChat}>Ask OpenClaw</button>
+            </div>
           </>
         )}
       </div>
