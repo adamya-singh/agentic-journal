@@ -5,17 +5,17 @@ import { createRequire } from 'node:module';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import ts from 'typescript';
-import { isApplicationSubmissionInFlight } from '../src/lib/job-application-cancellation';
+import { isApplicationSubmissionInFlight, stalledSubmissionBlockers } from '../src/lib/job-application-cancellation';
 import type { JobApplicationRecord, JobApplicationsViewData } from '../src/lib/types';
 
 // Render the real component without changing the repository's Node TS loader.
 const require = createRequire(import.meta.url);
-const exports: Record<string, React.ComponentType<{ applications: JobApplicationsViewData; onCancel: (listingId: string, reason: string) => Promise<void>; onResolve?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank') => Promise<void> }>> = {};
+const exports: Record<string, React.ComponentType<{ applications: JobApplicationsViewData; onCancel: (listingId: string, reason: string) => Promise<void>; onResolve?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank') => Promise<void>; onRedo?: (reviewId: string, instructions: string) => Promise<void> }>> = {};
 const code = ts.transpileModule(readFileSync(new URL('../src/components/ApplicationReviewPanel.tsx', import.meta.url), 'utf8'), {
   compilerOptions: { target: ts.ScriptTarget.ES2017, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.React, esModuleInterop: true },
 }).outputText;
 new Function('require', 'exports', code)((name: string) => {
-  if (name === '@/lib/job-application-cancellation') return { isApplicationSubmissionInFlight };
+  if (name === '@/lib/job-application-cancellation') return { isApplicationSubmissionInFlight, stalledSubmissionBlockers };
   if (name === './ScreenshotLightbox') return { ScreenshotLightbox: () => null };
   return require(name);
 }, exports);
@@ -66,20 +66,24 @@ test('expired submission leases do not block cancellation; submitted application
   assert.equal(cancellationButton({ status: 'submitted', submittedAt: new Date(now).toISOString() }), undefined);
 });
 
-function blankButton(required: boolean, overrides: Partial<JobApplicationRecord> = {}): string | undefined {
+function reviewButton(label: string, required: boolean, overrides: Partial<JobApplicationRecord> = {}): string | undefined {
   const question = { id: 'pronunciation', prompt: 'Name Pronunciation', kind: 'text', required,
     answer: 'Ah-dum-yah', resolution: 'auto-resolved' };
   const data = {
-    applications: { palantir: { listingId: 'palantir', status: 'awaiting-user-input', questions: [question], ...overrides } },
+    applications: { palantir: { listingId: 'palantir', status: 'awaiting-user-input', ...overrides,
+      questions: [question, ...(overrides.questions ?? [])] } },
     reviewItems: [{ id: 'review', listingId: 'palantir', questionId: question.id, question: question.prompt,
       answerUsed: question.answer, clarificationPrompt: 'How do you pronounce Adamya Singh?', confidence: 0,
       company: 'Palantir', role: 'Software Engineer New Grad', status: 'pending' }],
   } as unknown as JobApplicationsViewData;
   const markup = renderToStaticMarkup(React.createElement(exports.ApplicationReviewPanel, {
-    applications: data, onCancel: async () => {}, onResolve: async () => {},
+    applications: data, onCancel: async () => {}, onResolve: async () => {}, onRedo: async () => {},
   }));
-  return markup.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)?.find((button) => button.includes('Leave blank'));
+  return markup.match(/<button\b[^>]*>[\s\S]*?<\/button>/g)?.find((button) => button.includes(label));
 }
+
+const blankButton = (required: boolean, overrides: Partial<JobApplicationRecord> = {}) =>
+  reviewButton('Leave blank', required, overrides);
 
 test('optional pronunciation reviews offer an enabled Leave blank button; required fields do not', () => {
   const button = blankButton(false);
@@ -95,4 +99,16 @@ test('submitted, closed and actively submitting reviews do not offer Leave blank
   const now = Date.now();
   assert.equal(blankButton(false, { submissionAttemptedAt: new Date(now - 60000).toISOString(),
     lease: { token: 'live', claimedAt: new Date(now - 300000).toISOString(), expiresAt: new Date(now + 300000).toISOString() } }), undefined);
+});
+
+test('Redo is offered after a Submit the employer stopped, but not after one that may have gone through', () => {
+  const attemptedAt = '2026-09-22T12:13:03.822Z';
+  const captcha = { id: 'captcha', prompt: 'Please complete the hCaptcha puzzle.', kind: 'action', required: true,
+    resolution: 'pending', discoveredAt: '2026-09-22T12:14:43.452Z' };
+  assert.ok(reviewButton('Redo', true));
+  assert.ok(reviewButton('Redo', true, { submissionAttemptedAt: attemptedAt, questions: [captcha] } as Partial<JobApplicationRecord>));
+  assert.equal(reviewButton('Redo', true, { submissionAttemptedAt: attemptedAt }), undefined);
+  assert.equal(reviewButton('Redo', true, { submissionAttemptedAt: attemptedAt, questions: [captcha, { ...captcha,
+    id: 'confirm', prompt: 'Confirm whether this application was submitted' }] } as Partial<JobApplicationRecord>), undefined);
+  assert.equal(reviewButton('Redo', true, { status: 'submitted' }), undefined);
 });

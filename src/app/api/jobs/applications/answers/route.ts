@@ -14,6 +14,7 @@ import {
   upsertConfirmedAnswer,
 } from '../../application-store-utils';
 import { triggerJobApplicationWorker } from '../../application-worker-utils';
+import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 
 export const runtime = 'nodejs';
 
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
       ).length;
       const ambiguity = application.questions.find(
         (question) =>
-          question.prompt === 'Confirm whether this application was submitted' &&
+          question.prompt === SUBMISSION_CONFIRM_PROMPT &&
           question.resolution === 'answered',
       );
       if (ambiguity && typeof ambiguity.answer === 'string') {

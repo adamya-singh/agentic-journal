@@ -1,6 +1,6 @@
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { isApplicationSubmissionInFlight } from '@/lib/job-application-cancellation';
+import { isApplicationSubmissionInFlight, stalledSubmissionBlockers } from '@/lib/job-application-cancellation';
 import {
   findAnswerBankMatch,
   failApplicationScreenshotCapture,
@@ -87,12 +87,23 @@ export async function POST(request: NextRequest) {
         if (question.kind === 'file' || question.kind === 'action') {
           throw new ReviewAnswerError('OpenClaw can only redo answers it can type or select');
         }
-        // Any submission attempt makes the application unclaimable, so a redo could never run.
-        if (application.status === 'submitted' || application.submittedAt || application.status === 'closed'
-          || application.submissionAttemptedAt) {
-          throw new Error('Submission has already started or the application is already closed; this answer cannot be redone');
+        if (application.status === 'submitted' || application.submittedAt || application.status === 'closed') {
+          throw new Error('This application is already submitted or closed; this answer cannot be redone');
+        }
+        // An attempt keeps the application from being claimed again. Only one the
+        // employer stopped before it went through (a CAPTCHA, say) can be retired.
+        const blockers = stalledSubmissionBlockers(application);
+        if (application.submissionAttemptedAt && blockers.length === 0) {
+          throw new Error('Submission was already attempted and may have gone through; confirm whether it was submitted before redoing an answer');
         }
         const now = new Date().toISOString();
+        if (application.submissionAttemptedAt) {
+          // The form is filled and submitted again from scratch; a blocker that is
+          // still there is reported again on that run.
+          const retired = new Set(blockers.map((blocker) => blocker.id));
+          application.questions = application.questions.filter((candidate) => !retired.has(candidate.id));
+          delete application.submissionAttemptedAt;
+        }
         // The question goes back to OpenClaw with the note; its next draft is
         // queued as a new review that the deadline cannot skip.
         question.redoRequest = {

@@ -3,12 +3,13 @@
 /* eslint-disable @next/next/no-img-element -- screenshots use private dynamic URLs and must retain original resolution. */
 
 import React from 'react';
-import { isApplicationSubmissionInFlight } from '@/lib/job-application-cancellation';
+import { isApplicationSubmissionInFlight, stalledSubmissionBlockers } from '@/lib/job-application-cancellation';
 import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Images, Loader2, MessageCircleQuestion, Pencil, RotateCcw, Send, ZoomIn } from 'lucide-react';
 import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
   JobApplicationQuestion,
+  JobApplicationRecord,
   JobApplicationReviewItem,
   JobApplicationsViewData,
 } from '@/lib/types';
@@ -34,8 +35,10 @@ interface ReviewGroup {
   submitted: boolean;
   closed: boolean;
   submissionStarted: boolean;
-  /** Any submission attempt, even a stalled one; OpenClaw cannot redraft after it. */
-  submissionAttempted: boolean;
+  /** A submission attempt that may have gone through; OpenClaw cannot redraft after it. */
+  redoBlocked: boolean;
+  /** What stopped OpenClaw's last Submit click; a redo retires that attempt. */
+  stalledSubmission?: { attemptedAt: string; blocker: string };
   /** Full-page screenshots of the filled application exist (opens the gallery). */
   hasFullScreenshots: boolean;
 }
@@ -346,8 +349,9 @@ function ReviewGroupCard({
               onCorrect={(answer) => run(item.id, () => onResolve!(item.id, 'correct', answer))}
               onLeaveBlank={editable
                 ? () => run(item.id, () => onResolve!(item.id, 'leave-blank')) : undefined}
-              onRedo={editable && !group.submissionAttempted && onRedo
+              onRedo={editable && !group.redoBlocked && onRedo
                 ? (instructions) => run(item.id, () => onRedo(item.id, instructions)) : undefined}
+              stalledSubmission={group.stalledSubmission}
             />
           ))}
           {group.redoing.map((item) => (
@@ -419,6 +423,7 @@ function ReviewRow({
   onCorrect,
   onLeaveBlank,
   onRedo,
+  stalledSubmission,
 }: {
   listingId: string;
   item: JobApplicationReviewItem;
@@ -430,6 +435,7 @@ function ReviewRow({
   onCorrect: (answer: JobApplicationAnswer) => Promise<boolean>;
   onLeaveBlank?: () => Promise<boolean>;
   onRedo?: (instructions: string) => Promise<boolean>;
+  stalledSubmission?: ReviewGroup['stalledSubmission'];
 }) {
   const [draft, setDraft] = React.useState<JobApplicationAnswer | null>(null);
   const [redoNote, setRedoNote] = React.useState<string | null>(null);
@@ -523,6 +529,13 @@ function ReviewRow({
             <p className="text-xs text-slate-500 dark:text-slate-400">
               OpenClaw redrafts it with your note and sends the new answer back here. It won’t submit until you review it.
             </p>
+            {stalledSubmission && (
+              <p className="text-xs text-amber-800 dark:text-amber-300">
+                OpenClaw’s Submit on {new Date(stalledSubmission.attemptedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} was
+                stopped by: {stalledSubmission.blocker} Redoing reopens the application from the start, and you may need to
+                clear that step again when it submits.
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               <button
                 type="submit"
@@ -720,7 +733,7 @@ function buildGroups(applications: JobApplicationsViewData | null, now: number):
         submitted: application?.status === 'submitted',
         closed: application?.status === 'closed',
         submissionStarted: isApplicationSubmissionInFlight(application, now),
-        submissionAttempted: Boolean(application?.submissionAttemptedAt),
+        ...stalledState(application),
         hasFullScreenshots: (application?.screenshotCapture?.screenshots.length ?? 0) > 0,
       };
       byListing.set(item.listingId, group);
@@ -743,6 +756,14 @@ function buildGroups(applications: JobApplicationsViewData | null, now: number):
       rank(a) - rank(b) ||
       (a.holdUntil ?? '').localeCompare(b.holdUntil ?? '') ||
       (b.submittedAt ?? '').localeCompare(a.submittedAt ?? ''));
+}
+
+function stalledState(application?: JobApplicationRecord): Pick<ReviewGroup, 'redoBlocked' | 'stalledSubmission'> {
+  if (!application?.submissionAttemptedAt) return { redoBlocked: false };
+  const [blocker] = stalledSubmissionBlockers(application);
+  return blocker
+    ? { redoBlocked: false, stalledSubmission: { attemptedAt: application.submissionAttemptedAt, blocker: blocker.prompt } }
+    : { redoBlocked: true };
 }
 
 /** Option values are what the form submits; show their labels instead. */

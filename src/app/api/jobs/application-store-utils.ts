@@ -34,6 +34,7 @@ import {
   normalizeEmployerUpdates,
   toEmailUpdatesView,
 } from './email-update-utils';
+import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 
 const JOBS_DIR = jobsDataDir();
 const APPLICATIONS_FILE = path.join(JOBS_DIR, 'applications.json');
@@ -480,7 +481,7 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
         // submitted/retry dropdown).
         application.questions = mergeApplicationQuestions(application.questions, [
           createActionQuestion({
-            prompt: 'Confirm whether this application was submitted',
+            prompt: SUBMISSION_CONFIRM_PROMPT,
             helpText:
               'Open the application and answer “submitted” or “retry”. The worker will not click Submit again until you resolve this.',
             now: nowIso,

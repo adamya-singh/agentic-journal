@@ -24,6 +24,7 @@ import type {
 } from '@/lib/types';
 import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import { EmployerStageBadge } from './EmployerStageBadge';
+import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 
 export interface JobApplicationResponseInput {
   questionId: string;
@@ -826,7 +827,7 @@ function QuestionField({
   onSkip: (skip: boolean) => void;
 }) {
   const isSubmissionConfirmation =
-    question.prompt === 'Confirm whether this application was submitted';
+    question.prompt === SUBMISSION_CONFIRM_PROMPT;
   return (
     <fieldset
       className="rounded-xl border border-slate-200 p-4 dark:border-slate-700"

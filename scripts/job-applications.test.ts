@@ -1279,6 +1279,52 @@ describe('job application state', () => {
     assert.equal(store.isSubmissionBlockedByReview(data, application, new Date()), false);
   });
 
+  test('a redo retires a submit attempt the employer stopped, but never one that may have landed', async () => {
+    const captcha = (discoveredAt: string) => ({
+      id: 'captcha', prompt: 'Please complete the hCaptcha puzzle.', kind: 'action', required: true,
+      resolution: 'pending', discoveredAt,
+    });
+    const confirm = { id: 'confirm', prompt: 'Confirm whether this application was submitted', kind: 'action',
+      required: true, resolution: 'pending', discoveredAt: '2026-07-21T00:00:00.000Z' };
+    const attemptedAt = '2026-07-20T13:00:00.000Z';
+    for (const [label, extra, lease] of [
+      ['confirmation pending', [captcha('2026-07-20T13:05:00.000Z'), confirm], undefined],
+      ['blocker predates the attempt', [captcha('2026-07-20T12:30:00.000Z')], undefined],
+      ['run still leased', [captcha('2026-07-20T13:05:00.000Z')], { token: 't', claimedAt: now, expiresAt: '2000-01-01T00:00:00.000Z' }],
+    ] as const) {
+      await seedDraft('stalled-refused-lease');
+      await store.mutateJobApplicationsStore((data) => {
+        const application = data.applications['saved-new'];
+        application.submissionAttemptedAt = attemptedAt;
+        application.questions.push(...(extra as unknown as import('../src/lib/types').JobApplicationQuestion[]));
+        if (lease) application.lease = lease;
+      });
+      const item = store.readJobApplicationsStore().reviewItems.find(
+        (candidate) => candidate.listingId === 'saved-new' && candidate.questionId === 'why')!;
+      const response = await postReview({ reviewId: item.id, action: 'redo', instructions: 'Shorter' });
+      assert.equal(response.status, 409, label);
+      assert.equal(store.readJobApplicationsStore().applications['saved-new'].submissionAttemptedAt, attemptedAt, label);
+    }
+
+    await seedDraft('stalled-lease');
+    await store.mutateJobApplicationsStore((data) => {
+      const application = data.applications['saved-new'];
+      application.submissionAttemptedAt = attemptedAt;
+      application.questions.push(captcha('2026-07-20T13:05:00.000Z') as import('../src/lib/types').JobApplicationQuestion);
+    });
+    let data = store.readJobApplicationsStore();
+    assert.equal(store.isApplicationClaimable(data.applications['saved-new'], new Date()), false);
+    const item = data.reviewItems.find((candidate) => candidate.listingId === 'saved-new' && candidate.questionId === 'why')!;
+    const response = await postReview({ reviewId: item.id, action: 'redo', instructions: 'Shorter' });
+    assert.equal(response.status, 200);
+    data = store.readJobApplicationsStore();
+    const application = data.applications['saved-new'];
+    assert.equal(application.submissionAttemptedAt, undefined);
+    assert.equal(application.questions.some((question) => question.id === 'captcha'), false);
+    assert.equal(application.questions.find((question) => question.id === 'why')?.resolution, 'pending');
+    assert.equal(store.isApplicationClaimable(application, new Date()), true);
+  });
+
   test('a redo is refused once submission has started or the application is finished', async () => {
     for (const overrides of [
       { submissionAttemptedAt: now },
