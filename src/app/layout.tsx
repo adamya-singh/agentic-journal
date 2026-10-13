@@ -6,6 +6,7 @@ import { messageRenderers } from '@/cedar/messageRenderers';
 import { ThemeProvider } from '@/components/ThemeProvider';
 import { RefreshProvider } from '@/lib/RefreshContext';
 import { QuickCaptureProvider } from '@/components/quick-capture/QuickCaptureProvider';
+import { BugsFeaturesProvider } from '@/components/bugs-features/BugsFeaturesProvider';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -39,14 +40,16 @@ export default function RootLayout({
         <ThemeProvider>
           <RefreshProvider>
             <QuickCaptureProvider>
-              <CedarCopilot
-                userId={'Test User'}
-                threadId={'Test Thread'}
-                llmProvider={llmProvider}
-                messageRenderers={messageRenderers}
-              >
-                {children}
-              </CedarCopilot>
+              <BugsFeaturesProvider>
+                <CedarCopilot
+                  userId={'Test User'}
+                  threadId={'Test Thread'}
+                  llmProvider={llmProvider}
+                  messageRenderers={messageRenderers}
+                >
+                  {children}
+                </CedarCopilot>
+              </BugsFeaturesProvider>
             </QuickCaptureProvider>
           </RefreshProvider>
         </ThemeProvider>
