@@ -1,0 +1,22 @@
+{
+ "actions": [
+  {
+   "openPopupAction": {
+    "popup": {
+     "multiPageMenuRenderer": {
+      "header": {
+       "activeAccountHeaderRenderer": {
+        "accountName": {
+         "simpleText": "Example Person"
+        },
+        "channelHandle": {
+         "simpleText": "@example1234"
+        }
+       }
+      }
+     }
+    }
+   }
+  }
+ ]
+}

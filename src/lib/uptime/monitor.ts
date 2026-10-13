@@ -244,8 +244,8 @@ const STATIC_COMPONENTS: ComponentDef[] = [
   {
     id: 'media-worker',
     group: 'journal',
-    name: 'Media (IMDb)',
-    description: 'Media page and the worker for IMDb sync and watchlist updates',
+    name: 'Media (IMDb + YouTube)',
+    description: 'Media page and the worker for IMDb sync, watchlist updates and YouTube history',
     history: 'journal',
     units: ['agentic-journal-media-worker.service'],
     url: `${JOURNAL_ORIGIN}/api/media`,

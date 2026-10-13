@@ -13,6 +13,9 @@ export interface MediaTitle {
   watchlist?: boolean;
   collections: Collection[];
   reason?: string;
+  // Kept YouTube videos are titles too (id `yt:<videoId>`); they are never written to IMDb.
+  source?: 'imdb' | 'youtube';
+  channel?: string;
 }
 export interface Coverage {
   total: number | null;
@@ -20,7 +23,7 @@ export interface Coverage {
   complete: boolean;
   at: string;
 }
-export type MediaAction = 'sync' | 'seen' | 'watchlist' | 'rating';
+export type MediaAction = 'sync' | 'seen' | 'watchlist' | 'rating' | 'youtube-sync';
 export interface MediaJob {
   id: string;
   action: MediaAction;
@@ -30,6 +33,8 @@ export interface MediaJob {
   createdAt: string;
   finishedAt?: string;
   error?: string;
+  // A finished job that ended without an error but still needs you (e.g. confirm the account).
+  note?: string;
 }
 export type Tier = 'S' | 'A' | 'B' | 'C';
 // Your own ranking of watched titles. Each tier is ordered best-first; `pending`

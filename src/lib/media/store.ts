@@ -10,7 +10,14 @@ import type {
   MediaTitle,
   MediaView,
 } from './types.ts';
-import { applyRankOp, emptyRanking, outOfSync, withoutTitle, type RankOp } from './ranking.ts';
+import {
+  applyRankOp,
+  emptyRanking,
+  isImdb,
+  outOfSync,
+  withoutTitle,
+  type RankOp,
+} from './ranking.ts';
 
 // Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
 // dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
@@ -122,9 +129,13 @@ export async function enqueue(action: MediaAction, titleId?: string, rating?: nu
   });
 }
 const isPending = (j: MediaJob) => ['queued', 'running'].includes(j.status);
-function addJob(s: MediaState, action: MediaAction, titleId?: string, rating?: number) {
-  if (action !== 'sync' && (!titleId || !s.titles[titleId]))
-    throw new Error('Title not found. Refresh the page.');
+// Jobs that act on the whole account rather than one title.
+const ACCOUNT_ACTIONS: MediaAction[] = ['sync', 'youtube-sync'];
+export function addJob(s: MediaState, action: MediaAction, titleId?: string, rating?: number) {
+  if (!ACCOUNT_ACTIONS.includes(action)) {
+    if (!titleId || !s.titles[titleId]) throw new Error('Title not found. Refresh the page.');
+    if (!isImdb(titleId)) throw new Error('Only IMDb titles can be saved to IMDb.');
+  }
   const pending = s.jobs.filter(isPending);
   const duplicate = pending.find(
     (j) => j.action === action && j.titleId === titleId && j.rating === rating,
@@ -144,6 +155,13 @@ function addJob(s: MediaState, action: MediaAction, titleId?: string, rating?: n
     createdAt: new Date().toISOString(),
   });
   return id;
+}
+// Drops a title and everything that points at it, so re-adding it later starts fresh.
+export function removeTitle(s: MediaState, id: string) {
+  delete s.titles[id];
+  delete s.feedback[id];
+  if (s.ranking) s.ranking = withoutTitle(s.ranking, id);
+  s.recommendations = s.recommendations.filter((x) => x !== id);
 }
 // Older stores have no ranking; ids of titles that have since disappeared are dropped.
 export function rankingOf(s: MediaState) {
@@ -195,7 +213,8 @@ export function mergeCollection(
   coverage: Coverage,
 ) {
   if (coverage.complete) {
-    for (const t of Object.values(s.titles)) {
+    // Kept YouTube videos are not IMDb membership; an IMDb read cannot remove them.
+    for (const t of Object.values(s.titles).filter((t) => t.source !== 'youtube')) {
       t.collections = t.collections.filter((c) => c !== collection);
       if (collection === 'watched') t.watched = false;
       if (collection === 'watchlist') t.watchlist = false;

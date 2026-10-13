@@ -36,4 +36,17 @@ Storage: `src/backend/data/media/state.json`, redirected by `BACKEND_DATA_DIR` i
 
 Validation: media tests exercise partial/empty coverage, source versus personal ratings, concurrent writes, feedback persistence/restore, duplicate clicks, failed saves, interrupted writes, CSRF rejection, and canonical ID extraction with isolated browser fixtures. Live account imports are read-only; rating/Watchlist write flows are not tested by inventing preferences on the real account.
 
+## YouTube history
+
+**Sync YouTube** (or the daily run) reads Adamya's YouTube watch history in OpenClaw's browser. The worker opens `youtube.com/feed/history` in its own tab and reads the page data plus later pages the way YouTube's own client requests them. It is read-only: it never likes, subscribes, removes or pauses anything. Shorts are listed without a channel, so their channel comes from YouTube's public oEmbed endpoint.
+
+The first sync only reads which account is signed in and waits for **Yes, import my history** on /media. That account's `DATASYNC_ID` is then pinned; a later sync under another account fails without importing (OpenClaw's Chrome holds more than one Google account; switch back in the browser). A full import runs in jobs of at most 5 minutes; an unfinished one saves a cursor and queues the next job. Later syncs stop once a page is mostly known videos. The worker queues a sync a day after the last success, retrying a failed attempt at most hourly.
+
+Videos wait in `media/youtube.json` as pending until kept or skipped: in bulk (watched under 20%, live streams, a whole channel, the one-offs), or one at a time in a channel's Pick grid. "Remember for new videos" makes a channel rule that decides that channel's future videos. A kept video becomes a `yt:<videoId>` title in `state.json` (`source: 'youtube'`), which is the only record of kept. It appears in the library (format **YouTube**) and can be ranked with everything else, but `yt:` titles are never written to IMDb: rating sync, IMDb jobs, recommendation seeds and IMDb refreshes all skip them. **Remove** on a video card unkeeps it and leaves it skipped.
+
+```bash
+npm run media -- youtube-sync
+npm run media -- youtube-summary
+```
+
 Official feature references: [IMDb Watched FAQ](https://help.imdb.com/article/imdb/new-features-updates/mark-as-watched-faq/GR2SD7Y4LZVNHUVH), [IMDb Watchlist FAQ](https://help.imdb.com/article/imdb/track-movies-tv/watchlist-faq/G9PA556494DM8YBA).

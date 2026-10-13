@@ -64,6 +64,10 @@ export function rankedList(r: Ranking): RankedTitle[] {
   return out;
 }
 
+// IMDb titles can be written to IMDb; kept YouTube videos (`yt:` ids) never are.
+export const isImdb = (id: string) => /^tt\d+$/.test(id);
+export const YOUTUBE_ID = /^yt:[A-Za-z0-9_-]{11}$/;
+
 export const rankable = (t: MediaTitle) => !!(t.watched || t.yourRating);
 
 // Watched titles the ranking has not seen yet, in the order given.
@@ -74,9 +78,9 @@ export function unsorted(r: Ranking, titles: MediaTitle[]): string[] {
 
 export const pendingCount = (r: Ranking) => TIERS.reduce((n, t) => n + r.pending[t].length, 0);
 
-// Placed titles whose IMDb score differs from the one the ranking gives them.
+// Placed IMDb titles whose IMDb score differs from the one the ranking gives them.
 export function outOfSync(r: Ranking, titles: Record<string, MediaTitle>) {
   return rankedList(r)
-    .filter((x) => titles[x.id] && titles[x.id].yourRating !== x.score)
+    .filter((x) => isImdb(x.id) && titles[x.id] && titles[x.id].yourRating !== x.score)
     .map(({ id, score }) => ({ id, rating: score }));
 }

@@ -30,7 +30,9 @@ export function Poster({ title, className = '' }: { title?: MediaTitle; classNam
     <div
       className={`relative aspect-[2/3] shrink-0 overflow-hidden rounded-md bg-gray-100 dark:bg-gray-800 ${className}`}
     >
-      {title?.poster ? (
+      {title?.poster && title.source === 'youtube' ? (
+        <VideoFrame src={title.poster} />
+      ) : title?.poster ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={title.poster}
@@ -47,14 +49,41 @@ export function Poster({ title, className = '' }: { title?: MediaTitle; classNam
   );
 }
 
+// A 16:9 video thumbnail inside a 2:3 poster frame: the whole frame stays
+// visible over a blurred copy, so videos line up with posters in every row.
+export function VideoFrame({ src }: { src: string }) {
+  return (
+    <>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        aria-hidden
+        className="absolute inset-0 h-full w-full scale-125 object-cover opacity-70 blur-md"
+        referrerPolicy="no-referrer"
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt=""
+        className="relative h-full w-full object-contain"
+        referrerPolicy="no-referrer"
+      />
+      <span className="absolute bottom-1 right-1 h-2.5 w-3.5 rounded-[3px] bg-red-600 after:absolute after:left-[5px] after:top-[3px] after:border-y-[2.25px] after:border-l-[4px] after:border-y-transparent after:border-l-white after:content-['']" />
+    </>
+  );
+}
+
 const meta = (t?: MediaTitle) =>
-  [
-    t?.year,
-    t?.type === 'TVSeries' ? 'Series' : t?.type,
-    t?.imdbRating ? `IMDb ${t.imdbRating}` : '',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  t?.source === 'youtube'
+    ? [t.channel, 'YouTube'].filter(Boolean).join(' · ')
+    : [
+        t?.year,
+        t?.type === 'TVSeries' ? 'Series' : t?.type,
+        t?.imdbRating ? `IMDb ${t.imdbRating}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
 
 interface Bounds {
   id: string;
@@ -232,7 +261,7 @@ export function Ranker({ open, onOpenChange, data, focusId, api, onSaved }: Rank
             ? `Sending ${r.queued} ${r.queued === 1 ? 'score' : 'scores'} to IMDb${r.waiting ? `; ${r.waiting} more after the current saves finish` : ''}.`
             : r.waiting
               ? `${r.waiting} ${r.waiting === 1 ? 'score waits' : 'scores wait'} for the current IMDb saves to finish.`
-              : 'IMDb already has these scores.',
+              : 'Ranking saved. IMDb already has the movie and TV scores; YouTube videos stay in the Journal.',
         );
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Scores could not be queued.'));

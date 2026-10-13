@@ -1,9 +1,7 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import { chromium, type Page, type Browser } from 'playwright-core';
+import type { Page, Browser } from 'playwright-core';
+import { BrowserUnavailable, openOpenClawPage } from './openclaw-page.ts';
 import type { Collection, MediaTitle, Coverage, MediaJob } from './types.ts';
 
-const exec = promisify(execFile);
 const base = 'https://www.imdb.com';
 export const titleUrl = (id: string) => {
   if (!/^tt\d+$/.test(id)) throw new Error('Invalid IMDb title.');
@@ -22,19 +20,7 @@ export interface IMDbSession {
 export async function connectIMDb(expectedId?: string): Promise<IMDbSession> {
   let browser: Browser | undefined, page: Page | undefined;
   try {
-    // Ask OpenClaw for its configured profile, rather than launching a second
-    // browser or copying authentication data into Journal.
-    const { stdout } = await exec(
-      'openclaw',
-      ['browser', '--browser-profile', 'openclaw', 'status', '--json'],
-      { timeout: 90_000, maxBuffer: 2_000_000 },
-    );
-    const status = JSON.parse(stdout.slice(stdout.indexOf('{')));
-    const endpoint = new URL(status.cdpUrl);
-    if (!status.running || !['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname))
-      throw new IMDbError('Start the local OpenClaw browser and sign in to IMDb.');
-    browser = await chromium.connectOverCDP(endpoint.href, { noDefaults: true, timeout: 15_000 });
-    page = await browser.contexts()[0].newPage();
+    ({ browser, page } = await openOpenClawPage());
     // Source URLs are present in the DOM/JSON-LD without downloading posters
     // and autoplay media in the worker's dedicated tab.
     await page.route('**/*', (route) =>
@@ -80,6 +66,8 @@ export async function connectIMDb(expectedId?: string): Promise<IMDbSession> {
     if (page) await page.close().catch(() => undefined);
     if (browser) await browser.close().catch(() => undefined);
     if (e instanceof IMDbError) throw e;
+    if (e instanceof BrowserUnavailable)
+      throw new IMDbError('Start the local OpenClaw browser and sign in to IMDb.');
     // Do not surface raw process/browser errors, which can include authentication URLs.
     throw new IMDbError(
       'Could not access IMDb. Check the local OpenClaw browser, login, and any CAPTCHA, then retry.',

@@ -1,6 +1,25 @@
 import { connectIMDb, IMDbError, type IMDbSession } from './imdb.ts';
-import { readState, writeState, withLock, mergeCollection, syncRatings } from './store.ts';
+import { readState, writeState, withLock, mergeCollection, syncRatings, addJob } from './store.ts';
+import { isImdb } from './ranking.ts';
+import { connectYouTube, lookupChannel, YouTubeError, type YouTubeSession } from './youtube.ts';
+import {
+  assignChannels,
+  mergeBatch,
+  readYouTube,
+  unknownChannelIds,
+  writeYouTube,
+} from './youtube-store.ts';
 import type { MediaJob, MediaTitle } from './types.ts';
+
+// One YouTube job reads for at most this long, then the next job continues from
+// the saved cursor, so IMDb saves queued meanwhile are not held up.
+export const YOUTUBE_BUDGET_MS = 5 * 60_000;
+// A later sync stops once a page is mostly videos it already has.
+const CAUGHT_UP = 30;
+const DAY_MS = 24 * 3600_000;
+const RETRY_MS = 3600_000;
+const LOOKUPS_PER_JOB = 1000;
+const LOOKUP_PARALLEL = 6;
 
 export async function recoverInterrupted() {
   await withLock(() => {
@@ -9,12 +28,18 @@ export async function recoverInterrupted() {
       if (j.status === 'running') {
         j.status = 'failed';
         j.finishedAt = new Date().toISOString();
-        j.error = 'Worker interrupted. Retry explicitly; IMDb will be checked before any change.';
+        j.error =
+          j.action === 'youtube-sync'
+            ? 'Worker interrupted. Sync YouTube again to continue.'
+            : 'Worker interrupted. Retry explicitly; IMDb will be checked before any change.';
       }
     writeState(s);
   });
 }
-export async function processNext(connect: (id?: string) => Promise<IMDbSession> = connectIMDb) {
+export async function processNext(
+  connect: (id?: string) => Promise<IMDbSession> = connectIMDb,
+  connectYT: () => Promise<YouTubeSession> = connectYouTube,
+) {
   return withLock(async () => {
     const job = await withLock(() => {
       const s = readState();
@@ -32,6 +57,28 @@ export async function processNext(connect: (id?: string) => Promise<IMDbSession>
         writeState(s);
       }).catch(() => undefined);
     }, 15_000);
+    if (job.action === 'youtube-sync') {
+      try {
+        const { note, more } = await syncYouTube(connectYT);
+        await finish(job, undefined, note);
+        if (more)
+          await withLock(() => {
+            const s = readState();
+            addJob(s, 'youtube-sync');
+            writeState(s);
+          });
+      } catch (e) {
+        if (!(e instanceof YouTubeError))
+          console.error('YouTube sync failed:', String((e as Error)?.message).split('\n')[0]);
+        await finish(
+          job,
+          e instanceof YouTubeError ? e.message : 'YouTube could not be read. Sync again later.',
+        );
+      } finally {
+        clearInterval(heartbeat);
+      }
+      return true;
+    }
     let session: IMDbSession | undefined;
     try {
       const expected = readState().account?.id;
@@ -82,12 +129,13 @@ export async function processNext(connect: (id?: string) => Promise<IMDbSession>
     return true;
   }, 'browser');
 }
-async function finish(job: MediaJob, error?: string) {
+async function finish(job: MediaJob, error?: string, note?: string) {
   await withLock(() => {
     const s = readState(),
       current = s.jobs.find((j) => j.id === job.id)!;
     current.status = error ? 'failed' : 'succeeded';
     current.error = error;
+    if (note) current.note = note;
     current.finishedAt = new Date().toISOString();
     s.workerAt = new Date().toISOString();
     writeState(s);
@@ -105,12 +153,13 @@ async function sync(session: IMDbSession) {
     });
   }
   const s = readState();
-  const seeds = Object.values(s.titles).filter((t) => t.watched || t.watchlist);
+  const seeds = Object.values(s.titles).filter((t) => isImdb(t.id) && (t.watched || t.watchlist));
   const picks = await session.recommendations(seeds);
   const requested = [
     ...seeds.filter((t) => !t.type || !t.genres),
     ...picks.filter((t) => !s.titles[t.id]?.type),
   ]
+    .filter((t) => isImdb(t.id))
     .filter((t, i, a) => a.findIndex((v) => v.id === t.id) === i)
     .slice(0, 150);
   let detail: MediaTitle[] = [];
@@ -160,11 +209,105 @@ async function sync(session: IMDbSession) {
     writeState(s);
   });
 }
+async function saveYouTube(fn: (y: ReturnType<typeof readYouTube>) => void) {
+  await withLock(() => {
+    const y = readYouTube();
+    fn(y);
+    writeYouTube(y);
+  });
+}
+// Reads YouTube history into youtube.json. Returns `more` when a full import
+// ran out of time and another job should continue it.
+async function syncYouTube(connect: () => Promise<YouTubeSession>) {
+  await saveYouTube((y) => (y.lastAttemptAt = new Date().toISOString()));
+  const session = await connect();
+  try {
+    if (!session.account)
+      throw new YouTubeError("Sign in to YouTube in OpenClaw's browser, then sync again.");
+    const start = readYouTube();
+    if (!start.account || start.pendingAccount) {
+      await saveYouTube((y) => (y.pendingAccount = session.account!));
+      return { note: 'Waiting for you to confirm the YouTube account.', more: false };
+    }
+    if (start.account.id !== session.account.id) {
+      const who = session.account.handle || session.account.name;
+      throw new YouTubeError(
+        `OpenClaw's browser is signed in to YouTube as ${who}, not ${start.account.handle || start.account.name}. Switch accounts there, then sync again.`,
+      );
+    }
+    const incremental = !!start.coverage?.complete && !start.cursor;
+    let result;
+    try {
+      result = await session.readHistory({
+        cursor: start.cursor,
+        lastDay: start.cursorDay,
+        budgetMs: YOUTUBE_BUDGET_MS,
+        onBatch: async (videos) => {
+          const { known } = await mergeBatch(videos);
+          return incremental && known >= CAUGHT_UP;
+        },
+      });
+    } catch (e) {
+      // A saved cursor can expire; start again from the newest videos next time.
+      if (start.cursor) await saveYouTube((y) => (delete y.cursor, delete y.cursorDay));
+      throw e;
+    }
+    // Shorts are listed without a channel; YouTube's public oEmbed has it.
+    const unknown = unknownChannelIds(readYouTube(), LOOKUPS_PER_JOB);
+    const found: Parameters<typeof assignChannels>[0] = [];
+    for (let i = 0; i < unknown.length; i += LOOKUP_PARALLEL) {
+      const batch = unknown.slice(i, i + LOOKUP_PARALLEL);
+      const channels = await Promise.all(batch.map((videoId) => lookupChannel(videoId)));
+      batch.forEach((videoId, j) => channels[j] && found.push({ videoId, ...channels[j] }));
+    }
+    if (found.length) await assignChannels(found);
+    const now = new Date().toISOString();
+    await saveYouTube((y) => {
+      const days = Object.values(y.videos)
+        .map((v) => v.lastWatchedDay)
+        .sort();
+      if (result.cursor) {
+        y.cursor = result.cursor;
+        y.cursorDay = result.lastDay;
+      } else {
+        delete y.cursor;
+        delete y.cursorDay;
+        y.lastSyncAt = now;
+      }
+      y.coverage = {
+        oldestDay: days[0],
+        complete: result.complete || !!y.coverage?.complete,
+        total: days.length,
+        at: now,
+      };
+    });
+    return { note: undefined, more: !!result.cursor };
+  } finally {
+    await session.close().catch(() => undefined);
+  }
+}
+// The daily sync: once the account is confirmed, read new history a day after
+// the last successful sync, retrying a failed attempt at most hourly.
+export async function queueDailyYouTube(now = Date.now()) {
+  const y = readYouTube();
+  if (!y.account || y.pendingAccount) return false;
+  if (y.lastSyncAt && now - Date.parse(y.lastSyncAt) < DAY_MS) return false;
+  if (y.lastAttemptAt && now - Date.parse(y.lastAttemptAt) < RETRY_MS) return false;
+  return withLock(() => {
+    const s = readState();
+    if (s.jobs.some((j) => j.action === 'youtube-sync' && ['queued', 'running'].includes(j.status)))
+      return false;
+    addJob(s, 'youtube-sync');
+    writeState(s);
+    return true;
+  });
+}
 export async function runWorker() {
   // Prevent two daemon instances from recovering each other's running job.
   await withLock(async () => {
     await recoverInterrupted();
     while (true) {
+      await queueDailyYouTube().catch(() => undefined);
       await processNext();
       await new Promise((r) => setTimeout(r, 3000));
     }

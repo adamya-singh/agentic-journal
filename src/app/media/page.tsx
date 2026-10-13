@@ -18,8 +18,9 @@ import {
   X,
 } from 'lucide-react';
 import { AppHeader } from '@/components/AppHeader';
-import { Poster, Ranker, TIER_CLASS } from '@/components/media/Ranker';
-import { TIERS, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
+import { Poster, Ranker, TIER_CLASS, VideoFrame } from '@/components/media/Ranker';
+import { YouTubeIntake, YouTubeMark } from '@/components/media/YouTubeIntake';
+import { TIERS, isImdb, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
 import type { MediaTitle, MediaView, Tier } from '@/lib/media/types';
 
 const button =
@@ -80,7 +81,11 @@ export default function MediaPage() {
       setBusy(false);
     }
   };
-  const pending = data?.jobs.filter((j) => j.status === 'queued' || j.status === 'running') || [];
+  const allPending =
+    data?.jobs.filter((j) => j.status === 'queued' || j.status === 'running') || [];
+  // YouTube imports have their own status band; this list is IMDb requests.
+  const pending = allPending.filter((j) => j.action !== 'youtube-sync');
+  const youtubeSyncing = allPending.some((j) => j.action === 'youtube-sync');
   const failed =
     data?.jobs
       .filter(
@@ -89,22 +94,29 @@ export default function MediaPage() {
           !jobs.slice(i + 1).some((next) => next.action === j.action && next.titleId === j.titleId),
       )
       .slice(-3) || [];
-  const liked = data?.library.filter((t) => (t.yourRating || 0) >= 7) || [];
+  const ranked = data ? rankedList(data.ranking) : [];
+  const rankOf = new Map(ranked.map((r) => [r.id, r]));
+  // IMDb titles are liked by your IMDb rating; YouTube videos by their ranking score.
+  const isLiked = (t: MediaTitle) =>
+    (t.source === 'youtube' ? rankOf.get(t.id)?.score || 0 : t.yourRating || 0) >= 7;
+  const liked = data?.library.filter(isLiked) || [];
   const match = (t: MediaTitle) => {
     const search = `${t.title} ${t.year || ''} ${(t.genres || []).join(' ')}`
       .toLowerCase()
       .includes(q.toLowerCase());
+    const youtube = t.source === 'youtube';
     const kind =
       format === 'all' ||
-      (format === 'tv'
-        ? /TV|Series|Episode/i.test(t.type || '')
-        : format === 'anime'
-          ? t.genres?.some((g) => /anime/i.test(g))
-          : t.type === 'Movie');
+      (format === 'youtube'
+        ? youtube
+        : !youtube &&
+          (format === 'tv'
+            ? /TV|Series|Episode/i.test(t.type || '')
+            : format === 'anime'
+              ? t.genres?.some((g) => /anime/i.test(g))
+              : t.type === 'Movie'));
     return search && kind;
   };
-  const ranked = data ? rankedList(data.ranking) : [];
-  const rankOf = new Map(ranked.map((r) => [r.id, r]));
   const pendingTier = new Map<string, Tier>(
     data ? TIERS.flatMap((t) => data.ranking.pending[t].map((id) => [id, t] as const)) : [],
   );
@@ -122,7 +134,7 @@ export default function MediaPage() {
       (t) =>
         match(t) &&
         (filter === 'all' ||
-          (filter === 'liked' && (t.yourRating || 0) >= 7) ||
+          (filter === 'liked' && isLiked(t)) ||
           (filter === 'watched' && t.watched) ||
           (filter === 'watchlist' && t.watchlist)),
     )
@@ -141,9 +153,10 @@ export default function MediaPage() {
         Number(data?.feedback[a.id] === 'interested'),
     );
   const waiting =
-    pending.length > 0 && (!data?.workerAt || Date.now() - Date.parse(data.workerAt) > 120_000);
+    allPending.length > 0 && (!data?.workerAt || Date.now() - Date.parse(data.workerAt) > 120_000);
   const card = (title: MediaTitle, recommendation = false) => {
     const titlePending = pending.some((j) => j.titleId === title.id);
+    const youtube = title.source === 'youtube';
     return (
       <article
         key={title.id}
@@ -154,9 +167,11 @@ export default function MediaPage() {
           target="_blank"
           rel="noreferrer"
           className="relative block aspect-[2/3] overflow-hidden bg-gray-100 dark:bg-gray-800"
-          aria-label={`View ${title.title} on IMDb`}
+          aria-label={`View ${title.title} on ${youtube ? 'YouTube' : 'IMDb'}`}
         >
-          {title.poster ? (
+          {title.poster && youtube ? (
+            <VideoFrame src={title.poster} />
+          ) : title.poster ? (
             // IMDb already supplies resized images; keep the remote source without proxying it.
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -205,7 +220,10 @@ export default function MediaPage() {
             {title.title}
           </a>
           <p className="mt-1 text-xs text-gray-500">
-            {[title.year, title.type, title.imdbRating ? `IMDb ${title.imdbRating}` : null]
+            {(youtube
+              ? [title.channel, 'YouTube']
+              : [title.year, title.type, title.imdbRating ? `IMDb ${title.imdbRating}` : null]
+            )
               .filter(Boolean)
               .join(' · ')}
           </p>
@@ -224,7 +242,7 @@ export default function MediaPage() {
               </p>
             ) : (
               <div className="flex flex-wrap gap-1">
-                {!title.watched && (
+                {isImdb(title.id) && !title.watched && (
                   <button
                     className={`${button} bg-gray-100 dark:bg-gray-800 !px-2 !py-1.5 !text-xs`}
                     disabled={busy}
@@ -242,7 +260,7 @@ export default function MediaPage() {
                     <Check size={13} /> I saw it
                   </button>
                 )}
-                {!title.watchlist && (
+                {isImdb(title.id) && !title.watchlist && (
                   <button
                     className={`${button} !px-2 !py-1.5 !text-xs`}
                     disabled={busy}
@@ -264,6 +282,21 @@ export default function MediaPage() {
                     onClick={() => openRanker(title.id)}
                   >
                     <ArrowUpDown size={13} /> {rankOf.has(title.id) ? 'Move' : 'Rank'}
+                  </button>
+                )}
+                {youtube && (
+                  <button
+                    className={`${button} !px-2 !py-1.5 !text-xs text-gray-500`}
+                    disabled={busy}
+                    onClick={() =>
+                      void act(
+                        '/youtube/unkeep',
+                        { id: title.id },
+                        'Removed from your library. It stays skipped in your YouTube history.',
+                      )
+                    }
+                  >
+                    <X size={13} /> Remove
                   </button>
                 )}
                 {recommendation && (
@@ -310,14 +343,23 @@ export default function MediaPage() {
       </article>
     );
   };
+  const syncYouTube = () =>
+    void act(
+      '/youtube/sync',
+      {},
+      'YouTube sync queued. OpenClaw reads your history in the background.',
+    );
   return (
     <div className="min-h-screen bg-gray-50 text-gray-900 dark:bg-gray-950 dark:text-gray-100">
-      <AppHeader title="Media" subtitle="Your IMDb library and what to watch next" />
+      <AppHeader
+        title="Media"
+        subtitle="Your IMDb library, YouTube history and what to watch next"
+      />
       <main className="mx-auto max-w-[1500px] px-4 py-8 sm:px-8">
         <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-widest text-indigo-500">
-              Movies · TV · Anime
+              Movies · TV · Anime · YouTube
             </p>
             <h2 className="mt-2 text-3xl font-semibold tracking-tight">
               A little inspiration for your next watch.
@@ -329,19 +371,29 @@ export default function MediaPage() {
               {data?.syncedAt && `Updated ${new Date(data.syncedAt).toLocaleString()}.`}
             </p>
           </div>
-          <button
-            className={`${button} bg-indigo-600 text-white hover:!bg-indigo-700`}
-            disabled={busy || pending.some((j) => j.action === 'sync')}
-            onClick={() =>
-              void act('/sync', {}, 'IMDb refresh queued. You can leave this page while it runs.')
-            }
-          >
-            <RefreshCw
-              size={16}
-              className={pending.some((j) => j.action === 'sync') ? 'animate-spin' : ''}
-            />{' '}
-            {data?.account ? 'Refresh IMDb' : 'Connect IMDb'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={`${button} border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900`}
+              disabled={busy || youtubeSyncing}
+              onClick={syncYouTube}
+            >
+              {youtubeSyncing ? <Loader2 size={16} className="animate-spin" /> : <YouTubeMark />}{' '}
+              Sync YouTube
+            </button>
+            <button
+              className={`${button} bg-indigo-600 text-white hover:!bg-indigo-700`}
+              disabled={busy || pending.some((j) => j.action === 'sync')}
+              onClick={() =>
+                void act('/sync', {}, 'IMDb refresh queued. You can leave this page while it runs.')
+              }
+            >
+              <RefreshCw
+                size={16}
+                className={pending.some((j) => j.action === 'sync') ? 'animate-spin' : ''}
+              />{' '}
+              {data?.account ? 'Refresh IMDb' : 'Connect IMDb'}
+            </button>
+          </div>
         </div>
         {error && (
           <div
@@ -385,26 +437,30 @@ export default function MediaPage() {
               {j.titleId
                 ? data?.library.find((t) => t.id === j.titleId)?.title ||
                   data?.picks.find((t) => t.id === j.titleId)?.title
-                : 'IMDb refresh'}
+                : j.action === 'youtube-sync'
+                  ? 'YouTube sync'
+                  : 'IMDb refresh'}
               : {j.error}
             </span>
             <button
               className={button}
               disabled={
-                busy || pending.some((p) => p.action === j.action && p.titleId === j.titleId)
+                busy || allPending.some((p) => p.action === j.action && p.titleId === j.titleId)
               }
               onClick={() =>
-                void act(
-                  j.action === 'sync' ? '/sync' : '/action',
-                  j.action === 'sync'
-                    ? {}
-                    : {
-                        action: j.action,
-                        id: j.titleId,
-                        ...(j.action === 'rating' ? { rating: j.rating } : {}),
-                      },
-                  'Retry queued; current IMDb state will be checked first.',
-                )
+                j.action === 'youtube-sync'
+                  ? syncYouTube()
+                  : void act(
+                      j.action === 'sync' ? '/sync' : '/action',
+                      j.action === 'sync'
+                        ? {}
+                        : {
+                            action: j.action,
+                            id: j.titleId,
+                            ...(j.action === 'rating' ? { rating: j.rating } : {}),
+                          },
+                      'Retry queued; current IMDb state will be checked first.',
+                    )
               }
             >
               Retry
@@ -432,6 +488,7 @@ export default function MediaPage() {
             <option value="movie">Movies</option>
             <option value="tv">TV & episodes</option>
             <option value="anime">Anime</option>
+            <option value="youtube">YouTube</option>
           </select>
           {data && (
             <p className="text-sm text-gray-500">
@@ -446,6 +503,11 @@ export default function MediaPage() {
         )}
         {data && (
           <>
+            <YouTubeIntake
+              syncing={youtubeSyncing}
+              onLibraryChanged={() => void load()}
+              onSync={syncYouTube}
+            />
             <section aria-labelledby="ranking-heading" className="mb-10">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
@@ -566,7 +628,8 @@ export default function MediaPage() {
                     Your library
                   </h3>
                   <p className="mt-1 text-sm text-gray-500">
-                    Liked = your IMDb rating of 7–10. Watched titles are kept separately.
+                    Liked = your IMDb rating of 7–10, or a ranking score of 7+ for YouTube videos.
+                    Watched titles are kept separately.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1">
