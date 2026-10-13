@@ -56,11 +56,12 @@ export function NeedsYouQueue({ listings, applications, onOpen, onExtend }: Need
       if (application.status !== 'awaiting-user-input') continue;
       const listing = listingById.get(listingId);
       if (!listing) continue;
+      // A redo is OpenClaw's to redraft; the review panel shows it as being redone.
       const pending = application.questions.filter(
-        (question) => question.resolution === 'pending',
+        (question) => question.resolution === 'pending' && !question.redoRequest,
       );
-      // Drafted applications waiting on answer review live in the review panel.
-      if (pending.length === 0 && application.reviewHoldSince) continue;
+      // Drafted applications waiting on answer review (or a redraft) live in the review panel.
+      if (pending.length === 0) continue;
       const blockedEntry = [...application.statusHistory]
         .reverse()
         .find((entry) => entry.status === 'awaiting-user-input');

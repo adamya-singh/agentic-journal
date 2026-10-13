@@ -265,7 +265,7 @@ export function JobListings({
   // Same rows NeedsYouQueue lists: drafts held only for review live in the review panel.
   const questionCount = stages.needs.filter((listing) => {
     const record = records[listing.id];
-    return record?.questions.some((question) => question.resolution === 'pending') || !record?.reviewHoldSince;
+    return record?.questions.some((question) => question.resolution === 'pending' && !question.redoRequest);
   }).length;
   const emailCount = applications?.emailUpdates.pending.length ?? 0;
   const waitingCount = questionCount + review.blocking + emailCount;
@@ -887,8 +887,9 @@ function ApplicationStatusButton({
   application: JobApplicationRecord;
   onClick: () => void;
 }) {
+  // Redos are OpenClaw's to redraft, so they don't count as questions for Adamya.
   const pendingCount = application.questions.filter(
-    (question) => question.resolution === 'pending',
+    (question) => question.resolution === 'pending' && !question.redoRequest,
   ).length;
   const labels: Record<JobApplicationRecord['status'], string> = {
     unstarted: 'Unstarted',

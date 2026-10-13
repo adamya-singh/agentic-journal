@@ -73,8 +73,13 @@ export function JobApplicationModal({
   onSave,
   onEmailUpdate,
 }: JobApplicationModalProps) {
+  // A redo is OpenClaw's to redraft, not a blank for Adamya, unless he chooses to write it himself.
+  const [writingRedos, setWritingRedos] = React.useState<Set<string>>(new Set());
+  const redoQuestions = application.questions.filter(
+    (question) => question.resolution === 'pending' && question.redoRequest && !writingRedos.has(question.id),
+  );
   const pendingQuestions = application.questions.filter(
-    (question) => question.resolution === 'pending',
+    (question) => question.resolution === 'pending' && (!question.redoRequest || writingRedos.has(question.id)),
   );
   const [resumeVariant, setResumeVariant] = React.useState<JobApplicationResumeVariant>(
     application.resumeOverride ?? application.resumeVariant,
@@ -211,6 +216,16 @@ export function JobApplicationModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount
   }, []);
 
+  // Starts from the draft he sent back, so he can edit rather than retype it.
+  const writeRedoMyself = (question: JobApplicationQuestion) => {
+    setWritingRedos((current) => new Set(current).add(question.id));
+    const previous = question.redoRequest?.previousAnswer;
+    if (previous !== undefined) {
+      setAnswers((current) => (hasAnswer(current[question.id]) ? current : { ...current, [question.id]: previous }));
+    }
+    window.setTimeout(() => focusQuestion(question.id, true), 0);
+  };
+
   const acceptSuggestions = () => {
     setAnswers((current) => {
       const next = { ...current };
@@ -244,7 +259,7 @@ export function JobApplicationModal({
       const result = await onSave(listing.id, resumeVariant, responses);
       const updated = result && 'application' in result ? result.application : undefined;
       const remaining = updated
-        ? updated.questions.filter((question) => question.resolution === 'pending').length
+        ? updated.questions.filter((question) => question.resolution === 'pending' && !question.redoRequest).length
         : 0;
 
       if (remaining === 0) {
@@ -257,7 +272,7 @@ export function JobApplicationModal({
       // plainly that the worker only resumes when everything is answered.
       const stillPending = new Set(
         updated!.questions
-          .filter((question) => question.resolution === 'pending')
+          .filter((question) => question.resolution === 'pending' && !question.redoRequest)
           .map((question) => question.id),
       );
       setAnswers((current) =>
@@ -425,6 +440,36 @@ export function JobApplicationModal({
             </div>
           )}
 
+          {redoQuestions.length > 0 && (
+            <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900/60 dark:bg-violet-950/30">
+              <h3 className="flex items-center gap-2 font-semibold text-violet-900 dark:text-violet-100">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                OpenClaw is redrafting {redoQuestions.length === 1 ? 'an answer' : `${redoQuestions.length} answers`}
+              </h3>
+              <p className="mt-0.5 text-sm text-violet-800/80 dark:text-violet-200/80">
+                It writes a new draft from your note and sends it to Approve before submit on the Jobs board. Nothing is needed from you here.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {redoQuestions.map((question) => (
+                  <li key={question.id} className="rounded-lg bg-white/70 p-3 text-sm dark:bg-slate-900/60">
+                    <p className="font-medium text-slate-900 dark:text-slate-100">{question.prompt}</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words text-slate-600 dark:text-slate-300">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">You said </span>
+                      {question.redoRequest?.instructions}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => writeRedoMyself(question)}
+                      className="mt-2 text-xs font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    >
+                      Write it myself instead
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           <section>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
@@ -518,7 +563,9 @@ export function JobApplicationModal({
                 ? `${unresolvedQuestions.length} question${unresolvedQuestions.length === 1 ? '' : 's'} still unanswered`
                 : pendingQuestions.length > 0
                   ? 'All questions answered — saving resumes the worker'
-                  : ''}
+                  : redoQuestions.length > 0
+                    ? 'Nothing needed from you while OpenClaw redrafts'
+                    : ''}
             </p>
             <button
               type="button"
@@ -529,7 +576,9 @@ export function JobApplicationModal({
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {unresolvedQuestions.length > 0
                 ? `Save answers (${unresolvedQuestions.length} remaining)`
-                : 'Save & resume application'}
+                : pendingQuestions.length === 0 && redoQuestions.length > 0
+                  ? 'Save resume choice'
+                  : 'Save & resume application'}
             </button>
           </div>
         )}
