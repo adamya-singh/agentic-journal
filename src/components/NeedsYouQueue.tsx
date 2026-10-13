@@ -4,7 +4,7 @@ import React from 'react';
 import { AlertCircle, CalendarPlus, ChevronDown, ChevronRight } from 'lucide-react';
 import type { JobApplicationsViewData, JobListing } from '@/lib/types';
 
-const COLLAPSED_COUNT = 8;
+const COLLAPSED_COUNT = 6;
 
 interface NeedsYouQueueProps {
   listings: JobListing[];
@@ -91,85 +91,91 @@ export function NeedsYouQueue({ listings, applications, onOpen, onExtend }: Need
   const visible = expanded ? rows : rows.slice(0, COLLAPSED_COUNT);
 
   return (
-    <section
-      id="needs-you-queue"
-      className="border-b border-slate-200 dark:border-slate-700 bg-amber-50/60 dark:bg-amber-950/10"
-    >
-      <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-        <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-          Needs your input ({rows.length})
-        </h3>
-        <span className="text-xs text-amber-700/70 dark:text-amber-400/70">
-          — oldest first; answering all questions lets the worker resume
-        </span>
-      </div>
-      {extendError && <p role="alert" className="px-4 pb-1 text-sm text-red-700 dark:text-red-300">{extendError}</p>}
-      <ul className="divide-y divide-amber-100 dark:divide-amber-900/30">
-        {visible.map((row) => (
-          <li key={row.listingId} className="flex items-center hover:bg-amber-100/60 dark:hover:bg-amber-900/20">
-            <button
-              type="button"
-              onClick={() => onOpen(row.listingId)}
-              className="flex min-w-0 flex-1 items-baseline gap-3 py-2 pl-4 pr-2 text-left"
-            >
-              <span className="min-w-0 flex-1 truncate text-sm">
-                <span className="font-medium text-slate-800 dark:text-slate-100">
+    <section id="needs-you-queue" className="scroll-mt-24">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+        <AlertCircle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+        Answer questions · {rows.length}
+        <span className="hidden font-normal normal-case tracking-normal text-slate-400 sm:inline">oldest first; the worker resumes once you answer</span>
+      </h3>
+      {extendError && <p role="alert" className="mt-1 text-sm text-red-700 dark:text-red-300">{extendError}</p>}
+      <ul className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 dark:divide-slate-800 dark:border-slate-700">
+        {visible.map((row) => {
+          const drafts = row.autoCompletable && row.eligibleAt;
+          return (
+            <li key={row.listingId} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 hover:bg-slate-50 sm:flex-nowrap dark:hover:bg-slate-800/40">
+              <button
+                type="button"
+                onClick={() => onOpen(row.listingId)}
+                className="min-w-0 flex-1 basis-full text-left sm:basis-auto"
+              >
+                <span className="block truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
                   {row.company}
-                </span>{' '}
-                <span className="text-slate-500 dark:text-slate-400">{row.position}</span>
-                {row.archived && (
-                  <span className="ml-1.5 text-xs italic text-slate-400">(archived)</span>
-                )}
+                  {row.archived && <span className="ml-1.5 text-xs font-normal italic text-slate-400">(archived)</span>}
+                </span>
+                <span className="block truncate text-sm text-slate-600 dark:text-slate-300">{row.position}</span>
+              </button>
+              <span className="w-44 shrink-0 text-sm">
+                <span className="font-medium text-amber-800 dark:text-amber-300">
+                  {row.pendingCount} question{row.pendingCount === 1 ? '' : 's'}
+                </span>
+                <span className="text-slate-400"> · {row.requiredCount} required</span>
               </span>
-              <span className="shrink-0 text-xs font-medium text-amber-700 dark:text-amber-300">
-                {row.pendingCount} question{row.pendingCount === 1 ? '' : 's'}
-                {row.requiredCount > 0 && ` (${row.requiredCount} required)`}
-              </span>
-              <span className="w-24 shrink-0 text-right text-xs text-slate-400 dark:text-slate-500">
-                {row.autoCompletable && row.eligibleAt
-                  ? Date.parse(row.eligibleAt) <= now
+              <span className="w-40 shrink-0 text-xs text-slate-500 dark:text-slate-400" title={drafts ? 'OpenClaw drafts answers for you at this time' : 'OpenClaw can’t draft these answers; they wait for you'}>
+                {drafts
+                  ? Date.parse(row.eligibleAt!) <= now
                     ? 'Draft due'
-                    : `Drafts in ${formatCountdown(Date.parse(row.eligibleAt) - now)}`
-                  : 'External blocker'}
+                    : `Drafts in ${formatCountdown(Date.parse(row.eligibleAt!) - now)}`
+                  : `Waiting ${formatAge(now - Date.parse(row.blockedSince))}`}
               </span>
-            </button>
-            {/* Kept in every row so the columns line up; only autopilot rows can use it. */}
+              <span className="ml-auto flex shrink-0 items-center gap-2">
+                {drafts && onExtend && (
+                  <button
+                    type="button"
+                    onClick={() => extend(row.listingId)}
+                    disabled={extending !== null}
+                    aria-label={`Delay autopilot for ${row.company} ${row.position} by one day`}
+                    title="Give yourself another day before OpenClaw answers these for you"
+                    className="inline-flex min-h-8 items-center gap-1 rounded-md border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-50 disabled:opacity-50 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+                  >
+                    <CalendarPlus className="h-3.5 w-3.5" />
+                    {extending === row.listingId ? '…' : '+1 day'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => onOpen(row.listingId)}
+                  className="min-h-8 rounded-md bg-indigo-600 px-3 py-1 text-xs font-semibold text-white hover:bg-indigo-700"
+                >
+                  Answer
+                </button>
+              </span>
+            </li>
+          );
+        })}
+        {rows.length > COLLAPSED_COUNT && (
+          <li>
             <button
               type="button"
-              onClick={() => extend(row.listingId)}
-              disabled={!onExtend || !row.autoCompletable || !row.eligibleAt || extending !== null}
-              aria-label={`Delay autopilot for ${row.company} ${row.position} by one day`}
-              title="Give yourself another day before OpenClaw answers these for you"
-              className={`mr-3 inline-flex min-h-8 shrink-0 items-center gap-1 rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-50 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40 ${
-                row.autoCompletable && row.eligibleAt ? '' : 'invisible'
-              }`}
+              onClick={() => setExpanded((value) => !value)}
+              className="flex w-full items-center justify-between bg-slate-50 px-4 py-2 text-xs text-slate-500 hover:bg-slate-100 dark:bg-slate-800/40 dark:text-slate-400 dark:hover:bg-slate-800"
             >
-              <CalendarPlus className="h-3.5 w-3.5" />
-              {extending === row.listingId ? '…' : '+1 day'}
+              <span>{expanded ? `All ${rows.length} shown` : `+ ${rows.length - COLLAPSED_COUNT} more`}</span>
+              <span className="inline-flex items-center gap-1 font-medium text-indigo-600 dark:text-indigo-300">
+                {expanded ? <>Show fewer <ChevronDown className="h-3.5 w-3.5" /></> : <>Show all <ChevronRight className="h-3.5 w-3.5" /></>}
+              </span>
             </button>
           </li>
-        ))}
+        )}
       </ul>
-      {rows.length > COLLAPSED_COUNT && (
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          className="flex w-full items-center justify-center gap-1 px-4 py-2 text-xs font-medium text-amber-700 hover:bg-amber-100/60 dark:text-amber-300 dark:hover:bg-amber-900/20"
-        >
-          {expanded ? (
-            <>
-              <ChevronDown className="h-3.5 w-3.5" /> Show fewer
-            </>
-          ) : (
-            <>
-              <ChevronRight className="h-3.5 w-3.5" /> Show all {rows.length}
-            </>
-          )}
-        </button>
-      )}
     </section>
   );
+}
+
+function formatAge(milliseconds: number): string {
+  const days = Math.floor(milliseconds / 86_400_000);
+  if (days < 1) return 'today';
+  if (days < 60) return `${days} day${days === 1 ? '' : 's'}`;
+  return `${Math.round(days / 30)} months`;
 }
 
 function formatCountdown(milliseconds: number): string {

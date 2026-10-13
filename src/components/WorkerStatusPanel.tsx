@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Bot, Loader2, Pause, Play, Star } from 'lucide-react';
+import { Loader2, Pause, Play, Star } from 'lucide-react';
 import type { JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import type { JobApplicationsViewData, JobListing } from '@/lib/types';
 
@@ -144,126 +144,94 @@ export function WorkerStatusPanel({
     );
 
   return (
-    <div className="border-b border-slate-200 bg-slate-50/70 px-5 py-4 dark:border-slate-700 dark:bg-slate-950/30">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
-            <Bot className="h-4.5 w-4.5" aria-hidden="true" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
-              <span
-                className={`inline-block h-2 w-2 rounded-full ${statusDot}`}
-                aria-hidden="true"
-              />
-              Application worker · {statusLabel}
-            </div>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              {!workerEnabled
-                ? 'Paused — no new applications are claimed.'
-                : running
-                  ? 'Live · updates every 5s'
-                  : nextRetryAt
-                    ? `Retry scheduled for ${new Date(nextRetryAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-                    : 'Idle — wakes when there’s work (answers, new leads, retries).'}
-            </p>
-            <p className={`text-xs ${applications.schedulerHealth.healthy ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-              Scheduler: {applications.schedulerHealth.healthy
-                ? `healthy · cron ${applications.schedulerHealth.enabled ? 'enabled' : 'disabled'}`
-                : applications.schedulerHealth.error ?? 'unavailable'}
-            </p>
-            <EmailUpdatesStatus emailUpdates={applications.emailUpdates} onEmailUpdate={onEmailUpdate} onError={onError} />
-          </div>
+    <section aria-label="Application worker" className="rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-slate-100">
+          <span className={`inline-block h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />
+          Worker {statusLabel.toLowerCase()}
         </div>
         <button
           type="button"
           onClick={control}
           disabled={startDisabled}
-          className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
         >
           {controlPending ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : workerEnabled ? (
-            <Pause className="h-4 w-4" />
+            <Pause className="h-3.5 w-3.5" />
           ) : (
-            <Play className="h-4 w-4" />
+            <Play className="h-3.5 w-3.5" />
           )}
-          {workerEnabled ? 'Pause applications' : 'Start applications'}
+          {workerEnabled ? 'Pause' : 'Start'}
         </button>
       </div>
+      <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+        {!workerEnabled
+          ? 'Paused. No new applications are claimed.'
+          : running
+            ? 'Live · updates every 5s'
+            : nextRetryAt
+              ? `Retry scheduled for ${new Date(nextRetryAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+              : 'Idle. Wakes when there’s work (answers, new leads, retries).'}
+      </p>
 
       {currentApplication && (
         <button
           type="button"
           onClick={() => onOpenApplication(currentApplication.listingId)}
-          className="mt-3 flex w-full flex-col gap-1 rounded-md border border-blue-200 bg-blue-50/70 px-3.5 py-2.5 text-left transition hover:bg-blue-100/70 dark:border-blue-800 dark:bg-blue-950/30 dark:hover:bg-blue-950/50"
+          className="mt-3 block w-full rounded-md bg-blue-50 px-3 py-2 text-left transition hover:bg-blue-100/70 dark:bg-blue-950/40 dark:hover:bg-blue-950/60"
         >
-          <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-            <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-              {currentListing
-                ? `${currentListing.company} · ${currentListing.positionTitle}`
-                : currentApplication.listingId}
-            </span>
-            {currentApplication.lease && (
-              <span className="text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                {formatElapsed(currentApplication.lease.claimedAt, now)} elapsed
-              </span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            {progress ? (
-              <>
-                <span className="inline-flex whitespace-nowrap rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800 dark:bg-blue-900/50 dark:text-blue-200">
-                  {STEP_LABELS[progress.step] ?? progress.step}
-                </span>
-                <span className="font-medium text-slate-800 dark:text-slate-200">
-                  {progress.label}
-                </span>
-                {progress.detail && (
-                  <span className="text-slate-500 dark:text-slate-400">{progress.detail}</span>
-                )}
-              </>
-            ) : (
-              <span className="text-slate-500 dark:text-slate-400">
-                Working — no progress reported yet
-              </span>
-            )}
-          </div>
+          <span className="block text-xs font-medium text-blue-700 dark:text-blue-300">
+            {progress ? STEP_LABELS[progress.step] ?? progress.step : 'Working'}
+            {currentApplication.lease && ` · ${formatElapsed(currentApplication.lease.claimedAt, now)}`}
+          </span>
+          <span className="block truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+            {currentListing?.company ?? currentApplication.listingId}
+          </span>
+          {currentListing && (
+            <span className="block truncate text-xs text-slate-600 dark:text-slate-300">{currentListing.positionTitle}</span>
+          )}
+          <span className="mt-1 line-clamp-2 block text-xs text-slate-500 dark:text-slate-400">
+            {progress ? [progress.label, progress.detail].filter(Boolean).join(' · ') : 'No progress reported yet'}
+          </span>
         </button>
       )}
 
+      <dl className="mt-3 space-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <div className="flex justify-between gap-3">
+          <dt>Scheduler</dt>
+          <dd className={applications.schedulerHealth.healthy ? 'text-emerald-600 dark:text-emerald-400' : 'text-right text-red-600 dark:text-red-400'}>
+            {applications.schedulerHealth.healthy
+              ? applications.schedulerHealth.enabled ? 'Healthy' : 'Healthy · cron off'
+              : applications.schedulerHealth.error ?? 'Unavailable'}
+          </dd>
+        </div>
+        <EmailUpdatesStatus emailUpdates={applications.emailUpdates} onEmailUpdate={onEmailUpdate} onError={onError} />
+      </dl>
+
       {workerEnabled && queue.length > 0 && (
-        <div className="mt-3">
-          <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-            Up next
+        <div className="mt-3 border-t border-slate-100 pt-3 dark:border-slate-800">
+          <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Next to claim
           </div>
-          <ol className="max-h-44 divide-y divide-slate-200 overflow-y-auto rounded-md border border-slate-200 bg-white dark:divide-slate-800 dark:border-slate-700 dark:bg-slate-900">
+          <ol className="max-h-40 overflow-y-auto">
             {queue.map(({ entry, listing }) => (
               <li key={entry.listingId}>
                 <button
                   type="button"
                   onClick={() => onOpenApplication(entry.listingId)}
-                  className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                  className="flex w-full items-center gap-2 rounded px-1 py-1 text-left text-xs transition hover:bg-slate-50 dark:hover:bg-slate-800/60"
                 >
-                  <span className="w-5 shrink-0 text-right text-xs tabular-nums text-slate-400">
-                    {entry.rank}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-slate-800 dark:text-slate-200">
+                  <span className="w-4 shrink-0 text-right tabular-nums text-slate-400">{entry.rank}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-700 dark:text-slate-200">
                     <span className="font-medium">{listing.company}</span>
-                    <span className="text-slate-500 dark:text-slate-400">
-                      {' '}
-                      · {listing.positionTitle}
-                    </span>
+                    <span className="text-slate-500 dark:text-slate-400"> · {listing.positionTitle}</span>
                   </span>
                   {entry.reason === 'resume-requested' ? (
-                    <span className="inline-flex shrink-0 whitespace-nowrap rounded-full bg-violet-50 px-2 py-0.5 text-xs font-semibold text-violet-700 ring-1 ring-inset ring-violet-200 dark:bg-violet-950/40 dark:text-violet-200 dark:ring-violet-800">
-                      Resume requested
-                    </span>
+                    <span className="shrink-0 text-violet-700 dark:text-violet-300">Resume</span>
                   ) : entry.reason === 'starred' ? (
-                    <Star
-                      className="h-3.5 w-3.5 shrink-0 fill-amber-400 text-amber-500"
-                      aria-label="Starred"
-                    />
+                    <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-500" aria-label="Starred" />
                   ) : null}
                 </button>
               </li>
@@ -271,7 +239,7 @@ export function WorkerStatusPanel({
           </ol>
         </div>
       )}
-    </div>
+    </section>
   );
 }
 
@@ -299,26 +267,28 @@ function EmailUpdatesStatus({
     }
   };
   return (
-    <p className="text-xs text-slate-500 dark:text-slate-400">
-      Employer email updates:{' '}
-      {emailUpdates.enabled
-        ? emailUpdates.lastPolledAt
-          ? `on · inbox checked ${new Date(emailUpdates.lastPolledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-          : 'on · inbox not checked yet'
-        : 'off'}
-      {onEmailUpdate && (
-        <>
-          {' · '}
-          <button
-            type="button"
-            onClick={toggle}
-            disabled={pending}
-            className="font-semibold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-50 dark:text-indigo-300"
-          >
-            {emailUpdates.enabled ? 'Turn off' : 'Turn on'}
-          </button>
-        </>
-      )}
-    </p>
+    <div className="flex justify-between gap-3">
+      <dt className="whitespace-nowrap">Employer emails</dt>
+      <dd className="text-right">
+        {emailUpdates.enabled
+          ? emailUpdates.lastPolledAt
+            ? `On · checked ${new Date(emailUpdates.lastPolledAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+            : 'On · not checked yet'
+          : 'Off'}
+        {onEmailUpdate && (
+          <>
+            {' · '}
+            <button
+              type="button"
+              onClick={toggle}
+              disabled={pending}
+              className="font-semibold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-50 dark:text-indigo-300"
+            >
+              {emailUpdates.enabled ? 'Turn off' : 'Turn on'}
+            </button>
+          </>
+        )}
+      </dd>
+    </div>
   );
 }

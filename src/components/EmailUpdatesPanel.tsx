@@ -64,7 +64,7 @@ export function EmailUpdatesPanel({
   return (
     <section
       id="email-updates"
-      className="scroll-mt-24 border-b border-sky-200 bg-sky-50/60 px-5 py-4 dark:border-sky-900/60 dark:bg-sky-950/10"
+      className="scroll-mt-24 rounded-lg border border-sky-200 bg-sky-50/60 px-4 py-3 dark:border-sky-900/60 dark:bg-sky-950/10"
     >
       <h3>
         <button

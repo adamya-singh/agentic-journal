@@ -14,9 +14,10 @@ function fileRef(answer: string | string[]): { uploadId: string; fileName: strin
 }
 
 // Self-contained browser for the saved-answer bank. Fetches lazily on first
-// expand; mutations go through /api/jobs/applications/answer-bank.
-export function AnswerBankPanel() {
-  const [open, setOpen] = React.useState(false);
+// expand; mutations go through /api/jobs/applications/answer-bank. With
+// onClose it renders already open, as a section the caller dismisses.
+export function AnswerBankPanel({ onClose }: { onClose?: () => void } = {}) {
+  const [open, setOpen] = React.useState(Boolean(onClose));
   const [entries, setEntries] = React.useState<JobApplicationAnswerBankEntry[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [editingId, setEditingId] = React.useState<string | null>(null);
@@ -96,14 +97,29 @@ export function AnswerBankPanel() {
   };
 
   return (
-    <div className="border-b border-slate-200 px-4 py-2 dark:border-slate-700">
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
-      >
-        {open ? '▾' : '▸'} Saved answers{entries ? ` (${entries.length})` : ''}
-      </button>
+    <div className={onClose ? 'rounded-lg border border-slate-200 px-4 py-3 dark:border-slate-700' : 'border-b border-slate-200 px-4 py-2 dark:border-slate-700'}>
+      {onClose ? (
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
+            Saved answers{entries ? <span className="ml-1 text-sm font-normal text-slate-500"> {entries.length}</span> : ''}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 hover:text-slate-800 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+          >
+            <X className="h-4 w-4" /> Close
+          </button>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-slate-100"
+        >
+          {open ? '▾' : '▸'} Saved answers{entries ? ` (${entries.length})` : ''}
+        </button>
+      )}
       {open && (
         <div className="mt-2">
           {error && <p className="mb-2 text-sm text-red-600 dark:text-red-300">{error}</p>}

@@ -51,6 +51,7 @@ export function ApplicationReviewPanel({
   onOpenApplication,
   onExtend,
   onCancel,
+  scope,
 }: {
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
@@ -59,19 +60,22 @@ export function ApplicationReviewPanel({
   onOpenApplication?: (listingId: string) => void;
   onExtend?: (listingId: string) => Promise<void>;
   onCancel?: (listingId: string, reason: string) => Promise<void>;
+  /** blocking = applications that have not been sent; audit = after-the-fact checks of sent ones. */
+  scope?: 'blocking' | 'audit';
 }) {
+  const storageKey = scope ? `${COLLAPSED_STORAGE_KEY}.${scope}` : COLLAPSED_STORAGE_KEY;
   // The fold state is remembered so a long queue doesn't push the rest of the
   // page down on every visit (it matters most on mobile).
   const [collapsed, setCollapsed] = React.useState(false);
   React.useEffect(() => {
     try {
-      setCollapsed(window.localStorage.getItem(COLLAPSED_STORAGE_KEY) === '1');
+      setCollapsed(window.localStorage.getItem(storageKey) === '1');
     } catch {}
-  }, []);
+  }, [storageKey]);
   const toggleCollapsed = () => {
     setCollapsed((current) => {
       try {
-        window.localStorage.setItem(COLLAPSED_STORAGE_KEY, current ? '0' : '1');
+        window.localStorage.setItem(storageKey, current ? '0' : '1');
       } catch {}
       return !current;
     });
@@ -83,7 +87,11 @@ export function ApplicationReviewPanel({
     return () => window.clearInterval(timer);
   }, []);
 
-  const groups = React.useMemo(() => buildGroups(applications, now), [applications, now]);
+  const groups = React.useMemo(
+    () => buildGroups(applications, now).filter((group) =>
+      !scope || (scope === 'audit') === Boolean(group.submittedAt || group.closed)),
+    [applications, now, scope],
+  );
 
   // undefined = follow the default (only the first group is open).
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
@@ -112,23 +120,29 @@ export function ApplicationReviewPanel({
   };
 
   return (
-    <section className="border-b border-violet-200 bg-violet-50/50 px-5 py-4 dark:border-violet-900/60 dark:bg-violet-950/10">
+    <section className={scope ? '' : 'border-b border-violet-200 bg-violet-50/50 px-5 py-4 dark:border-violet-900/60 dark:bg-violet-950/10'}>
       <h3>
         <button
           type="button"
           onClick={toggleCollapsed}
           aria-expanded={!collapsed}
           aria-controls="application-review-items"
-          className="-my-2 flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold text-violet-900 dark:text-violet-200"
+          className={scope
+            ? '-my-2 flex min-h-11 w-full items-center gap-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400'
+            : '-my-2 flex min-h-11 w-full items-center gap-2 text-left text-sm font-semibold text-violet-900 dark:text-violet-200'}
         >
-          <MessageCircleQuestion className="h-4 w-4 shrink-0 text-violet-600" />
+          <MessageCircleQuestion className={scope ? 'h-3.5 w-3.5 shrink-0 text-violet-600' : 'h-4 w-4 shrink-0 text-violet-600'} />
           <span className="min-w-0 flex-1">
-            Review OpenClaw’s answer choices ({pendingCount})
+            {scope === 'blocking'
+              ? `Approve before submit${pendingCount ? ` · ${pendingCount} answer${pendingCount === 1 ? '' : 's'}` : ''}`
+              : scope === 'audit'
+                ? `Spot-check sent answers · ${pendingCount}`
+                : `Review OpenClaw’s answer choices (${pendingCount})`}
             {redoingCount > 0 && (
-              <span className="ml-2 font-normal text-violet-700 dark:text-violet-300">{redoingCount} being redone</span>
+              <span className="ml-2 font-normal normal-case tracking-normal text-violet-700 dark:text-violet-300">{redoingCount} being redone</span>
             )}
             {heldCount > 0 && (
-              <span className="ml-2 font-normal text-amber-700 dark:text-amber-300">
+              <span className="ml-2 font-normal normal-case tracking-normal text-amber-700 dark:text-amber-300">
                 {heldCount} application{heldCount === 1 ? '' : 's'} waiting to submit
               </span>
             )}
