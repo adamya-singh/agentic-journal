@@ -9,6 +9,8 @@ import {
   mutateJobApplicationsStore,
   parseFileAnswer,
   releaseApplicationLease,
+  releaseApplicationsAnsweredByBank,
+  resetApplicationFailureStreak,
   setApplicationStatus,
   upsertConfirmedAnswer,
 } from '../../application-store-utils';
@@ -138,6 +140,8 @@ export async function POST(request: NextRequest) {
 
       let shouldWake = false;
       if (pendingAfter === 0 && application.status === 'awaiting-user-input') {
+        // Adamya stepped in: OpenClaw gets a fresh set of tries.
+        resetApplicationFailureStreak(application);
         setApplicationStatus(application, 'in-progress', now);
         application.resumeRequestedAt = now;
         delete application.nextRetryAt;
@@ -148,6 +152,10 @@ export async function POST(request: NextRequest) {
         }
       } else {
         application.updatedAt = now;
+      }
+      // One answer can settle the same question on other waiting applications.
+      if (releaseApplicationsAnsweredByBank(store, now).length > 0 && readiness.ready && store.workerEnabled) {
+        shouldWake = true;
       }
       return { application, shouldWake };
     });

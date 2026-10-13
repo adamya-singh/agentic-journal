@@ -163,6 +163,12 @@ export interface JobApplicationQuestion {
   suggestion?: JobApplicationQuestionSuggestion;
   resolution: JobApplicationQuestionResolution;
   discoveredAt: string;
+  /** Filled by the Journal from an answer Adamya already confirmed for the same question. */
+  fromAnswerBank?: true;
+  /** A "do this yourself" step the worker ran into more than once (kept as one question). */
+  occurrences?: number;
+  /** When that step was first run into, if it has happened more than once. */
+  firstDiscoveredAt?: string;
   answeredAt?: string;
   generatedAnswer?: JobApplicationGeneratedAnswer;
   /** Set only by the human answer/review endpoints, never by a worker update. */
@@ -229,6 +235,18 @@ export interface JobApplicationError {
   message: string;
   occurredAt: string;
   retryable: boolean;
+}
+
+/** One failed run, kept so Adamya can see why OpenClaw gave up. */
+export interface JobApplicationErrorEvent {
+  code: string;
+  message: string;
+  occurredAt: string;
+  attempt: number;
+  /** The worker reported it, or the Journal noticed a run that never reported back. */
+  source: 'worker' | 'recovery';
+  /** The worker's last progress report in that run. */
+  lastStep?: string;
 }
 
 export interface JobApplicationSubmissionEvidence {
@@ -359,6 +377,10 @@ export interface JobApplicationRecord {
   resumeRequestedAt?: string;
   lastAttemptAt?: string;
   lastError?: JobApplicationError;
+  /** Failed runs in a row; any real outcome or Adamya resuming it resets the count. */
+  failureStreak?: number;
+  /** The most recent failed runs, oldest first. */
+  errorHistory?: JobApplicationErrorEvent[];
   submissionAttemptedAt?: string;
   submittedAt?: string;
   closedAt?: string;

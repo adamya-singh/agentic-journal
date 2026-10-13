@@ -8,8 +8,10 @@ import {
 import {
   getJobApplicationReadiness,
   hasActionableJobApplications,
+  mutateJobApplicationsStore,
   readJobApplicationsStore,
   reconcileStaleJobApplicationLeases,
+  releaseApplicationsAnsweredByBank,
 } from './application-store-utils';
 
 const OPENCLAW_CRON_JOB_NAME = 'Agentic Journal Job Applications';
@@ -177,6 +179,13 @@ export async function reconcileAndWakeJobApplicationWorker(): Promise<void> {
   }
   lastReconcileAtMs = now;
   try {
+    // Questions the answer bank now settles (Adamya answered them on another application).
+    const answered = await mutateJobApplicationsStore((store) =>
+      releaseApplicationsAnsweredByBank(store, new Date(now).toISOString()),
+    );
+    if (answered.length > 0 && hasActionableJobApplications()) {
+      await wakeJobApplicationWorkerIfEnabled();
+    }
     const { reconciled } = await reconcileStaleJobApplicationLeases();
     if (reconciled.length === 0) {
       return;

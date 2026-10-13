@@ -206,6 +206,47 @@ describe('job application state', () => {
     assert.equal(recovered?.application.attemptCount, 2);
   });
 
+  test('a blocker reported again updates the one waiting instead of stacking copies', () => {
+    const at = (minute: number) => `2026-09-19T05:${String(minute).padStart(2, '0')}:00.000Z`;
+    const signIn = (minute: number) => store.createActionQuestion({
+      prompt: 'Sign in to LinkedIn',
+      // Each challenge page has a one-time URL, so ids never match.
+      pageUrl: `https://www.linkedin.com/checkpoint/challenge/${minute}`,
+      now: at(minute),
+    });
+    const field = { id: 'q-email', prompt: 'Email', kind: 'text' as const, required: true, resolution: 'pending' as const, discoveredAt: at(0) };
+    let questions = store.mergeApplicationQuestions([field], [signIn(1)]);
+    questions = store.mergeApplicationQuestions(questions, [signIn(2)]);
+    questions = store.mergeApplicationQuestions(questions, [
+      store.createActionQuestion({ prompt: 'Complete the CAPTCHA', now: at(3) }),
+    ]);
+    const blockers = questions.filter((question) => question.kind === 'action');
+    assert.equal(blockers.length, 1);
+    assert.equal(blockers[0].prompt, 'Complete the CAPTCHA');
+    assert.equal(blockers[0].id, signIn(1).id);
+    assert.equal(blockers[0].occurrences, 3);
+    assert.equal(blockers[0].firstDiscoveredAt, at(1));
+    assert.ok(questions.some((question) => question.id === 'q-email'));
+
+    // A submit confirmation is its own step, and an answered blocker is history.
+    questions = store.mergeApplicationQuestions(
+      questions.map((question) => question.kind === 'action' ? { ...question, resolution: 'answered' as const } : question),
+      [store.createActionQuestion({ prompt: 'Confirm whether this application was submitted', now: at(4) }), signIn(5)],
+    );
+    assert.deepEqual(
+      questions.filter((question) => question.kind === 'action').map((question) => [question.resolution, question.occurrences ?? 1]),
+      [['pending', 1], ['pending', 1], ['answered', 3]],
+    );
+
+    // Copies already on disk collapse when read.
+    const stacked = [1, 2, 3, 4].map(signIn);
+    const collapsed = store.collapseRepeatedActionQuestions([field, ...stacked]);
+    assert.equal(collapsed.length, 2);
+    assert.equal(collapsed[1].discoveredAt, at(4));
+    assert.equal(collapsed[1].occurrences, 4);
+    assert.equal(collapsed[1].firstDiscoveredAt, at(1));
+  });
+
   test('creates deterministic question IDs and confirmed answer entries', async () => {
     const params = {
       prompt: 'Are you authorized to work?',
@@ -685,12 +726,13 @@ describe('job application state', () => {
         createdAt: now,
         updatedAt: now,
       };
-      // Third-attempt dead run -> escalates to the user.
+      // Third dead run in a row -> escalates to the user.
       data.applications.starred = {
         listingId: 'starred',
         status: 'in-progress',
         resumeVariant: 'swe',
-        attemptCount: 3,
+        attemptCount: 5,
+        failureStreak: 2,
         statusHistory: [{ status: 'in-progress', changedAt: now }],
         questions: [],
         lease: staleLease('2020-01-01T00:00:00.000Z'),
@@ -707,6 +749,19 @@ describe('job application state', () => {
         questions: [],
         submissionAttemptedAt: now,
         lease: staleLease('2020-01-01T00:00:00.000Z'),
+        createdAt: now,
+        updatedAt: now,
+      };
+      // Resumed by Adamya long after its last run: waiting to be claimed, not dead.
+      data.applications.archived = {
+        listingId: 'archived',
+        status: 'in-progress',
+        resumeVariant: 'swe',
+        attemptCount: 4,
+        statusHistory: [{ status: 'in-progress', changedAt: now }],
+        questions: [],
+        lastAttemptAt: '2026-07-01T00:00:00.000Z',
+        resumeRequestedAt: now,
         createdAt: now,
         updatedAt: now,
       };
@@ -741,6 +796,16 @@ describe('job application state', () => {
     assert.equal(retried.progress, undefined);
     assert.ok(retried.nextRetryAt && Date.parse(retried.nextRetryAt) > Date.now());
     assert.match(retried.incompleteScreenshotCapture?.error ?? '', /Run interrupted/);
+    assert.match(retried.lastError?.message ?? '', /claimed at 11:00 UTC.*“Navigating”/);
+    assert.deepEqual(
+      retried.errorHistory?.map((event) => [event.source, event.attempt, event.lastStep]),
+      [['recovery', 1, 'Navigating']],
+    );
+    assert.equal(retried.failureStreak, 1);
+
+    const waiting = data.applications.archived;
+    assert.equal(waiting.lastError, undefined);
+    assert.equal(waiting.nextRetryAt, undefined);
 
     const escalated = data.applications.starred;
     assert.equal(escalated.status, 'awaiting-user-input');
@@ -1959,6 +2024,77 @@ describe('job application state', () => {
     assert.equal(jobStore.readJobListings().listings.find((item) => item.id === 'saved-old')?.status, 'applied');
     assert.equal((await postAnswers({ listingId: 'saved-old', resumeVariant: 'swe', responses: [], submittedByHand: true })).status, 400);
     restoreListingStatus('saved-old', 'saved');
+  });
+
+  test('fields are questions, saved answers are not asked again, and stopping is not a capture failure', async () => {
+    const leaseToken = 'guard-lease';
+    const authOptions = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [
+        { id: 'bank-name', normalizedPrompt: store.normalizePrompt('Full Name*'), prompt: 'Full Name*', kind: 'text', answer: 'Adamya Singh', confirmedAt: now, sourceListingId: 'applied' },
+        { id: 'bank-auth', normalizedPrompt: store.normalizePrompt('Are you legally authorized to work in the US?'), prompt: 'Are you legally authorized to work in the US?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'yes', confirmedAt: now, sourceListingId: 'applied' },
+        { id: 'bank-sponsor', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'text', answer: 'No', confirmedAt: now, sourceListingId: 'applied' },
+        { id: 'bank-why', normalizedPrompt: store.normalizePrompt('Why us?'), prompt: 'Why us?', kind: 'text', answer: 'Because of your mission.', confirmedAt: now, sourceListingId: 'applied' },
+      ];
+      data.applications['saved-old'] = {
+        listingId: 'saved-old', status: 'in-progress', resumeVariant: 'swe', attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: now }], questions: [],
+        lease: { token: leaseToken, claimedAt: now, expiresAt: '2100-01-01T00:00:00.000Z' }, createdAt: now, updatedAt: now,
+      };
+    });
+    const base = { listingId: 'saved-old', leaseToken };
+
+    // A form field is never a blocker; a real blocker still is.
+    const misfiled = await postUpdate({ ...base, action: 'awaiting-action', prompt: 'Please complete the remaining application fields' });
+    assert.equal(misfiled.status, 400);
+    assert.match((await misfiled.json()).error, /own text, single-select/);
+    assert.equal((await postUpdate({ ...base, action: 'record-questions', retainLease: true, questions: [
+      { prompt: 'Demographic survey - Choose your location', kind: 'action', required: true },
+    ] })).status, 400);
+    assert.equal(store.misfiledBlockerReason('Complete reCAPTCHA verification on the application page'), null);
+    assert.equal(store.misfiledBlockerReason('Sign in to LinkedIn or verify LinkedIn credentials'), null);
+
+    // Giving up on screenshots to ask questions keeps the run going.
+    const captureId = (await (await postUpdate({ ...base, action: 'start-screenshot-capture' })).json())
+      .application.incompleteScreenshotCapture.id as string;
+    assert.equal((await postUpdate({ ...base, action: 'screenshot-capture-failed', captureId, error: 'Stopping for unresolved question: Why us?' })).status, 200);
+    let application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(application.status, 'in-progress');
+    assert.equal(application.lease?.token, leaseToken);
+    assert.equal(application.questions.length, 0);
+
+    assert.equal((await postUpdate({ ...base, action: 'record-questions', questions: [
+      { prompt: 'Full Name', kind: 'text', required: true },
+      { prompt: 'Are you legally authorized to work in the US?', kind: 'single-select', required: true, options: authOptions },
+      // Matched on wording only, and it decides eligibility: Adamya still checks it.
+      { prompt: 'Will you require visa sponsorship?', kind: 'single-select', required: true, options: authOptions },
+      { prompt: 'Why us?', kind: 'text', multiline: true, required: true },
+    ] })).status, 200);
+    application = store.readJobApplicationsStore().applications['saved-old'];
+    const byPrompt = Object.fromEntries(application.questions.map((question) => [question.prompt, question]));
+    assert.deepEqual([byPrompt['Full Name'].resolution, byPrompt['Full Name'].answer, byPrompt['Full Name'].fromAnswerBank], ['answered', 'Adamya Singh', true]);
+    assert.equal(byPrompt['Are you legally authorized to work in the US?'].answer, 'yes');
+    assert.equal(byPrompt['Will you require visa sponsorship?'].resolution, 'pending');
+    assert.equal(byPrompt['Why us?'].resolution, 'pending');
+    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.lease, undefined);
+    assert.ok(!application.questions.some((question) => question.kind === 'action'));
+
+    // Answering the rest elsewhere releases it: one saved answer unblocks every application waiting on it.
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank.push(
+        { id: 'bank-sponsor-select', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'no', confirmedAt: now, sourceListingId: 'applied' },
+      );
+      data.applications['saved-old'].questions = data.applications['saved-old'].questions.filter((question) => question.prompt !== 'Why us?');
+      assert.deepEqual(store.releaseApplicationsAnsweredByBank(data, now), ['saved-old']);
+    });
+    application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(application.status, 'in-progress');
+    assert.equal(application.resumeRequestedAt, now);
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [];
+      delete data.applications['saved-old'];
+    });
   });
 
   test('a live run reports its own outcome, then an earlier email settles it', async () => {

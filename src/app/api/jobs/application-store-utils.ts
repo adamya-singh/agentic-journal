@@ -1,7 +1,12 @@
 import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
 import { DateSourceSchema } from '@/lib/employment-dates';
-import { JOB_APPLICATION_CANDIDATE_CONTEXT, needsExplicitReview } from '@/lib/application-eligibility';
+import {
+  hasStaleGraduationContext,
+  isEligibilityQuestion,
+  JOB_APPLICATION_CANDIDATE_CONTEXT,
+  needsExplicitReview,
+} from '@/lib/application-eligibility';
 import * as fs from 'fs';
 import * as path from 'path';
 import { jobsDataDir } from '@/lib/backend-data';
@@ -16,6 +21,7 @@ import type {
   JobApplicationQuestionKind,
   JobApplicationQueuePreviewEntry,
   JobApplicationReadiness,
+  JobApplicationErrorEvent,
   JobApplicationRecord,
   JobApplicationSubmissionEvidence,
   JobApplicationReviewItem,
@@ -48,6 +54,9 @@ const APPLICATION_FILES_DIR =
 const DEFAULT_RESUME_DIR = '/home/openclaw/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
+/** Failed runs in a row before OpenClaw stops and asks for help. */
+export const JOB_APPLICATION_FAILURE_LIMIT = 3;
+const ERROR_HISTORY_LIMIT = 10;
 // Autopilot drafts the remaining answers a day after an application blocks,
 // then holds them in the review queue for up to two more days before submitting.
 export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 24 * 60 * 60 * 1000;
@@ -425,12 +434,49 @@ export interface StaleLeaseReconcileResult {
  * application re-enters the retry ladder instead of silently burning attempts.
  * Fires only on hard lease expiry — it can never touch a live run.
  */
+/**
+ * Records a failed run and returns how many have failed in a row. Lifetime
+ * attempts are not failures: an application that asked questions twice and
+ * then hit one deploy restart has failed once.
+ */
+export function recordApplicationFailure(
+  application: JobApplicationRecord,
+  failure: { code: string; message: string; source: JobApplicationErrorEvent['source'] },
+  now: string,
+): number {
+  const streak = (application.failureStreak ?? 0) + 1;
+  application.failureStreak = streak;
+  application.lastError = {
+    code: failure.code,
+    message: failure.message,
+    occurredAt: now,
+    retryable: streak < JOB_APPLICATION_FAILURE_LIMIT,
+  };
+  application.errorHistory = [
+    ...(application.errorHistory ?? []),
+    {
+      ...failure,
+      occurredAt: now,
+      attempt: application.attemptCount,
+      ...(application.progress?.label ? { lastStep: application.progress.label } : {}),
+    },
+  ].slice(-ERROR_HISTORY_LIMIT);
+  return streak;
+}
+
+/** A run produced a real outcome, or Adamya stepped in: failures no longer run in a row. */
+export function resetApplicationFailureStreak(application: JobApplicationRecord): void {
+  delete application.failureStreak;
+}
+
 export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseReconcileResult> {
+  // Only a run that held a lease and let it expire died. An in-progress record
+  // without a lease is waiting to be claimed (resumed, or between retries):
+  // treating it as dead once pushed Chalk's retry back every 5 minutes for days.
   const hasStaleLease = (application: JobApplicationRecord, nowMs: number): boolean =>
     application.status === 'in-progress' &&
-    ((Boolean(application.lease) && Date.parse(application.lease!.expiresAt) <= nowMs) ||
-      (!application.lease && Boolean(application.lastAttemptAt) &&
-        Date.parse(application.lastAttemptAt!) + LEASE_DURATION_MS <= nowMs));
+    Boolean(application.lease) &&
+    Date.parse(application.lease!.expiresAt) <= nowMs;
 
   // Lock-free pre-check so the every-5-minutes caller costs one file read.
   const preCheck = readJobApplicationsStore();
@@ -460,13 +506,14 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
       if (!hasStaleLease(application, now.getTime())) {
         continue;
       }
-      application.lastError = {
+      const lastStep = application.progress
+        ? ` Its last step was “${application.progress.label}” at ${application.progress.updatedAt.slice(11, 16)} UTC.`
+        : ' It never reported progress.';
+      const streak = recordApplicationFailure(application, {
         code: 'run-interrupted',
-        message:
-          'Worker run ended without recording an outcome (provider failure or crash); recovered automatically.',
-        occurredAt: nowIso,
-        retryable: application.attemptCount < 3,
-      };
+        message: `The run claimed at ${application.lease!.claimedAt.slice(11, 16)} UTC ended without reporting back (crash, provider failure, timeout or a Journal restart).${lastStep}`,
+        source: 'recovery',
+      }, nowIso);
       const capture = application.incompleteScreenshotCapture;
       if (capture && !capture.error) {
         failApplicationScreenshotCapture(
@@ -497,11 +544,11 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
         ]);
         setApplicationStatus(application, 'awaiting-user-input', nowIso);
         reconciled.push({ listingId: application.listingId });
-      } else if (application.attemptCount >= 3) {
+      } else if (streak >= JOB_APPLICATION_FAILURE_LIMIT) {
         application.questions = mergeApplicationQuestions(application.questions, [
           createActionQuestion({
             prompt: 'Automation needs help with this application',
-            helpText: application.lastError.message,
+            helpText: application.lastError!.message,
             required: true,
             now: nowIso,
           }),
@@ -509,10 +556,7 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
         setApplicationStatus(application, 'awaiting-user-input', nowIso);
         reconciled.push({ listingId: application.listingId });
       } else {
-        const retryIndex = Math.min(
-          Math.max(application.attemptCount - 1, 0),
-          JOB_APPLICATION_RETRY_DELAYS_MS.length - 1,
-        );
+        const retryIndex = Math.min(streak - 1, JOB_APPLICATION_RETRY_DELAYS_MS.length - 1);
         application.nextRetryAt = new Date(
           now.getTime() + JOB_APPLICATION_RETRY_DELAYS_MS[retryIndex],
         ).toISOString();
@@ -724,6 +768,87 @@ export function completeApplicationScreenshotCapture(
   delete application.incompleteScreenshotCapture;
   application.updatedAt = completedAt;
   return { capture, supersededCaptureId };
+}
+
+/**
+ * The run stopped for something other than screenshots (questions, a blocker,
+ * a retry): close its unfinished capture quietly, so it is never mistaken for
+ * a capture failure.
+ */
+export function closeDanglingScreenshotCapture(
+  application: JobApplicationRecord,
+  reason: string,
+  now: string,
+): void {
+  const capture = application.incompleteScreenshotCapture;
+  if (!capture || capture.error) return;
+  capture.failedAt = now;
+  capture.error = reason;
+}
+
+// Blockers are things only a person can do. A field the worker could not fill is a question.
+const FORM_FIELD_WORDING = /\b(?:fields?|dropdowns?|combo ?box(?:es)?|questions?|survey|select|choose)\b/i;
+const HUMAN_ONLY_WORDING = /captcha|sign[ -]?in|log[ -]?in|verif|passkey|security key|account|password|2fa|one-time|code|limit/i;
+
+/** Why a reported blocker is really unfilled form fields, or null when it is a genuine blocker. */
+export function misfiledBlockerReason(prompt: string): string | null {
+  if (!FORM_FIELD_WORDING.test(prompt) || HUMAN_ONLY_WORDING.test(prompt)) return null;
+  return `"${prompt}" describes form fields, not something only Adamya can do. Record each unfilled field as its own text, single-select, multi-select or file question (open a dropdown to read its options; if they stay unreadable, use a text question and say so in helpText).`;
+}
+
+/**
+ * Answers a pending question with what Adamya already confirmed for the same
+ * question elsewhere. An exact match (same prompt, kind and choices) is his
+ * answer; a text field matched on prompt alone (name, email, LinkedIn) is too,
+ * unless it decides eligibility. Long-form answers and graduation answers older
+ * than his January 2027 correction never count.
+ */
+export function answerFromBank(
+  question: JobApplicationQuestion,
+  bank: JobApplicationAnswerBankEntry[],
+  now: string,
+): boolean {
+  if (
+    question.resolution !== 'pending' ||
+    question.kind === 'file' ||
+    question.kind === 'action' ||
+    question.redoRequest
+  ) {
+    return false;
+  }
+  // Long-form answers ("Why us?") are written for one employer.
+  if (question.multiline) return false;
+  const match = findAnswerBankMatch(question, bank);
+  if (!match?.usable) return false;
+  const safe = match.tier === 'exact' || (question.kind === 'text' && !isEligibilityQuestion(question));
+  if (!safe || hasStaleGraduationContext({ prompt: question.prompt, answer: match.answer })) return false;
+  question.answer = match.answer;
+  question.resolution = 'answered';
+  question.answeredAt = now;
+  question.fromAnswerBank = true;
+  delete question.suggestion;
+  return true;
+}
+
+/**
+ * Applications waiting only on questions the answer bank now settles go back
+ * to the worker. Runs after Adamya saves answers (one answer can unblock many
+ * applications) and on the periodic reconcile.
+ */
+export function releaseApplicationsAnsweredByBank(store: JobApplicationsStoreData, now: string): string[] {
+  const released: string[] = [];
+  for (const application of Object.values(store.applications)) {
+    if (application.status !== 'awaiting-user-input' || application.lease || application.reviewHoldSince) continue;
+    const filled = application.questions.filter((question) => answerFromBank(question, store.answerBank, now));
+    if (filled.length === 0) continue;
+    application.updatedAt = now;
+    if (application.questions.some((question) => question.resolution === 'pending')) continue;
+    setApplicationStatus(application, 'in-progress', now);
+    application.resumeRequestedAt = now;
+    delete application.nextRetryAt;
+    released.push(application.listingId);
+  }
+  return released;
 }
 
 export function failApplicationScreenshotCapture(
@@ -1053,11 +1178,76 @@ export function createActionQuestion(params: {
   };
 }
 
+/**
+ * Which "do this yourself" step an action question is: confirming a Submit
+ * (its prompt is load-bearing for the modal), or whatever else stopped the worker.
+ */
+function actionFamily(question: JobApplicationQuestion): string {
+  return question.prompt === SUBMISSION_CONFIRM_PROMPT ? 'confirm-submission' : 'blocker';
+}
+
+function isPendingAction(question: JobApplicationQuestion): boolean {
+  return question.kind === 'action' && question.resolution === 'pending';
+}
+
+/** `latest` as the surviving copy of a blocker also reported as `other`. */
+function repeatOf(latest: JobApplicationQuestion, other: JobApplicationQuestion): JobApplicationQuestion {
+  const firsts = [latest, other].map((question) => question.firstDiscoveredAt ?? question.discoveredAt).sort();
+  return {
+    ...latest,
+    occurrences: (latest.occurrences ?? 1) + (other.occurrences ?? 1),
+    firstDiscoveredAt: firsts[0],
+  };
+}
+
+/**
+ * At most one pending blocker per family. The worker words each report
+ * afresh and blocker pages carry one-time URLs, so ids alone never matched:
+ * a retry loop once stacked 69 copies of one LinkedIn sign-in. The newest
+ * report wins, counting how often it happened.
+ */
+export function collapseRepeatedActionQuestions(
+  questions: JobApplicationQuestion[],
+): JobApplicationQuestion[] {
+  const newest = new Map<string, JobApplicationQuestion>();
+  for (const question of questions) {
+    if (!isPendingAction(question)) continue;
+    const family = actionFamily(question);
+    const kept = newest.get(family);
+    if (!kept) {
+      newest.set(family, question);
+    } else if (question.discoveredAt > kept.discoveredAt) {
+      newest.set(family, repeatOf(question, kept));
+    } else {
+      newest.set(family, repeatOf(kept, question));
+    }
+  }
+  const emitted = new Set<string>();
+  return questions.flatMap((question) => {
+    if (!isPendingAction(question)) return [question];
+    const family = actionFamily(question);
+    if (emitted.has(family)) return [];
+    emitted.add(family);
+    return [newest.get(family)!];
+  });
+}
+
 export function mergeApplicationQuestions(
   current: JobApplicationQuestion[],
-  incoming: JobApplicationQuestion[],
+  reported: JobApplicationQuestion[],
 ): JobApplicationQuestion[] {
   const currentById = new Map(current.map((question) => [question.id, question]));
+  // A blocker reported again updates the one already waiting, under its id.
+  const waiting = new Map(current.filter(isPendingAction).map((question) => [actionFamily(question), question]));
+  const incoming = reported.map((question) => {
+    if (question.kind !== 'action') return question;
+    const earlier = currentById.get(question.id)?.resolution === 'pending'
+      ? currentById.get(question.id)!
+      : waiting.get(actionFamily(question));
+    if (!earlier || !isPendingAction(earlier)) return question;
+    waiting.delete(actionFamily(earlier));
+    return { ...repeatOf(question, earlier), id: earlier.id };
+  });
   const merged = incoming.map((question) => {
     const existing = currentById.get(question.id);
     if (!existing) {
@@ -1376,7 +1566,7 @@ function normalizeApplicationRecord(
   const status = normalizeApplicationStatus(value.status);
   const createdAt = normalizeString(value.createdAt) || now;
   const questions = Array.isArray(value.questions)
-    ? value.questions.flatMap((question) => normalizeQuestion(question))
+    ? collapseRepeatedActionQuestions(value.questions.flatMap((question) => normalizeQuestion(question)))
     : [];
   const record: JobApplicationRecord = {
     listingId,
@@ -1436,6 +1626,25 @@ function normalizeApplicationRecord(
         retryable: value.lastError.retryable === true,
       };
     }
+  }
+  if (typeof value.failureStreak === 'number' && Number.isInteger(value.failureStreak) && value.failureStreak > 0) {
+    record.failureStreak = value.failureStreak;
+  }
+  if (Array.isArray(value.errorHistory)) {
+    const history = value.errorHistory.flatMap((event): JobApplicationErrorEvent[] => {
+      if (!isRecord(event)) return [];
+      const code = normalizeString(event.code);
+      const message = normalizeString(event.message);
+      const occurredAt = normalizeString(event.occurredAt);
+      if (!code || !message || !occurredAt) return [];
+      return [{
+        code, message, occurredAt,
+        attempt: normalizeNonNegativeInteger(event.attempt),
+        source: event.source === 'recovery' ? 'recovery' : 'worker',
+        ...(normalizeString(event.lastStep) ? { lastStep: normalizeString(event.lastStep) } : {}),
+      }];
+    });
+    if (history.length) record.errorHistory = history.slice(-ERROR_HISTORY_LIMIT);
   }
   if (isRecord(value.submissionEvidence)) {
     record.submissionEvidence = {
@@ -1651,6 +1860,11 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
     }
   }
   if (normalizeString(value.answeredAt)) question.answeredAt = normalizeString(value.answeredAt);
+  if (typeof value.occurrences === 'number' && Number.isInteger(value.occurrences) && value.occurrences > 1) {
+    question.occurrences = value.occurrences;
+  }
+  if (normalizeString(value.firstDiscoveredAt)) question.firstDiscoveredAt = normalizeString(value.firstDiscoveredAt);
+  if (value.fromAnswerBank === true) question.fromAnswerBank = true;
   if (isRecord(value.answerScreenshot)) {
     const shot = value.answerScreenshot;
     const id = normalizeString(shot.id);

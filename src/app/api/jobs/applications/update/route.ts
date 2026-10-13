@@ -7,8 +7,14 @@ import type { JobApplicationQuestion, JobApplicationRecord } from '@/lib/types';
 import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 import { readJobListings } from '../../job-store-utils';
 import {
+  JOB_APPLICATION_FAILURE_LIMIT,
+  recordApplicationFailure,
+  resetApplicationFailureStreak,
+  answerFromBank,
+  closeDanglingScreenshotCapture,
   confirmSubmissionFromEmployerEmail,
   createActionQuestion,
+  misfiledBlockerReason,
   buildGoogleDocAutoAnswerEntry,
   createApplicationQuestionId,
   completeApplicationScreenshotCapture,
@@ -29,6 +35,14 @@ import {
 } from '../../application-store-utils';
 
 export const runtime = 'nodejs';
+
+/** A blocker that is really form fields: the worker must record it as questions instead. */
+class MisfiledBlockerError extends Error {}
+
+function requireGenuineBlocker(prompt: string): void {
+  const reason = misfiledBlockerReason(prompt);
+  if (reason) throw new MisfiledBlockerError(reason);
+}
 
 const AnswerSchema = z.union([z.string(), z.array(z.string())]);
 const QuestionOptionSchema = z.object({ value: z.string(), label: z.string() });
@@ -154,8 +168,15 @@ export async function POST(request: NextRequest) {
         parsed.data.leaseToken,
       );
       const now = new Date().toISOString();
+      // The run got somewhere: earlier failures no longer count as in a row.
+      if (['record-questions', 'record-auto-answers', 'awaiting-action', 'submission-attempted', 'submitted', 'closed'].includes(parsed.data.action)) {
+        resetApplicationFailureStreak(application);
+      }
 
       if (parsed.data.action === 'record-questions') {
+        for (const question of parsed.data.questions) {
+          if (question.kind === 'action') requireGenuineBlocker(question.prompt);
+        }
         const questions: JobApplicationQuestion[] = parsed.data.questions.map((question) => ({
           ...question,
           id:
@@ -175,7 +196,10 @@ export async function POST(request: NextRequest) {
             throw new EmploymentDateError('Fresh Simplify date source required for the current attempt');
           }
         }
+        // Anything Adamya already answered for the same question is not asked again.
+        for (const question of application.questions) answerFromBank(question, store.answerBank, now);
         if (!parsed.data.retainLease && application.questions.some((question) => question.resolution === 'pending')) {
+          closeDanglingScreenshotCapture(application, 'Stopped for questions', now);
           setApplicationStatus(application, 'awaiting-user-input', now);
           releaseApplicationLease(application);
         } else {
@@ -304,7 +328,15 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      if (parsed.data.action === 'screenshot-capture-failed') {
+      // Stopping for questions is not a capture failure: keep the lease so the
+      // run can still record them.
+      const stoppingForQuestions =
+        parsed.data.action === 'screenshot-capture-failed' &&
+        (/question/i.test(parsed.data.error) ||
+          application.questions.some((question) => question.resolution === 'pending' && question.kind !== 'action'));
+      if (parsed.data.action === 'screenshot-capture-failed' && stoppingForQuestions) {
+        failApplicationScreenshotCapture(application, parsed.data.captureId, parsed.data.error, now);
+      } else if (parsed.data.action === 'screenshot-capture-failed') {
         failApplicationScreenshotCapture(
           application,
           parsed.data.captureId,
@@ -318,7 +350,7 @@ export async function POST(request: NextRequest) {
           [
             createActionQuestion({
               prompt: 'Screenshot capture needs help',
-              helpText: `Submission was not attempted because the worker could not save every filled application page after three attempts. ${parsed.data.error}`,
+              helpText: `Submission was not attempted because the worker could not save every filled application page. ${parsed.data.error}`,
               pageUrl: parsed.data.pageUrl,
               now,
             }),
@@ -368,18 +400,15 @@ export async function POST(request: NextRequest) {
       }
 
       if (parsed.data.action === 'retry') {
-        const retryIndex = Math.min(
-          Math.max(application.attemptCount - 1, 0),
-          JOB_APPLICATION_RETRY_DELAYS_MS.length - 1,
+        const streak = recordApplicationFailure(
+          application,
+          { code: parsed.data.code, message: parsed.data.message, source: 'worker' },
+          now,
         );
-        application.lastError = {
-          code: parsed.data.code,
-          message: parsed.data.message,
-          occurredAt: now,
-          retryable: application.attemptCount < 3,
-        };
+        const retryIndex = Math.min(streak - 1, JOB_APPLICATION_RETRY_DELAYS_MS.length - 1);
+        closeDanglingScreenshotCapture(application, parsed.data.message, now);
         releaseApplicationLease(application);
-        if (application.attemptCount >= 3) {
+        if (streak >= JOB_APPLICATION_FAILURE_LIMIT) {
           application.questions = mergeApplicationQuestions(application.questions, [
             createActionQuestion({
               prompt: 'Automation needs help with this application',
@@ -398,6 +427,8 @@ export async function POST(request: NextRequest) {
       }
 
       if (parsed.data.action === 'awaiting-action') {
+        requireGenuineBlocker(parsed.data.prompt);
+        closeDanglingScreenshotCapture(application, parsed.data.prompt, now);
         application.questions = mergeApplicationQuestions(application.questions, [
           createActionQuestion({
             prompt: parsed.data.prompt,
@@ -440,6 +471,7 @@ export async function POST(request: NextRequest) {
 
       if (parsed.data.action === 'release') {
         application.updatedAt = now;
+        closeDanglingScreenshotCapture(application, 'Run released before capture finished', now);
         releaseApplicationLease(application);
       }
 
@@ -450,7 +482,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, application: result, ...(reviewHold ? { reviewHold } : {}) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to update job application';
-    const status = error instanceof EmploymentDateError ? 400 : /lease|already|not found|submission-attempted|screenshot|awaiting review/i.test(message)
+    const status = error instanceof EmploymentDateError || error instanceof MisfiledBlockerError ? 400 : /lease|already|not found|submission-attempted|screenshot|awaiting review/i.test(message)
       ? 409
       : 500;
     console.error('Error updating job application:', error);

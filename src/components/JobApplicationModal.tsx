@@ -470,9 +470,31 @@ export function JobApplicationModal({
           {application.lastError && (
             <div className="flex gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
               <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-              <div>
+              <div className="min-w-0 flex-1">
                 <strong>{application.lastError.code}</strong>
                 <p>{application.lastError.message}</p>
+                {(application.errorHistory?.length ?? 0) > 1 && (
+                  <details className="mt-2">
+                    <summary className="cursor-pointer text-xs font-semibold">
+                      Last {application.errorHistory!.length} failed runs
+                      {application.failureStreak ? ` · ${application.failureStreak} in a row` : ''}
+                    </summary>
+                    <ol className="mt-2 space-y-2 text-xs">
+                      {application.errorHistory!.slice().reverse().map((event, index) => (
+                        <li key={`${event.occurredAt}-${index}`} className="border-l-2 border-red-200 pl-2 dark:border-red-900">
+                          <p className="font-medium">
+                            {formatDateTime(event.occurredAt)} · attempt {event.attempt} ·{' '}
+                            {event.source === 'recovery' ? 'never reported back' : 'OpenClaw reported'} · {event.code}
+                          </p>
+                          <p className="break-words opacity-90">{event.message}</p>
+                          {event.lastStep && !event.message.includes(event.lastStep) && (
+                            <p className="opacity-75">Last step: {event.lastStep}</p>
+                          )}
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
+                )}
               </div>
             </div>
           )}
@@ -947,6 +969,12 @@ function QuestionField({
       </legend>
       {question.helpText && (
         <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{question.helpText}</p>
+      )}
+      {question.occurrences && question.occurrences > 1 && (
+        <p className="mb-3 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          OpenClaw ran into this {question.occurrences} times
+          {question.firstDiscoveredAt ? ` since ${formatDateTime(question.firstDiscoveredAt)}` : ''}
+        </p>
       )}
       {question.suggestion && (
         <p className="mb-2 inline-flex rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700 dark:bg-violet-950/40 dark:text-violet-200">

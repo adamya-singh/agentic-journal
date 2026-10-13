@@ -26,14 +26,22 @@ interface Connection {
   pending: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>;
 }
 
+/** A file picker the page opened, caught so Adamya can answer it from the Journal. */
+export interface FileChooserRequest {
+  backendNodeId: number;
+  mode: 'selectSingle' | 'selectMultiple';
+}
+
 interface BrowserState {
   connections: Map<string, Promise<Connection>>;
+  fileChoosers: Map<string, FileChooserRequest>;
   manualUntil: number;
 }
 
 // One server process, but each route bundle may load this module separately.
 const globalState = globalThis as typeof globalThis & { __openclawBrowser?: BrowserState };
-const state: BrowserState = (globalState.__openclawBrowser ??= { connections: new Map(), manualUntil: 0 });
+const state: BrowserState = (globalState.__openclawBrowser ??= { connections: new Map(), fileChoosers: new Map(), manualUntil: 0 });
+state.fileChoosers ??= new Map();
 
 export class OpenClawBrowserError extends Error {}
 
@@ -42,8 +50,17 @@ export function touchManualBrowserSession(now = Date.now()): void {
   state.manualUntil = now + MANUAL_SESSION_TTL_MS;
 }
 
+/**
+ * Hands the browser back: closing our DevTools sessions also ends their
+ * file-picker interception, so the worker's own uploads behave normally.
+ */
 export function endManualBrowserSession(): void {
   state.manualUntil = 0;
+  state.fileChoosers.clear();
+  for (const opening of state.connections.values()) {
+    opening.then((connection) => connection.socket.close()).catch(() => undefined);
+  }
+  state.connections.clear();
 }
 
 export function isManualBrowserSessionActive(now = Date.now()): boolean {
@@ -122,7 +139,16 @@ function connect(targetId: string): Promise<Connection> {
       socket.addEventListener('error', () => reject(new OpenClawBrowserError('Could not reach that tab')), { once: true });
     });
     socket.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data)) as { id?: number; result?: unknown; error?: { message: string } };
+      const message = JSON.parse(String(event.data)) as {
+        id?: number; result?: unknown; error?: { message: string }; method?: string; params?: Record<string, unknown>;
+      };
+      if (message.method === 'Page.fileChooserOpened' && typeof message.params?.backendNodeId === 'number') {
+        state.fileChoosers.set(targetId, {
+          backendNodeId: message.params.backendNodeId,
+          mode: message.params.mode === 'selectMultiple' ? 'selectMultiple' : 'selectSingle',
+        });
+        return;
+      }
       const waiter = message.id === undefined ? undefined : connection.pending.get(message.id);
       if (!waiter) return;
       connection.pending.delete(message.id!);
@@ -134,6 +160,10 @@ function connect(targetId: string): Promise<Connection> {
       for (const waiter of connection.pending.values()) waiter.reject(new OpenClawBrowserError('The tab went away'));
       connection.pending.clear();
     });
+    // Catch file pickers instead of letting a native dialog open on the laptop's screen.
+    for (const [method, params] of [['Page.enable', {}], ['Page.setInterceptFileChooserDialog', { enabled: true }]] as const) {
+      socket.send(JSON.stringify({ id: connection.nextId++, method, params }));
+    }
     return connection;
   })();
   state.connections.set(targetId, opening);
@@ -163,6 +193,7 @@ export interface BrowserFrame {
   title: string;
   width: number;
   height: number;
+  fileChooser?: FileChooserRequest['mode'];
 }
 
 export async function captureBrowserFrame(targetId: string): Promise<BrowserFrame> {
@@ -177,7 +208,20 @@ export async function captureBrowserFrame(targetId: string): Promise<BrowserFram
     title: info.targetInfo.title,
     width: Math.round(metrics.cssVisualViewport.clientWidth),
     height: Math.round(metrics.cssVisualViewport.clientHeight),
+    ...(state.fileChoosers.has(targetId) ? { fileChooser: state.fileChoosers.get(targetId)!.mode } : {}),
   };
+}
+
+/** Puts files (absolute paths on this machine) into the picker the page opened, or dismisses it. */
+export async function answerFileChooser(targetId: string, files: string[]): Promise<void> {
+  const chooser = state.fileChoosers.get(targetId);
+  if (!chooser) throw new OpenClawBrowserError('The page is not asking for a file');
+  state.fileChoosers.delete(targetId);
+  if (files.length === 0) return;
+  await call(targetId, 'DOM.setFileInputFiles', {
+    files: chooser.mode === 'selectSingle' ? files.slice(0, 1) : files,
+    backendNodeId: chooser.backendNodeId,
+  });
 }
 
 export type BrowserInput =
@@ -241,7 +285,8 @@ export async function sendBrowserInput(targetId: string, input: BrowserInput): P
       return;
     }
     case 'navigate': {
-      const url = /^https?:\/\//i.test(input.url) ? input.url : `https://${input.url}`;
+      state.fileChoosers.delete(targetId);
+      const url = /^([a-z][a-z0-9+.-]*:\/\/|about:|data:)/i.test(input.url) ? input.url : `https://${input.url}`;
       await call(targetId, 'Page.navigate', { url });
       return;
     }
