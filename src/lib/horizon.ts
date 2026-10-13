@@ -28,6 +28,16 @@ export interface HorizonUndated {
   label: string;
 }
 
+// A daily task: it never comes due, so it rides on the ring around the sun instead of the zones.
+export interface HorizonDaily {
+  id: string;
+  listType: 'have-to-do' | 'want-to-do';
+  title: string;
+  short: string;
+  minutes: number | null;   // the length the task names ("30 minutes", "1 hour"), if any
+  done: boolean;            // checked off today
+}
+
 export interface HorizonCleared {
   id: string;
   short: string;
@@ -40,6 +50,8 @@ export interface HorizonData {
   holds: HorizonItem[];
   undated: HorizonUndated[];
   cleared: HorizonCleared[];
+  dailies: HorizonDaily[];
+  dailyWeek: number[];    // dailies checked off on each of the last 7 days, oldest first, today last
   hiddenStale: number;
   letGoThisWeek: number;
   bounds: { climb: number; altitude: number };   // hours from now to next Monday and the Monday after
@@ -147,6 +159,35 @@ export function shortenTask(text: string): { short: string; label: string } {
   return { short, label: label || '' };
 }
 
+const DURATION = /(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?)\b/i;
+
+// "do 1 leetcode problem (1 hour)" -> "1 leetcode problem", 60 minutes;
+// "work out for 10 minutes" -> "Work out", 10 minutes.
+export function shortenDaily(text: string): { short: string; minutes: number | null } {
+  const m = DURATION.exec(text);
+  const minutes = m ? Math.round(Number(m[1]) * (/^h/i.test(m[2]) ? 60 : 1)) : null;
+  const unit = String.raw`\d+(?:\.\d+)?\s*(?:hours?|hrs?|minutes?|mins?)\b`;
+  let short = text.trim()
+    .replace(/\s*\([^)]*\)\s*$/, '')
+    .replace(new RegExp(String.raw`\s+for\s+${unit}`, 'i'), '')
+    .replace(new RegExp(String.raw`^do\s+${unit}\s+of\s+`, 'i'), '')
+    .replace(/^do\s+/i, '')
+    .trim();
+  if (short.length > 24) {
+    // Cut at a word, and not on a dangling "or"/"of" ("Karpathy videos or Stanford CS336" -> "Karpathy videos…").
+    const words = short.slice(0, 24).split(' ').slice(0, -1);
+    while (words.length > 1 && /^(or|and|of|the|to|a|on|for|with)$/i.test(words[words.length - 1])) words.pop();
+    short = `${words.join(' ')}…`;
+  }
+  return { short: short.charAt(0).toUpperCase() + short.slice(1), minutes };
+}
+
+// "1h 30m", "40m".
+export function fmtMinutes(total: number): string {
+  const h = Math.floor(total / 60), m = total % 60;
+  return h ? `${h}h${m ? ` ${m}m` : ''}` : `${m}m`;
+}
+
 export function weightFor(text: string, listType: string): number {
   if (listType === 'want-to-do') return 2;
   if (/\bOA\b|online assessment|take-home|midterm|final exam|\bexam\b/i.test(text)) return 5;
@@ -168,6 +209,7 @@ export interface HorizonInputs {
   currentHaveToDoIds: string[];
   completed: { id: string; text: string; completedAt?: string }[];
   letGoThisWeek?: number;
+  dailyDoneByDay?: string[][];   // ids of dailies checked off on each of the last 7 days, oldest first
   now?: Date;
 }
 
@@ -249,13 +291,27 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     .sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))
     .map((c) => ({ id: c.id, short: shortenTask(c.text).short, day: DAY[new Date(c.completedAt as string).getDay()] }));
 
+  const doneByDay = input.dailyDoneByDay ?? [];
+  const doneToday = new Set(doneByDay[doneByDay.length - 1] ?? []);
+  const dailies: HorizonDaily[] = [];
+  const addDaily = (t: Task, listType: HorizonDaily['listType']) => {
+    const { short, minutes } = shortenDaily(t.text);
+    dailies.push({ id: t.id, listType, title: t.text, short, minutes, done: doneToday.has(t.id) });
+  };
+  flatten(input.haveToDo).filter((t) => t.isDaily).forEach((t) => addDaily(t, 'have-to-do'));
+  flatten(input.wantToDo).filter((t) => t.isDaily).forEach((t) => addDaily(t, 'want-to-do'));
+
   const today = startOfDay(now);
   const nextMonday = new Date(today.getTime() + (((8 - today.getDay()) % 7) || 7) * 864e5);
   const bounds = {
     climb: (nextMonday.getTime() - now.getTime()) / 36e5,
     altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
   };
-  return { now: now.toISOString(), items: ringItems, holds, undated, cleared, hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds };
+  return {
+    now: now.toISOString(), items: ringItems, holds, undated, cleared,
+    dailies, dailyWeek: doneByDay.map((ids) => ids.length),
+    hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds,
+  };
 }
 
 // The three answers the hero leads with.

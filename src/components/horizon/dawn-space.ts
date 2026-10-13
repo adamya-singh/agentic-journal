@@ -2,17 +2,23 @@
 // upright in the flat view, and stepping inside tips them back while the camera comes down to the spawn
 // point beside the sun. Inside, the cursor looks across the half-circle ahead and scrolling travels.
 import * as THREE from 'three';
-import type { HorizonData, HorizonItem } from '@/lib/horizon';
-import { HORIZON_RING_ZONES } from '@/lib/horizon';
-import { DAWN, ZONE_NAMES, esc, starField, type PillSpot, type Sector } from './dawn-svg';
+import type { HorizonData, HorizonDaily, HorizonItem } from '@/lib/horizon';
+import { HORIZON_RING_ZONES, fmtMinutes } from '@/lib/horizon';
+import { DAILY_R, DAWN, ZONE_NAMES, dailyArcs, esc, starField, type PillSpot, type Sector } from './dawn-svg';
 
 const U = 10;                                     // 1 world unit = 10 SVG px
 const R = DAWN.R.map((r) => r / U);
 const TOP = DAWN.H / U, BOT = -DAWN.G / U;        // visible world y range at the flat pose
+const DR = DAILY_R / U;
 const D0 = 400, EYE = 3.6, SPAWN = 12, PITCH0 = -0.17, FOV1 = 62 * Math.PI / 180, YAW_MAX = 76 * Math.PI / 180, RMAX = 49;
 const DOT: Record<string, number> = { ignition: 0xfff6ec, climb: 0xffffff, altitude: 0xdfe7f5, orbit: 0xb9c6dc, hold: 0xff5a1f };
 
 type NodeKind = HorizonItem['zone'];
+interface DailySeg {
+  daily: HorizonDaily; mid: number; el: HTMLButtonElement | null;
+  mesh: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>;
+}
+
 interface SpaceNode {
   item: HorizonItem; k: NodeKind; x2: number; y2: number; lift: number; phase: number;
   el: HTMLDivElement; dot: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>; world: THREE.Vector3;
@@ -68,6 +74,12 @@ export class DawnSpace {
   private youEl: HTMLDivElement | null = null;
   private spots: PillSpot[] = [];
   private holds: HorizonItem[] = [];
+  // The dailies ring is a child of the sun, so it shrinks and turns to face you with it.
+  private dailyRing = new THREE.Group();
+  private dailySegs: DailySeg[] = [];
+  private dailyEl: HTMLButtonElement | null = null;
+  private dailyZone: HTMLDivElement | null = null;
+  private dailyHover = 0;     // pointer is over the sun's zone or a target: hold the view so they stay put
   private sectors: Sector[] = [];
   private rays: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial> | null = null;
   private mode: 'flat' | 'live' = 'flat';
@@ -94,6 +106,9 @@ export class DawnSpace {
   onLeave: (() => void) | null = null;
   onFrame: (() => void) | null = null;
   onEscape: (() => boolean) | null = null;
+  // Hooks for the dailies: a segment was clicked (toggle it), or the count under the sun (open the list).
+  onDailyToggle: ((id: string) => void) | null = null;
+  onDailyOpen: (() => void) | null = null;
   // While set, the cursor no longer swings the view: a small parallax around this heading, or none when still.
   private focus: { yaw: number; pitch: number; still: boolean } | null = null;
 
@@ -162,6 +177,7 @@ export class DawnSpace {
     this.haze = new THREE.Mesh(new THREE.CircleGeometry(R[2], 96), new THREE.MeshBasicMaterial({ map: hazeTex, transparent: true, clippingPlanes: this.above, fog: false, depthWrite: false }));
     this.haze.renderOrder = order++; this.sun.renderOrder = order++;
     this.scene.add(this.haze); this.scene.add(this.sun);
+    this.sun.add(this.dailyRing);
 
     this.stems = new THREE.LineSegments(this.stemGeo, new THREE.LineBasicMaterial({ color: 0xe6ecf4, transparent: true, opacity: 0, fog: false }));
     this.scene.add(this.stems);
@@ -182,6 +198,7 @@ export class DawnSpace {
     this.holds = data.holds;
     this.sectors = sectors;
     this.buildRays();
+    this.buildDailyRing(data.dailies);
     if (this.mode === 'live') this.buildNodes();
   }
 
@@ -236,10 +253,78 @@ export class DawnSpace {
     this.disk.add(this.rays);
   }
 
+  private buildDailyRing(dailies: HorizonDaily[]) {
+    this.dailySegs.forEach((d) => { this.dailyRing.remove(d.mesh); d.mesh.geometry.dispose(); d.mesh.material.dispose(); });
+    this.dailySegs = dailyArcs(dailies.length).map((arc, i) => {
+      const daily = dailies[i], w = daily.done ? 0.3 : 0.225;
+      const a1 = arc.a1 * Math.PI / 180, len = (arc.a0 - arc.a1) * Math.PI / 180;
+      const mesh = new THREE.Mesh(new THREE.RingGeometry(DR - w, DR + w, 24, 1, a1, len), new THREE.MeshBasicMaterial({
+        color: daily.done ? 0xfff6ec : 0xffecd6, transparent: true, opacity: daily.done ? 1 : 0.38,
+        depthWrite: false, side: THREE.DoubleSide, clippingPlanes: this.above, fog: false,
+      }));
+      mesh.renderOrder = 50;
+      this.dailyRing.add(mesh);
+      return { daily, mid: arc.mid, el: null, mesh };
+    });
+  }
+
+  // Click targets for the ring and its count, rebuilt with the other labels each time you step inside.
+  private buildDailyHits() {
+    this.dailyEl = null;
+    this.dailyZone = null;
+    this.dailyHover = 0;
+    if (!this.dailySegs.length) return;
+    // Moving the mouse swings the view, which would slide the small targets out from under it, so the area
+    // around the sun holds the view while the pointer is in it.
+    const hold = (el: HTMLElement) => {
+      el.addEventListener('pointerenter', () => { this.dailyHover += 1; });
+      el.addEventListener('pointerleave', () => { this.dailyHover = Math.max(0, this.dailyHover - 1); });
+    };
+    this.dailyZone = document.createElement('div');
+    this.dailyZone.className = 'hz3d-dz';
+    hold(this.dailyZone);
+    this.labEl.appendChild(this.dailyZone);
+    this.dailySegs.forEach((sg) => {
+      const d = sg.daily, el = document.createElement('button');
+      el.type = 'button';
+      el.className = `hz3d-ds${d.done ? ' done' : ''}`;
+      const len = d.minutes ? ` · ${fmtMinutes(d.minutes)}` : '';
+      el.dataset.label = `${d.short}${len} · ${d.done ? 'done, click to undo' : 'click to check off'}`;
+      el.setAttribute('aria-label', `${d.title}${d.done ? ', done today. Mark not done.' : '. Check off for today.'}`);
+      el.addEventListener('click', (e) => { e.stopPropagation(); if (this.mode === 'live') this.onDailyToggle?.(d.id); });
+      hold(el);
+      el.addEventListener('pointerenter', () => { sg.mesh.material.color.setHex(0xffd2a8); sg.mesh.material.opacity = 1; });
+      el.addEventListener('pointerleave', () => { sg.mesh.material.color.setHex(d.done ? 0xfff6ec : 0xffecd6); sg.mesh.material.opacity = d.done ? 1 : 0.38; });
+      this.labEl.appendChild(el);
+      sg.el = el;
+    });
+    const done = this.dailySegs.filter((sg) => sg.daily.done).length, n = this.dailySegs.length;
+    this.dailyEl = document.createElement('button');
+    this.dailyEl.type = 'button';
+    this.dailyEl.className = 'hz3d-dl';
+    this.dailyEl.textContent = done === n ? 'ALL DONE' : `${done} OF ${n} DAILY`;
+    this.dailyEl.setAttribute('aria-label', `Dailies: ${done} of ${n} done today. Show the list.`);
+    this.dailyEl.addEventListener('click', (e) => { e.stopPropagation(); if (this.mode === 'live') this.onDailyOpen?.(); });
+    hold(this.dailyEl);
+    this.labEl.appendChild(this.dailyEl);
+  }
+
+  /** Where the sun is on screen in sky pixels, and how far out its ring of dailies reaches. */
+  sunScreen(): { x: number; y: number; r: number; on: boolean } {
+    const c = this.tmp.set(0, 0, 0).applyMatrix4(this.sun.matrixWorld).project(this.camera);
+    const x = (c.x * 0.5 + 0.5) * this.W, y = (-c.y * 0.5 + 0.5) * this.H, on = c.z < 1;
+    const e = this.tmp.set(DR, 0, 0).applyMatrix4(this.sun.matrixWorld).project(this.camera);
+    return { x, y, r: Math.abs((e.x * 0.5 + 0.5) * this.W - x), on };
+  }
+
   private clearNodes() {
     this.nodes.forEach((n) => { this.scene.remove(n.dot); n.dot.geometry.dispose(); n.dot.material.dispose(); });
     this.nodes = [];
     this.zoneLabs = [];
+    this.dailySegs.forEach((sg) => { sg.el = null; });
+    this.dailyEl = null;
+    this.dailyZone = null;
+    this.dailyHover = 0;
     this.labEl.innerHTML = '';
   }
 
@@ -280,6 +365,7 @@ export class DawnSpace {
     this.youEl.className = 'hz3d-you';
     this.youEl.textContent = 'YOU';
     this.labEl.appendChild(this.youEl);
+    this.buildDailyHits();
   }
 
   private setMode(m: 'flat' | 'live') {
@@ -332,7 +418,7 @@ export class DawnSpace {
       const b = sky.getBoundingClientRect();
       const nx = Math.max(-1, Math.min(1, ((e.clientX - b.left) / b.width) * 2 - 1));
       const ny = Math.max(-1, Math.min(1, ((e.clientY - b.top) / b.height) * 2 - 1));
-      if (this.focus?.still) return;
+      if (this.focus?.still || this.dailyHover > 0) return;
       if (this.focus) { this.look.yaw = this.focus.yaw - nx * 0.06; this.look.pitch = this.focus.pitch - ny * 0.03; return; }
       this.look.yaw = -nx * YAW_MAX; this.look.pitch = PITCH0 - ny * 0.14;
     }, sig);
@@ -543,6 +629,31 @@ export class DawnSpace {
       tmp.set(0, 2, 0).applyMatrix4(this.sun.matrixWorld).project(this.camera);
       this.youEl.style.transform = `translate(${((tmp.x * 0.5 + 0.5) * W).toFixed(1)}px,${((-tmp.y * 0.5 + 0.5) * H).toFixed(1)}px) translate(-50%,-50%) scale(${kFlat.toFixed(3)})`;
       this.youEl.style.opacity = Math.max(0, 1 - e * 2.5).toFixed(2);
+    }
+    // The dailies' targets fade in once you are standing at the pad; flat, the drawing's own targets take over.
+    const showDaily = this.mode === 'live' && e > 0.95;
+    if (this.dailyZone) {
+      const sun = this.sunScreen(), size = (sun.r + 34) * 2, vis = showDaily && sun.on;
+      this.dailyZone.style.transform = `translate(${sun.x.toFixed(1)}px,${sun.y.toFixed(1)}px) translate(-50%,-50%)`;
+      this.dailyZone.style.width = this.dailyZone.style.height = `${size.toFixed(0)}px`;
+      this.dailyZone.classList.toggle('hit', vis);
+      if (!vis) this.dailyHover = 0;
+    }
+    this.dailySegs.forEach((sg) => {
+      if (!sg.el) return;
+      const a = sg.mid * Math.PI / 180;
+      tmp.set(Math.cos(a) * DR, Math.sin(a) * DR, 0).applyMatrix4(this.sun.matrixWorld).project(this.camera);
+      const vis = showDaily && tmp.z < 1 && Math.abs(tmp.x) < 1.05 && Math.abs(tmp.y) < 1.05;
+      sg.el.style.transform = `translate(${((tmp.x * 0.5 + 0.5) * W).toFixed(1)}px,${((-tmp.y * 0.5 + 0.5) * H).toFixed(1)}px) translate(-50%,-50%)`;
+      sg.el.style.opacity = vis ? '1' : '0';
+      sg.el.classList.toggle('hit', vis);
+    });
+    if (this.dailyEl) {
+      tmp.set(0, -(R[0] + 2.6), 0).applyMatrix4(this.sun.matrixWorld).project(this.camera);   // under the sun, as in the flat view
+      const vis = showDaily && tmp.z < 1 && Math.abs(tmp.x) < 1.05 && Math.abs(tmp.y) < 1.05;
+      this.dailyEl.style.transform = `translate(${((tmp.x * 0.5 + 0.5) * W).toFixed(1)}px,${((-tmp.y * 0.5 + 0.5) * H).toFixed(1)}px) translate(-50%,-50%)`;
+      this.dailyEl.style.opacity = vis ? '1' : '0';
+      this.dailyEl.classList.toggle('hit', vis);
     }
     this.onFrame?.();
     if (this.mode === 'live') {

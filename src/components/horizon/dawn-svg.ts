@@ -26,6 +26,17 @@ export const DAWN = {
   } as Record<string, [string, string, string, string]>,
 };
 
+// Dailies ring the sun: one arc each across its top half, left to right. Shared with the 3D sun and the
+// click targets over the flat drawing, so all three line up.
+export const DAILY_R = 69;
+export function dailyArcs(n: number): { a0: number; a1: number; mid: number }[] {
+  const gap = 4, seg = (180 - gap * (n + 1)) / n;
+  return Array.from({ length: n }, (_, i) => {
+    const a0 = 180 - gap - i * (seg + gap);
+    return { a0, a1: a0 - seg, mid: a0 - seg / 2 };
+  });
+}
+
 export const ZONE_NAMES: Record<string, [string, string]> = {
   ignition: ['Ignition', 'next 48h'], climb: ['Climb', 'this week'], altitude: ['Altitude', 'next week'], orbit: ['Orbit', 'later'],
 };
@@ -131,6 +142,8 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     `<radialGradient id="hz-sun" cx=".5" cy=".5" r=".5">${DAWN.sun.map((c, i) => `<stop offset="${[0, 0.55, 0.85, 1][i]}" stop-color="${c}"/>`).join('')}</radialGradient>` +
     `<radialGradient id="hz-haze" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="${DAWN.haze}" stop-opacity=".5"/><stop offset=".5" stop-color="${DAWN.haze}" stop-opacity=".15"/><stop offset="1" stop-color="${DAWN.haze}" stop-opacity="0"/></radialGradient>` +
     '<filter id="hz-blur" x="-20%" y="-50%" width="140%" height="200%"><feGaussianBlur stdDeviation="6"/></filter>' +
+    '<filter id="hz-dglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4"/></filter>' +
+    '<filter id="hz-bloom" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="12"/></filter>' +
     `<clipPath id="hz-above"><rect width="${W}" height="${H}"/></clipPath></defs>`;
   s += `<rect width="${W}" height="${H}" fill="url(#hz-sky)"/>`;
   s += starField(W, H * 0.6, DAWN.stars);
@@ -145,13 +158,29 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     const a = sec.a0 + SECTOR_GAP / 2, p0 = pt(R[0] + 8, a), p1 = pt(R[4] + 6, a);
     s += `<line x1="${p0[0].toFixed(1)}" y1="${p0[1].toFixed(1)}" x2="${p1[0].toFixed(1)}" y2="${p1[1].toFixed(1)}" stroke="rgba(255,255,255,.09)"/>`;
   });
+  const dailies = data.dailies, doneN = dailies.filter((d) => d.done).length;
+  // The sun glows wider as the day's dailies get done.
+  if (dailies.length) {
+    const all = doneN === dailies.length;
+    s += `<circle cx="${X}" cy="${H}" r="${all ? 104 : 72}" fill="${DAWN.haze}" opacity="${(0.12 + 0.5 * doneN / dailies.length).toFixed(2)}" filter="url(#hz-bloom)"/>`;
+  }
   s += `<circle cx="${X}" cy="${H}" r="${R[0]}" fill="url(#hz-sun)"/></g>`;
+  dailyArcs(dailies.length).forEach((arc, i) => {
+    const d = dailies[i], p0 = pt(DAILY_R, arc.a0), p1 = pt(DAILY_R, arc.a1);
+    const path = `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${DAILY_R} ${DAILY_R} 0 0 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
+    if (d.done) s += `<path d="${path}" fill="none" stroke="#ffb37a" stroke-width="7" stroke-linecap="round" opacity=".8" filter="url(#hz-dglow)"/>`;
+    s += `<path class="hz-dseg${d.done ? ' done' : ''}" data-daily="${esc(d.id)}" d="${path}" fill="none" stroke="${d.done ? '#fff6ec' : 'rgba(255,236,214,.38)'}" stroke-width="4.5" stroke-linecap="round"/>`;
+  });
   sectors.forEach((sec) => {
     const p = pt(R[4] + 16, sec.mid), c = Math.cos(sec.mid * Math.PI / 180);
     const anchor = c > 0.25 ? 'start' : c < -0.25 ? 'end' : 'middle';
     s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 3).toFixed(1)}" text-anchor="${anchor}" style="font-family:${MONO}" font-size="10" letter-spacing="1.6" fill="#d6dde8" opacity=".7">${esc(sec.group.toUpperCase())}</text>`;
   });
-  s += `<text x="${X}" y="${H - 20}" text-anchor="middle" style="font-family:${MONO}" font-size="10" letter-spacing="2" fill="${DAWN.sunText}">YOU</text>`;
+  s += `<text x="${X}" y="${H - (dailies.length ? 29 : 20)}" text-anchor="middle" style="font-family:${MONO}" font-size="10" letter-spacing="2" fill="${DAWN.sunText}">YOU</text>`;
+  if (dailies.length) {
+    const count = doneN === dailies.length ? 'ALL DONE' : `${doneN} OF ${dailies.length} DAILY`;
+    s += `<text x="${X}" y="${H - 12}" text-anchor="middle" style="font-family:${MONO}" font-size="9" letter-spacing="1.4" fill="#7a3a10">${count}</text>`;
+  }
   s += `<rect y="${H}" width="${W}" height="${G}" fill="url(#hz-gr)"/>`;
   s += `<rect x="0" y="${H - 1}" width="${W}" height="1.5" fill="${DAWN.line}"/>`;
   HORIZON_RING_ZONES.forEach((k, i) => {
@@ -160,7 +189,8 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     s += `<text x="${x}" y="${H + 30}" text-anchor="middle" style="font-family:${SERIF}" font-size="24" font-style="italic" fill="${DAWN.groundInk}">${nm[0]}</text>`;
     s += `<text x="${x}" y="${H + 46}" text-anchor="middle" style="font-family:${MONO}" font-size="9.5" letter-spacing="1.4" fill="${DAWN.groundInk}" opacity=".7">${nm[1].toUpperCase()}</text>`;
   });
-  const boxes: Box[] = [[X - R[0] - 8, H - R[0] - 8, X + R[0] + 8, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
+  const core = data.dailies.length ? DAILY_R + 6 : R[0] + 8;   // keep pills off the sun and its ring of dailies
+  const boxes: Box[] = [[X - core, H - core, X + core, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
   // Place pills nearest-due first, so the most urgent ones keep their ideal spot.
   const secBy = new Map(sectors.map((sec) => [sec.group, sec]));
   data.items.slice().sort((a, b) => a.hours - b.hours).forEach((it) => {

@@ -8,6 +8,7 @@ import { horizonAnswers, type HorizonData } from '@/lib/horizon';
 import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { BriefLayer } from './BriefLayer';
+import { DailyRing } from './DailyRing';
 import { LetGoReasonModal } from '@/components/LetGoReasonModal';
 import { DONE_CSS, DoneTray } from './DoneTray';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
@@ -26,6 +27,7 @@ const CSS = `
 .hz-say h1{margin:0;font:400 clamp(22px,3.2vw,44px)/1.04 var(--hz-serif);letter-spacing:-.005em;color:var(--hz-ink)}
 .hz-say h1 em{font-style:normal;color:var(--hz-em)}
 .hz-say p{margin:8px 0 0;font:13px/1.45 var(--hz-sans);color:var(--hz-dim)}
+.hz-say .hz-daily-line{color:var(--hz-em)}
 .hz-cap{position:absolute;right:3%;top:24px;width:min(34%,420px);z-index:6}
 .hz-loading{position:absolute;inset:0;display:grid;place-items:center;font:13px var(--hz-sans);color:var(--hz-dim);z-index:2}
 .hz3d{position:absolute;inset:0;opacity:0;pointer-events:none}
@@ -236,6 +238,11 @@ export function HorizonHero() {
     ? [`${answers.cleared} cleared${answers.letGo ? `, ${answers.letGo} let go` : ''} this week.`, answers.big ? `Next big launch: ${answers.big.short} · ${answers.big.day}.` : '']
       .filter(Boolean).join(' ')
     : '';
+  // What's left of today's dailies, so the ring around the sun needs no hovering to read.
+  const dailiesLeft = data?.dailies.filter((d) => !d.done) ?? [];
+  const dailyLine = !data?.dailies.length ? ''
+    : dailiesLeft.length ? `Dailies left: ${dailiesLeft.map((d) => d.short).join(', ')}`.replace(/(?<!…)$/, '.')
+      : `All ${data.dailies.length} dailies done.`;
 
   return (
     <section ref={heroRef} className={`hz-hero ${serif.variable}`} aria-label="Priority horizon">
@@ -250,7 +257,7 @@ export function HorizonHero() {
         {!data && <div className="hz-loading">{error || 'Loading your horizon…'}</div>}
         <div className="hz-say">
           <h1>{headline}</h1>
-          {sub && <p>{sub}</p>}
+          {(sub || dailyLine) && <p>{sub}{dailyLine && <> <span className="hz-daily-line">{dailyLine}</span></>}</p>}
         </div>
         <div className="hz-cap hz-nointeract" onClick={(e) => e.stopPropagation()}>
           <QuickCaptureInput variant="inline" />
@@ -306,6 +313,7 @@ export function HorizonHero() {
         <LetGoReasonModal taskText={letGoAsk?.title ?? null} onCancel={() => setLetGoAsk(null)} onConfirm={letGo} />
       </div>
       <BriefLayer heroRef={heroRef} svgRef={svgRef} space={space} data={data} spots={spots} onChanged={refreshTasks} />
+      <DailyRing data={data} space={space} onChanged={refreshTasks} />
     </section>
   );
 }
