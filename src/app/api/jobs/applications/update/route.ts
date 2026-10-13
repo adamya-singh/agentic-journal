@@ -7,6 +7,7 @@ import type { JobApplicationQuestion, JobApplicationRecord } from '@/lib/types';
 import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 import { readJobListings } from '../../job-store-utils';
 import {
+  confirmSubmissionFromEmployerEmail,
   createActionQuestion,
   buildGoogleDocAutoAnswerEntry,
   createApplicationQuestionId,
@@ -410,17 +411,20 @@ export async function POST(request: NextRequest) {
       }
 
       if (parsed.data.action === 'ambiguous-submission') {
-        application.questions = mergeApplicationQuestions(application.questions, [
-          createActionQuestion({
-            prompt: SUBMISSION_CONFIRM_PROMPT,
-            helpText:
-              'Open the application and answer “submitted” or “retry”. The worker will not click Submit again until you resolve this.',
-            pageUrl: parsed.data.pageUrl,
-            now,
-          }),
-        ]);
-        setApplicationStatus(application, 'awaiting-user-input', now);
         releaseApplicationLease(application);
+        // An employer email may already have answered it.
+        if (!confirmSubmissionFromEmployerEmail(application, now)) {
+          application.questions = mergeApplicationQuestions(application.questions, [
+            createActionQuestion({
+              prompt: SUBMISSION_CONFIRM_PROMPT,
+              helpText:
+                'Open the application and answer “submitted” or “retry”. The worker will not click Submit again until you resolve this.',
+              pageUrl: parsed.data.pageUrl,
+              now,
+            }),
+          ]);
+          setApplicationStatus(application, 'awaiting-user-input', now);
+        }
       }
 
       if (parsed.data.action === 'progress') {

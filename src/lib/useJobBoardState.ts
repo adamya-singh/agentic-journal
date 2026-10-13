@@ -236,11 +236,12 @@ export function useJobBoardState(
       listingId: string,
       resumeVariant: JobApplicationResumeVariant,
       responses: JobApplicationResponseInput[],
+      options?: { submittedByHand?: boolean },
     ) => {
       const response = await fetch('/api/jobs/applications/answers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ listingId, resumeVariant, responses }),
+        body: JSON.stringify({ listingId, resumeVariant, responses, ...options }),
       });
       const data = await response.json();
       if (!response.ok || !data.success) {

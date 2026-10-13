@@ -1,16 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { captureSubmissionSnapshot } from '../../application-store-utils';
 import type { JobApplicationAnswer, JobApplicationQuestion } from '@/lib/types';
 import {
   applicationFileExists,
   getJobApplicationReadiness,
+  markApplicationSubmitted,
   materializeJobApplication,
   mutateJobApplicationsStore,
   parseFileAnswer,
   releaseApplicationLease,
   setApplicationStatus,
-  updateJobListingLeadStatus,
   upsertConfirmedAnswer,
 } from '../../application-store-utils';
 import { triggerJobApplicationWorker } from '../../application-worker-utils';
@@ -35,6 +34,8 @@ const RequestSchema = z.object({
         }),
     )
     .default([]),
+  /** Adamya finished and submitted it himself in OpenClaw's browser. */
+  submittedByHand: z.boolean().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -95,6 +96,21 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      if (parsed.data.submittedByHand) {
+        if (application.status === 'submitted' || application.status === 'closed') {
+          throw new Error('This application is already finished');
+        }
+        // Whatever the worker was stuck on no longer matters.
+        for (const question of application.questions) {
+          if (question.resolution !== 'pending') continue;
+          question.resolution = question.kind === 'action' ? 'answered' : 'skipped';
+          if (question.kind === 'action') question.answer = 'Submitted by hand';
+          question.answeredAt = now;
+        }
+        markApplicationSubmitted(application, { message: 'Submitted by hand in OpenClaw’s browser' }, now);
+        return { application, shouldWake: false };
+      }
+
       const pendingAfter = application.questions.filter(
         (question) => question.resolution === 'pending',
       ).length;
@@ -106,20 +122,11 @@ export async function POST(request: NextRequest) {
       if (ambiguity && typeof ambiguity.answer === 'string') {
         const answer = ambiguity.answer.trim().toLowerCase();
         if (['submitted', 'yes', 'confirmed'].includes(answer)) {
-          setApplicationStatus(application, 'submitted', now);
-          application.submittedAt = now;
-          application.submissionEvidence = {
-            message: 'Submission confirmed manually in Agentic Journal',
-          };
-          captureSubmissionSnapshot(application, true);
-          application.simplifySync = {
-            status: 'pending',
-            attemptCount: application.simplifySync?.attemptCount ?? 0,
-            updatedAt: now,
-          };
-          delete application.resumeRequestedAt;
-          releaseApplicationLease(application);
-          updateJobListingLeadStatus(parsed.data.listingId, 'applied');
+          markApplicationSubmitted(
+            application,
+            { message: 'Submission confirmed manually in Agentic Journal' },
+            now,
+          );
           return { application, shouldWake: false };
         }
         if (['retry', 'not submitted', 'no'].includes(answer)) {
@@ -156,7 +163,7 @@ export async function POST(request: NextRequest) {
     const message = error instanceof Error ? error.message : 'Failed to save answers';
     const status = /not found/i.test(message)
       ? 404
-      : /question|required|answer|confirmation/i.test(message)
+      : /question|required|answer|confirmation|finished/i.test(message)
         ? 400
         : 500;
     console.error('Error saving job application answers:', error);

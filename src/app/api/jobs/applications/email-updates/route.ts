@@ -3,9 +3,13 @@ import { emailMessageIds, foldEmployerEmail, sameEmployerEmail, sameCandidateEma
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EventDetailsSchema, eventDetails } from '@/lib/job-event-details';
-import type { JobApplicationRecord, JobEmailUpdatesView, JobListing } from '@/lib/types';
+import type {
+  JobApplicationRecord, JobEmailUpdatesProcessedEntry, JobEmailUpdatesView, JobListing,
+} from '@/lib/types';
 import { readJobListings } from '../../job-store-utils';
 import {
+  confirmSubmissionFromEmployerEmail,
+  isAwaitingSubmissionConfirmation,
   materializeJobApplication,
   mutateJobApplicationsStore,
   readJobApplicationsStore,
@@ -79,9 +83,39 @@ export interface JobEmailUpdatesResult {
   summary?: { applied: number; queued: number; ignored: number; skipped: number };
 }
 
-/** A posting an employer email can refer to: applied for and not withdrawn from the board. */
+/**
+ * A posting an employer email can refer to: applied for and not withdrawn from
+ * the board, or one OpenClaw clicked Submit on without seeing it go through
+ * (an email from the employer settles that question).
+ */
 function isTrackable(listing: JobListing, application: JobApplicationRecord | undefined): boolean {
-  return listing.status === 'applied' || application?.status === 'submitted';
+  return (
+    listing.status === 'applied' ||
+    application?.status === 'submitted' ||
+    isAwaitingSubmissionConfirmation(application)
+  );
+}
+
+/** When the oldest Submit still waiting for confirmation was clicked. */
+function earliestUnconfirmedSubmit(applications: Record<string, JobApplicationRecord>): number | undefined {
+  const times = Object.values(applications)
+    .filter(isAwaitingSubmissionConfirmation)
+    .map((application) => Date.parse(application.submissionAttemptedAt!));
+  return times.length ? Math.min(...times) : undefined;
+}
+
+/**
+ * An email set aside before unconfirmed Submits were matchable, read after one
+ * of them was clicked, may be the employer's acknowledgement: discovery offers
+ * it once more, and recording it again marks it seen.
+ */
+function needsSecondLook(entry: JobEmailUpdatesProcessedEntry, unconfirmedSince: number | undefined): boolean {
+  return (
+    unconfirmedSince !== undefined &&
+    entry.outcome === 'ignored' &&
+    !entry.sawUnconfirmedSubmits &&
+    Date.parse(entry.at) >= unconfirmedSince
+  );
 }
 
 /** What the agent needs for one pass: the time window, handled ids, and the postings to match against. */
@@ -115,6 +149,7 @@ export async function GET(request: NextRequest) {
         ? Date.parse(state.lastPolledAt) - JOB_EMAIL_UPDATE_POLL_OVERLAP_MS
         : now - JOB_EMAIL_UPDATE_FIRST_POLL_LOOKBACK_MS,
     ).toISOString();
+    const unconfirmedSince = earliestUnconfirmedSubmit(store.applications);
     const listings = readJobListings().listings.flatMap((listing) => {
       const application = store.applications[listing.id];
       if (!isTrackable(listing, application)) return [];
@@ -129,8 +164,11 @@ export async function GET(request: NextRequest) {
           positionTitle: listing.positionTitle,
           location: listing.location,
           linkHost,
-          submittedAt: application?.submittedAt ?? listing.updatedAt,
+          submittedAt: application?.submittedAt ?? application?.submissionAttemptedAt ?? listing.updatedAt,
           employerStage: application?.employerStage ?? null,
+          ...(isAwaitingSubmissionConfirmation(application)
+            ? { awaitingSubmissionConfirmation: true }
+            : {}),
         },
       ];
     });
@@ -140,7 +178,7 @@ export async function GET(request: NextRequest) {
       since,
       autoApplyConfidence: JOB_EMAIL_UPDATE_AUTO_APPLY_CONFIDENCE,
       receivedAutoApplyConfidence: JOB_EMAIL_UPDATE_RECEIVED_AUTO_APPLY_CONFIDENCE,
-      knownMessageIds: [...new Set([...Object.keys(state.processed), ...state.pending.flatMap(emailMessageIds), ...Object.values(store.applications).flatMap(a => (a.employerUpdates ?? []).flatMap(emailMessageIds))])],
+      knownMessageIds: [...new Set([...Object.keys(state.processed).filter((id) => !needsSecondLook(state.processed[id], unconfirmedSince)), ...state.pending.flatMap(emailMessageIds), ...Object.values(store.applications).flatMap(a => (a.employerUpdates ?? []).flatMap(emailMessageIds))])],
       listings,
     });
   } catch (error) {
@@ -178,6 +216,8 @@ export async function POST(request: NextRequest) {
         const application = materializeJobApplication(store, listingId);
         const previousStage = application.employerStage;
         if (applyEmployerUpdate(application, update, now)) stageChanged = true;
+        // The new Simplify card needs the worker too.
+        if (confirmSubmissionFromEmployerEmail(application, now)) stageChanged = true;
         const listing = listings.find((candidate) => candidate.id === listingId);
         try {
           if (listing && previousStage !== 'assessment' && application.employerStage === 'assessment') {
@@ -230,10 +270,12 @@ export async function POST(request: NextRequest) {
         return { emailUpdates: toEmailUpdatesView(state), applications: [...enriched] };
       }
 
+      const unconfirmedSince = earliestUnconfirmedSubmit(store.applications);
       if (input.action === 'record') {
         const summary = { applied: 0, queued: 0, ignored: 0, skipped: 0 };
         for (const email of input.emails) {
-          if (state.processed[email.gmailMessageId]) {
+          const handled = state.processed[email.gmailMessageId];
+          if (handled && !needsSecondLook(handled, unconfirmedSince)) {
             summary.skipped += 1;
             continue;
           }

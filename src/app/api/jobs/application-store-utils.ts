@@ -17,6 +17,7 @@ import type {
   JobApplicationQueuePreviewEntry,
   JobApplicationReadiness,
   JobApplicationRecord,
+  JobApplicationSubmissionEvidence,
   JobApplicationReviewItem,
   JobApplicationScreenshotCapture,
   JobApplicationsStoreData,
@@ -26,6 +27,7 @@ import type {
   JobSimplifyTrackerStatus,
 } from '@/lib/types';
 import { readJobListings, writeJobListings } from './job-store-utils';
+import { isManualBrowserSessionActive } from '@/lib/openclaw-browser';
 import {
   getEmptyEmailUpdatesState,
   isJobEmployerStage,
@@ -333,6 +335,10 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
     if (!store.workerEnabled || !getJobApplicationReadiness().ready) {
       return null;
     }
+    // Adamya is using OpenClaw's browser from the Journal; stay out of his way.
+    if (isManualBrowserSessionActive()) {
+      return null;
+    }
 
     const now = new Date();
     const activeLease = Object.values(store.applications).some(
@@ -473,7 +479,9 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
       releaseApplicationLease(application);
       delete application.progress;
 
-      if (application.submissionAttemptedAt && !application.submittedAt) {
+      if (confirmSubmissionFromEmployerEmail(application, nowIso)) {
+        reconciled.push({ listingId: application.listingId });
+      } else if (application.submissionAttemptedAt && !application.submittedAt) {
         // The run died after submission-attempted: the final click may or may
         // not have landed. Never retry automatically — hand the user the same
         // confirm question the ambiguous-submission action produces (prompt
@@ -1141,6 +1149,82 @@ export function updateJobListingLeadStatus(
   listing.updatedAt = now;
   listing.statusHistory = [...listing.statusHistory, { status, changedAt: now }];
   writeJobListings(data);
+}
+
+/** Marks an application submitted on evidence other than the worker's own confirmation page. */
+export function markApplicationSubmitted(
+  application: JobApplicationRecord,
+  evidence: JobApplicationSubmissionEvidence,
+  now: string,
+  submittedAt = now,
+): void {
+  setApplicationStatus(application, 'submitted', now);
+  application.submittedAt = submittedAt;
+  application.submissionEvidence = evidence;
+  captureSubmissionSnapshot(application, true);
+  const targetStatus = application.simplifySync?.targetStatus;
+  application.simplifySync = {
+    status: 'pending',
+    attemptCount: application.simplifySync?.attemptCount ?? 0,
+    updatedAt: now,
+    // An employer email may already have said where the new card belongs.
+    ...(targetStatus ? { targetStatus } : {}),
+  };
+  delete application.resumeRequestedAt;
+  releaseApplicationLease(application);
+  updateJobListingLeadStatus(application.listingId, 'applied');
+}
+
+/** OpenClaw clicked Submit but never saw the employer confirm it. */
+export function isAwaitingSubmissionConfirmation(application: JobApplicationRecord | undefined): boolean {
+  return Boolean(
+    application?.submissionAttemptedAt &&
+      !application.submittedAt &&
+      application.status !== 'submitted' &&
+      application.status !== 'closed',
+  );
+}
+
+/** Clock skew between the Submit click and the employer's mail server. */
+const SUBMISSION_EMAIL_SLACK_MS = 10 * 60_000;
+
+/**
+ * Any employer email that arrived after the Submit click (an acknowledgement,
+ * an assessment, even a rejection) proves the application reached them, so it
+ * answers "was this submitted?" without asking Adamya. A live run is left to
+ * report its own outcome.
+ */
+export function confirmSubmissionFromEmployerEmail(
+  application: JobApplicationRecord,
+  now: string,
+): boolean {
+  if (!isAwaitingSubmissionConfirmation(application)) return false;
+  if (application.lease && Date.parse(application.lease.expiresAt) > Date.parse(now)) return false;
+  const attemptedAt = Date.parse(application.submissionAttemptedAt!);
+  const email = (application.employerUpdates ?? [])
+    .filter(
+      (update) =>
+        update.source === 'email' &&
+        Date.parse(update.receivedAt) >= attemptedAt - SUBMISSION_EMAIL_SLACK_MS,
+    )
+    .sort((first, second) => first.receivedAt.localeCompare(second.receivedAt))[0];
+  if (!email) return false;
+  for (const question of application.questions) {
+    if (question.prompt === SUBMISSION_CONFIRM_PROMPT && question.resolution === 'pending') {
+      question.answer = 'submitted';
+      question.resolution = 'auto-resolved';
+      question.answeredAt = now;
+    }
+  }
+  markApplicationSubmitted(
+    application,
+    {
+      message: `Confirmed by an employer email after Submit: “${email.subject || email.summary || 'employer reply'}” (${email.receivedAt.slice(0, 10)})`,
+    },
+    now,
+    application.submissionAttemptedAt,
+  );
+  return true;
 }
 
 function resolveApplicationForListing(

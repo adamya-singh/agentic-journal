@@ -135,7 +135,7 @@ export function markEmailProcessed(
   gmailMessageId: string,
   entry: JobEmailUpdatesState['processed'][string],
 ): void {
-  state.processed[gmailMessageId] = entry;
+  state.processed[gmailMessageId] = { ...entry, sawUnconfirmedSubmits: true };
   const ids = Object.keys(state.processed);
   if (ids.length <= PROCESSED_LEDGER_LIMIT) return;
   const pending = new Set(state.pending.flatMap(emailMessageIds));
@@ -238,6 +238,7 @@ export function normalizeEmailUpdatesState(value: unknown): JobEmailUpdatesState
         at: text(entry.at),
         outcome,
         ...(text(entry.listingId) ? { listingId: text(entry.listingId) } : {}),
+        ...(entry.sawUnconfirmedSubmits === true ? { sawUnconfirmedSubmits: true as const } : {}),
       };
     }
   }

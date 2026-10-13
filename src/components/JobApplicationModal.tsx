@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Images,
   Loader2,
+  MonitorPlay,
   X,
 } from 'lucide-react';
 import type {
@@ -25,6 +26,7 @@ import type {
 import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import { EmployerStageBadge } from './EmployerStageBadge';
 import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
+import { OpenClawBrowserViewer } from './OpenClawBrowserViewer';
 
 export interface JobApplicationResponseInput {
   questionId: string;
@@ -41,6 +43,7 @@ interface JobApplicationModalProps {
     listingId: string,
     resumeVariant: JobApplicationResumeVariant,
     responses: JobApplicationResponseInput[],
+    options?: { submittedByHand?: boolean },
   ) => Promise<{
     success: boolean;
     application?: JobApplicationRecord;
@@ -96,6 +99,10 @@ export function JobApplicationModal({
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [saveNotice, setSaveNotice] = React.useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = React.useState(false);
+  const browserOpenRef = React.useRef(false);
+  browserOpenRef.current = browserOpen;
+  const manualSteps = pendingQuestions.filter((question) => question.kind === 'action');
 
   const backdropArmedRef = React.useRef(false);
 
@@ -180,7 +187,8 @@ export function JobApplicationModal({
 
   React.useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') requestClose();
+      // Escape inside OpenClaw's browser belongs to the page.
+      if (event.key === 'Escape' && !browserOpenRef.current) requestClose();
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
@@ -290,7 +298,36 @@ export function JobApplicationModal({
     }
   };
 
+  // Whatever the worker was stuck on is done: resume it (a pending "was it
+  // submitted?" becomes a retry, since Adamya just looked and it wasn't).
+  const handBackFromBrowser = async () => {
+    const responses = manualSteps.map((question) => ({
+      questionId: question.id,
+      answer: question.prompt === SUBMISSION_CONFIRM_PROMPT ? 'retry' : 'Done in OpenClaw’s browser',
+    }));
+    await onSave(listing.id, resumeVariant, responses);
+    setBrowserOpen(false);
+  };
+
+  const submittedFromBrowser = async () => {
+    await onSave(listing.id, resumeVariant, [], { submittedByHand: true });
+    clearDraft();
+    setBrowserOpen(false);
+    onClose();
+  };
+
   return (
+    <>
+    {browserOpen && (
+      <OpenClawBrowserViewer
+        listingId={listing.id}
+        heading={`${listing.company} · ${listing.positionTitle}`}
+        task={manualSteps[0]?.prompt}
+        onHandBack={handBackFromBrowser}
+        onSubmittedByHand={submittedFromBrowser}
+        onClose={() => setBrowserOpen(false)}
+      />
+    )}
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/55 p-0 backdrop-blur-sm sm:items-center sm:p-6"
       role="dialog"
@@ -440,6 +477,28 @@ export function JobApplicationModal({
             </div>
           )}
 
+          {manualSteps.length > 0 && application.status !== 'submitted' && application.status !== 'closed' && (
+            <div className="flex flex-col gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center dark:border-indigo-900/60 dark:bg-indigo-950/30">
+              <div className="min-w-0 flex-1 text-sm">
+                <p className="font-semibold text-indigo-900 dark:text-indigo-100">
+                  {manualSteps.some((question) => question.prompt === SUBMISSION_CONFIRM_PROMPT)
+                    ? 'Check the page OpenClaw submitted from'
+                    : 'OpenClaw needs you to do this step in its browser'}
+                </p>
+                <p className="mt-0.5 text-indigo-800/80 dark:text-indigo-200/80">
+                  Opens OpenClaw’s own browser here, on the page it stopped at. Sign-ins you finish there carry over to its next try.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setBrowserOpen(true)}
+                className="inline-flex h-10 shrink-0 items-center justify-center gap-2 rounded-md bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                <MonitorPlay className="h-4 w-4" /> Open OpenClaw’s browser
+              </button>
+            </div>
+          )}
+
           {redoQuestions.length > 0 && (
             <section className="rounded-xl border border-violet-200 bg-violet-50 p-4 dark:border-violet-900/60 dark:bg-violet-950/30">
               <h3 className="flex items-center gap-2 font-semibold text-violet-900 dark:text-violet-100">
@@ -584,6 +643,7 @@ export function JobApplicationModal({
         )}
       </div>
     </div>
+    </>
   );
 }
 

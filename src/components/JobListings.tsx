@@ -43,6 +43,7 @@ interface JobListingsProps {
     listingId: string,
     resumeVariant: JobApplicationResumeVariant,
     responses: JobApplicationResponseInput[],
+    options?: { submittedByHand?: boolean },
   ) => Promise<{
     success: boolean;
     application?: JobApplicationRecord;

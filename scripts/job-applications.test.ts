@@ -186,6 +186,11 @@ describe('job application state', () => {
     await store.mutateJobApplicationsStore((data) => {
       data.enabledApplicationCategories = ['new-grad'];
     });
+    // While Adamya drives OpenClaw's browser from the Journal, nothing new starts.
+    const browser = await import('../src/lib/openclaw-browser');
+    browser.touchManualBrowserSession();
+    assert.equal(await store.claimNextJobApplication(), null);
+    browser.endManualBrowserSession();
     const second = await store.claimNextJobApplication();
     assert.equal(second?.listing.id, 'saved-new');
   });
@@ -1881,7 +1886,115 @@ describe('job application state', () => {
     assert.equal(store.readJobApplicationsStore().emailUpdates.enabled, false);
     assert.equal((await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json()).enabled, false);
   });
+
+  test('an employer email after an unconfirmed Submit answers "was it submitted?"', async () => {
+    await seedSubmitted();
+    const attemptedAt = '2026-07-21T10:00:00.000Z';
+    await store.mutateJobApplicationsStore((data) => {
+      data.emailUpdates.enabled = true;
+      data.applications['saved-old'] = {
+        listingId: 'saved-old', status: 'awaiting-user-input', resumeVariant: 'swe', attemptCount: 1,
+        statusHistory: [{ status: 'awaiting-user-input', changedAt: attemptedAt }],
+        questions: [store.createActionQuestion({ prompt: 'Confirm whether this application was submitted', now: attemptedAt })],
+        submissionAttemptedAt: attemptedAt, createdAt: now, updatedAt: attemptedAt,
+      };
+      // Read before the posting was trackable, so it was set aside.
+      data.emailUpdates.processed['early-ack'] = { at: attemptedAt, outcome: 'ignored' };
+      data.emailUpdates.processed['set-aside'] = { at: attemptedAt, outcome: 'ignored', sawUnconfirmedSubmits: true };
+      data.emailUpdates.processed['before-click'] = { at: '2026-07-21T09:00:00.000Z', outcome: 'ignored' };
+    });
+
+    const context = await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json();
+    const entry = context.listings.find((item: { listingId: string }) => item.listingId === 'saved-old');
+    assert.equal(entry.awaitingSubmissionConfirmation, true);
+    assert.equal(entry.submittedAt, attemptedAt);
+    // Only mail set aside after the click, before this kind of posting was matchable, gets a second look.
+    assert.deepEqual(context.knownMessageIds.sort(), ['before-click', 'set-aside']);
+
+    // Mail from before the click proves nothing about this attempt.
+    await postEmailUpdates({ action: 'record', emails: [
+      email('stale', { listingId: 'saved-old', stage: 'received', receivedAt: '2026-07-20T09:00:00.000Z' }),
+    ] });
+    assert.equal(store.readJobApplicationsStore().applications['saved-old'].status, 'awaiting-user-input');
+
+    const body = await (await postEmailUpdates({ action: 'record', emails: [
+      email('early-ack', { listingId: 'saved-old', stage: 'received', confidence: 0.9, receivedAt: '2026-07-21T10:02:00.000Z', subject: 'Thanks for applying' }),
+      // Already seen alongside the unconfirmed Submit: stays handled.
+      email('set-aside', { listingId: 'applied' }),
+    ] })).json();
+    assert.deepEqual(body.summary, { applied: 1, queued: 0, ignored: 0, skipped: 1 });
+    const application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(application.status, 'submitted');
+    assert.equal(application.submittedAt, attemptedAt);
+    assert.match(application.submissionEvidence?.message ?? '', /Thanks for applying/);
+    assert.equal(application.questions[0].resolution, 'auto-resolved');
+    assert.equal(application.questions[0].answer, 'submitted');
+    assert.equal(application.simplifySync?.status, 'pending');
+    assert.equal(jobStore.readJobListings().listings.find((item) => item.id === 'saved-old')?.status, 'applied');
+    // Nothing left unconfirmed, so nothing is offered again.
+    const after = await (await emailUpdatesRoute.GET(new NextRequest('http://localhost/api/jobs/applications/email-updates'))).json();
+    assert.ok(after.knownMessageIds.includes('early-ack'));
+    restoreListingStatus('saved-old', 'saved');
+  });
+
+  test('submitted by hand in OpenClaw\'s browser closes out every blocker', async () => {
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-old'] = {
+        listingId: 'saved-old', status: 'awaiting-user-input', resumeVariant: 'swe', attemptCount: 2,
+        statusHistory: [{ status: 'awaiting-user-input', changedAt: now }],
+        questions: [
+          store.createActionQuestion({ prompt: 'Solve the CAPTCHA', now }),
+          { id: 'q-why', prompt: 'Why us?', kind: 'text', required: true, resolution: 'pending', discoveredAt: now },
+        ],
+        createdAt: now, updatedAt: now,
+      };
+    });
+    const response = await postAnswers({ listingId: 'saved-old', resumeVariant: 'swe', responses: [], submittedByHand: true });
+    assert.equal(response.status, 200);
+    const application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(application.status, 'submitted');
+    assert.equal(application.submissionEvidence?.message, 'Submitted by hand in OpenClaw’s browser');
+    assert.deepEqual(application.questions.map((question) => question.resolution), ['answered', 'skipped']);
+    assert.equal(application.simplifySync?.status, 'pending');
+    assert.equal(jobStore.readJobListings().listings.find((item) => item.id === 'saved-old')?.status, 'applied');
+    assert.equal((await postAnswers({ listingId: 'saved-old', resumeVariant: 'swe', responses: [], submittedByHand: true })).status, 400);
+    restoreListingStatus('saved-old', 'saved');
+  });
+
+  test('a live run reports its own outcome, then an earlier email settles it', async () => {
+    await seedSubmitted();
+    const attemptedAt = '2026-07-21T10:00:00.000Z';
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-old'] = {
+        listingId: 'saved-old', status: 'in-progress', resumeVariant: 'swe', attemptCount: 1,
+        statusHistory: [{ status: 'in-progress', changedAt: attemptedAt }], questions: [],
+        submissionAttemptedAt: attemptedAt, createdAt: now, updatedAt: attemptedAt,
+        lease: { token: 'live', claimedAt: attemptedAt, expiresAt: '2999-01-01T00:00:00.000Z' },
+      };
+    });
+    await postEmailUpdates({ action: 'record', emails: [
+      email('ack-during-run', { listingId: 'saved-old', stage: 'received', receivedAt: '2026-07-21T10:01:00.000Z' }),
+    ] });
+    assert.equal(store.readJobApplicationsStore().applications['saved-old'].status, 'in-progress');
+
+    // The run then dies without reporting: recovery uses the email instead of asking.
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications['saved-old'].lease!.expiresAt = '2000-01-01T00:00:00.000Z';
+    });
+    await store.reconcileStaleJobApplicationLeases();
+    const application = store.readJobApplicationsStore().applications['saved-old'];
+    assert.equal(application.status, 'submitted');
+    assert.equal(application.questions.length, 0);
+    restoreListingStatus('saved-old', 'saved');
+  });
 });
+
+function restoreListingStatus(listingId: string, status: string) {
+  const data = jobStore.readJobListings();
+  const entry = data.listings.find((item) => item.id === listingId)!;
+  entry.status = status as typeof entry.status;
+  jobStore.writeJobListings(data);
+}
 
 function postAnswers(body: unknown) {
   return answersRoute.POST(

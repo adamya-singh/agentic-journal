@@ -293,6 +293,11 @@ export interface JobEmailUpdatesProcessedEntry {
   at: string;
   outcome: 'applied' | 'queued' | 'ignored';
   listingId?: string;
+  /**
+   * Handled while postings with an unconfirmed Submit were matchable. Older
+   * set-aside emails get one more look, since they may settle one of those.
+   */
+  sawUnconfirmedSubmits?: true;
 }
 
 export interface JobEmailUpdatesState {
