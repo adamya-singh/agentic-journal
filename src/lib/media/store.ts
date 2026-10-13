@@ -5,10 +5,12 @@ import type {
   Collection,
   Coverage,
   MediaAction,
+  MediaJob,
   MediaState,
   MediaTitle,
   MediaView,
 } from './types.ts';
+import { applyRankOp, emptyRanking, outOfSync, withoutTitle, type RankOp } from './ranking.ts';
 
 // Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
 // dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
@@ -87,10 +89,12 @@ export function view(): MediaView {
       .map((j) => j.titleId),
   );
   const titles = Object.values(s.titles);
-  const { titles: _titles, ...rest } = s;
+  const { titles: _titles, ranking: _ranking, ...rest } = s;
   void _titles;
+  void _ranking;
   return {
     ...rest,
+    ranking: rankingOf(s),
     library: titles
       .filter((t) => t.collections.length)
       .sort((a, b) => (b.yourRating || 0) - (a.yourRating || 0) || a.title.localeCompare(b.title)),
@@ -112,30 +116,74 @@ export async function feedback(id: string, value: 'interested' | 'dismissed' | n
 export async function enqueue(action: MediaAction, titleId?: string, rating?: number) {
   return withLock(() => {
     const s = readState();
-    if (action !== 'sync' && (!titleId || !s.titles[titleId]))
-      throw new Error('Title not found. Refresh the page.');
-    const pending = s.jobs.filter((j) => ['queued', 'running'].includes(j.status));
-    const duplicate = pending.find(
-      (j) => j.action === action && j.titleId === titleId && j.rating === rating,
-    );
-    if (duplicate) return duplicate.id;
-    if (pending.length >= 50) throw new Error('The media queue is full. Wait for pending changes.');
-    if (pending.some((j) => titleId && j.titleId === titleId && j.action === action))
-      throw new Error('This title already has a pending change. Wait for it to finish.');
-    const id = randomUUID();
-    s.jobs = s.jobs
-      .filter((j) => ['queued', 'running'].includes(j.status))
-      .concat(s.jobs.filter((j) => !['queued', 'running'].includes(j.status)).slice(-100));
-    s.jobs.push({
-      id,
-      action,
-      titleId,
-      rating,
-      status: 'queued',
-      createdAt: new Date().toISOString(),
-    });
+    const id = addJob(s, action, titleId, rating);
     writeState(s);
     return id;
+  });
+}
+const isPending = (j: MediaJob) => ['queued', 'running'].includes(j.status);
+function addJob(s: MediaState, action: MediaAction, titleId?: string, rating?: number) {
+  if (action !== 'sync' && (!titleId || !s.titles[titleId]))
+    throw new Error('Title not found. Refresh the page.');
+  const pending = s.jobs.filter(isPending);
+  const duplicate = pending.find(
+    (j) => j.action === action && j.titleId === titleId && j.rating === rating,
+  );
+  if (duplicate) return duplicate.id;
+  if (pending.length >= 50) throw new Error('The media queue is full. Wait for pending changes.');
+  if (pending.some((j) => titleId && j.titleId === titleId && j.action === action))
+    throw new Error('This title already has a pending change. Wait for it to finish.');
+  const id = randomUUID();
+  s.jobs = pending.concat(s.jobs.filter((j) => !isPending(j)).slice(-100));
+  s.jobs.push({
+    id,
+    action,
+    titleId,
+    rating,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+  });
+  return id;
+}
+// Older stores have no ranking; ids of titles that have since disappeared are dropped.
+export function rankingOf(s: MediaState) {
+  let r = s.ranking || emptyRanking();
+  for (const id of [
+    ...Object.values(r.tiers).flat(),
+    ...Object.values(r.pending).flat(),
+    ...r.skipped,
+  ])
+    if (!s.titles[id]) r = withoutTitle(r, id);
+  return r;
+}
+export async function rank(op: RankOp) {
+  return withLock(() => {
+    const s = readState();
+    if (!s.titles[op.id]) throw new Error('Title not found. Refresh the page.');
+    s.ranking = { ...applyRankOp(rankingOf(s), op), updatedAt: new Date().toISOString() };
+    writeState(s);
+  });
+}
+// Queues one IMDb rating job per placed title whose score changed. Titles that
+// already have a rating save in flight wait for the next sync.
+export async function syncRatings() {
+  return withLock(() => {
+    const s = readState();
+    let queued = 0,
+      waiting = 0;
+    for (const { id, rating } of outOfSync(rankingOf(s), s.titles)) {
+      const pending = s.jobs.filter(isPending);
+      const same = pending.find((j) => j.action === 'rating' && j.titleId === id);
+      if (same?.rating === rating) continue;
+      if (same || pending.length >= 50) {
+        waiting++;
+        continue;
+      }
+      addJob(s, 'rating', id, rating);
+      queued++;
+    }
+    writeState(s);
+    return { queued, waiting };
   });
 }
 // A partial refresh adds observed evidence without erasing old membership.

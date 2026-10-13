@@ -1,5 +1,5 @@
 import { connectIMDb, IMDbError, type IMDbSession } from './imdb.ts';
-import { readState, writeState, withLock, mergeCollection } from './store.ts';
+import { readState, writeState, withLock, mergeCollection, syncRatings } from './store.ts';
 import type { MediaJob, MediaTitle } from './types.ts';
 
 export async function recoverInterrupted() {
@@ -60,7 +60,15 @@ export async function processNext(connect: (id?: string) => Promise<IMDbSession>
         });
       }
       await finish(job);
+      // Ranking moves made while this save ran may have changed other scores.
+      if (job.action === 'rating') await syncRatings();
     } catch (e) {
+      // The job record keeps a safe message; the log gets the first line of the raw cause.
+      if (!(e instanceof IMDbError))
+        console.error(
+          `Media ${job.action} job failed:`,
+          String((e as Error)?.message).split('\n')[0],
+        );
       await finish(
         job,
         e instanceof IMDbError

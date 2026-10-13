@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import * as Dialog from '@radix-ui/react-dialog';
 import {
+  ArrowUpDown,
   ArrowUpRight,
   Check,
   Clock,
@@ -14,10 +14,13 @@ import {
   Search,
   Star,
   ThumbsDown,
+  Trophy,
   X,
 } from 'lucide-react';
 import { AppHeader } from '@/components/AppHeader';
-import type { MediaTitle, MediaView } from '@/lib/media/types';
+import { Poster, Ranker, TIER_CLASS } from '@/components/media/Ranker';
+import { TIERS, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
+import type { MediaTitle, MediaView, Tier } from '@/lib/media/types';
 
 const button =
   'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -43,8 +46,12 @@ export default function MediaPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [format, setFormat] = useState('all');
   const [dismissed, setDismissed] = useState(false);
-  const [ratingTitle, setRatingTitle] = useState<MediaTitle>();
-  const [score, setScore] = useState('');
+  const [rankOpen, setRankOpen] = useState(false);
+  const [rankFocus, setRankFocus] = useState<string>();
+  const openRanker = (focus?: string) => {
+    setRankFocus(focus);
+    setRankOpen(true);
+  };
   const load = useCallback(async () => {
     try {
       setData(await api<MediaView>());
@@ -96,14 +103,36 @@ export default function MediaPage() {
           : t.type === 'Movie');
     return search && kind;
   };
-  const library = (data?.library || []).filter(
-    (t) =>
-      match(t) &&
-      (filter === 'all' ||
-        (filter === 'liked' && (t.yourRating || 0) >= 7) ||
-        (filter === 'watched' && t.watched) ||
-        (filter === 'watchlist' && t.watchlist)),
+  const ranked = data ? rankedList(data.ranking) : [];
+  const rankOf = new Map(ranked.map((r) => [r.id, r]));
+  const pendingTier = new Map<string, Tier>(
+    data ? TIERS.flatMap((t) => data.ranking.pending[t].map((id) => [id, t] as const)) : [],
   );
+  const rankLeft = data
+    ? unsorted(data.ranking, data.library).length + pendingCount(data.ranking)
+    : 0;
+  const ratingJobs = pending.filter((j) => j.action === 'rating');
+  const unsynced = data
+    ? outOfSync(data.ranking, Object.fromEntries(data.library.map((t) => [t.id, t]))).filter(
+        (x) => !ratingJobs.some((j) => j.titleId === x.id && j.rating === x.rating),
+      )
+    : [];
+  const library = (data?.library || [])
+    .filter(
+      (t) =>
+        match(t) &&
+        (filter === 'all' ||
+          (filter === 'liked' && (t.yourRating || 0) >= 7) ||
+          (filter === 'watched' && t.watched) ||
+          (filter === 'watchlist' && t.watchlist)),
+    )
+    .map((t, i) => ({ t, i }))
+    .sort(
+      (a, b) =>
+        (rankOf.get(a.t.id)?.rank ?? Infinity) - (rankOf.get(b.t.id)?.rank ?? Infinity) ||
+        a.i - b.i,
+    )
+    .map(({ t }) => t);
   const picks = (data?.picks || [])
     .filter(match)
     .sort(
@@ -142,7 +171,20 @@ export default function MediaPage() {
               <Film size={44} />
             </div>
           )}
-          {title.yourRating ? (
+          {rankOf.has(title.id) ? (
+            <span
+              className={`absolute left-2 top-2 rounded-md px-2 py-1 text-xs font-bold ${TIER_CLASS[rankOf.get(title.id)!.tier]}`}
+            >
+              #{rankOf.get(title.id)!.rank} · {rankOf.get(title.id)!.tier} ·{' '}
+              {rankOf.get(title.id)!.score}/10
+            </span>
+          ) : pendingTier.has(title.id) ? (
+            <span
+              className={`absolute left-2 top-2 rounded-md px-2 py-1 text-xs font-bold ${TIER_CLASS[pendingTier.get(title.id)!]}`}
+            >
+              {pendingTier.get(title.id)} · not placed yet
+            </span>
+          ) : title.yourRating ? (
             <span className="absolute left-2 top-2 inline-flex items-center gap-1 rounded-md bg-indigo-600 px-2 py-1 text-xs font-semibold text-white">
               <Star size={12} fill="currentColor" /> Your {title.yourRating}/10
             </span>
@@ -186,13 +228,16 @@ export default function MediaPage() {
                   <button
                     className={`${button} bg-gray-100 dark:bg-gray-800 !px-2 !py-1.5 !text-xs`}
                     disabled={busy}
-                    onClick={() =>
-                      void act(
-                        '/action',
-                        { action: 'seen', id: title.id },
-                        'Watch queued. It will show as watched after IMDb confirms.',
+                    onClick={async () => {
+                      if (
+                        await act(
+                          '/action',
+                          { action: 'seen', id: title.id },
+                          'Watch queued. It will show as watched after IMDb confirms.',
+                        )
                       )
-                    }
+                        openRanker(title.id);
+                    }}
                   >
                     <Check size={13} /> I saw it
                   </button>
@@ -212,16 +257,15 @@ export default function MediaPage() {
                     <Plus size={13} /> Watchlist
                   </button>
                 )}
-                <button
-                  className={`${button} !px-2 !py-1.5 !text-xs`}
-                  disabled={busy}
-                  onClick={() => {
-                    setRatingTitle(title);
-                    setScore(title.yourRating?.toString() || '');
-                  }}
-                >
-                  <Star size={13} /> Rate
-                </button>
+                {title.watched && (
+                  <button
+                    className={`${button} !px-2 !py-1.5 !text-xs`}
+                    disabled={busy}
+                    onClick={() => openRanker(title.id)}
+                  >
+                    <ArrowUpDown size={13} /> {rankOf.has(title.id) ? 'Move' : 'Rank'}
+                  </button>
+                )}
                 {recommendation && (
                   <>
                     <button
@@ -402,6 +446,88 @@ export default function MediaPage() {
         )}
         {data && (
           <>
+            <section aria-labelledby="ranking-heading" className="mb-10">
+              <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <h3 id="ranking-heading" className="text-xl font-semibold">
+                    Your ranking
+                  </h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    {ranked.length
+                      ? `${ranked.length} ranked${rankLeft ? ` · ${rankLeft} waiting for a place` : ''}. Scores go to IMDb as your ratings.`
+                      : 'Sort what you have watched into S, A, B and C, then a few head-to-head picks set the exact order.'}
+                  </p>
+                  {ratingJobs.length > 0 && (
+                    <p className="mt-1 flex items-center gap-1 text-xs text-gray-500">
+                      <Loader2 size={12} className="animate-spin" /> Saving {ratingJobs.length}{' '}
+                      {ratingJobs.length === 1 ? 'score' : 'scores'} to IMDb
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {unsynced.length > 0 && !rankLeft && (
+                    <button
+                      className={button}
+                      disabled={busy}
+                      onClick={() =>
+                        void act(
+                          '/ranking/sync',
+                          {},
+                          'Scores queued for IMDb. They save one at a time in the background.',
+                        )
+                      }
+                    >
+                      <RefreshCw size={14} /> Send {unsynced.length}{' '}
+                      {unsynced.length === 1 ? 'score' : 'scores'} to IMDb
+                    </button>
+                  )}
+                  <button
+                    className={`${button} bg-indigo-600 text-white hover:!bg-indigo-700`}
+                    onClick={() => openRanker()}
+                  >
+                    <Trophy size={15} />{' '}
+                    {!ranked.length
+                      ? `Rank ${rankLeft} titles`
+                      : rankLeft
+                        ? `Continue ranking · ${rankLeft} left`
+                        : 'Rank'}
+                  </button>
+                </div>
+              </div>
+              {ranked.length > 0 && (
+                <div className="grid gap-2">
+                  {TIERS.filter((tier) => data.ranking.tiers[tier].length).map((tier) => (
+                    <div key={tier} className="grid grid-cols-[46px_minmax(0,1fr)] gap-2.5">
+                      <span
+                        className={`grid place-items-center rounded-lg text-2xl font-extrabold ${TIER_CLASS[tier]}`}
+                      >
+                        {tier}
+                      </span>
+                      <div className="flex min-w-0 gap-1.5 overflow-x-auto pb-1">
+                        {ranked
+                          .filter((r) => r.tier === tier)
+                          .map((r) => {
+                            const t = data.library.find((x) => x.id === r.id);
+                            return (
+                              <button
+                                key={r.id}
+                                className="relative shrink-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                                title={`${t?.title} · ${r.score}/10. Click to move it.`}
+                                onClick={() => openRanker(r.id)}
+                              >
+                                <Poster title={t} className="w-[74px]" />
+                                <span className="absolute left-1 top-1 rounded bg-black/75 px-1.5 text-[10px] font-bold tabular-nums text-white">
+                                  #{r.rank}
+                                </span>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
             <section aria-labelledby="picks-heading" className="mb-10">
               <div className="mb-4 flex items-end justify-between gap-3">
                 <div>
@@ -513,59 +639,19 @@ export default function MediaPage() {
           </>
         )}
       </main>
-      <Dialog.Root
-        open={!!ratingTitle}
-        onOpenChange={(open) => {
-          if (!open) setRatingTitle(undefined);
-        }}
-      >
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(92vw,420px)] -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-6 dark:bg-gray-900">
-            <Dialog.Title className="text-lg font-semibold">Rate {ratingTitle?.title}</Dialog.Title>
-            <Dialog.Description className="mt-2 text-sm text-gray-500">
-              Save your exact score to IMDb. Rating a title also records it as watched.
-            </Dialog.Description>
-            <label className="mt-5 block text-sm">
-              Your IMDb rating
-              <select
-                value={score}
-                onChange={(e) => setScore(e.target.value)}
-                className="mt-2 block w-full rounded-lg border border-gray-300 bg-transparent p-2 dark:border-gray-700"
-              >
-                <option value="" disabled>
-                  Choose 1–10
-                </option>
-                {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                  <option key={n} value={n}>
-                    {n}/10
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="mt-5 flex justify-end gap-2">
-              <Dialog.Close className={button}>Cancel</Dialog.Close>
-              <button
-                className={`${button} bg-indigo-600 text-white hover:!bg-indigo-700`}
-                disabled={!score || busy}
-                onClick={async () => {
-                  if (
-                    ratingTitle &&
-                    (await act(
-                      '/action',
-                      { action: 'rating', id: ratingTitle.id, rating: Number(score) },
-                      'Rating queued for IMDb.',
-                    ))
-                  )
-                    setRatingTitle(undefined);
-                }}
-              >
-                Save to IMDb
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
+      {data && (
+        <Ranker
+          open={rankOpen}
+          onOpenChange={(open) => {
+            setRankOpen(open);
+            if (!open) void load();
+          }}
+          data={data}
+          focusId={rankFocus}
+          api={api}
+          onSaved={setData}
+        />
+      )}
     </div>
   );
 }

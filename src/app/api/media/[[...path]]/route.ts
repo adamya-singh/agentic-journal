@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { view, enqueue, feedback } from '@/lib/media/store';
+import { view, enqueue, feedback, rank, syncRatings } from '@/lib/media/store';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 const result = (data: unknown, status = 200) =>
@@ -47,6 +47,23 @@ export async function POST(req: NextRequest) {
       await feedback(body.id, body.value);
       return result(view());
     }
+    if (action === 'ranking') {
+      const id = z.string().regex(/^tt\d+$/),
+        tier = z.enum(['S', 'A', 'B', 'C']);
+      const body = z
+        .discriminatedUnion('op', [
+          z.object({ op: z.literal('tier'), id, tier }).strict(),
+          z
+            .object({ op: z.literal('place'), id, tier, index: z.number().int().min(0) })
+            .strict(),
+          z.object({ op: z.literal('skip'), id }).strict(),
+          z.object({ op: z.literal('unrank'), id }).strict(),
+        ])
+        .parse(await req.json());
+      await rank(body);
+      return result(view());
+    }
+    if (action === 'ranking/sync') return result({ ...(await syncRatings()), view: view() }, 202);
     if (action === 'action') {
       const body = z
         .discriminatedUnion('action', [

@@ -260,7 +260,9 @@ export class BrowserIMDb implements IMDbSession {
       this.page.evaluate((id) => {
         const watched = document.querySelector(`[data-testid="watched-button-${id}"]`);
         const wl = document.querySelector('[data-testid="tm-box-wl-button"]');
-        const rating = document.querySelector('[data-testid="hero-rating-bar__user-rating"]');
+        const rating = [
+          ...document.querySelectorAll<HTMLElement>('[data-testid="hero-rating-bar__user-rating"]'),
+        ].find((el) => el.offsetParent !== null);
         return {
           watched: /^Watched\b/.test(
             watched?.getAttribute('aria-label') || watched?.textContent?.trim() || '',
@@ -276,12 +278,16 @@ export class BrowserIMDb implements IMDbSession {
     if (job.action === 'watchlist' && !state.watchlist)
       await this.page.getByTestId('tm-box-wl-button').click();
     if (job.action === 'rating' && state.yourRating !== job.rating) {
+      // The hero renders a desktop and a mobile rating bar; only one is visible at a time.
       await this.page
         .getByTestId('hero-rating-bar__user-rating')
+        .filter({ visible: true })
         .first()
         .getByRole('button')
         .click();
-      const dialog = this.page.getByRole('dialog');
+      const dialog = this.page
+        .getByRole('dialog')
+        .filter({ has: this.page.getByRole('button', { name: /^Rate \d+($| out of 10)/ }) });
       await dialog
         .getByRole('button', { name: new RegExp(`^Rate ${job.rating}($| out of 10)`) })
         .click();

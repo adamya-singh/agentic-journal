@@ -31,8 +31,18 @@ export interface MediaJob {
   finishedAt?: string;
   error?: string;
 }
+export type Tier = 'S' | 'A' | 'B' | 'C';
+// Your own ranking of watched titles. Each tier is ordered best-first; `pending`
+// holds titles sorted into a tier but not yet placed by head-to-head picks.
+export interface Ranking {
+  tiers: Record<Tier, string[]>;
+  pending: Record<Tier, string[]>;
+  skipped: string[];
+  updatedAt?: string;
+}
 export interface MediaState {
   version: 1;
+  ranking?: Ranking;
   account?: { id: string; name: string };
   titles: Record<string, MediaTitle>;
   recommendations: string[];
@@ -43,7 +53,8 @@ export interface MediaState {
   workerAt?: string;
   warning?: string;
 }
-export interface MediaView extends Omit<MediaState, 'titles'> {
+export interface MediaView extends Omit<MediaState, 'titles' | 'ranking'> {
+  ranking: Ranking;
   library: MediaTitle[];
   picks: MediaTitle[];
   dismissed: MediaTitle[];
