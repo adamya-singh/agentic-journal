@@ -22,6 +22,10 @@ export async function register(): Promise<void> {
     ensureOverviewCron().catch(error => console.error('Job overview scheduler:',error));
   }
 
+  // OpenClaw's morning pass that keeps the Media feed stocked.
+  const { ensureFeedCuratorCron } = await import('./lib/media/feed-cron');
+  ensureFeedCuratorCron().catch((error) => console.error('Feed curator cron:', error));
+
   const {
     ensureJobApplicationWorkerCron, reconcileAndWakeJobApplicationWorker, syncJobEmailUpdatesCron,
   } = await import('./app/api/jobs/application-worker-utils');

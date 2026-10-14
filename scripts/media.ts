@@ -1,9 +1,12 @@
 import { view, enqueue, feedback } from '../src/lib/media/store.ts';
 import { summary } from '../src/lib/media/youtube-store.ts';
+import { FEED_USAGE, feedCommand } from '../src/lib/media/feed-cli.ts';
 const [command, ...args] = process.argv.slice(2);
 try {
   let data: unknown;
-  if (command === 'status' || command === 'list') data = view();
+  if (command?.startsWith('feed-') && (data = await feedCommand(command, args)) !== undefined) {
+    /* handled */
+  } else if (command === 'status' || command === 'list') data = view();
   else if (command === 'sync') data = { jobId: await enqueue('sync') };
   else if (command === 'youtube-sync') data = { jobId: await enqueue('youtube-sync') };
   else if (command === 'youtube-summary') data = summary();
@@ -22,7 +25,8 @@ try {
     data = view();
   } else
     throw new Error(
-      'Usage: media.ts list|status|sync|youtube-sync|youtube-summary|seen ttID|watchlist ttID|rate ttID 1-10|dismiss ttID|interested ttID|restore ttID',
+      'Usage: media.ts list|status|sync|youtube-sync|youtube-summary|seen ttID|watchlist ttID|rate ttID 1-10|dismiss ttID|interested ttID|restore ttID|' +
+        FEED_USAGE,
     );
   console.log(JSON.stringify({ success: true, data }));
 } catch (e) {

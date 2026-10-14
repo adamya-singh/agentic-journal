@@ -33,7 +33,8 @@
     "bookmarks:videos": "node --env-file-if-exists=.env scripts/bookmarks-videos.ts",
     "bookmarks:transcripts": "node --env-file-if-exists=.env scripts/bookmarks-transcribe.ts",
     "media": "node --env-file-if-exists=.env scripts/media.ts",
-    "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts"
+    "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts",
+    "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",

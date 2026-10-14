@@ -50,3 +50,24 @@ npm run media -- youtube-summary
 ```
 
 Official feature references: [IMDb Watched FAQ](https://help.imdb.com/article/imdb/new-features-updates/mark-as-watched-faq/GR2SD7Y4LZVNHUVH), [IMDb Watchlist FAQ](https://help.imdb.com/article/imdb/track-movies-tv/watchlist-faq/G9PA556494DM8YBA).
+
+## Your feed
+
+`/media/feed` is an endless scroll of content judged to move you toward your compass: videos from your YouTube history, saved X bookmarks and unwatched IMDb picks, plus new uploads OpenClaw finds from channels you up-vote. Vote each item **Up** or **Down** (or skip it); the order changes as you vote.
+
+- **Stream** is one column of cards with a side panel showing your compass, what your votes taught the feed and OpenClaw's last pass. **Theater** is one big player with an endless Up next list that auto-advances. Videos start muted (browsers require it); turn sound on once and later videos keep it. Keys: J/K next/previous, U up, D down, S skip, M sound, Space play/pause, O open, T switch view.
+- **Compass**: Long-term is OpenClaw's North Star (`~/.openclaw/workspace/USER.md` "Core North Star" plus `MEMORY.md` "North Star Anchor" and `SOUL.md` "Canonical North Star"). Short-term is `$OPENCLAW_COMPASS_DIR/short-term/compass.md` (default `~/.openclaw/workspace/compass`, maintained by the compass skill; flat front matter `title`, `start`, `end`, and an H2 "Relation to the long-term compass"). The Journal only reads them. Every item is judged per compass, so Short-term turns on once items have been judged against it (`feed-judge --compass short`).
+- **Ranking** (`src/lib/media/feed-rank.ts`): curator confidence for the selected compass, plus smoothed weights from your votes for the item's tags, creator and source, a small bonus for creators you have barely voted on and for fresh items, then a pass that never shows one creator twice in a row. A card shown on two different days without a vote is skipped. When fewer than 60 items wait, the best reserve candidates are promoted.
+- **Seeding**: `npm run feed:seed -- judge` asks Gemini 2.5 Flash (Vertex, `FEED_JUDGE_MODEL` overrides) to judge every pool item against the long-term compass, checkpointing in `media/feed-seed-<compass>.json`; `report` shows the distribution; `write` puts the strongest ~400 in the queue (source quotas, per-creator cap) and keeps the rest of the aligned items as candidates. `FEED_LLM_DISABLED=1` turns the judge off.
+- **OpenClaw** runs the `agentic-journal-feed-curator` skill each morning at 07:00 (cron "Agentic Journal Feed Curator", registered at server start; `FEED_CURATOR_CRON_DISABLED=1` skips registration, `OPENCLAW_FEED_CURATOR_CRON_ID` pins it). It reads `feed-digest`, adds new uploads from up-voted channels via YouTube RSS, judges new history and bookmarks, promotes candidates for your strongest tags and records the pass. It is read-only on YouTube, X and IMDb.
+
+```bash
+npm run media -- feed-digest
+npm run media -- feed-candidates --source youtube --limit 50
+npm run media -- feed-judge --compass short --scope items --limit 200
+npm run media -- feed-add --file items.json --by openclaw
+npm run media -- feed-promote --tag "frontier AI" --limit 10
+npm run media -- feed-stats
+```
+
+Storage: `media/feed.json` (ids, per-compass judgments, your votes; titles, text and media are read from `youtube.json`, `state.json` and the bookmarks store at request time) under its own `feed` lock. The future plan, a real recommender still managed by OpenClaw, is a Bugs/Features entry.

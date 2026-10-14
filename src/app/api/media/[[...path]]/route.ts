@@ -11,6 +11,21 @@ import {
   summary,
   unkeep,
 } from '@/lib/media/youtube-store';
+import { markSeen, page, skip, vote } from '@/lib/media/feed-store';
+import { addLink, feedTeaser, feedView } from '@/lib/media/feed-view';
+import { FEED_ID } from '@/lib/media/feed-pools';
+const feedId = z.string().regex(FEED_ID);
+const compass = z.enum(['long', 'short']);
+const feedQuery = z
+  .object({
+    compass: compass.default('long'),
+    filter: z.enum(['queue', 'voted', 'skipped']).default('queue'),
+    source: z.enum(['youtube', 'x', 'imdb']).optional(),
+    exclude: z.array(feedId).max(3000).optional(),
+    offset: z.number().int().min(0).optional(),
+    limit: z.number().int().min(1).max(40).optional(),
+  })
+  .strict();
 // Media titles: IMDb ids, or kept YouTube videos.
 const titleId = z.string().regex(/^(tt\d+|yt:[A-Za-z0-9_-]{11})$/);
 const videoId = z.string().regex(/^[A-Za-z0-9_-]{11}$/);
@@ -39,6 +54,15 @@ export async function GET(req: NextRequest) {
     if (action === 'youtube') {
       const sort = z.enum(['videos', 'hours', 'recent']).catch('videos').parse(q.get('sort'));
       return result(summary(sort));
+    }
+    if (action === 'feed/summary') return result(feedTeaser());
+    if (action === 'feed') {
+      const body = feedQuery.parse({
+        compass: q.get('compass') || undefined,
+        filter: q.get('filter') || undefined,
+        source: q.get('source') || undefined,
+      });
+      return result(feedView(body));
     }
     if (action === 'youtube/videos') {
       const offset = z.coerce.number().int().min(0).catch(0).parse(q.get('offset'));
@@ -92,6 +116,35 @@ export async function POST(req: NextRequest) {
         .parse(await req.json());
       await rank(body);
       return result(view());
+    }
+    if (action === 'feed/page') return result(page(feedQuery.parse(await req.json())));
+    if (action === 'feed/vote') {
+      const body = z
+        .object({ id: feedId, vote: z.enum(['up', 'down']).nullable(), compass: compass.default('long') })
+        .strict()
+        .parse(await req.json());
+      return result(await vote(body.id, body.vote, body.compass));
+    }
+    if (action === 'feed/skip') {
+      const body = z
+        .object({ id: feedId, undo: z.boolean().optional(), compass: compass.default('long') })
+        .strict()
+        .parse(await req.json());
+      return result(await skip(body.id, body.undo, body.compass));
+    }
+    if (action === 'feed/seen') {
+      const body = z
+        .object({ ids: z.array(feedId).min(1).max(100), compass: compass.default('long') })
+        .strict()
+        .parse(await req.json());
+      return result(await markSeen(body.ids, body.compass));
+    }
+    if (action === 'feed/add') {
+      const body = z
+        .object({ url: z.string().url().max(500) })
+        .strict()
+        .parse(await req.json());
+      return result(await addLink(body.url), 201);
     }
     if (action === 'youtube/sync') return result({ jobId: await enqueue('youtube-sync') }, 202);
     if (action === 'youtube/account') {
