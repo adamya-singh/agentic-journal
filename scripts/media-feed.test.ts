@@ -312,3 +312,13 @@ test('a new short-term period wipes last period’s judgments; the digest asks f
   assert.deepEqual(g.rejected[`yt:${vid(5)}`].map((r) => r.compass), ['long']);
   assert.equal(g.shortJudged, undefined);
 });
+
+test('the media CLI runs under plain Node (no test loader), as OpenClaw runs it', async () => {
+  const { execFileSync } = await import('node:child_process');
+  seed();
+  const out = execFileSync(process.execPath, ['--no-warnings', 'scripts/media.ts', 'feed-stats'], {
+    env: { ...process.env, BACKEND_DATA_DIR: dir },
+    encoding: 'utf8',
+  });
+  assert.equal(JSON.parse(out).success, true);
+});

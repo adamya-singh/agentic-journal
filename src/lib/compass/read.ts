@@ -3,16 +3,16 @@
 // unexpected fs errors (not ENOENT/ENOTDIR/EACCES/EISDIR) propagate to the route's 500.
 import fs from 'node:fs';
 import path from 'node:path';
-import { compassStatus, isIsoDate, todayInNewYork, weeksInclusive } from './dates';
-import { frontMatterInt, parseFrontMatter } from './front-matter';
-import { fileLastCommitAt, gitAvailable, isCompassRepo, repoInfo } from './git';
+import { compassStatus, isIsoDate, todayInNewYork, weeksInclusive } from './dates.ts';
+import { frontMatterInt, parseFrontMatter } from './front-matter.ts';
+import { fileLastCommitAt, gitAvailable, isCompassRepo, repoInfo } from './git.ts';
 import {
   extractBulletBlock,
   extractH2Section,
   parseLogEntries,
   retroVerdict,
   splitH2Sections,
-} from './markdown-sections';
+} from './markdown-sections.ts';
 import {
   SHORT_TERM_REQUIRED_KEYS,
   SHORT_TERM_SECTIONS,
@@ -27,7 +27,7 @@ import {
   type PeriodState,
   type PeriodSummary,
   type ShortTermCompass,
-} from './types';
+} from './types.ts';
 
 export const DEFAULT_COMPASS_DIR = '/home/openclaw/.openclaw/workspace/compass';
 export const PERIOD_ID_RE = /^\d{4}-\d{2}-\d{2}--\d{4}-\d{2}-\d{2}$/;

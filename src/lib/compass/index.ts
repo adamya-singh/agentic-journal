@@ -1,8 +1,8 @@
 // Server-only barrel for the compass reader (read.ts and git.ts touch fs and child_process).
 // Client components import `./types`, `./dates` and `./markdown-sections` directly.
-export * from './types';
-export * from './dates';
-export * from './front-matter';
-export * from './markdown-sections';
-export * from './read';
-export * from './git';
+export * from './types.ts';
+export * from './dates.ts';
+export * from './front-matter.ts';
+export * from './markdown-sections.ts';
+export * from './read.ts';
+export * from './git.ts';

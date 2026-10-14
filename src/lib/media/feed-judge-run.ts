@@ -30,8 +30,8 @@ export async function judgeFeed(o: {
               (!o.source || i.source === o.source) &&
               !f.rejected[i.id]?.some((r) => r.compass === o.compass),
           )
-          // Things you liked first: they matter most under any compass.
-          .sort((a, b) => Number(b.state === 'up') - Number(a.state === 'up'))
+          // Things you liked first, then what is in your queue, then the reserve.
+          .sort((a, b) => rankForJudging(a.state) - rankForJudging(b.state))
           .slice(0, o.limit)
           .map((i) => judgeInput(i.id))
           .filter((x): x is JudgeInput => !!x)
@@ -82,3 +82,6 @@ export function wipeShort(feed: FeedState) {
   delete feed.shortJudged;
   return n;
 }
+
+const rankForJudging = (state: string) =>
+  state === 'up' ? 0 : state === 'new' || state === 'seen' ? 1 : state === 'candidate' ? 2 : 3;

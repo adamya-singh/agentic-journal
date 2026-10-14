@@ -1,6 +1,6 @@
 // Calendar-date helpers for the compass. Dates are New York calendar days written as YYYY-MM-DD
 // and compared as strings; nothing here builds a local-midnight Date or slices toISOString().
-import type { CompassStatus } from './types';
+import type { CompassStatus } from './types.ts';
 
 export const NEW_YORK_TZ = 'America/New_York';
 const ISO_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;

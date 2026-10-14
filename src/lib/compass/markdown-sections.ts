@@ -1,6 +1,6 @@
 // Markdown structure helpers for compass files. Pure and client-safe: the page uses them to split
 // Focus items into cards, the reader uses them to find sections and log entries.
-import type { LogEntry, LogEntryKind, RetroVerdict } from './types';
+import type { LogEntry, LogEntryKind, RetroVerdict } from './types.ts';
 
 const FENCE_RE = /^\s{0,3}(`{3,}|~{3,})/;
 const H2_RE = /^##\s+(.*?)\s*#*\s*$/;

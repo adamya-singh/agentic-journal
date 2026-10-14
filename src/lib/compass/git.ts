@@ -11,7 +11,7 @@ import type {
   CompassHistory,
   HistoryScope,
   RepoInfo,
-} from './types';
+} from './types.ts';
 
 export const SHA_RE = /^[0-9a-f]{7,40}$/;
 /** Diffs longer than this are cut and flagged `truncated`. */
