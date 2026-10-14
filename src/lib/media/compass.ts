@@ -1,16 +1,20 @@
-import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { CompassKind } from './feed-types.ts';
+import { parseFrontMatter } from '../compass/front-matter.ts';
+import {
+  parseShortTermMarkdown,
+  readLongTermCompass,
+  readLongTermFiles,
+  readShortTermCompass,
+} from '../compass/read.ts';
+import type { ShortTermCompass } from '../compass/types.ts';
 
-// Read-only view of OpenClaw's compasses, for the feed. The long-term compass is
-// its North Star (USER.md "Core North Star", MEMORY.md "North Star Anchor",
-// SOUL.md "Canonical North Star"); the short-term compass is
-// $OPENCLAW_COMPASS_DIR/short-term/compass.md (flat front matter: title, period,
-// start, end, review_by, updated; H2 "Relation to the long-term compass"), kept in
-// its own git repo by the compass skill. The Journal never writes either.
-// When src/lib/compass (the /compass page's reader) lands, this file should
-// delegate to readShortTermCompass / readLongTermCompass instead of parsing.
+// The feed's view of OpenClaw's compasses, in the shape the judge, the digest and /media/feed were
+// built against. Parsing lives in src/lib/compass (the /compass page's reader); this file only adapts
+// its results. The long-term compass comes from the mirrors under $OPENCLAW_COMPASS_DIR/long-term/
+// and, until the mirror timer has run, from the live workspace USER.md / MEMORY.md / SOUL.md.
+// The Journal never writes either compass.
 
 export interface Compass {
   kind: CompassKind;
@@ -33,27 +37,10 @@ export const compassDir = () =>
   expand(process.env.OPENCLAW_COMPASS_DIR || path.join(workspace(), 'compass'));
 export const shortTermPath = () => path.join(compassDir(), 'short-term', 'compass.md');
 
-function read(file: string): { text: string; mtime: string } | undefined {
-  try {
-    return {
-      text: fs.readFileSync(file, 'utf8'),
-      mtime: fs.statSync(file).mtime.toISOString(),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-// Minimal YAML front matter: `key: value` lines, quotes stripped. Nested values are ignored.
+// Flat front matter (`key: value`, quotes stripped), via the shared parser.
 export function frontMatter(md: string): { meta: Record<string, string>; body: string } {
-  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  if (!m) return { meta: {}, body: md };
-  const meta: Record<string, string> = {};
-  for (const line of m[1].split(/\r?\n/)) {
-    const kv = line.match(/^([A-Za-z_][\w-]*)\s*:\s*(.*)$/);
-    if (kv && kv[2].trim()) meta[kv[1].toLowerCase()] = kv[2].trim().replace(/^["']|["']$/g, '');
-  }
-  return { meta, body: md.slice(m[0].length) };
+  const fm = parseFrontMatter(md);
+  return { meta: fm.data, body: fm.body };
 }
 
 // The text under the first heading matching `title`, up to the next heading of the same or higher level.
@@ -72,72 +59,51 @@ export function section(md: string, title: RegExp): string | undefined {
 }
 
 const DATE = /\d{4}-\d{2}-\d{2}/;
-export function parseShortTerm(md: string): Omit<Compass, 'kind' | 'source' | 'available'> {
-  const { meta, body } = frontMatter(md);
-  const start = meta.start;
-  const end = meta.end;
+const PERIOD_ID = /^\d{4}-\d{2}-\d{2}--/;
+// "## For agents" is OpenClaw's rulebook, not something to show you.
+const FOR_AGENTS = /^## For agents[\s\S]*?(?=^## |(?![\s\S]))/m;
+
+function toCompass(c: ShortTermCompass): Omit<Compass, 'kind' | 'source' | 'available'> {
+  const meta = c.frontMatter;
+  const start = meta.start?.match(DATE)?.[0];
+  const end = meta.end?.match(DATE)?.[0];
   // `period` is the id "<start>--<end>"; a free-text duration is a fallback label.
-  const label = meta.period && !/^\d{4}-\d{2}-\d{2}--/.test(meta.period) ? meta.period : meta.duration;
-  const title = meta.title || body.match(/^#\s+(.+)$/m)?.[1]?.trim();
+  const label = meta.period && !PERIOD_ID.test(meta.period) ? meta.period : meta.duration;
   return {
-    // "## For agents" is OpenClaw's rulebook, not something to show you.
-    text: body.replace(/^## For agents[\s\S]*?(?=^## |(?![\s\S]))/m, '').trim(),
-    forAgents: section(body, /^## For agents/i),
-    periodId: meta.period || (start && end ? `${start}--${end}` : undefined),
-    version: meta.version ? Number(meta.version) || undefined : undefined,
-    title,
-    updatedAt: meta.updated || meta.updated_at,
+    text: c.text.replace(FOR_AGENTS, '').trim(),
+    forAgents: c.forAgents || undefined,
+    periodId: c.period?.id || undefined,
+    version: c.version ?? undefined,
+    title: c.title || undefined,
+    updatedAt: c.updated ?? meta.updated_at ?? c.mtime ?? undefined,
     period:
-      start || end || label
-        ? {
-            start: start?.match(DATE)?.[0],
-            end: end?.match(DATE)?.[0],
-            label: label || undefined,
-          }
-        : undefined,
-    relation: section(body, /relat|long[- ]term|serves|north star/i),
+      start || end || label ? { start, end, label: label || undefined } : undefined,
+    relation: c.relation || undefined,
   };
 }
 
-// USER.md's "Core North Star" bullet block, through the Scoreboard bullet.
-function northStarBlock(md: string) {
-  const lines = md.split(/\r?\n/);
-  const start = lines.findIndex((l) => /North Star/i.test(l));
-  if (start < 0) return undefined;
-  const out: string[] = [];
-  for (const line of lines.slice(start)) {
-    if (/^---/.test(line) || (out.length && /^#{1,6}\s/.test(line))) break;
-    out.push(line);
-    // The block ends at the Scoreboard bullet; what follows (e.g. consent preferences) isn't the compass.
-    if (/\*\*Scoreboard:\*\*/.test(line)) break;
-  }
-  return out.join('\n').trim();
+export function parseShortTerm(md: string): Omit<Compass, 'kind' | 'source' | 'available'> {
+  return toCompass(parseShortTermMarkdown(md, ''));
 }
 
 export function readCompass(kind: CompassKind): Compass {
   if (kind === 'short') {
-    const file = shortTermPath();
-    const got = read(file);
-    if (!got || !got.text.trim()) return { kind, available: false, text: '', source: file };
-    return { kind, available: true, source: file, updatedAt: got.mtime, ...parseShortTerm(got.text) };
+    const c = readShortTermCompass(compassDir());
+    const empty = !c.text.trim() && Object.keys(c.frontMatter).length === 0;
+    if (!c.available || empty) return { kind, available: false, text: '', source: c.path };
+    return { kind, available: true, source: c.path, ...toCompass(c) };
   }
-  const userFile = path.join(workspace(), 'USER.md'),
-    memoryFile = path.join(workspace(), 'MEMORY.md'),
-    soulFile = path.join(workspace(), 'SOUL.md');
-  const user = read(userFile),
-    memory = read(memoryFile),
-    soul = read(soulFile);
-  const parts = [
-    user && northStarBlock(user.text),
-    memory && section(memory.text, /North Star Anchor/i),
-    soul && section(soul.text, /Canonical North Star/i),
-  ].filter((x): x is string => !!x);
+  const mirrors = readLongTermCompass(compassDir());
+  const lt = mirrors.available ? mirrors : readLongTermFiles(workspace(), { gitDir: null });
+  const sources = [lt.parts.user, lt.parts.memory, lt.parts.soul]
+    .filter((part) => part.exists)
+    .map((part) => part.path);
   return {
     kind,
-    available: parts.length > 0,
-    text: parts.join('\n\n'),
-    source: [userFile, memoryFile, soulFile].filter((_, i) => [user, memory, soul][i]).join(' + '),
-    updatedAt: [user?.mtime, memory?.mtime, soul?.mtime].filter(Boolean).sort().at(-1),
+    available: lt.text.trim().length > 0,
+    text: lt.text,
+    source: sources.join(' + ') || path.join(compassDir(), 'long-term'),
+    updatedAt: lt.mirroredAt ?? undefined,
   };
 }
 

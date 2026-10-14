@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: '/bookmarks', label: 'Bookmarks' },
   { href: '/media', label: 'Media' },
   { href: '/projects', label: 'Projects' },
+  { href: '/compass', label: 'Compass' },
   { href: '/jobs', label: 'Jobs' },
   { href: '/omi-transcripts', label: 'Transcripts' },
   { href: '/uptime', label: 'Status' },
