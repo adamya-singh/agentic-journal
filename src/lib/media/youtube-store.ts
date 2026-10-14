@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mediaRoot, readState, removeTitle, withLock, writeState } from './store.ts';
-import { thumbnailUrl, watchUrl, type HistoryVideo, type YouTubeAccount } from './youtube.ts';
+import { thumbnailUrl, watchUrl } from './youtube-links.ts';
+import type { HistoryVideo, YouTubeAccount } from './youtube.ts';
 import type { MediaState, MediaTitle } from './types.ts';
 
 // Your YouTube watch history as review candidates. Pending and skipped videos

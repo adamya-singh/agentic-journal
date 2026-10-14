@@ -1,5 +1,6 @@
 import type { Browser, Page } from 'playwright-core';
 import { BrowserUnavailable, openOpenClawPage } from './openclaw-page.ts';
+import { VIDEO_ID, thumbnailUrl, watchUrl } from './youtube-links.ts';
 
 // Reads YouTube watch history from OpenClaw's signed-in Chrome. Read-only:
 // it loads /feed/history and asks YouTube for further pages the way the page
@@ -30,12 +31,7 @@ export interface HistoryPage {
   // The day heading in force at the end of the page, for a continuation that has none.
   lastDay?: string;
 }
-export const VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
-export const thumbnailUrl = (videoId: string) => `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`;
-export const watchUrl = (videoId: string, short?: boolean) =>
-  short
-    ? `https://www.youtube.com/shorts/${videoId}`
-    : `https://www.youtube.com/watch?v=${videoId}`;
+export { VIDEO_ID, thumbnailUrl, watchUrl };
 
 type Json = Record<string, unknown>;
 const obj = (v: unknown): Json | undefined =>
