@@ -33,7 +33,7 @@ export function judgePrompt(compass: Compass, vocabulary: string[], items: Judge
 His ${compass.kind === 'short' ? 'SHORT-TERM' : 'LONG-TERM'} compass:${period}
 """
 ${compass.text.slice(0, 6000)}
-"""
+"""${compass.forAgents ? `\n\nOpenClaw's rules for this period (use them when judging):\n${compass.forAgents.slice(0, 2000)}` : ''}
 
 What counts as aligned:
 - Builds the capabilities the compass names: frontier AI understanding, ML fundamentals from scratch, research papers, building and shipping, founder and strategy thinking, compute and leverage, great engineers and researchers talking shop.

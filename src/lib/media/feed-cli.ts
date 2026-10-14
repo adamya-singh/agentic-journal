@@ -34,6 +34,10 @@ export function digest(compass: CompassKind = 'long') {
       long: { available: long.available, text: long.text, updatedAt: long.updatedAt },
       short: {
         available: short.available,
+        title: short.title,
+        periodId: short.periodId,
+        version: short.version,
+        forAgents: short.forAgents,
         text: short.text,
         period: short.period,
         relation: short.relation,
@@ -42,6 +46,11 @@ export function digest(compass: CompassKind = 'long') {
       },
     },
     vocabulary: f.vocabulary.map((t) => ({ tag: t, meaning: DEFAULT_VOCABULARY[t] })),
+    // Run `feed-judge --compass short --scope items` when true (new period, or judging unfinished).
+    shortNeedsJudging:
+      short.available &&
+      (f.shortJudged?.period !== short.periodId || s.judged.short < Math.min(s.judged.long, 400)),
+    shortJudged: f.shortJudged,
     queue: s.counts.queue,
     counts: s.counts,
     judged: s.judged,

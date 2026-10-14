@@ -21,6 +21,9 @@ export interface Compass {
   title?: string;
   period?: { start?: string; end?: string; label?: string };
   relation?: string; // how the short-term compass serves the long-term one
+  forAgents?: string; // OpenClaw-only rules (feed judging hints), sent to the judge
+  periodId?: string; // "<start>--<end>"; a new id means a new period
+  version?: number; // bumps on every edit, resets to 1 when a period opens
 }
 
 const workspace = () =>
@@ -71,13 +74,17 @@ export function section(md: string, title: RegExp): string | undefined {
 const DATE = /\d{4}-\d{2}-\d{2}/;
 export function parseShortTerm(md: string): Omit<Compass, 'kind' | 'source' | 'available'> {
   const { meta, body } = frontMatter(md);
-  const start = meta.period_start || meta.start || meta.from;
-  const end = meta.period_end || meta.end || meta.until || meta.to;
+  const start = meta.start;
+  const end = meta.end;
   // `period` is the id "<start>--<end>"; a free-text duration is a fallback label.
   const label = meta.period && !/^\d{4}-\d{2}-\d{2}--/.test(meta.period) ? meta.period : meta.duration;
   const title = meta.title || body.match(/^#\s+(.+)$/m)?.[1]?.trim();
   return {
-    text: body.trim(),
+    // "## For agents" is OpenClaw's rulebook, not something to show you.
+    text: body.replace(/^## For agents[\s\S]*?(?=^## |(?![\s\S]))/m, '').trim(),
+    forAgents: section(body, /^## For agents/i),
+    periodId: meta.period || (start && end ? `${start}--${end}` : undefined),
+    version: meta.version ? Number(meta.version) || undefined : undefined,
     title,
     updatedAt: meta.updated || meta.updated_at,
     period:

@@ -56,6 +56,8 @@ export interface FeedState {
   // Judged not aligned under that compass; never re-judged under it.
   rejected: Record<string, { at: string; compass: CompassKind }[]>;
   curator: { runs: CuratorRun[] };
+  // The short-term compass period the `short` judgments belong to. A new period id wipes them.
+  shortJudged?: { period: string; version?: number; at: string };
 }
 
 // Seed vocabulary. OpenClaw may add tags with `media.ts feed-vocab --add`.

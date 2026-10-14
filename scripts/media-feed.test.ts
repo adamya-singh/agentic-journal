@@ -233,6 +233,17 @@ test('compasses: long-term from USER/MEMORY/SOUL, short-term from compass/short-
   assert.match(long.text, /Systemic influence/);
   process.env.OPENCLAW_COMPASS_DIR = path.join(dir, 'elsewhere');
   assert.equal(readCompass('short').available, false);
+  // For agents is OpenClaw's: hidden from the page text, passed to the judge.
+  fs.mkdirSync(path.join(dir, 'elsewhere', 'short-term'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'elsewhere', 'short-term', 'compass.md'),
+    '---\nkind: short-term\nperiod: 2026-10-14--2026-12-22\ntitle: Land the role\nstart: 2026-10-14\nend: 2026-12-22\nversion: 3\n---\n## Period\nWeeks.\n\n## Relation to the long-term compass\n- Advances: depth\n\n## For agents\nPrefer agents content.\n',
+  );
+  const next = readCompass('short');
+  assert.equal(next.periodId, '2026-10-14--2026-12-22');
+  assert.equal(next.version, 3);
+  assert.doesNotMatch(next.text, /Prefer agents/);
+  assert.equal(next.forAgents, 'Prefer agents content.');
 });
 
 test('the judge prompt quotes the compass and the vocabulary', () => {
@@ -278,4 +289,26 @@ test('feed routes: GET view, POST vote/seen/page, Origin required', async () => 
     }),
   );
   assert.equal(foreign.status, 403);
+});
+
+test('a new short-term period wipes last period’s judgments; the digest asks for a re-judge', async () => {
+  const { wipeShort } = await import('../src/lib/media/feed-judge-run.ts');
+  seed();
+  const f = readFeed();
+  addTo(f, [{ id: 'tt1', alignment: { short: { confidence: 0.8, tags: [], why: 'Old period fit.', judgedBy: 't' } } }], 't');
+  rejectIn(f, [`yt:${vid(5)}`], 'short');
+  rejectIn(f, [`yt:${vid(5)}`], 'long');
+  f.shortJudged = { period: '2026-08-01--2026-10-13', at: '2026-08-01T00:00:00Z' };
+  writeFeed(f);
+  fs.mkdirSync(path.join(dir, 'ws', 'compass', 'short-term'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'ws', 'compass', 'short-term', 'compass.md'),
+    '---\nkind: short-term\nperiod: 2026-10-14--2026-12-22\ntitle: Next\nstart: 2026-10-14\nend: 2026-12-22\nversion: 1\n---\n## Period\nx\n',
+  );
+  assert.equal(digest().shortNeedsJudging, true);
+  const g = readFeed();
+  assert.equal(wipeShort(g), 1);
+  assert.equal(g.items.tt1.alignment.short, undefined);
+  assert.deepEqual(g.rejected[`yt:${vid(5)}`].map((r) => r.compass), ['long']);
+  assert.equal(g.shortJudged, undefined);
 });
