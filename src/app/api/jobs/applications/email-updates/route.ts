@@ -3,6 +3,7 @@ import { emailMessageIds, foldEmployerEmail, sameEmployerEmail, sameCandidateEma
 import { after, NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EventDetailsSchema, eventDetails } from '@/lib/job-event-details';
+import { isEmailTrackable } from '@/lib/job-email-updates';
 import type {
   JobApplicationRecord, JobEmailUpdatesProcessedEntry, JobEmailUpdatesView, JobListing,
 } from '@/lib/types';
@@ -83,19 +84,6 @@ export interface JobEmailUpdatesResult {
   summary?: { applied: number; queued: number; ignored: number; skipped: number };
 }
 
-/**
- * A posting an employer email can refer to: applied for and not withdrawn from
- * the board, or one OpenClaw clicked Submit on without seeing it go through
- * (an email from the employer settles that question).
- */
-function isTrackable(listing: JobListing, application: JobApplicationRecord | undefined): boolean {
-  return (
-    listing.status === 'applied' ||
-    application?.status === 'submitted' ||
-    isAwaitingSubmissionConfirmation(application)
-  );
-}
-
 /** When the oldest Submit still waiting for confirmation was clicked. */
 function earliestUnconfirmedSubmit(applications: Record<string, JobApplicationRecord>): number | undefined {
   const times = Object.values(applications)
@@ -152,7 +140,7 @@ export async function GET(request: NextRequest) {
     const unconfirmedSince = earliestUnconfirmedSubmit(store.applications);
     const listings = readJobListings().listings.flatMap((listing) => {
       const application = store.applications[listing.id];
-      if (!isTrackable(listing, application)) return [];
+      if (!isEmailTrackable(listing, application)) return [];
       let linkHost = '';
       try {
         linkHost = new URL(application?.canonicalApplicationUrl ?? listing.link).hostname;
@@ -208,7 +196,7 @@ export async function POST(request: NextRequest) {
       const changed = new Map<string, JobApplicationRecord>();
       const trackable = (listingId: string | undefined) => {
         const listing = listings.find((candidate) => candidate.id === listingId);
-        return listing && isTrackable(listing, store.applications[listing.id])
+        return listing && isEmailTrackable(listing, store.applications[listing.id])
           ? listing
           : undefined;
       };

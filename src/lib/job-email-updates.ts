@@ -1,5 +1,5 @@
 import type {
-  JobApplicationRecord, JobApplicationsViewData, JobEmailUpdatesView, JobEmployerStage,
+  JobApplicationRecord, JobApplicationsViewData, JobEmailUpdatesView, JobEmployerStage, JobListing,
 } from './types';
 
 export const JOB_EMPLOYER_STAGE_LABELS: Record<JobEmployerStage, string> = {
@@ -9,6 +9,29 @@ export const JOB_EMPLOYER_STAGE_LABELS: Record<JobEmployerStage, string> = {
   offer: 'Offer',
   rejected: 'Rejected',
 };
+
+/** OpenClaw clicked Submit but never saw the employer confirm it. */
+export function isAwaitingSubmissionConfirmation(application: JobApplicationRecord | undefined): boolean {
+  return Boolean(
+    application?.submissionAttemptedAt &&
+      !application.submittedAt &&
+      application.status !== 'submitted' &&
+      application.status !== 'closed',
+  );
+}
+
+/**
+ * A posting an employer email can refer to: applied for and not withdrawn from
+ * the board, or one OpenClaw clicked Submit on without seeing it go through
+ * (an email from the employer settles that question).
+ */
+export function isEmailTrackable(listing: JobListing, application: JobApplicationRecord | undefined): boolean {
+  return (
+    listing.status === 'applied' ||
+    application?.status === 'submitted' ||
+    isAwaitingSubmissionConfirmation(application)
+  );
+}
 
 export type JobEmailUpdateRequest =
   | {

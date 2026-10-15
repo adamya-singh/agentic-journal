@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Mail, X } from 'lucide-react';
-import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
+import { isEmailTrackable, JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import type {
   JobApplicationsViewData, JobEmailUpdateCandidate, JobEmployerStage, JobListing,
 } from '@/lib/types';
@@ -49,13 +49,16 @@ export function EmailUpdatesPanel({
   const options = React.useMemo(() => {
     if (!applications) return [];
     return listings
-      .filter((listing) =>
-        listing.status === 'applied' || applications.applications[listing.id]?.status === 'submitted')
-      .map((listing) => ({
-        listingId: listing.id,
-        label: `${listing.company} — ${listing.positionTitle}`,
-        submittedAt: applications.applications[listing.id]?.submittedAt ?? listing.updatedAt,
-      }))
+      .filter((listing) => isEmailTrackable(listing, applications.applications[listing.id]))
+      .map((listing) => {
+        const application = applications.applications[listing.id];
+        return {
+          listingId: listing.id,
+          label: `${listing.company} — ${listing.positionTitle}`,
+          submittedAt: application?.submittedAt ?? application?.submissionAttemptedAt ?? listing.updatedAt,
+          employerStage: application?.employerStage,
+        };
+      })
       .sort((first, second) => second.submittedAt.localeCompare(first.submittedAt));
   }, [listings, applications]);
 
@@ -112,13 +115,17 @@ function CandidateCard({
   onUpdate,
 }: {
   candidate: JobEmailUpdateCandidate;
-  options: { listingId: string; label: string }[];
+  options: { listingId: string; label: string; employerStage?: JobEmployerStage }[];
   onUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
 }) {
   const suggested = candidate.suggestedListingIds.filter((id) => options.some((option) => option.listingId === id));
-  // Preselect only an unambiguous suggestion; otherwise make the choice explicit.
-  const [listingId, setListingId] = React.useState(suggested.length === 1 ? suggested[0] : '');
-  const [stage, setStage] = React.useState<JobEmployerStage | ''>(candidate.suggestedStage ?? '');
+  // Prefill OpenClaw's best guess so a right guess is one click; its first suggestion is its pick.
+  const [listingId, setListingId] = React.useState(suggested[0] ?? '');
+  // Until a stage is chosen, follow OpenClaw's, or else keep the chosen posting where it is.
+  const [chosenStage, setStage] = React.useState<JobEmployerStage | '' | null>(null);
+  const currentStage = options.find((option) => option.listingId === listingId)?.employerStage;
+  const stage = chosenStage ?? candidate.suggestedStage ?? currentStage ?? '';
+  const stageUnchanged = chosenStage === null && !candidate.suggestedStage && currentStage !== undefined;
   const [busy, setBusy] = React.useState<'apply' | 'dismiss' | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const fieldId = `email-update-${candidate.id}`;
@@ -152,7 +159,6 @@ function CandidateCard({
         </time>
       </div>
       <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">{candidate.from}</p>
-      {(candidate.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {candidate.emailMessageIds!.length} emails; folded into one update.</p>}
       {candidate.summary && <p className="mt-1.5 text-slate-700 dark:text-slate-300">{candidate.summary}</p>}
       {(candidate.emailMessageIds?.length ?? 0) > 1 && <p className="mt-0.5 text-xs text-slate-500">Received {candidate.emailMessageIds!.length} emails; folded into one update.</p>}
       {candidate.reason && (
@@ -164,6 +170,11 @@ function CandidateCard({
       <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_auto] sm:items-end">
         <label className="min-w-0 text-xs font-semibold text-slate-600 dark:text-slate-300" htmlFor={`${fieldId}-posting`}>
           Posting
+          {listingId !== '' && listingId === suggested[0] && (
+            <span className="ml-1.5 font-normal text-sky-700 dark:text-sky-300">
+              · OpenClaw’s guess{suggested.length > 1 ? ` (${suggested.length - 1} other possible)` : ''}
+            </span>
+          )}
           <select id={`${fieldId}-posting`} value={listingId} onChange={(event) => setListingId(event.target.value)} className={`mt-1 font-normal ${field}`}>
             <option value="">Choose a posting…</option>
             {suggested.length > 0 && (
@@ -180,6 +191,9 @@ function CandidateCard({
         </label>
         <label className="text-xs font-semibold text-slate-600 dark:text-slate-300" htmlFor={`${fieldId}-stage`}>
           Stage
+          {stageUnchanged && !informational && (
+            <span className="ml-1.5 font-normal text-sky-700 dark:text-sky-300">· unchanged</span>
+          )}
           <select disabled={informational} id={`${fieldId}-stage`} value={stage} onChange={(event) => setStage(event.target.value as JobEmployerStage | '')} className={`mt-1 font-normal ${field}`}>
             <option value="">{informational?'Informational — stage unchanged':'Choose…'}</option>
             {STAGES.map((value) => <option key={value} value={value}>{JOB_EMPLOYER_STAGE_LABELS[value]}</option>)}

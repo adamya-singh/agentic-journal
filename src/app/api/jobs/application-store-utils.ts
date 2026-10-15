@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
+import { isAwaitingSubmissionConfirmation } from '@/lib/job-email-updates';
 import { DateSourceSchema } from '@/lib/employment-dates';
 import {
   hasStaleGraduationContext,
@@ -1365,15 +1366,7 @@ export function markApplicationSubmitted(
   updateJobListingLeadStatus(application.listingId, 'applied');
 }
 
-/** OpenClaw clicked Submit but never saw the employer confirm it. */
-export function isAwaitingSubmissionConfirmation(application: JobApplicationRecord | undefined): boolean {
-  return Boolean(
-    application?.submissionAttemptedAt &&
-      !application.submittedAt &&
-      application.status !== 'submitted' &&
-      application.status !== 'closed',
-  );
-}
+export { isAwaitingSubmissionConfirmation };
 
 /** Clock skew between the Submit click and the employer's mail server. */
 const SUBMISSION_EMAIL_SLACK_MS = 10 * 60_000;
