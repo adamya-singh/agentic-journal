@@ -14,6 +14,7 @@ import {
 import { markSeen, page, skip, vote } from '@/lib/media/feed-store';
 import { addLink, feedTeaser, feedView } from '@/lib/media/feed-view';
 import { FEED_ID } from '@/lib/media/feed-pools';
+import { ensureFresh, markWatched, savePosition, syncEpisodes, tbpnView } from '@/lib/media/tbpn';
 const feedId = z.string().regex(FEED_ID);
 const compass = z.enum(['long', 'short']);
 const feedQuery = z
@@ -56,6 +57,10 @@ export async function GET(req: NextRequest) {
       return result(summary(sort));
     }
     if (action === 'feed/summary') return result(feedTeaser());
+    if (action === 'tbpn') {
+      await ensureFresh();
+      return result(tbpnView());
+    }
     if (action === 'feed') {
       const body = feedQuery.parse({
         compass: q.get('compass') || undefined,
@@ -145,6 +150,25 @@ export async function POST(req: NextRequest) {
         .strict()
         .parse(await req.json());
       return result(await addLink(body.url), 201);
+    }
+    if (action === 'tbpn/position') {
+      const body = z
+        .object({ id: videoId, position: z.number().min(0).max(86_400), ended: z.boolean().optional() })
+        .strict()
+        .parse(await req.json());
+      return result(await savePosition(body.id, body.position, body.ended));
+    }
+    if (action === 'tbpn/watched') {
+      const body = z
+        .object({ id: videoId, done: z.boolean() })
+        .strict()
+        .parse(await req.json());
+      await markWatched(body.id, body.done);
+      return result(tbpnView());
+    }
+    if (action === 'tbpn/refresh') {
+      await syncEpisodes();
+      return result(tbpnView());
     }
     if (action === 'youtube/sync') return result({ jobId: await enqueue('youtube-sync') }, 202);
     if (action === 'youtube/account') {

@@ -21,6 +21,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { Poster, Ranker, TIER_CLASS, VideoFrame } from '@/components/media/Ranker';
 import { YouTubeIntake, YouTubeMark } from '@/components/media/YouTubeIntake';
 import { FeedTeaser } from '@/components/media/feed/FeedTeaser';
+import { TbpnTeaser } from '@/components/media/tbpn/TbpnTeaser';
 import { TIERS, isImdb, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
 import type { MediaTitle, MediaView, Tier } from '@/lib/media/types';
 
@@ -504,6 +505,7 @@ export default function MediaPage() {
         )}
         {data && (
           <>
+            <TbpnTeaser />
             <FeedTeaser />
             <YouTubeIntake
               syncing={youtubeSyncing}

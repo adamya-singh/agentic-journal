@@ -54,7 +54,7 @@ declare global {
   }
 }
 let ytReady: Promise<YTNamespace> | undefined;
-function loadYouTube(): Promise<YTNamespace> {
+export function loadYouTube(): Promise<YTNamespace> {
   if (window.YT?.Player) return Promise.resolve(window.YT);
   ytReady ??= new Promise((resolve) => {
     const previous = window.onYouTubeIframeAPIReady;
