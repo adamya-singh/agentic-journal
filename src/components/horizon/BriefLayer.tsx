@@ -28,10 +28,11 @@ const CSS = BRIEF_CSS + `
 .hzb-lead line{stroke:rgba(255,210,168,.75);stroke-width:1.2}
 .hzb-lead circle{fill:#ffd2a8}
 .hzb-tether{position:absolute;left:0;top:0;display:flex;align-items:stretch;max-width:calc(100% - 24px);max-height:calc(100% - 24px);pointer-events:auto;will-change:transform}
-.hzb-card{position:relative;flex:0 1 330px;width:330px;min-width:0;overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;background:rgba(12,17,30,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:14px 14px 12px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.hzb-card{position:relative;flex:0 1 340px;width:340px;min-width:0;overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;background:linear-gradient(180deg,rgba(22,27,48,.86),rgba(9,12,24,.93));backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:16px 18px 14px;box-shadow:0 40px 90px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.08);animation:hzb-grow .38s cubic-bezier(.16,1,.3,1)}
+@keyframes hzb-grow{from{opacity:.3;transform:scale(.9)}to{opacity:1;transform:none}}
 .hzb-card .hzb-ttl{font-size:24px;padding-right:28px}
 .hzb-pop{position:absolute;top:16px;bottom:16px;display:flex;align-items:stretch;max-width:calc(100% - 32px);pointer-events:auto}
-.hzb-pop-in{position:relative;display:flex;flex-direction:column;flex:0 1 470px;width:470px;min-width:0;box-sizing:border-box;border-radius:18px;border:1px solid rgba(255,230,200,.3);background:linear-gradient(180deg,rgba(17,27,50,.96),rgba(8,12,22,.97) 320px);box-shadow:0 30px 90px rgba(0,0,0,.55),0 0 50px rgba(255,190,130,.1);animation:hzb-in .3s cubic-bezier(.2,.8,.2,1)}
+.hzb-pop-in{position:relative;display:flex;flex-direction:column;flex:0 1 470px;width:470px;min-width:0;box-sizing:border-box;border-radius:20px;border:1px solid rgba(255,255,255,.12);background:linear-gradient(180deg,rgba(22,27,48,.93),rgba(9,12,24,.96) 320px);backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);box-shadow:0 40px 90px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.08);animation:hzb-in .3s cubic-bezier(.2,.8,.2,1)}
 @keyframes hzb-in{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
 .hzb-bar{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 14px 10px 18px;border-bottom:1px solid rgba(255,255,255,.13);font:500 10px var(--hz-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--hz-dim)}
 .hzb-bar button{font:500 11.5px var(--hz-mono);letter-spacing:0;text-transform:none;border:1px solid rgba(255,255,255,.22);background:transparent;border-radius:999px;padding:3px 11px;cursor:pointer;color:var(--hz-ink)}
@@ -73,7 +74,7 @@ const CSS = BRIEF_CSS + `
 .hzb-ask[aria-expanded=true]{background:#ffd2a8;color:#1b0d05;border-color:#ffd2a8}
 .hzb-bar .hzb-ask{font:500 11.5px var(--hz-mono);letter-spacing:0;text-transform:none;padding:3px 11px}
 .hzb-bar>div{display:flex;gap:6px}
-@media (prefers-reduced-motion:reduce){.hzb-pop-in,.hzf,.hzf::after{animation:none!important}}
+@media (prefers-reduced-motion:reduce){.hzb-pop-in,.hzb-card,.hzf,.hzf::after{animation:none!important}}
 @media (max-width:760px){.hzb-pop{left:8px!important;right:8px!important;max-width:none;top:8px;bottom:8px}.hzb-pop-in{flex:1 1 auto;width:auto;min-height:0}.hzb-pop .hzf{flex:0 0 46%}}
 `;
 

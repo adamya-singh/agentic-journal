@@ -11,6 +11,7 @@ import { BriefLayer } from './BriefLayer';
 import { DailyRing } from './DailyRing';
 import { LetGoReasonModal } from '@/components/LetGoReasonModal';
 import { DONE_CSS, DoneTray } from './DoneTray';
+import { FarSide, type FarInfo } from './FarSide';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
 
@@ -28,6 +29,8 @@ const CSS = `
 .hz-say h1 em{font-style:normal;color:var(--hz-em)}
 .hz-say p{margin:8px 0 0;font:13px/1.45 var(--hz-sans);color:var(--hz-dim)}
 .hz-say .hz-daily-line{color:var(--hz-em)}
+.hz-say button.hz-daily-line{pointer-events:auto;background:none;border:0;padding:0;font:inherit;text-align:left;cursor:pointer;text-decoration:underline dotted rgba(255,210,168,.5);text-underline-offset:3px}
+.hz-say button.hz-daily-line:hover,.hz-say button.hz-daily-line:focus-visible{text-decoration-color:var(--hz-em);outline:none}
 .hz-cap{position:absolute;right:3%;top:24px;width:min(34%,420px);z-index:6}
 .hz-loading{position:absolute;inset:0;display:grid;place-items:center;font:13px var(--hz-sans);color:var(--hz-dim);z-index:2}
 .hz3d{position:absolute;inset:0;opacity:0;pointer-events:none}
@@ -95,6 +98,10 @@ export function HorizonHero() {
   const heroRef = React.useRef<HTMLElement>(null);
   const [space, setSpace] = React.useState<DawnSpace | null>(null);
   const [spots, setSpots] = React.useState<PillSpot[]>([]);
+  const [sectors, setSectors] = React.useState<Sector[]>([]);
+  // The far side of the dome: which face is up, and where its ground rows go.
+  const [farInfo, setFarInfo] = React.useState<FarInfo>({ far: false, count: 0, noticed: 0 });
+  const [groundSlot, setGroundSlot] = React.useState<HTMLDivElement | null>(null);
   const layoutRef = React.useRef<{ spots: PillSpot[]; sectors: Sector[]; data: HorizonData } | null>(null);
   const [data, setData] = React.useState<HorizonData | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -160,6 +167,7 @@ export function HorizonHero() {
       layoutRef.current = { spots, sectors, data };
       spaceRef.current?.setLayout(spots, data, sectors);
       setSpots(spots);
+      setSectors(sectors);
     };
     draw();
     let alive = true;
@@ -231,10 +239,13 @@ export function HorizonHero() {
   // A proposal whose task is no longer one of the pad's holds still needs an answer.
   const waiting = data ? proposals.filter((p) => !data.holds.some((h) => h.id === p.taskId)) : [];
   const answers = data ? horizonAnswers(data) : null;
-  const headline = answers?.next
+  const far = farInfo.far;
+  const headline = far ? <>The <em>far side</em>.</> : answers?.next
     ? (answers.holds.length ? <>Clear the pad, then <em>{answers.next.short}</em>.</> : <>Next up: <em>{answers.next.short}</em>.</>)
     : <>Clear skies.</>;
-  const sub = answers
+  const sub = far
+    ? `${farInfo.count} to decide: ${farInfo.count - farInfo.noticed} you saved, ${farInfo.noticed} OpenClaw noticed. Closer to the sun is sooner.`
+    : answers
     ? [`${answers.cleared} cleared${answers.letGo ? `, ${answers.letGo} let go` : ''} this week.`, answers.big ? `Next big launch: ${answers.big.short} · ${answers.big.day}.` : '']
       .filter(Boolean).join(' ')
     : '';
@@ -245,7 +256,7 @@ export function HorizonHero() {
       : `All ${data.dailies.length} dailies done.`;
 
   return (
-    <section ref={heroRef} className={`hz-hero ${serif.variable}`} aria-label="Priority horizon">
+    <section ref={heroRef} className={`hz-hero ${serif.variable}${far ? ' hz-far' : ''}`} aria-label="Priority horizon">
       <style dangerouslySetInnerHTML={{ __html: CSS + DONE_CSS }} />
       <div
         ref={skyRef}
@@ -257,13 +268,27 @@ export function HorizonHero() {
         {!data && <div className="hz-loading">{error || 'Loading your horizon…'}</div>}
         <div className="hz-say">
           <h1>{headline}</h1>
-          {(sub || dailyLine) && <p>{sub}{dailyLine && <> <span className="hz-daily-line">{dailyLine}</span></>}</p>}
+          {(sub || dailyLine) && (
+            <p>{sub}{dailyLine && !far && <> <button type="button" className="hz-daily-line" onClick={() => window.dispatchEvent(new Event('hz-daily-open'))}>{dailyLine}</button></>}</p>
+          )}
         </div>
         <div className="hz-cap hz-nointeract" onClick={(e) => e.stopPropagation()}>
           <QuickCaptureInput variant="inline" />
         </div>
+        <FarSide
+          skyRef={skyRef}
+          svgRef={svgRef}
+          spots={spots}
+          sectors={sectors}
+          data={data}
+          space={space}
+          groundSlot={groundSlot}
+          onFar={setFarInfo}
+          onTasksChanged={refreshTasks}
+        />
       </div>
       <div className="hz-ground hz-keep">
+        {far ? <div ref={setGroundSlot} style={{ display: 'contents' }} /> : <>
         <div className="hz-row hz-row-b">
           <b>Pad</b>
           {data && data.holds.length === 0 && <span className="hz-none">Nothing overdue. The pad is clear.</span>}
@@ -307,6 +332,7 @@ export function HorizonHero() {
             ))}
           </div>
         )}
+        </>}
       </div>
       {/* Above the brief overlay, which can be open when a hold's Let go is clicked. */}
       <div style={{ position: 'relative', zIndex: 70 }}>

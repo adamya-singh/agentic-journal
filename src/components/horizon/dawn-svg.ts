@@ -83,7 +83,7 @@ function place(boxes: Box[], cands: [number, number][], w: number, bounds: Box):
 
 export interface Sector { group: string; a0: number; a1: number; mid: number }
 
-const FAN_LEFT = 174, FAN_RIGHT = 6, SECTOR_GAP = 2;
+export const FAN_LEFT = 174, FAN_RIGHT = 6, SECTOR_GAP = 2;
 
 // One slice of the fan per group, in a fixed order so each subject keeps its direction from day to day:
 // courses alphabetically from the left, then Jobs, Other and Life on the right.
@@ -147,7 +147,8 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     `<clipPath id="hz-above"><rect width="${W}" height="${H}"/></clipPath></defs>`;
   s += `<rect width="${W}" height="${H}" fill="url(#hz-sky)"/>`;
   s += starField(W, H * 0.6, DAWN.stars);
-  s += '<g clip-path="url(#hz-above)">';
+  // What rolls when the dome turns (rings, slices, pills) is in .hz-face; the sky, sun, dailies and ground stay.
+  s += '<g class="hz-face" clip-path="url(#hz-above)">';
   for (let idx = 3; idx >= 0; idx -= 1) {
     s += `<circle cx="${X}" cy="${H}" r="${R[idx + 1]}" fill="${DAWN.bands[idx]}" stroke="${DAWN.ring}"${idx === 3 ? ' stroke-dasharray="2 6"' : ''}/>`;
   }
@@ -158,6 +159,7 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     const a = sec.a0 + SECTOR_GAP / 2, p0 = pt(R[0] + 8, a), p1 = pt(R[4] + 6, a);
     s += `<line x1="${p0[0].toFixed(1)}" y1="${p0[1].toFixed(1)}" x2="${p1[0].toFixed(1)}" y2="${p1[1].toFixed(1)}" stroke="rgba(255,255,255,.09)"/>`;
   });
+  s += '</g><g clip-path="url(#hz-above)">';
   const dailies = data.dailies, doneN = dailies.filter((d) => d.done).length;
   // The sun glows wider as the day's dailies get done.
   if (dailies.length) {
@@ -171,11 +173,13 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     if (d.done) s += `<path d="${path}" fill="none" stroke="#ffb37a" stroke-width="7" stroke-linecap="round" opacity=".8" filter="url(#hz-dglow)"/>`;
     s += `<path class="hz-dseg${d.done ? ' done' : ''}" data-daily="${esc(d.id)}" d="${path}" fill="none" stroke="${d.done ? '#fff6ec' : 'rgba(255,236,214,.38)'}" stroke-width="4.5" stroke-linecap="round"/>`;
   });
+  s += '<g class="hz-face">';
   sectors.forEach((sec) => {
     const p = pt(R[4] + 16, sec.mid), c = Math.cos(sec.mid * Math.PI / 180);
     const anchor = c > 0.25 ? 'start' : c < -0.25 ? 'end' : 'middle';
     s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 3).toFixed(1)}" text-anchor="${anchor}" style="font-family:${MONO}" font-size="10" letter-spacing="1.6" fill="#d6dde8" opacity=".7">${esc(sec.group.toUpperCase())}</text>`;
   });
+  s += '</g>';
   s += `<text x="${X}" y="${H - (dailies.length ? 29 : 20)}" text-anchor="middle" style="font-family:${MONO}" font-size="10" letter-spacing="2" fill="${DAWN.sunText}">YOU</text>`;
   if (dailies.length) {
     const count = doneN === dailies.length ? 'ALL DONE' : `${doneN} OF ${dailies.length} DAILY`;
@@ -183,12 +187,14 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
   }
   s += `<rect y="${H}" width="${W}" height="${G}" fill="url(#hz-gr)"/>`;
   s += `<rect x="0" y="${H - 1}" width="${W}" height="1.5" fill="${DAWN.line}"/>`;
+  s += '<g class="hz-ztoday">';
   HORIZON_RING_ZONES.forEach((k, i) => {
     const mid = (R[i] + R[i + 1]) / 2, x = X - mid, nm = ZONE_NAMES[k];
     s += `<line x1="${x}" x2="${x}" y1="${H}" y2="${H + 7}" stroke="${DAWN.groundInk}"/>`;
     s += `<text x="${x}" y="${H + 30}" text-anchor="middle" style="font-family:${SERIF}" font-size="24" font-style="italic" fill="${DAWN.groundInk}">${nm[0]}</text>`;
     s += `<text x="${x}" y="${H + 46}" text-anchor="middle" style="font-family:${MONO}" font-size="9.5" letter-spacing="1.4" fill="${DAWN.groundInk}" opacity=".7">${nm[1].toUpperCase()}</text>`;
   });
+  s += '</g><g class="hz-face">';
   const core = data.dailies.length ? DAILY_R + 6 : R[0] + 8;   // keep pills off the sun and its ring of dailies
   const boxes: Box[] = [[X - core, H - core, X + core, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
   // Place pills nearest-due first, so the most urgent ones keep their ideal spot.
@@ -213,6 +219,7 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     s += `<text x="${p[0].toFixed(1)}" y="${(p[1] + 25).toFixed(1)}" text-anchor="middle" style="font-family:${MONO}" font-size="10.5" fill="${DAWN.date}" opacity="${k === 'orbit' ? 0.55 : 0.8}">${esc(it.day)}</text>`;
     spots.push({ item: it, x: p[0], y: p[1] });
   });
+  s += '</g>';
   svg.setAttribute('viewBox', `0 0 ${W} ${H + G}`);
   svg.innerHTML = s;
   return { spots, sectors };

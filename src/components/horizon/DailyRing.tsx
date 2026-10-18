@@ -20,7 +20,7 @@ const DAILY_CSS = `
 .hz-flat .hz-dseg.hot{stroke:#ffd2a8;stroke-width:6}
 .hzd-tip{position:absolute;z-index:9;pointer-events:none;font:500 12.5px var(--hz-sans);color:var(--hz-ink);background:rgba(10,14,24,.8);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,210,168,.5);border-radius:999px;padding:5px 12px;white-space:nowrap}
 .hzd-tip span{font:11px var(--hz-mono);color:var(--hz-dim);margin-left:6px}
-.hzd-card{position:absolute;width:300px;max-width:calc(100vw - 32px);box-sizing:border-box;pointer-events:auto;color:var(--hz-ink);background:rgba(10,14,24,.86);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.16);border-radius:14px;padding:10px 14px 6px;box-shadow:0 18px 40px rgba(0,0,0,.4);animation:hzd-in .22s cubic-bezier(.2,.8,.2,1)}
+.hzd-card{position:absolute;width:300px;max-width:calc(100vw - 32px);box-sizing:border-box;pointer-events:auto;color:var(--hz-ink);background:linear-gradient(180deg,rgba(22,27,48,.86),rgba(9,12,24,.93));backdrop-filter:blur(22px) saturate(1.3);-webkit-backdrop-filter:blur(22px) saturate(1.3);border:1px solid rgba(255,255,255,.12);border-radius:20px;padding:12px 16px 8px;box-shadow:0 40px 90px -20px rgba(0,0,0,.7),inset 0 1px 0 rgba(255,255,255,.08);animation:hzd-in .22s cubic-bezier(.2,.8,.2,1)}
 @keyframes hzd-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .hzd-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:6px}
 .hzd-head b{font:italic 400 22px var(--hz-serif)}
@@ -68,6 +68,11 @@ export function DailyRing({ data, space, onChanged }: {
 }) {
   const dailies = React.useMemo(() => data?.dailies ?? [], [data]);
   const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    const onOpen = () => setOpen((o) => !o);
+    window.addEventListener('hz-daily-open', onOpen);
+    return () => window.removeEventListener('hz-daily-open', onOpen);
+  }, []);
   const [hot, setHot] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -129,7 +134,7 @@ export function DailyRing({ data, space, onChanged }: {
     };
     const onDown = (e: PointerEvent) => {
       const t = e.target as HTMLElement;
-      if (!t.closest('.hzd-card,.hzd-sun,.hz3d-dl,.hz3d-ds')) setOpen(false);
+      if (!t.closest('.hzd-card,.hzd-sun,.hz-daily-line,.hz3d-dl,.hz3d-ds')) setOpen(false);
     };
     document.addEventListener('keydown', onKey, true);
     document.addEventListener('pointerdown', onDown);
@@ -187,14 +192,6 @@ export function DailyRing({ data, space, onChanged }: {
           />
         );
       })}
-      <button
-        type="button"
-        className="hzd-sun"
-        style={{ left: `${DAWN.X / 12}%`, top: `${(DAWN.H / 630) * 100}%` }}
-        aria-label={`Dailies: ${done} of ${dailies.length} done today. ${open ? 'Hide' : 'Show'} the list.`}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      />
       {hotIdx >= 0 && !open && !live && (() => {
         const d = dailies[hotIdx], spot = arcSpot(arcs[hotIdx].mid);
         return (

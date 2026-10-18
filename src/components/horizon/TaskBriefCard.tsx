@@ -12,8 +12,9 @@ export const BRIEF_CSS = `
 .hzb{color:var(--hz-ink);font:13.5px/1.5 var(--hz-sans)}
 .hzb a{color:var(--hz-em)}
 .hzb-eyebrow{display:flex;flex-wrap:wrap;gap:4px 8px;font:500 10.5px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--hz-dim)}
-.hzb-eyebrow b{font-weight:500;color:var(--hz-em)}
-.hzb-ttl{margin:6px 0 2px;font:400 30px/1.05 var(--hz-serif);text-wrap:balance}
+.hzb-eyebrow{align-items:center}
+.hzb-eyebrow b{font-weight:600;color:#1b0d05;background:var(--hz-em);border-radius:6px;padding:2px 8px}
+.hzb-ttl{margin:10px 0 2px;font:italic 400 30px/1.03 var(--hz-serif);text-wrap:balance}
 .hzb-full{margin:0;font-size:12.5px;color:var(--hz-dim)}
 .hzb-when{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}
 .hzb-zc{font:500 12px var(--hz-mono);padding:3px 10px;border-radius:999px;border:1px solid rgba(255,255,255,.22);white-space:nowrap}
@@ -24,14 +25,14 @@ export const BRIEF_CSS = `
 .hzb-where{font-size:12.5px;color:var(--hz-dim)}
 .hzb-note{margin:6px 0 0;font-size:12.5px;color:var(--hz-dim)}
 .hzb-stakes{margin:10px 0 0;color:#dfe5ee}
-.hzb-next{margin-top:14px;border:1px solid rgba(255,210,168,.35);background:linear-gradient(180deg,rgba(255,210,168,.1),rgba(255,210,168,.03));border-radius:12px;padding:12px}
+.hzb-next{margin-top:14px;border:1px solid rgba(255,190,120,.3);background:radial-gradient(140% 120% at 0% 0%,rgba(255,154,60,.2),rgba(255,154,60,.04) 60%);border-radius:16px;padding:14px}
 .hzb-lab{font:500 10px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--hz-em)}
-.hzb-go{display:inline-flex;align-items:center;gap:8px;margin-top:8px;background:#ffd2a8;color:#1b0d05;border:0;border-radius:9px;padding:8px 14px;font:600 14px var(--hz-sans);text-decoration:none;cursor:pointer;max-width:100%;text-align:left}
+.hzb-go{display:inline-flex;align-items:center;gap:8px;margin-top:8px;background:linear-gradient(180deg,#ffd9a0,#ff9a3c);color:#1b0d05;border:0;border-radius:12px;padding:10px 15px;font:600 14px var(--hz-sans);text-decoration:none;cursor:pointer;max-width:100%;text-align:left;box-shadow:0 10px 30px -10px rgba(255,140,50,.75),inset 0 1px 0 rgba(255,255,255,.6)}
 .hzb a.hzb-go{color:#1b0d05}
 .hzb-go:hover{filter:brightness(1.05)}
 .hzb-next p{margin:8px 0 0;font-size:13px;color:#d6dde8}
 .hzb-sec{margin-top:16px}
-.hzb-sec>h4{margin:0 0 7px;font:500 10.5px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--hz-dim)}
+.hzb-sec>h4{margin:0 0 7px;font:500 10px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:#8d98aa}
 .hzb-flags{display:grid;gap:7px}
 .hzb-flag{display:grid;grid-template-columns:12px minmax(0,1fr);gap:8px;font-size:13px;line-height:1.45;padding:8px 10px;border-radius:10px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.13)}
 .hzb-flag i{width:9px;height:9px;border-radius:50%;margin-top:5px}
@@ -89,7 +90,8 @@ export const BRIEF_CSS = `
 .hzb-fb:disabled{opacity:.5;cursor:default}
 .hzb-more{background:transparent;border:0;color:#ffd2a8;font:500 12.5px var(--hz-sans);cursor:pointer;padding:0}
 .hzb-cardfoot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}
-.hzb-x{position:absolute;top:10px;right:10px;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(0,0,0,.25);cursor:pointer;color:var(--hz-dim);font-size:16px;line-height:1}
+.hzb-x{position:absolute;top:12px;right:12px;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,.15);background:rgba(0,0,0,.35);cursor:pointer;color:#dfe5ee;font-size:16px;line-height:1;transition:transform .2s,border-color .2s}
+.hzb-x:hover{transform:rotate(90deg)}
 .hzb-x:hover,.hzb-x:focus-visible{color:var(--hz-ink);border-color:#ffd2a8;outline:none}
 .hzb-loading{font-size:13px;color:var(--hz-dim);padding:6px 0}
 .hzb-oc{display:inline-block;font:10px/1.5 var(--hz-mono);letter-spacing:.04em;color:#e2b88f;border:1px dashed rgba(255,210,168,.45);border-radius:5px;padding:0 5px;margin-left:6px;white-space:nowrap;vertical-align:1px}

@@ -26,6 +26,10 @@ export async function register(): Promise<void> {
   const { ensureFeedCuratorCron } = await import('./lib/media/feed-cron');
   ensureFeedCuratorCron().catch((error) => console.error('Feed curator cron:', error));
 
+  // OpenClaw's twice-daily pass that writes the action cards on Horizon Dawn's far side.
+  const { ensureActionCardsCron } = await import('./lib/action-cards/cron');
+  ensureActionCardsCron().catch((error) => console.error('Action cards cron:', error));
+
   const {
     ensureJobApplicationWorkerCron, reconcileAndWakeJobApplicationWorker, syncJobEmailUpdatesCron,
   } = await import('./app/api/jobs/application-worker-utils');
