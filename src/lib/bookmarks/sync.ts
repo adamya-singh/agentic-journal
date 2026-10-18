@@ -384,49 +384,50 @@ export async function refreshVideoLinks(postIds: string[], fetcher: typeof fetch
  * Each page reserves budget before the request and settles to the returned resource count.
  * Membership is replaced only after every folder was read, so a failure leaves the old copy.
  */
+/** The connected account, once X is connected and the spending limit is confirmed. */
+function connectedAccount() {
+  return withLock(() => {
+    const s = readState();
+    if (!s.accountId || !credentials().accessToken)
+      throw new Error('Connect X before importing folders.');
+    if (!s.budgetConfirmed)
+      throw new Error(
+        'Confirm the $5 spending limit and disabled auto-recharge in connection settings.',
+      );
+    return s.accountId;
+  });
+}
+/** Every page of the folder list (no folderId) or of one folder, each page reserved and settled. */
+async function readFolderPages(accountId: string, folderId: string | undefined, fetcher: typeof fetch) {
+  const out: { id: string; name?: string }[] = [],
+    seen = new Set<string>();
+  let cursor: string | undefined;
+  for (let n = 0; n < MAX_FOLDER_PAGES; n++) {
+    const month = await reserveBudget(
+      FOLDER_PAGE_RESERVE,
+      'The local monthly allowance is exhausted. Folders were not updated.',
+    );
+    const page = await fetchFolderPage(accountId, folderId, cursor, fetcher);
+    await settleBudget(month, FOLDER_PAGE_RESERVE, page.data.length * POST_COST);
+    out.push(...page.data);
+    if (!page.next) return out;
+    if (seen.has(page.next))
+      throw new XError(
+        'invalid_request',
+        'X repeated a folder pagination cursor. Folders were not updated.',
+      );
+    seen.add(page.next);
+    cursor = page.next;
+  }
+  throw new XError('invalid_request', 'A bookmark folder is too large to import.');
+}
 export async function importFolders(fetcher: typeof fetch = fetch) {
   return withLock(async () => {
-    const accountId = await withLock(() => {
-      const s = readState();
-      if (!s.accountId || !credentials().accessToken)
-        throw new Error('Connect X before importing folders.');
-      if (!s.budgetConfirmed)
-        throw new Error(
-          'Confirm the $5 spending limit and disabled auto-recharge in connection settings.',
-        );
-      return s.accountId;
-    });
-    const reserve = () =>
-      reserveBudget(
-        FOLDER_PAGE_RESERVE,
-        'The local monthly allowance is exhausted. Folders were not updated.',
-      );
-    const settle = (month: string, count: number) =>
-      settleBudget(month, FOLDER_PAGE_RESERVE, count * POST_COST);
-    const readAll = async (folderId?: string) => {
-      const out: { id: string; name?: string }[] = [],
-        seen = new Set<string>();
-      let cursor: string | undefined;
-      for (let n = 0; n < MAX_FOLDER_PAGES; n++) {
-        const month = await reserve();
-        const page = await fetchFolderPage(accountId, folderId, cursor, fetcher);
-        await settle(month, page.data.length);
-        out.push(...page.data);
-        if (!page.next) return out;
-        if (seen.has(page.next))
-          throw new XError(
-            'invalid_request',
-            'X repeated a folder pagination cursor. Folders were not updated.',
-          );
-        seen.add(page.next);
-        cursor = page.next;
-      }
-      throw new XError('invalid_request', 'A bookmark folder is too large to import.');
-    };
-    const folders = (await readAll()).map((f) => ({ id: f.id, name: f.name! }));
+    const accountId = await connectedAccount();
+    const folders = (await readFolderPages(accountId, undefined, fetcher)).map((f) => ({ id: f.id, name: f.name! }));
     const membership: Record<string, string[]> = {};
     for (const folder of folders)
-      for (const post of await readAll(folder.id)) {
+      for (const post of await readFolderPages(accountId, folder.id, fetcher)) {
         const list = (membership[post.id] ||= []);
         if (!list.includes(folder.id)) list.push(folder.id);
       }
@@ -444,6 +445,31 @@ export async function importFolders(fetcher: typeof fetch = fetch) {
       });
     });
     return { folders: folders.length, assigned: Object.keys(membership).length, syncedAt };
+  }, '.folders-lock');
+}
+/**
+ * Refreshes one known folder's posts and leaves the others as they are: the Openclaw folder can be
+ * checked every day for about $0.02 instead of paying to read every folder.
+ */
+export async function importFolder(folderId: string, fetcher: typeof fetch = fetch) {
+  return withLock(async () => {
+    const accountId = await connectedAccount();
+    const known = readFolders();
+    if (known.accountId !== accountId || !known.folders.some((f) => f.id === folderId))
+      throw new Error('That folder is not known yet. Import all folders once first.');
+    const ids = (await readFolderPages(accountId, folderId, fetcher)).map((p) => p.id);
+    const syncedAt = new Date().toISOString();
+    await withLock(() => {
+      const previous = readFolders();
+      const membership: Record<string, string[]> = {};
+      for (const [postId, folderIds] of Object.entries(previous.membership)) {
+        const rest = folderIds.filter((id) => id !== folderId);
+        if (rest.length) membership[postId] = rest;
+      }
+      for (const postId of ids) (membership[postId] ||= []).push(folderId);
+      writeJson('folders.json', { ...previous, membership, folderSyncedAt: { ...(previous.folderSyncedAt || {}), [folderId]: syncedAt } });
+    });
+    return { folder: folderId, posts: ids.length, syncedAt };
   }, '.folders-lock');
 }
 export async function runWorker() {

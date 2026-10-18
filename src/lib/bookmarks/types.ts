@@ -48,6 +48,8 @@ export interface BookmarkFolderStore {
    * the newest 20 posts per folder, so these are merged with `membership` and survive API refreshes.
    */
   web?: Record<string, { syncedAt: string; ids: string[] }>;
+  /** When single folders were last refreshed on their own (see importFolder). */
+  folderSyncedAt?: Record<string, string>;
 }
 /** Downloaded media files, keyed `${postId}:${mediaIndex}`. */
 export type BookmarkMediaIndex = Record<

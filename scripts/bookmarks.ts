@@ -20,6 +20,7 @@ if (command === 'help') {
           'update --key account:post [--favorite true|false] [--read true|false] [--tags tag1,tag2]',
           'sync',
           'folders',
+          'folder --id folderId   (refresh one folder, about $0.02)',
           'status',
           'cancel',
           'resume',
@@ -40,6 +41,7 @@ if (command === 'help') {
         'update',
         'sync',
         'folders',
+        'folder',
         'status',
         'cancel',
         'resume',
@@ -54,7 +56,7 @@ if (command === 'help') {
           ? '/item'
           : `/${command}`;
     const url = new URL(`/api/bookmarks${endpoint}`, base);
-    const write = ['update', 'sync', 'folders', 'cancel', 'resume'].includes(command);
+    const write = ['update', 'sync', 'folders', 'folder', 'cancel', 'resume'].includes(command);
     let body: Record<string, unknown> | undefined;
     if (command === 'update') {
       body = { key: options.get('key') };
@@ -70,6 +72,9 @@ if (command === 'help') {
           .split(',')
           .map((s) => s.trim())
           .filter(Boolean);
+    } else if (command === 'folder') {
+      if (!options.has('id')) throw new Error('folder needs --id <folderId>.');
+      body = { id: options.get('id') };
     } else if (!write) for (const [key, value] of options) url.searchParams.set(key, value);
     const response = await fetch(url, {
       method: write ? 'POST' : 'GET',
@@ -78,7 +83,7 @@ if (command === 'help') {
         'Content-Type': 'application/json',
       },
       body: body ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(command === 'folders' ? 300_000 : 15_000),
+      signal: AbortSignal.timeout(command === 'folders' || command === 'folder' ? 300_000 : 15_000),
     });
     const data = await response.json();
     console.log(JSON.stringify(data, null, 2));

@@ -18,7 +18,7 @@ import {
   safeReason,
   XError,
 } from '@/lib/bookmarks/x-client';
-import { status, startSync, cancelSync, settings, importFolders } from '@/lib/bookmarks/sync';
+import { status, startSync, cancelSync, settings, importFolders, importFolder } from '@/lib/bookmarks/sync';
 import { localMediaFile } from '@/lib/bookmarks/media';
 import fs from 'node:fs';
 import { Readable } from 'node:stream';
@@ -160,6 +160,10 @@ export async function POST(req: NextRequest) {
     if (action === 'sync' || action === 'resume')
       return result({ jobId: await startSync(action === 'resume') }, 202);
     if (action === 'folders') return result(await importFolders());
+    if (action === 'folder') {
+      const { id } = z.object({ id: z.string().regex(/^\d{1,19}$/) }).strict().parse(await req.json());
+      return result(await importFolder(id));
+    }
     if (action === 'cancel') {
       await cancelSync();
       return result(status());

@@ -24,6 +24,7 @@ import {
   recoverInterrupted,
   billingMonth,
   importFolders,
+  importFolder,
   refreshVideoLinks,
 } from '../src/lib/bookmarks/sync.ts';
 import { downloadVideos } from '../src/lib/bookmarks/media.ts';
@@ -723,6 +724,30 @@ test('folder lists read from x.com merge with API membership and survive an API 
   await importFolders(folderFetch(routes()));
   assert.equal(listBookmarks().folders[0].count, 3);
   assert.deepEqual(getBookmark('42:1')!.folders, ['100']);
+});
+
+test('refreshing one folder pays for that folder only and keeps the others', async () => {
+  await reviewed();
+  await startSync();
+  await processJob(fake([page(['3', '2', '1'])]));
+  await importFolders(
+    folderFetch({
+      '/': [{ data: [{ id: '100', name: 'Openclaw' }, { id: '200', name: 'Recipes' }] }],
+      '/100': [{ data: [{ id: '3' }] }],
+      '/200': [{ data: [{ id: '2' }, { id: '3' }] }],
+    }),
+  );
+  const before = readState().usage[billingMonth()];
+  const urls: string[] = [];
+  const r = await importFolder('100', folderFetch({ '/100': [{ data: [{ id: '1' }, { id: '2' }] }] }, urls));
+  assert.deepEqual([r.folder, r.posts], ['100', 2]);
+  assert.equal(urls.length, 1);
+  assert.ok(Math.abs(readState().usage[billingMonth()] - before - 0.002) < 1e-9);
+  const ids = (folder: string) => listBookmarks(new URLSearchParams({ folder })).items.map((i) => i.id).sort();
+  assert.deepEqual(ids('100'), ['1', '2']);
+  assert.deepEqual(ids('200'), ['2', '3']);
+  assert.deepEqual(getBookmark('42:3')!.folders, ['200']);
+  await assert.rejects(importFolder('999', folderFetch({})), /not known yet/);
 });
 
 function videoPage() {
