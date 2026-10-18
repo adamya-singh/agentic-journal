@@ -47,6 +47,7 @@ export interface HorizonCleared {
 export interface HorizonData {
   now: string;
   items: HorizonItem[];
+  further: HorizonItem[];   // later tasks the outer ring has no room for; the pulled-back view shows them
   holds: HorizonItem[];
   undated: HorizonUndated[];
   cleared: HorizonCleared[];
@@ -267,9 +268,13 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     .sort((a, b) => b.weight - a.weight || b.hours - a.hours)
     .slice(0, HOLDS_MAX);
   let orbitCount = 0;
+  const further: HorizonItem[] = [];
   const ringItems = items.filter((i) => {
     if (i.zone === 'hold') return false;
-    if (i.zone === 'orbit') { orbitCount += 1; return orbitCount <= ORBIT_MAX; }
+    if (i.zone === 'orbit') {
+      orbitCount += 1;
+      if (orbitCount > ORBIT_MAX) { further.push(i); return false; }
+    }
     return true;
   });
 
@@ -308,7 +313,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
   };
   return {
-    now: now.toISOString(), items: ringItems, holds, undated, cleared,
+    now: now.toISOString(), items: ringItems, further, holds, undated, cleared,
     dailies, dailyWeek: doneByDay.map((ids) => ids.length),
     hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds,
   };

@@ -5,13 +5,14 @@ import { Instrument_Serif } from 'next/font/google';
 import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
 import { useRefresh } from '@/lib/RefreshContext';
 import { horizonAnswers, type HorizonData } from '@/lib/horizon';
-import { drawDawn, type PillSpot, type Sector } from './dawn-svg';
+import { drawDawn, type PillSpot, type PullView, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { BriefLayer } from './BriefLayer';
 import { DailyRing } from './DailyRing';
 import { LetGoReasonModal } from '@/components/LetGoReasonModal';
 import { DONE_CSS, DoneTray } from './DoneTray';
 import { FarSide, type FarInfo } from './FarSide';
+import { PullBack } from './PullBack';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
 
@@ -99,6 +100,9 @@ export function HorizonHero() {
   const [space, setSpace] = React.useState<DawnSpace | null>(null);
   const [spots, setSpots] = React.useState<PillSpot[]>([]);
   const [sectors, setSectors] = React.useState<Sector[]>([]);
+  // Pulled back (Shift + scroll, or Further on the ground): two more rings and the tasks past Orbit.
+  const [pulled, setPulled] = React.useState<PullView | null>(null);
+  const [pullOut, setPullOut] = React.useState(false);
   // The far side of the dome: which face is up, and where its ground rows go.
   const [farInfo, setFarInfo] = React.useState<FarInfo>({ far: false, count: 0, noticed: 0 });
   const [groundSlot, setGroundSlot] = React.useState<HTMLDivElement | null>(null);
@@ -163,11 +167,12 @@ export function HorizonHero() {
     if (!data || !svgRef.current) return;
     const draw = () => {
       if (!svgRef.current) return;
-      const { spots, sectors } = drawDawn(svgRef.current, data);
+      const { spots, sectors, pulled } = drawDawn(svgRef.current, data);
       layoutRef.current = { spots, sectors, data };
       spaceRef.current?.setLayout(spots, data, sectors);
       setSpots(spots);
       setSectors(sectors);
+      setPulled(pulled);
     };
     draw();
     let alive = true;
@@ -240,11 +245,17 @@ export function HorizonHero() {
   const waiting = data ? proposals.filter((p) => !data.holds.some((h) => h.id === p.taskId)) : [];
   const answers = data ? horizonAnswers(data) : null;
   const far = farInfo.far;
-  const headline = far ? <>The <em>far side</em>.</> : answers?.next
+  const out = pullOut && !far;
+  const furtherSoonest = data ? data.further.slice().sort((a, b) => a.hours - b.hours) : [];
+  const headline = far ? <>The <em>far side</em>.</> : out ? <>Further <em>out</em>.</> : answers?.next
     ? (answers.holds.length ? <>Clear the pad, then <em>{answers.next.short}</em>.</> : <>Next up: <em>{answers.next.short}</em>.</>)
     : <>Clear skies.</>;
   const sub = far
     ? `${farInfo.count} to decide: ${farInfo.count - farInfo.noticed} you saved, ${farInfo.noticed} OpenClaw noticed. Closer to the sun is sooner.`
+    : out
+    ? (furtherSoonest.length
+      ? `${furtherSoonest.length} more past the next weeks: ${furtherSoonest.map((i) => `${i.short} · ${i.day}`).join(', ')}.`
+      : 'Nothing more on the calendar past Orbit.')
     : answers
     ? [`${answers.cleared} cleared${answers.letGo ? `, ${answers.letGo} let go` : ''} this week.`, answers.big ? `Next big launch: ${answers.big.short} · ${answers.big.day}.` : '']
       .filter(Boolean).join(' ')
@@ -269,7 +280,7 @@ export function HorizonHero() {
         <div className="hz-say">
           <h1>{headline}</h1>
           {(sub || dailyLine) && (
-            <p>{sub}{dailyLine && !far && <> <button type="button" className="hz-daily-line" onClick={() => window.dispatchEvent(new Event('hz-daily-open'))}>{dailyLine}</button></>}</p>
+            <p>{sub}{dailyLine && !far && !out && <> <button type="button" className="hz-daily-line" onClick={() => window.dispatchEvent(new Event('hz-daily-open'))}>{dailyLine}</button></>}</p>
           )}
         </div>
         <div className="hz-cap hz-nointeract" onClick={(e) => e.stopPropagation()}>
@@ -286,6 +297,7 @@ export function HorizonHero() {
           onFar={setFarInfo}
           onTasksChanged={refreshTasks}
         />
+        <PullBack skyRef={skyRef} svgRef={svgRef} spots={spots} pulled={pulled} further={data?.further.length ?? 0} onOut={setPullOut} />
       </div>
       <div className="hz-ground hz-keep">
         {far ? <div ref={setGroundSlot} style={{ display: 'contents' }} /> : <>
@@ -338,7 +350,7 @@ export function HorizonHero() {
       <div style={{ position: 'relative', zIndex: 70 }}>
         <LetGoReasonModal taskText={letGoAsk?.title ?? null} onCancel={() => setLetGoAsk(null)} onConfirm={letGo} />
       </div>
-      <BriefLayer heroRef={heroRef} svgRef={svgRef} space={space} data={data} spots={spots} onChanged={refreshTasks} />
+      <BriefLayer heroRef={heroRef} svgRef={svgRef} space={space} data={data} spots={pullOut && pulled ? pulled.spots : spots} onChanged={refreshTasks} />
       <DailyRing data={data} space={space} onChanged={refreshTasks} />
     </section>
   );

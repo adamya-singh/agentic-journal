@@ -28,6 +28,17 @@ describe('Horizon dailies', () => {
     assert.deepEqual(data.dailyWeek, [0, 1, 0, 0, 0, 3, 1]);
   });
 
+  test('later tasks past the outer ring wait further out, soonest on the ring', () => {
+    const now = new Date(2026, 9, 18, 10, 0);
+    const haveToDo: Task[] = Array.from({ length: 9 }, (_, i) => ({ id: `t${i}`, text: `Later task ${i}`, dueDate: `2026-11-${String(10 + i * 4).padStart(2, '0')}` }));
+    haveToDo[8] = { id: 't8', text: 'Submit Online Diploma Application', dueDate: '2027-01-15' };
+
+    const data = buildHorizon({ haveToDo, wantToDo: [], currentHaveToDoIds: [], completed: [], now });
+
+    assert.deepEqual(data.items.map((i) => i.id), ['t0', 't1', 't2', 't3', 't4', 't5']);
+    assert.deepEqual(data.further.map((i) => [i.id, i.zone]), [['t6', 'orbit'], ['t7', 'orbit'], ['t8', 'orbit']]);
+  });
+
   test('shortens daily task text and reads its length', () => {
     assert.deepEqual(shortenDaily('do 1 leetcode problem (1 hour)'), { short: '1 leetcode problem', minutes: 60 });
     assert.deepEqual(shortenDaily('work on aviro for 30 minutes'), { short: 'Work on aviro', minutes: 30 });

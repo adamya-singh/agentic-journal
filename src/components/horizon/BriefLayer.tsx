@@ -129,6 +129,7 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     const m = new Map<string, string>();
     data?.holds.forEach((h) => m.set(h.id, h.title));
     data?.items.forEach((i) => m.set(i.id, i.title));
+    data?.further.forEach((i) => m.set(i.id, i.title));
     data?.undated.forEach((u) => m.set(u.id, u.title));
     return m;
   }, [data]);
@@ -193,7 +194,7 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
       const svg = svgRef.current;
       if (sp && svg) {
         const k = svg.clientWidth / 1200;
-        const w = (textWidth(sp.item.short, sp.item.weight >= 4 ? 600 : 500) + 24) * k;
+        const w = (textWidth(sp.item.short, sp.item.weight >= 4 ? 600 : 500) + 24) * (sp.s ?? 1) * k;
         return { x: sp.x * k, y: sp.y * k, half: w / 2, on: true, chip: false };
       }
     }
@@ -407,13 +408,13 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <div className="hzb-picks">
-        {spots.map(({ item, x, y }) => (
+        {spots.map(({ item, x, y, s }) => (
           <button
             key={item.id}
             type="button"
             className={`hzb-pick${sel === item.id && mode !== 'none' ? ' sel' : ''}`}
             aria-label={`${item.short}, ${item.day}. Open its brief.`}
-            style={{ left: `${x / 12}%`, top: `${(y / 630) * 100}%`, width: `${(textWidth(item.short, item.weight >= 4 ? 600 : 500) + 24) / 12}%` }}
+            style={{ left: `${x / 12}%`, top: `${(y / 630) * 100}%`, width: `${((textWidth(item.short, item.weight >= 4 ? 600 : 500) + 24) * (s ?? 1)) / 12}%`, ...(s ? { height: `${4.6 * s}%` } : {}) }}
             onClick={() => select(item.id)}
           />
         ))}
