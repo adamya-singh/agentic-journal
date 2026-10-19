@@ -400,6 +400,8 @@ export interface JobApplicationRecord {
   employerUpdates?: JobEmployerUpdate[];
   /** The journal task created when the employer sent an online assessment. */
   assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string };
+  /** The journal task created when the employer invited Adamya to book an interview. */
+  interviewTask?: { taskId: string; createdAt: string; gmailMessageId?: string };
   /** Live worker progress report; only meaningful while a lease is active. */
   progress?: JobApplicationProgress;
   screenshotCapture?: JobApplicationScreenshotCapture;

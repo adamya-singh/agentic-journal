@@ -601,6 +601,7 @@ export function timeline(r: OverviewRow): TimelineEntry[] {
 export type AttentionItem = {
   kind:
     | 'assessment-open'
+    | 'interview-unscheduled'
     | 'interview-upcoming'
     | 'interview-unrecorded'
     | 'emails-pending'
@@ -638,6 +639,33 @@ export function attentionItems(
             .filter(Boolean)
             .join(' · '),
           milestoneKind: 'assessment-completed',
+        });
+    }
+    // An invite to book a time: nothing else surfaces it until a time is recorded.
+    const interviewInvite = r.events.findLast(
+      (e) => e.stage === 'interview' && !['assessment-reminder', 'still-reviewing'].includes(e.eventKind ?? ''),
+    );
+    if (interviewInvite) {
+      const inviteAt = epoch(interviewInvite.receivedAt) ?? 0;
+      const handled =
+        r.milestones.some(
+          (m) =>
+            ['interview-scheduled', 'interview-completed'].includes(m.kind) &&
+            Math.max(epoch(m.occurredAt) ?? 0, epoch(m.createdAt) ?? 0) >= inviteAt,
+        ) ||
+        r.events.some(
+          (e) => ['offer', 'rejected'].includes(e.stage ?? '') && (epoch(e.receivedAt) ?? 0) >= inviteAt,
+        );
+      if (!handled)
+        items.push({
+          kind: 'interview-unscheduled',
+          id: r.id,
+          title: `${r.company} · ${r.role}`,
+          detail: [
+            `${interviewInvite.interviewRound ?? 'Interview'} invite ${relativeTime(interviewInvite.receivedAt, now)}`,
+            'no time recorded',
+          ].join(' · '),
+          milestoneKind: 'interview-scheduled',
         });
     }
     const scheduled = r.milestones

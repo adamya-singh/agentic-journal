@@ -1693,6 +1693,12 @@ function normalizeApplicationRecord(
       ...(normalizeString(value.assessmentTask.emailDueDate) ? { emailDueDate: normalizeString(value.assessmentTask.emailDueDate) } : {}),
     };
   }
+  if (isRecord(value.interviewTask)) {
+    const taskId = normalizeString(value.interviewTask.taskId);
+    const createdAt = normalizeString(value.interviewTask.createdAt);
+    const gmailMessageId = normalizeString(value.interviewTask.gmailMessageId);
+    if (taskId && createdAt) record.interviewTask = { taskId, createdAt, ...(gmailMessageId ? { gmailMessageId } : {}) };
+  }
   if (isRecord(value.progress)) {
     const step = normalizeString(value.progress.step);
     const label = normalizeString(value.progress.label);

@@ -27,6 +27,7 @@ import {
   toEmailUpdatesView,
 } from '../../email-update-utils';
 import { ensureAssessmentTask, syncAssessmentTask, foldSharedAssessmentTasks } from '../../assessment-task-utils';
+import { ensureInterviewTask } from '../../interview-task-utils';
 import {
   syncJobEmailUpdatesCron,
   wakeJobApplicationWorkerIfEnabled,
@@ -216,6 +217,14 @@ export async function POST(request: NextRequest) {
         } catch (error) {
           // The stage change still stands; the task can be added by hand.
           console.error('Failed to update the online assessment task:', error);
+        }
+        try {
+          // Picking a stage by hand means Adamya already knows; an email may be news.
+          if (listing && update.source === 'email' && update.stage === 'interview') {
+            ensureInterviewTask(application, listing, update, now);
+          }
+        } catch (error) {
+          console.error('Failed to add the interview task:', error);
         }
         changed.set(listingId, application);
       };

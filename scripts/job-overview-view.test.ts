@@ -289,6 +289,31 @@ test('attention items surface open assessments and overdue analysis only', () =>
   assert.equal(attentionItems(pending, NOW)[0].kind, 'emails-pending');
 });
 
+test('an interview invite needs you until a time, outcome or decision is recorded', () => {
+  const fresh = { report: { generatedAt: new Date(NOW).toISOString(), cutoff: '', model: '', insights: [] }, stale: false, error: null };
+  const invite = event('interview', '2026-09-21T22:49:45Z', { interviewRound: 'Recruiter Phone Screen' });
+  const withInvite = (extra: JobEmployerUpdate[] = [], milestones: Parameters<typeof rows>[1] = {}) =>
+    attentionItems({
+      ...rows([{ listing: listing('rr'), application: application('rr', '2026-09-15T00:00:00Z', {
+        employerUpdates: [event('received', '2026-09-15T00:01:00Z'), invite, ...extra],
+      }) }], milestones),
+      analysis: fresh,
+    }, NOW);
+  const [item] = withInvite();
+  assert.equal(item.kind, 'interview-unscheduled');
+  assert.equal(item.id, 'rr');
+  assert.equal(item.milestoneKind, 'interview-scheduled');
+  assert.match(item.detail, /^Recruiter Phone Screen invite .* · no time recorded$/);
+  const milestone = (kind: 'interview-scheduled' | 'interview-completed', occurredAt: string) =>
+    ({ rr: [{ id: 'm', kind, occurredAt, createdAt: '2026-09-22T12:00:00Z', source: 'manual' as const, note: '' }] });
+  assert.deepEqual(withInvite([], milestone('interview-scheduled', '2026-09-25T15:00:00Z')).map((i) => i.kind), ['interview-upcoming']);
+  assert.deepEqual(withInvite([], milestone('interview-completed', '2026-09-22T14:00:00Z')).map((i) => i.kind), []);
+  assert.deepEqual(withInvite([event('rejected', '2026-09-22T10:00:00Z')]).map((i) => i.kind), []);
+  // A time recorded for an earlier round does not cover the next invite.
+  const earlier = { rr: [{ id: 'm', kind: 'interview-scheduled' as const, occurredAt: '2026-09-18T15:00:00Z', createdAt: '2026-09-17T12:00:00Z', source: 'manual' as const, note: '' }] };
+  assert.deepEqual(withInvite([], earlier).map((i) => i.kind), ['interview-unscheduled', 'interview-unrecorded']);
+});
+
 test('comparison cards only render dimensions with two named groups of ten', () => {
   const entries = [] as { listing: JobListing; application: JobApplicationRecord }[];
   for (let i = 0; i < 12; i++)

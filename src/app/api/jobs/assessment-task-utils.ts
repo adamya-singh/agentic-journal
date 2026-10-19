@@ -19,10 +19,10 @@ export const ASSESSMENT_NOTES_MARKER =
 type AssessmentListing = Pick<JobListing, 'id' | 'company' | 'positionTitle' | 'link'>;
 
 // Task due dates are local calendar days, like everything else in the journal.
-const localDate = (date: Date) => new Intl.DateTimeFormat('en-CA', {
+export const localDate = (date: Date) => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(date);
-const displayTime = (date: Date) =>
+export const displayTime = (date: Date) =>
   date.toLocaleString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
     hour: 'numeric', minute: '2-digit', timeZoneName: 'short', timeZone: 'America/New_York',
@@ -32,7 +32,7 @@ const validDate = (value: string | undefined) => {
   return date && !Number.isNaN(date.getTime()) ? date : undefined;
 };
 // Angle brackets keep parentheses and spaces in a URL from ending the link.
-const link = (label: string, url: string) => `[${label}](<${url.replace(/[<>\s]/g, encodeURIComponent)}>)`;
+export const link = (label: string, url: string) => `[${label}](<${url.replace(/[<>\s]/g, encodeURIComponent)}>)`;
 
 /** The inbox the email agent reads; links open in that account rather than the browser's first one. */
 export function gmailLink(update: Pick<JobEmployerUpdate, 'gmailMessageId' | 'gmailThreadId'>): string | undefined {
@@ -116,7 +116,7 @@ export function buildAssessmentNotes(listing: AssessmentListing, application: Jo
 }
 
 /** Regenerates the block above the marker; text below it (or notes with no marker) is kept. */
-function mergeNotes(generated: string, existing: string | undefined): string {
+export function mergeNotes(generated: string, existing: string | undefined): string {
   if (!existing) return generated;
   const at = existing.indexOf(ASSESSMENT_NOTES_MARKER);
   const userNotes = at === -1 ? existing : existing.slice(at + ASSESSMENT_NOTES_MARKER.length);

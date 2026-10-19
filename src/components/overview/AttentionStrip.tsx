@@ -8,6 +8,7 @@ import { Band, Button } from './primitives';
 
 const ICON: Record<AttentionItem['kind'], React.ReactNode> = {
   'assessment-open': <AlertCircle className="h-4 w-4" aria-hidden="true" />,
+  'interview-unscheduled': <CalendarClock className="h-4 w-4" aria-hidden="true" />,
   'interview-upcoming': <CalendarClock className="h-4 w-4" aria-hidden="true" />,
   'interview-unrecorded': <CalendarClock className="h-4 w-4" aria-hidden="true" />,
   'emails-pending': <Mail className="h-4 w-4" aria-hidden="true" />,
@@ -47,6 +48,12 @@ export function AttentionStrip({
         return (
           <Button variant="amber" onClick={() => onOpen(item.id!, item.milestoneKind)}>
             {item.kind === 'assessment-open' ? 'Record completion' : 'Record outcome'}
+          </Button>
+        );
+      case 'interview-unscheduled':
+        return (
+          <Button variant="amber" onClick={() => onOpen(item.id!, item.milestoneKind)}>
+            Record time
           </Button>
         );
       case 'interview-upcoming':
