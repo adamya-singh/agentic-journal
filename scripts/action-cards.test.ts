@@ -146,6 +146,18 @@ test('validate reports what an upsert would do without writing', () => {
   assert.equal(readCards().length, 2);
 });
 
+test('validate warns, without blocking, when a card links to a course home or front page', () => {
+  const [home, item, none] = validateCards([
+    card('tasks:hw3', { link: 'https://rutgers.instructure.com/courses/408919' }),
+    card('tasks:hw3b', { link: 'https://rutgers.instructure.com/courses/408919/assignments/4589249' }),
+    card('tasks:hw3c'),
+  ]);
+  assert.equal(home.action, 'add');
+  assert.match(home.warning ?? '', /home or list page/);
+  assert.equal(item.warning, undefined);
+  assert.equal(none.warning, undefined);
+});
+
 test('the digest lists the Openclaw folder, marks posts with cards, and spaces X refreshes 3 days apart', () => {
   const b = path.join(dir, 'bookmarks');
   fs.mkdirSync(b, { recursive: true });

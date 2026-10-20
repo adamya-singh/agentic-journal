@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { backendDataDir, writeJsonFileAtomic } from '../backend-data.ts';
+import { isGenericLink } from '../deep-link.ts';
 import {
   CARD_SOURCES,
   CARD_WHENS,
@@ -140,8 +141,18 @@ function checkBet(input: { bet: string; why: { tone: string } }) {
   }
 }
 
-/** What upserting these would do, without writing: add, update, reopen (was withdrawn) or keep (already answered). */
-export function validateCards(values: unknown[]): { key: string; action: 'add' | 'update' | 'reopen' | 'keep-answered' | 'invalid'; error?: string }[] {
+// A card's link should open the thing to act on; a course home or a front page is a warning, not an error,
+// since sometimes nothing more direct exists.
+function linkWarning(input: { link?: string }): string | undefined {
+  if (!isGenericLink(input.link)) return undefined;
+  return `link ${input.link} is a home or list page. Use the page for the thing itself (the assignment, form, posting or doc) if you can find it.`;
+}
+
+/**
+ * What upserting these would do, without writing: add, update, reopen (was withdrawn) or keep (already answered).
+ * `warning` marks something worth fixing that doesn't block the upsert.
+ */
+export function validateCards(values: unknown[]): { key: string; action: 'add' | 'update' | 'reopen' | 'keep-answered' | 'invalid'; error?: string; warning?: string }[] {
   const cards = readCards();
   return values.map((v) => {
     try {
@@ -149,7 +160,8 @@ export function validateCards(values: unknown[]): { key: string; action: 'add' |
       checkBet(input);
       const c = cards.find((x) => x.key === input.key);
       const action = !c ? 'add' : c.status === 'withdrawn' ? 'reopen' : c.status === 'open' || c.status === 'handed' ? 'update' : 'keep-answered';
-      return { key: input.key, action };
+      const warning = linkWarning(input);
+      return { key: input.key, action, ...(warning ? { warning } : {}) };
     } catch (e) {
       const key = v && typeof v === 'object' && typeof (v as { key?: unknown }).key === 'string' ? (v as { key: string }).key : '?';
       return { key, action: 'invalid' as const, error: e instanceof Error ? e.message : String(e) };

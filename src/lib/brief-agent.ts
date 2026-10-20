@@ -8,6 +8,7 @@ import { createHash } from 'crypto';
 import { z } from 'zod';
 import type { Task } from '@/lib/types';
 import { JOURNAL_HOURS } from '@/lib/done-at';
+import { isCanvasItemLink, isGenericLink } from '@/lib/deep-link';
 import { dayLabel, impliedOaDue, parseDue, shortenTask } from '@/lib/horizon';
 import type {
   BriefAction,
@@ -197,7 +198,26 @@ export function mergeAgentLayer(
   const layer = record.layer;
   if (!layer) return { ...brief, agent };
 
-  const ruleNextIsWeak = !brief.next || (!brief.next.href && !brief.next.taskId);
+  // Start here should open the thing itself. The rules' pick only stands in when it has no target or lands
+  // on a hub (the course home, when a synced task carries nothing but its title): then OpenClaw's pick wins
+  // if it is more direct, or failing that the assignment page or start link it found.
+  const direct = (n: { href?: string; taskId?: string } | null) => !!n && (!!n.taskId || (!!n.href && !isGenericLink(n.href)));
+  let agentNext: TaskBrief['next'] = layer.next ? { ...layer.next, oc: true as const } : null;
+  if (!direct(agentNext)) {
+    const found = layer.links.find((l) => l.kind === 'start' && !isGenericLink(l.href))
+      ?? layer.links.find((l) => l.kind === 'canvas' && isCanvasItemLink(l.href));
+    if (found) {
+      agentNext = {
+        label: found.kind === 'start' ? `Open ${found.label}` : 'Open it on Canvas',
+        detail: layer.next && !layer.next.href ? `First: ${layer.next.label}` : null,
+        href: found.href, src: found.src, oc: true as const,
+      };
+    }
+  }
+  const next = direct(brief.next) ? brief.next
+    : direct(agentNext) ? agentNext
+    : !brief.next?.href && !brief.next?.taskId && agentNext ? agentNext
+    : brief.next;
   const stepKeys = new Set(brief.steps.map((s) => norm(s.text)));
   const factKeys = new Set(brief.facts.map((f) => norm(f.k)));
   const hrefs = new Set(brief.links.map((l) => l.href));
@@ -230,13 +250,18 @@ export function mergeAgentLayer(
     when: { ...brief.when, where: brief.when.where ?? layer.where, ...(!brief.when.where && layer.where ? { whereOc: true as const } : {}) },
     stakes: brief.stakes ?? layer.stakes,
     ...(!brief.stakes && layer.stakes ? { stakesOc: true as const } : {}),
-    next: ruleNextIsWeak && layer.next ? { ...layer.next, oc: true as const } : brief.next,
+    next,
     steps: [
       ...brief.steps,
       ...layer.steps.filter((s) => !stepKeys.has(norm(s.text))).map((s) => ({ text: s.text, done: false, ...(s.href ? { href: s.href } : {}), src: s.src, oc: true as const })),
     ],
     facts: [...brief.facts, ...layer.facts.filter((f) => !factKeys.has(norm(f.k))).map((f) => ({ ...f, oc: true as const }))],
-    links: [...brief.links, ...layer.links.filter((l) => !hrefs.has(l.href)).map((l) => ({ ...l, oc: true as const }))],
+    // The course page the rules add stays last, after what OpenClaw found.
+    links: [
+      ...brief.links.filter((l) => !(l.src === 'rule' && isGenericLink(l.href))),
+      ...layer.links.filter((l) => !hrefs.has(l.href)).map((l) => ({ ...l, oc: true as const })),
+      ...brief.links.filter((l) => l.src === 'rule' && isGenericLink(l.href)),
+    ],
     flags: [...brief.flags.filter((f) => !(added > 0 && f.level === 'gap' && GAP_ONLY_SAVED.test(f.text))), ...flags],
     related: [
       ...brief.related,
@@ -257,7 +282,9 @@ export function buildBriefAgentPrompt(input: {
 }): string {
   const { brief, task } = input;
   const ruleBrief = {
-    kind: brief.kind, course: brief.course, when: brief.when, stakes: brief.stakes, next: brief.next,
+    kind: brief.kind, course: brief.course, when: brief.when, stakes: brief.stakes,
+    // A course home is only a stand-in; say so, or OpenClaw takes it as done and leaves it.
+    next: brief.next && isGenericLink(brief.next.href) ? { ...brief.next, fallback: 'only a course/site home; replace it' } : brief.next,
     steps: brief.steps, facts: brief.facts, links: brief.links, flags: brief.flags,
     related: brief.related.map((r) => ({ taskId: r.taskId, short: r.short, rel: r.rel, day: r.day, state: r.state })),
   };
@@ -279,6 +306,8 @@ His other open tasks (use these ids for related tasks and merges):
 ${input.otherTasks.map((t) => `${t.id} | ${t.text}${t.due ? ` | due ${t.due}` : ''}`).join('\n')}
 
 Find what he needs to start and finish it: the real instructions and requirements, points, length, the submission link and format, the exact deadline if it differs, who to contact, what it depends on, and what is likely to go wrong. For a class task, find the assignment or announcement on Canvas. For an exam, find what it covers and what is allowed. Prefer facts you read over guesses. Mark each item's src: "canvas", "email", "web", "journal", "notes", "jobs" for something you read there, or "agent" for your own inference.
+
+"next" is the Start here button, so its href must be the most direct page for doing the thing, the one he would otherwise hunt for: the assignment's own Canvas page (https://rutgers.instructure.com/courses/<course>/assignments/<id>), the quiz, the discussion, the submission or application form, the specific doc. Use the URL you actually opened, not a course home, an Assignments or Modules list, or a site's front page; fall back to those only when you could not find the item itself. If the rules' next above is marked fallback, replace it. Also list the item's page under links (kind "canvas" for Canvas, "start" for a form or test).
 
 Actions: attach one to a flag only when it fixes what the flag says. Kinds:
 - {"kind":"plan","label":"Block 8–10pm tonight","date":"YYYY-MM-DD","start":"8pm","end":"10pm"}  (hours are journal hours: 7am…11pm, 12am…6am; end optional)
