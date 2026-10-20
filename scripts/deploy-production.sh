@@ -19,6 +19,8 @@ DEV_SERVICE="agentic-journal-dev.service"
 OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
 BOOKMARKS_WORKER_SERVICE="agentic-journal-bookmarks-worker.service"
 MEDIA_WORKER_SERVICE="agentic-journal-media-worker.service"
+SESSION_INDEX_SERVICE="agentic-journal-session-index.service"
+SESSION_INDEX_TIMER="agentic-journal-session-index.timer"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
@@ -108,11 +110,14 @@ install_unit_if_changed "$DEV_SERVICE"
 install_unit_if_changed "$OMI_WORKER_SERVICE"
 install_unit_if_changed "$BOOKMARKS_WORKER_SERVICE"
 install_unit_if_changed "$MEDIA_WORKER_SERVICE"
+install_unit_if_changed "$SESSION_INDEX_SERVICE"
+install_unit_if_changed "$SESSION_INDEX_TIMER"
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$PROD_SERVICE" >/dev/null
 systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$BOOKMARKS_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$MEDIA_WORKER_SERVICE" >/dev/null
+systemctl_cmd enable --now "$SESSION_INDEX_TIMER" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."

@@ -12,6 +12,7 @@ import { CARD_WHENS, type ActionCard, type CardAnswer, type FarSideView } from '
 import { DAWN, FAN_LEFT, FAN_RIGHT, SECTOR_GAP, textWidth, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { ActionCardView, CARD_CSS, SRC_ICON, SRC_NAME, type CardDecisionInput } from './ActionCardView';
+import { SESSIONS_CSS } from './CardSessions';
 
 const { W, H: SY, X: SX, R } = DAWN;
 const VH = 630;                 // the drawing's full height, sky plus ground
@@ -90,7 +91,7 @@ function layoutFar(cards: ActionCard[]): { spots: FarSpot[]; slices: FarSlice[] 
   return { spots, slices };
 }
 
-export const FAR_CSS = CARD_CSS + `
+export const FAR_CSS = CARD_CSS + SESSIONS_CSS + `
 .hzx{position:absolute;left:0;top:0;width:100%;aspect-ratio:1200/630;z-index:4;pointer-events:none;visibility:hidden}
 .hzx.on{visibility:visible}
 .hzx canvas{position:absolute;inset:0;width:100%;height:100%}
