@@ -71,13 +71,15 @@ export async function GET(req: NextRequest) {
     }
     if (action === 'youtube/videos') {
       const offset = z.coerce.number().int().min(0).catch(0).parse(q.get('offset'));
+      // A grid reloads all it shows after a decision, which can be several pages.
+      const limit = z.coerce.number().int().min(1).max(240).catch(24).parse(q.get('limit'));
       const bucket = q.get('bucket');
       const filter = q.get('channel')
         ? { channel: channelKey.parse(q.get('channel')) }
         : bucket
           ? { bucket: z.enum(['barely', 'live']).parse(bucket) }
           : { oneOffs: true as const };
-      return result(listVideos(filter, offset));
+      return result(listVideos(filter, offset, limit));
     }
     if (action) return NextResponse.json({ success: false, error: 'Not found.' }, { status: 404 });
     return result(view());
