@@ -85,16 +85,6 @@ export function starField(w: number, h: number, n: number): string {
   return s;
 }
 
-type Box = [number, number, number, number];
-function place(boxes: Box[], cands: [number, number][], w: number, bounds: Box): [number, number] | null {
-  for (const c of cands) {
-    const b: Box = [c[0] - w / 2 - 5, c[1] - 16, c[0] + w / 2 + 5, c[1] + 30];
-    if (b[0] < bounds[0] || b[2] > bounds[2] || b[1] < bounds[1] || b[3] > bounds[3]) continue;
-    if (!boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) { boxes.push(b); return c; }
-  }
-  return null;
-}
-
 export interface Sector { group: string; a0: number; a1: number; mid: number }
 
 export const FAN_LEFT = 174, FAN_RIGHT = 6, SECTOR_GAP = 2;
@@ -143,7 +133,98 @@ export function radiusFor(it: HorizonItem, data: HorizonData): number {
 
 export interface PillSpot { item: HorizonItem; x: number; y: number; s?: number }   // s: pill scale, 1 when unset
 
-export interface PullView { spots: PillSpot[]; sectors: Sector[]; names: [string, string][] }
+export interface PullView { spots: PillSpot[]; sectors: Sector[]; names: [string, string][]; hidden: HorizonItem[] }
+
+// ---- placing pills so no two can ever cover each other ----
+export type Box = [number, number, number, number];   // x0, y0, x1, y1
+export const boxesHit = (b: Box, o: Box) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1];
+
+// Width of a pill (its name plus padding) and of the date under it, before scaling.
+export type Measure = (text: string, weight: number) => number;
+export const pillWidth = (it: HorizonItem, measure: Measure = textWidth) => measure(it.short, it.weight >= 4 ? 600 : 500) + 24;
+const dateWidth = (it: HorizonItem) => it.day.length * 6.3;   // Geist Mono at 10.5px: 0.6em a character
+
+// What a pill takes up at (x, y): the pill, the date under it (sometimes the wider of the two) and a little air.
+export function pillBox(it: HorizonItem, x: number, y: number, s: number, measure: Measure = textWidth): Box {
+  const hw = (Math.max(pillWidth(it, measure), dateWidth(it)) / 2 + 5) * s;
+  return [x - hw, y - 16 * s, x + hw, y + 30 * s];
+}
+
+export interface PillAim { item: HorizonItem; r: number; mid: number; half: number }   // ideal distance and slice
+export interface PillField {
+  scales: number[];   // pill sizes to try, largest first; the layout shrinks only when the larger size can't fit everyone
+  rings: number[];    // ring radii: a pill keeps to its own ring as long as it can
+  blocked: Box[];     // the sun, the headline, the capture box
+  bounds: Box;
+  minR: number;       // nothing closer to the sun than this
+  measure?: Measure;
+}
+
+const at = (r: number, deg: number): [number, number] => [DAWN.X + r * Math.cos(deg * Math.PI / 180), DAWN.H - r * Math.sin(deg * Math.PI / 180)];
+
+// The spots a pill tries first: slide along its slice at its own distance, so the due-date order holds,
+// then nudge in or out a little, then lean into the neighbouring slices. Offsets are [radial px, slice halves].
+const NEAR: [number, number][] = [];
+[0, 8, -8, 16, -16, 24, -24].forEach((dr) => [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9].forEach((f) => NEAR.push([dr, f])));
+[1.2, -1.2, 1.6, -1.6, 2.2, -2.2].forEach((f) => [0, 12, -12].forEach((dr) => NEAR.push([dr, f])));
+// Failing those, a fine sweep around the ideal spot, nearest first, favouring along the ring over away
+// from it (distance from the sun is the due date). Offsets are [radial px, px along the ring].
+const SWEEP: [number, number][] = [];
+for (let dr = -120; dr <= 120; dr += 4) for (let t = -300; t <= 300; t += 6) SWEEP.push([dr, t]);
+SWEEP.sort((a, b) => Math.hypot(1.6 * a[0], a[1]) - Math.hypot(1.6 * b[0], b[1]));
+
+// Places every pill, nearest-due first so the most urgent keep their ideal spot. Each spot is checked
+// against every box already down, so two pills can't overlap by construction. A pill that can't fit near
+// its spot looks along its own ring, then spills to a neighbouring one (its date still says when). When
+// even that fails, every pill shrinks a step and the layout starts over; at the smallest size a pill may
+// go anywhere on the sky that is free, and one that finds no room at all is held back (hidden) rather
+// than drawn over another.
+export function placePills(aims: PillAim[], field: PillField): { spots: PillSpot[]; hidden: HorizonItem[] } {
+  const { bounds, blocked, minR, rings, scales } = field;
+  const measure = field.measure ?? textWidth;
+  const order = aims.slice().sort((a, b) => a.item.hours - b.item.hours);
+  let res: { spots: PillSpot[]; hidden: HorizonItem[] } = { spots: [], hidden: [] };
+  scales.some((s, si) => {
+    const boxes = blocked.slice();
+    res = { spots: [], hidden: [] };
+    for (const a of order) {
+      let box: Box | null = null;
+      const free = (x: number, y: number) => {
+        const b = pillBox(a.item, x, y, s, measure);
+        if (b[0] < bounds[0] || b[2] > bounds[2] || b[1] < bounds[1] || b[3] > bounds[3]) return false;
+        for (const o of boxes) if (boxesHit(b, o)) return false;
+        box = b;
+        return true;
+      };
+      const k = rings.findIndex((r, i) => i === rings.length - 1 || a.r < rings[i + 1]);
+      const lo = Math.max(minR, rings[k]), hi = rings[k + 1] ?? Infinity;
+      const swept = (inRing: boolean) => SWEEP.find(([dr, t]) => {
+        const r = a.r + dr;
+        if (r < minR || (r >= lo && r <= hi) !== inRing) return false;
+        const p = at(r, a.mid + (t / r) * 180 / Math.PI);
+        return free(p[0], p[1]);
+      });
+      let p: [number, number] | undefined = NEAR.map(([dr, f]) => at(Math.max(minR, a.r + dr), a.mid + f * a.half)).find((q) => free(q[0], q[1]));
+      if (!p) { const o = swept(true) ?? swept(false); if (o) p = at(a.r + o[0], a.mid + (o[1] / (a.r + o[0])) * 180 / Math.PI); }
+      if (!p && si === scales.length - 1) {
+        // Last resort: the nearest free spot anywhere on the sky, in growing squares around the ideal one.
+        const [cx, cy] = at(a.r, a.mid), step = 6, far = Math.ceil(Math.max(bounds[2], bounds[3]) / step);
+        for (let d = 1; d <= far && !p; d += 1) {
+          for (let i = -d; i <= d && !p; i += 1) {
+            for (const [x, y] of [[cx + i * step, cy - d * step], [cx + i * step, cy + d * step], [cx - d * step, cy + i * step], [cx + d * step, cy + i * step]]) {
+              if (free(x, y)) { p = [x, y]; break; }
+            }
+          }
+        }
+      }
+      if (!p || !box) { res.hidden.push(a.item); continue; }
+      boxes.push(box);
+      res.spots.push({ item: a.item, x: p[0], y: p[1], ...(s !== 1 ? { s } : {}) });
+    }
+    return res.hidden.length === 0;
+  });
+  return res;
+}
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const dayOut = (now: Date, days: number) => { const d = new Date(now.getTime() + days * 864e5); return `to ${MON[d.getMonth()]} ${d.getDate()}`; };
@@ -160,41 +241,38 @@ function radiusPulled(it: HorizonItem, data: HorizonData): number {
   return P[3 + b] + pad + (P[4 + b] - P[3 + b] - 2 * pad) * f;
 }
 
-const overlap = (b: Box, o: Box) => Math.max(0, Math.min(b[2], o[2]) - Math.max(b[0], o[0])) * Math.max(0, Math.min(b[3], o[3]) - Math.max(b[1], o[1]));
+// The sky a pill may use: clear of the sun and its ring of dailies, the headline and the capture box.
+function fieldFor(data: HorizonData, rings: number[], minR: number, scales: number[], measure?: Measure): PillField {
+  const { W, H, X } = DAWN, core = data.dailies.length ? DAILY_R + 6 : DAWN.R[0] + 8;
+  return { scales, rings, minR, measure, bounds: [4, 4, W - 4, H - 4], blocked: [[X - core, H - core, X + core, H], [0, 0, 420, 150], [W - 400, 0, W, 110]] };
+}
 
-export function pullLayout(data: HorizonData): PullView {
-  const { W, H, X } = DAWN, P = PULL.R, s = PULL.pill;
-  const pt = (r: number, deg: number): [number, number] => [X + r * Math.cos(deg * Math.PI / 180), H - r * Math.sin(deg * Math.PI / 180)];
+// Pill sizes, largest first; a crowded sky steps down until every pill fits.
+const SHRINK = [1, 0.9, 0.8, 0.72, 0.65];
+
+// Today's Dawn: the ring tasks, each on the ring of its zone in its subject's slice.
+export function dawnLayout(data: HorizonData, measure?: Measure): { spots: PillSpot[]; sectors: Sector[]; hidden: HorizonItem[] } {
+  const sectors = sectorsFor(data), secBy = new Map(sectors.map((sec) => [sec.group, sec]));
+  const aims = data.items.map((item) => {
+    const sec = secBy.get(item.group) as Sector;
+    return { item, r: radiusFor(item, data), mid: sec.mid, half: (sec.a0 - sec.a1) / 2 };
+  });
+  return { sectors, ...placePills(aims, fieldFor(data, DAWN.R, DAWN.R[0] + 18, SHRINK, measure)) };
+}
+
+export function pullLayout(data: HorizonData, measure?: Measure): PullView {
   const all = data.items.concat(data.further);
   const sectors = sectorsFor({ ...data, items: all });
   const secBy = new Map(sectors.map((sec) => [sec.group, sec]));
-  const core = data.dailies.length ? DAILY_R + 6 : P[0] + 8;
-  const boxes: Box[] = [[X - core, H - core, X + core, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
-  const spots: PillSpot[] = [];
-  all.slice().sort((a, b) => a.hours - b.hours).forEach((it) => {
-    const sec = secBy.get(it.group) as Sector, half = (sec.a0 - sec.a1) / 2;
-    const r = radiusPulled(it, data), w = (textWidth(it.short, it.weight >= 4 ? 600 : 500) + 24) * s;
-    const cands: { p: [number, number]; cost: number }[] = [];
-    [0, 8, -8, 16, -16, 26, -26, 38, -38].forEach((dr, di) => [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9].forEach((f, fi) => cands.push({ p: pt(Math.max(P[0] + 30, r + dr), sec.mid + f * half), cost: di * 1.2 + fi })));
-    [1.3, -1.3, 1.8, -1.8, 2.4, -2.4].forEach((f) => [0, 14, -14].forEach((dr) => cands.push({ p: pt(r + dr, sec.mid + f * half), cost: 30 + Math.abs(f) * 4 + Math.abs(dr) / 7 })));
-    cands.sort((a, b) => a.cost - b.cost);
-    const boxAt = (c: [number, number]): Box => [c[0] - w / 2 - 5, c[1] - 16 * s, c[0] + w / 2 + 5, c[1] + 30 * s];
-    const inside = (b: Box) => b[0] >= 4 && b[2] <= W - 4 && b[1] >= 4 && b[3] <= H - 4;
-    const cost = (b: Box) => boxes.reduce((sum, o) => sum + overlap(b, o), 0);
-    // The first free spot; failing that, the one that covers the least.
-    let best = cands.find((c) => { const b = boxAt(c.p); return inside(b) && cost(b) === 0; });
-    if (!best) {
-      let bv = Infinity;
-      for (const c of cands) { const b = boxAt(c.p); if (!inside(b)) continue; const v = cost(b) + c.cost * 30; if (v < bv) { bv = v; best = c; } }
-    }
-    const p = best ? best.p : pt(r, sec.mid);
-    boxes.push(boxAt(p));
-    spots.push({ item: it, x: p[0], y: p[1], s });
+  const aims = all.map((item) => {
+    const sec = secBy.get(item.group) as Sector;
+    return { item, r: radiusPulled(item, data), mid: sec.mid, half: (sec.a0 - sec.a1) / 2 };
   });
+  const { spots, hidden } = placePills(aims, fieldFor(data, PULL.R, PULL.R[0] + 30, SHRINK.map((k) => k * PULL.pill), measure));
   const now = new Date(data.now);
   const names: [string, string][] = [ZONE_NAMES.ignition, ZONE_NAMES.climb, ZONE_NAMES.altitude,
     ['Orbit', dayOut(now, PULL.orbitDays)], ['Season', dayOut(now, PULL.seasonDays)], ['Beyond', 'later']];
-  return { spots, sectors, names };
+  return { spots, sectors, names, hidden };
 }
 
 function pillSvg(it: HorizonItem, further: boolean): string {
@@ -219,7 +297,6 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     const a = deg * Math.PI / 180;
     return [X + r * Math.cos(a), H - r * Math.sin(a)];
   };
-  const spots: PillSpot[] = [];
   let s = '<defs>' +
     `<linearGradient id="hz-sky" x1="0" y1="0" x2="0" y2="1">${DAWN.sky.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient>` +
     `<linearGradient id="hz-gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${DAWN.groundBand[0]}"/><stop offset="1" stop-color="${DAWN.groundBand[1]}"/></linearGradient>` +
@@ -239,7 +316,7 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
     s += `<circle class="hz-ring" data-i="${idx + 1}" cx="${X}" cy="${H}" r="${R[Math.min(idx + 1, 4)]}" fill="${extra ? PULL.bands[idx - 4] : DAWN.bands[idx]}" stroke="${extra ? PULL.ring : DAWN.ring}"${idx >= 3 ? ' stroke-dasharray="2 6"' : ''}${extra ? ' opacity="0"' : ''}/>`;
   }
   s += `<circle class="hz-haze" cx="${X}" cy="${H}" r="${R[2]}" fill="url(#hz-haze)"/>`;
-  const sectors = sectorsFor(data);
+  const { spots, sectors, hidden } = dawnLayout(data);
   const pulled = pullLayout(data);
   // Faint rays between slices, and each slice's name just outside the last ring. The pulled-back view has its own.
   const rays = (secs: Sector[], r1: number) => secs.slice(1).map((sec) => {
@@ -279,24 +356,12 @@ export function drawDawn(svg: SVGSVGElement, data: HorizonData): { spots: PillSp
   s += `<g class="hz-zg-a"><g class="hz-ztoday">${HORIZON_RING_ZONES.map((k, i) => groundName(ZONE_NAMES[k], i)).join('')}</g></g>`;
   s += `<g class="hz-zg-b" opacity="0">${pulled.names.map(groundName).join('')}</g>`;
   s += '<g class="hz-face">';
-  const core = data.dailies.length ? DAILY_R + 6 : R[0] + 8;   // keep pills off the sun and its ring of dailies
-  const boxes: Box[] = [[X - core, H - core, X + core, H], [0, 0, 420, 150], [W - 400, 0, W, 110]];
-  // Place pills nearest-due first, so the most urgent ones keep their ideal spot.
-  const secBy = new Map(sectors.map((sec) => [sec.group, sec]));
-  data.items.slice().sort((a, b) => a.hours - b.hours).forEach((it) => {
-    const sec = secBy.get(it.group) as Sector;
-    const r = radiusFor(it, data);
-    const fw = it.weight >= 4 ? 600 : 500;
-    const w = textWidth(it.short, fw) + 24;
-    const half = (sec.a0 - sec.a1) / 2;
-    const cands: [number, number][] = [];
-    // Slide along the slice first (same distance, so the due-date order holds), then nudge in or out a little.
-    const inSlice = [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9];
-    [0, 8, -8, 16, -16, 24, -24].forEach((dr) => inSlice.forEach((f) => cands.push(pt(r + dr, sec.mid + f * half))));
-    [1.2, -1.2, 1.6, -1.6, 2.2, -2.2].forEach((f) => [0, 12, -12].forEach((dr) => cands.push(pt(r + dr, sec.mid + f * half))));
-    const p = place(boxes, cands, w, [4, 4, W - 4, H - 4]) || pt(r, sec.mid);
-    s += `<g class="hz-pill" data-id="${esc(it.id)}" transform="translate(${p[0].toFixed(1)} ${p[1].toFixed(1)})">${pillSvg(it, false)}</g>`;
-    spots.push({ item: it, x: p[0], y: p[1] });
+  spots.forEach(({ item, x, y, s: k }) => {
+    s += `<g class="hz-pill" data-id="${esc(item.id)}" transform="translate(${x.toFixed(1)} ${y.toFixed(1)})${k ? ` scale(${k})` : ''}">${pillSvg(item, false)}</g>`;
+  });
+  // A ring task the sky had no room for (only on a very crowded day) waits with the further ones.
+  hidden.forEach((it) => {
+    s += `<g class="hz-pill" data-id="${esc(it.id)}" opacity="0">${pillSvg(it, false)}</g>`;
   });
   // Tasks only the pulled-back view has room for wait, hidden, until the camera moves.
   data.further.forEach((it) => {
@@ -380,4 +445,6 @@ export function applyPull(svg: SVGSVGElement, base: PillSpot[], pulled: PullView
     const sc = lerp(a.s ?? 1, b.s ?? 1);
     g.setAttribute('transform', `translate(${fx(lerp(a.x, b.x))} ${fx(lerp(a.y, b.y))}) scale(${sc.toFixed(4)})`);
   });
+  // One the pulled-back sky had no room for fades where it stands.
+  pulled.hidden.forEach((it) => { if (at.has(it.id)) el.pills.get(it.id)?.setAttribute('opacity', (1 - z).toFixed(3)); });
 }
