@@ -297,7 +297,7 @@ export function HorizonHero() {
           onFar={setFarInfo}
           onTasksChanged={refreshTasks}
         />
-        <PullBack skyRef={skyRef} svgRef={svgRef} spots={spots} pulled={pulled} further={data?.further.length ?? 0} onOut={setPullOut} />
+        <PullBack skyRef={skyRef} svgRef={svgRef} spots={spots} pulled={pulled} further={(data?.further.length ?? 0) + (spots.length ? Math.max(0, (data?.items.length ?? 0) - spots.length) : 0)} onOut={setPullOut} />
       </div>
       <div className="hz-ground hz-keep">
         {far ? <div ref={setGroundSlot} style={{ display: 'contents' }} /> : <>
