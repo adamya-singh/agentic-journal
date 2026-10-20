@@ -986,9 +986,14 @@ function QuestionField({
           type="button"
           onClick={() => onChange(question.bankMatch!.answer)}
           className="mb-2 block max-w-full truncate rounded-full border border-teal-200 bg-teal-50 px-2.5 py-0.5 text-left text-xs font-medium text-teal-700 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-200 dark:hover:bg-teal-900/50"
-          title="Fill with your previously saved answer"
+          title={question.bankMatch.scope === 'context'
+            ? 'The answer you gave for another job; check it fits this one'
+            : 'Fill with your previously saved answer'}
         >
-          Use previous answer: “{formatAnswerPreview(question.bankMatch.answer)}”
+          {question.bankMatch.scope === 'context' && question.bankMatch.context
+            ? `Use what you told ${question.bankMatch.context.company}: `
+            : 'Use previous answer: '}
+          “{formatAnswerPreview(question.bankMatch.answer)}”
         </button>
       )}
       {question.bankMatch && !question.bankMatch.usable && (

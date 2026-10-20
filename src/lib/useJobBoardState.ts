@@ -9,6 +9,7 @@ import type { JobApplicationResponseInput } from '@/components/JobApplicationMod
 import type {
   JobApplicationCategory,
   JobApplicationAnswer,
+  JobApplicationAnswerScope,
   JobApplicationRecord,
   JobApplicationResumeVariant,
   JobApplicationsViewData,
@@ -261,8 +262,9 @@ export function useJobBoardState(
     reviewId: string,
     action: 'confirm' | 'correct' | 'leave-blank',
     answer?: JobApplicationAnswer,
+    scope?: JobApplicationAnswerScope,
   ) => {
-    const data = await saveJobReview(reviewId, action, answer);
+    const data = await saveJobReview(reviewId, action, answer, fetch, scope);
     reviewRevision.current += 1;
     setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
   }, []);
@@ -294,8 +296,11 @@ export function useJobBoardState(
     setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
   }, []);
 
-  const confirmAllJobApplicationReviews = React.useCallback(async (listingId: string) => {
-    const data = await saveJobReviewConfirmAll(listingId);
+  const confirmAllJobApplicationReviews = React.useCallback(async (
+    listingId: string,
+    scopes?: Record<string, JobApplicationAnswerScope>,
+  ) => {
+    const data = await saveJobReviewConfirmAll(listingId, fetch, scopes);
     reviewRevision.current += 1;
     setJobApplicationsData((current) => current ? applyJobReviewResult(current, data) : current);
   }, []);

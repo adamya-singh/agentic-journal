@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
 import { isAwaitingSubmissionConfirmation } from '@/lib/job-email-updates';
 import { DateSourceSchema } from '@/lib/employment-dates';
+import { defaultAnswerScope, normalizeCompanyName } from '@/lib/job-answer-scope';
 import {
   hasStaleGraduationContext,
   isEligibilityQuestion,
@@ -17,6 +18,8 @@ import type {
   JobApplicationAnswer,
   JobApplicationAnswerBankEntry,
   JobApplicationAnswerBankMatch,
+  JobApplicationAnswerContext,
+  JobApplicationAnswerScope,
   JobApplicationCounts,
   JobApplicationQuestion,
   JobApplicationQuestionKind,
@@ -150,8 +153,15 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
     }
   }
 
+  // Answers saved before answer scopes existed are sorted once, with the job
+  // they were given for; the next locked write persists it.
+  let listingsById: Map<string, JobListing> | undefined;
+  const contextFor = (listingId: string): JobApplicationAnswerContext | undefined => {
+    listingsById ??= new Map(readJobListings().listings.map((listing) => [listing.id, listing]));
+    return listingContext(listingsById.get(listingId));
+  };
   const answerBank = Array.isArray(parsed.answerBank)
-    ? parsed.answerBank.flatMap((entry) => normalizeAnswerBankEntry(entry))
+    ? parsed.answerBank.flatMap((entry) => normalizeAnswerBankEntry(entry, contextFor))
     : [];
   const reviewItems = Array.isArray(parsed.reviewItems)
     ? parsed.reviewItems.flatMap((item) => normalizeReviewItem(item))
@@ -248,7 +258,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     }
     // resolveApplicationForListing returns store records by reference; clone
     // before attaching view-only bankMatch enrichment so it never persists.
-    applications[listing.id] = enrichApplicationWithBankMatches(application, store.answerBank);
+    applications[listing.id] = enrichApplicationWithBankMatches(application, store.answerBank, listing.company);
     incrementStatusCount(counts, application.status);
     if (listing.status === 'saved' || listing.status === 'starred') {
       for (const category of listing.applicationCategories) {
@@ -273,7 +283,13 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     eligibleBacklog,
     applications,
     answerBank: store.answerBank,
-    reviewItems: store.reviewItems,
+    reviewItems: store.reviewItems.map((item) => {
+      if (item.status !== 'pending') return item;
+      const question = store.applications[item.listingId]?.questions.find((candidate) => candidate.id === item.questionId);
+      if (!question) return item;
+      const { scope } = resolveAnswerScope(store.answerBank, question, item.answerUsed, { company: item.company, role: item.role });
+      return { ...item, answerScope: scope };
+    }),
     emailUpdates: toEmailUpdatesView(store.emailUpdates),
     schedulerHealth: {
       healthy: false,
@@ -288,6 +304,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
 function enrichApplicationWithBankMatches(
   application: JobApplicationRecord,
   bank: JobApplicationAnswerBankEntry[],
+  company?: string,
 ): JobApplicationRecord {
   if (bank.length === 0 || !application.questions.some((q) => q.resolution === 'pending')) {
     return application;
@@ -298,7 +315,7 @@ function enrichApplicationWithBankMatches(
       if (question.resolution !== 'pending') {
         return question;
       }
-      const bankMatch = findAnswerBankMatch(question, bank);
+      const bankMatch = findAnswerBankMatch(question, bank, company);
       return bankMatch ? { ...question, bankMatch } : question;
     }),
   };
@@ -801,8 +818,9 @@ export function misfiledBlockerReason(prompt: string): string | null {
  * Answers a pending question with what Adamya already confirmed for the same
  * question elsewhere. An exact match (same prompt, kind and choices) is his
  * answer; a text field matched on prompt alone (name, email, LinkedIn) is too,
- * unless it decides eligibility. Long-form answers and graduation answers older
- * than his January 2027 correction never count.
+ * unless it decides eligibility. Long-form answers, answers he gave for one
+ * specific job (scope "context") and graduation answers older than his
+ * January 2027 correction never count.
  */
 export function answerFromBank(
   question: JobApplicationQuestion,
@@ -820,7 +838,7 @@ export function answerFromBank(
   // Long-form answers ("Why us?") are written for one employer.
   if (question.multiline) return false;
   const match = findAnswerBankMatch(question, bank);
-  if (!match?.usable) return false;
+  if (!match?.usable || match.scope !== 'general') return false;
   const safe = match.tier === 'exact' || (question.kind === 'text' && !isEligibilityQuestion(question));
   if (!safe || hasStaleGraduationContext({ prompt: question.prompt, answer: match.answer })) return false;
   question.answer = match.answer;
@@ -1072,36 +1090,43 @@ export function optionsFingerprint(
  * (normalizedPrompt, kind) match ignoring options. Select-kind matches at the
  * relaxed tier are only "usable" when every stored value appears among the new
  * question's options — otherwise the match is reference-only.
+ *
+ * General answers come first. Without one, the answer given for another job
+ * (scope "context") is offered as a hint: the same company's first, then the
+ * most recent.
  */
 export function findAnswerBankMatch(
   question: JobApplicationQuestion,
   bank: JobApplicationAnswerBankEntry[],
+  company?: string,
 ): JobApplicationAnswerBankMatch | null {
   const normalizedPrompt = normalizePrompt(question.prompt);
   const fingerprint = optionsFingerprint(question.options);
-  let best: { entry: JobApplicationAnswerBankEntry; tier: 'exact' | 'kind' } | null = null;
+  const companyKey = company ? normalizeCompanyName(company) : undefined;
+  const rank = (entry: JobApplicationAnswerBankEntry): number =>
+    (entry.scope === 'general' ? 0 : companyKey && entry.context && normalizeCompanyName(entry.context.company) === companyKey ? 2 : 4) +
+    (entry.optionsFingerprint === fingerprint ? 0 : 1);
+  let best: { entry: JobApplicationAnswerBankEntry; rank: number } | null = null;
   for (const entry of bank) {
     if (entry.normalizedPrompt !== normalizedPrompt || entry.kind !== question.kind) {
       continue;
     }
-    if (entry.optionsFingerprint === fingerprint) {
-      best = { entry, tier: 'exact' };
-      break;
-    }
-    if (!best) {
-      best = { entry, tier: 'kind' };
+    const entryRank = rank(entry);
+    if (!best || entryRank < best.rank || (entryRank === best.rank && entry.confirmedAt > best.entry.confirmedAt)) {
+      best = { entry, rank: entryRank };
     }
   }
   if (!best) {
     return null;
   }
+  const tier = best.rank % 2 === 0 ? 'exact' : 'kind';
 
   let usable = true;
   if (question.kind === 'file') {
     // A saved file answer is only offerable while the file still exists.
     usable = applicationFileExists(best.entry.answer);
   } else if (
-    best.tier === 'kind' &&
+    tier === 'kind' &&
     (question.kind === 'single-select' || question.kind === 'multi-select')
   ) {
     const optionValues = new Set(
@@ -1118,26 +1143,101 @@ export function findAnswerBankMatch(
     entryId: best.entry.id,
     answer: best.entry.answer,
     prompt: best.entry.prompt,
-    tier: best.tier,
+    tier,
     usable,
+    scope: best.entry.scope,
+    ...(best.entry.context ? { context: best.entry.context } : {}),
   };
 }
 
+export function listingContext(listing: JobListing | undefined): JobApplicationAnswerContext | undefined {
+  if (!listing?.company) return undefined;
+  return { company: listing.company, ...(listing.positionTitle ? { role: listing.positionTitle } : {}) };
+}
+
+export function readListingContext(listingId: string): JobApplicationAnswerContext | undefined {
+  return listingContext(readJobListings().listings.find((listing) => listing.id === listingId));
+}
+
+/**
+ * The scope a confirmed answer is saved with: Adamya's explicit choice, else
+ * the one he last chose for the same question, else the Journal's default
+ * ("how did you hear", "why us" and answers naming the company depend on the job).
+ */
+export function resolveAnswerScope(
+  bank: JobApplicationAnswerBankEntry[],
+  question: Pick<JobApplicationQuestion, 'prompt' | 'kind'>,
+  answer: JobApplicationAnswer,
+  context: JobApplicationAnswerContext | undefined,
+  explicit?: JobApplicationAnswerScope,
+): { scope: JobApplicationAnswerScope; scopeSetBy?: 'adamya' } {
+  if (explicit) return { scope: explicit, scopeSetBy: 'adamya' };
+  const normalizedPrompt = normalizePrompt(question.prompt);
+  const chosen = bank
+    .filter((entry) => entry.scopeSetBy === 'adamya' && entry.normalizedPrompt === normalizedPrompt && entry.kind === question.kind)
+    .sort((a, b) => b.confirmedAt.localeCompare(a.confirmedAt))[0];
+  if (chosen) return { scope: chosen.scope, scopeSetBy: 'adamya' };
+  return { scope: defaultAnswerScope({ prompt: question.prompt, answer, company: context?.company }) };
+}
+
+function sameCompany(a?: JobApplicationAnswerContext, b?: JobApplicationAnswerContext): boolean {
+  return Boolean(a && b && normalizeCompanyName(a.company) === normalizeCompanyName(b.company));
+}
+
+/**
+ * Moves a saved answer to the other scope. One general answer per question:
+ * making this one general turns any other general answer to the same question
+ * into the context answer it was for that job.
+ */
+export function setAnswerScope(
+  store: JobApplicationsStoreData,
+  id: string,
+  scope: JobApplicationAnswerScope,
+): JobApplicationAnswerBankEntry | null {
+  const entry = store.answerBank.find((candidate) => candidate.id === id);
+  if (!entry) return null;
+  entry.scope = scope;
+  entry.scopeSetBy = 'adamya';
+  if (scope === 'general') {
+    for (const other of store.answerBank) {
+      if (other !== entry && other.scope === 'general' && other.normalizedPrompt === entry.normalizedPrompt &&
+        other.kind === entry.kind && other.optionsFingerprint === entry.optionsFingerprint) {
+        other.scope = 'context';
+      }
+    }
+  }
+  return entry;
+}
+
+/**
+ * Saves a confirmed answer. A general answer replaces the general answer to
+ * the same question; a context answer is kept per company, so "How did you
+ * hear about us?" can hold one answer for Notion and another for Stripe.
+ */
 export function upsertConfirmedAnswer(params: {
   store: JobApplicationsStoreData;
   listingId: string;
   question: JobApplicationQuestion;
   answer: JobApplicationAnswer;
   confirmedAt: string;
-}): void {
+  /** The job it was given for; defaults to the listing's company and role. */
+  context?: JobApplicationAnswerContext;
+  /** Adamya's choice; otherwise resolveAnswerScope decides. */
+  scope?: JobApplicationAnswerScope;
+}): JobApplicationAnswerBankEntry {
   const normalizedPrompt = normalizePrompt(params.question.prompt);
   const fingerprint = optionsFingerprint(params.question.options);
-  const existing = params.store.answerBank.find(
-    (entry) =>
-      entry.normalizedPrompt === normalizedPrompt &&
-      entry.kind === params.question.kind &&
-      entry.optionsFingerprint === fingerprint,
-  );
+  const context = params.context ?? readListingContext(params.listingId);
+  const { scope, scopeSetBy } = resolveAnswerScope(params.store.answerBank, params.question, params.answer, context, params.scope);
+  const sameQuestion = (entry: JobApplicationAnswerBankEntry) =>
+    entry.normalizedPrompt === normalizedPrompt &&
+    entry.kind === params.question.kind &&
+    entry.optionsFingerprint === fingerprint;
+  const existing = params.store.answerBank.find((entry) => sameQuestion(entry) && entry.scope === scope &&
+    (scope === 'general' || sameCompany(entry.context, context)));
+  // This job's answer saved under the other scope is superseded by this one.
+  params.store.answerBank = params.store.answerBank.filter((entry) =>
+    entry === existing || !sameQuestion(entry) || entry.scope === scope || !sameCompany(entry.context, context));
   const entry: JobApplicationAnswerBankEntry = {
     id: existing?.id ?? randomUUID(),
     normalizedPrompt,
@@ -1147,12 +1247,18 @@ export function upsertConfirmedAnswer(params: {
     answer: params.answer,
     confirmedAt: params.confirmedAt,
     sourceListingId: params.listingId,
+    scope,
+    ...(scopeSetBy ? { scopeSetBy } : {}),
+    ...(context ? { context } : {}),
   };
   if (existing) {
+    delete existing.scopeSetBy;
+    delete existing.context;
     Object.assign(existing, entry);
-  } else {
-    params.store.answerBank.push(entry);
+    return existing;
   }
+  params.store.answerBank.push(entry);
+  return entry;
 }
 
 export function createActionQuestion(params: {
@@ -1938,7 +2044,10 @@ function normalizeQuestion(value: unknown): JobApplicationQuestion[] {
   return [question];
 }
 
-function normalizeAnswerBankEntry(value: unknown): JobApplicationAnswerBankEntry[] {
+function normalizeAnswerBankEntry(
+  value: unknown,
+  contextFor: (listingId: string) => JobApplicationAnswerContext | undefined,
+): JobApplicationAnswerBankEntry[] {
   if (!isRecord(value)) return [];
   const answer = normalizeAnswer(value.answer);
   const id = normalizeString(value.id);
@@ -1958,6 +2067,14 @@ function normalizeAnswerBankEntry(value: unknown): JobApplicationAnswerBankEntry
   ) {
     return [];
   }
+  const storedContext = isRecord(value.context) && normalizeString(value.context.company)
+    ? {
+        company: normalizeString(value.context.company)!,
+        ...(normalizeString(value.context.role) ? { role: normalizeString(value.context.role) } : {}),
+      }
+    : undefined;
+  const storedScope = value.scope === 'general' || value.scope === 'context' ? value.scope : undefined;
+  const context = storedContext ?? (storedScope ? undefined : contextFor(sourceListingId));
   return [
     {
       id,
@@ -1970,6 +2087,9 @@ function normalizeAnswerBankEntry(value: unknown): JobApplicationAnswerBankEntry
       answer,
       confirmedAt,
       sourceListingId,
+      scope: storedScope ?? defaultAnswerScope({ prompt, answer, company: context?.company }),
+      ...(storedScope && value.scopeSetBy === 'adamya' ? { scopeSetBy: 'adamya' as const } : {}),
+      ...(context ? { context } : {}),
     },
   ];
 }

@@ -18,11 +18,14 @@ import type { JobApplicationAnswer, JobApplicationQuestion } from '@/lib/types';
 
 export const runtime = 'nodejs';
 
+const ScopeSchema = z.enum(['general', 'context']);
 const ReviewSchema = z.union([
   z.object({
     reviewId: z.string().min(1),
     action: z.enum(['confirm', 'correct', 'leave-blank']),
     answer: z.union([z.string(), z.array(z.string())]).optional(),
+    /** Only when Adamya changed it; otherwise the saved answer takes the default scope. */
+    scope: ScopeSchema.optional(),
   }),
   z.object({
     reviewId: z.string().min(1),
@@ -32,6 +35,8 @@ const ReviewSchema = z.union([
   z.object({
     listingId: z.string().min(1),
     action: z.literal('confirm-all'),
+    /** Scopes Adamya changed before confirming, by review id. */
+    scopes: z.record(ScopeSchema).optional(),
   }),
   z.object({
     listingId: z.string().min(1),
@@ -185,7 +190,11 @@ export async function POST(request: NextRequest) {
         }
         question.eligibilityReviewedAnswer = answer;
         delete question.redoRequest;
-        upsertConfirmedAnswer({ store, listingId: item.listingId, question, answer, confirmedAt: now });
+        const scope = input.action === 'confirm-all' ? input.scopes?.[item.id] : input.scope;
+        upsertConfirmedAnswer({
+          store, listingId: item.listingId, question, answer, confirmedAt: now,
+          context: { company: item.company, role: item.role }, scope,
+        });
         item.status = input.action === 'correct' ? 'corrected' : 'confirmed';
         item.resolvedAt = now;
         changed.push(question);

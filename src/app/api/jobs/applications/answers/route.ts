@@ -8,6 +8,7 @@ import {
   materializeJobApplication,
   mutateJobApplicationsStore,
   parseFileAnswer,
+  readListingContext,
   releaseApplicationLease,
   releaseApplicationsAnsweredByBank,
   resetApplicationFailureStreak,
@@ -30,6 +31,8 @@ const RequestSchema = z.object({
           questionId: z.string().min(1),
           answer: AnswerSchema.optional(),
           skip: z.boolean().optional(),
+          /** Only when Adamya changed it; otherwise the saved answer takes the default scope. */
+          scope: z.enum(['general', 'context']).optional(),
         })
         .refine((value) => value.skip === true || value.answer !== undefined, {
           message: 'Each response requires an answer or explicit skip',
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     const readiness = getJobApplicationReadiness();
+    const context = readListingContext(parsed.data.listingId);
     const result = await mutateJobApplicationsStore((store) => {
       const application = materializeJobApplication(store, parsed.data.listingId);
       const now = new Date().toISOString();
@@ -94,6 +98,8 @@ export async function POST(request: NextRequest) {
             question,
             answer,
             confirmedAt: now,
+            context,
+            scope: response.scope,
           });
         }
       }

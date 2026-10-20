@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
+import type { JobApplicationQuestion } from '../src/lib/types';
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'agentic-journal-applications-'));
 const jobsDir = path.join(testRoot, 'jobs');
@@ -316,6 +317,7 @@ describe('job application state', () => {
         answer: ref,
         confirmedAt: now,
         sourceListingId: 'saved-new',
+        scope: 'general' as const,
       },
     ];
     assert.equal(store.findAnswerBankMatch(question, bank)?.usable, true);
@@ -1165,7 +1167,7 @@ describe('job application state', () => {
       data.applications['applied'] = { ...application, listingId: 'applied', status: 'submitted',
         questions: [{ ...application.questions[0] }] };
       data.answerBank = [{ id: 'old-grad', prompt: 'Graduation Date', normalizedPrompt: 'graduation date',
-        kind: 'text', answer: '05/01/27', confirmedAt: now, sourceListingId: 'saved-new' }];
+        kind: 'text', answer: '05/01/27', confirmedAt: now, sourceListingId: 'saved-new', scope: 'general' }];
     });
     const response = await route.POST(new NextRequest('http://localhost/api/jobs/applications/candidate-context', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'refresh' }),
@@ -2031,10 +2033,10 @@ describe('job application state', () => {
     const authOptions = [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
     await store.mutateJobApplicationsStore((data) => {
       data.answerBank = [
-        { id: 'bank-name', normalizedPrompt: store.normalizePrompt('Full Name*'), prompt: 'Full Name*', kind: 'text', answer: 'Adamya Singh', confirmedAt: now, sourceListingId: 'applied' },
-        { id: 'bank-auth', normalizedPrompt: store.normalizePrompt('Are you legally authorized to work in the US?'), prompt: 'Are you legally authorized to work in the US?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'yes', confirmedAt: now, sourceListingId: 'applied' },
-        { id: 'bank-sponsor', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'text', answer: 'No', confirmedAt: now, sourceListingId: 'applied' },
-        { id: 'bank-why', normalizedPrompt: store.normalizePrompt('Why us?'), prompt: 'Why us?', kind: 'text', answer: 'Because of your mission.', confirmedAt: now, sourceListingId: 'applied' },
+        { id: 'bank-name', normalizedPrompt: store.normalizePrompt('Full Name*'), prompt: 'Full Name*', kind: 'text', answer: 'Adamya Singh', confirmedAt: now, sourceListingId: 'applied', scope: 'general' },
+        { id: 'bank-auth', normalizedPrompt: store.normalizePrompt('Are you legally authorized to work in the US?'), prompt: 'Are you legally authorized to work in the US?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'yes', confirmedAt: now, sourceListingId: 'applied', scope: 'general' },
+        { id: 'bank-sponsor', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'text', answer: 'No', confirmedAt: now, sourceListingId: 'applied', scope: 'general' },
+        { id: 'bank-why', normalizedPrompt: store.normalizePrompt('Why us?'), prompt: 'Why us?', kind: 'text', answer: 'Because of your mission.', confirmedAt: now, sourceListingId: 'applied', scope: 'general' },
       ];
       data.applications['saved-old'] = {
         listingId: 'saved-old', status: 'in-progress', resumeVariant: 'swe', attemptCount: 1,
@@ -2083,7 +2085,7 @@ describe('job application state', () => {
     // Answering the rest elsewhere releases it: one saved answer unblocks every application waiting on it.
     await store.mutateJobApplicationsStore((data) => {
       data.answerBank.push(
-        { id: 'bank-sponsor-select', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'no', confirmedAt: now, sourceListingId: 'applied' },
+        { id: 'bank-sponsor-select', normalizedPrompt: store.normalizePrompt('Will you require visa sponsorship?'), prompt: 'Will you require visa sponsorship?', kind: 'single-select', optionsFingerprint: store.optionsFingerprint(authOptions), answer: 'no', confirmedAt: now, sourceListingId: 'applied', scope: 'general' },
       );
       data.applications['saved-old'].questions = data.applications['saved-old'].questions.filter((question) => question.prompt !== 'Why us?');
       assert.deepEqual(store.releaseApplicationsAnsweredByBank(data, now), ['saved-old']);
@@ -2122,6 +2124,137 @@ describe('job application state', () => {
     assert.equal(application.status, 'submitted');
     assert.equal(application.questions.length, 0);
     restoreListingStatus('saved-old', 'saved');
+  });
+});
+
+describe('answer scopes', () => {
+  const hear = (id: string, options = [{ value: 'linkedin', label: 'LinkedIn' }, { value: 'site', label: 'Company website' }]): JobApplicationQuestion => ({
+    id, prompt: 'How did you hear about this opportunity?', kind: 'single-select' as const, required: true,
+    options, resolution: 'pending' as const, discoveredAt: now,
+  });
+
+  test('saved answers without a scope are sorted once, with the job they were given for', () => {
+    writeFileSync(path.join(jobsDir, 'applications.json'), `${JSON.stringify({
+      schemaVersion: 3, workerEnabled: false, applications: {}, reviewItems: [],
+      answerBank: [
+        { id: 'legacy-hear', normalizedPrompt: 'how did you hear about this opportunity select all that apply',
+          prompt: 'How did you hear about this opportunity? (select all that apply)', kind: 'multi-select',
+          answer: ['Example Website'], confirmedAt: now, sourceListingId: 'saved-new' },
+        { id: 'legacy-auth', normalizedPrompt: 'are you authorized to work in the us', prompt: 'Are you authorized to work in the US?',
+          kind: 'single-select', answer: 'Yes', confirmedAt: now, sourceListingId: 'saved-new' },
+        { id: 'legacy-gone', normalizedPrompt: 'email', prompt: 'Email', kind: 'text', answer: 'a@b.c', confirmedAt: now,
+          sourceListingId: 'deleted-listing' },
+      ],
+    })}\n`);
+    const [hearEntry, auth, gone] = store.readJobApplicationsStore().answerBank;
+    assert.equal(hearEntry.scope, 'context');
+    assert.deepEqual(hearEntry.context, { company: 'Example', role: 'Machine Learning Engineer' });
+    assert.equal(auth.scope, 'general');
+    assert.equal(auth.context?.company, 'Example');
+    assert.equal(gone.scope, 'general');
+    assert.equal(gone.context, undefined);
+    assert.equal(hearEntry.scopeSetBy, undefined);
+  });
+
+  test('context answers are kept per company and never fill a question on their own', async () => {
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [];
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-new', question: hear('q1'), answer: 'site', confirmedAt: now,
+        context: { company: 'Notion' } });
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-old', question: hear('q2'), answer: 'linkedin',
+        confirmedAt: '2026-07-21T12:00:00.000Z', context: { company: 'Stripe' } });
+      // Confirming it again for Notion replaces Notion's answer only.
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-new', question: hear('q1'), answer: 'linkedin', confirmedAt: now,
+        context: { company: 'Notion' } });
+    });
+    const bank = store.readJobApplicationsStore().answerBank;
+    assert.deepEqual(bank.map((entry) => [entry.scope, entry.context?.company, entry.answer]),
+      [['context', 'Notion', 'linkedin'], ['context', 'Stripe', 'linkedin']]);
+
+    const pending = hear('q3');
+    const match = store.findAnswerBankMatch(pending, bank, 'Notion');
+    assert.equal(match?.scope, 'context');
+    assert.equal(match?.context?.company, 'Notion');
+    assert.equal(store.findAnswerBankMatch(pending, bank)?.context?.company, 'Stripe', 'most recent without a company');
+    assert.equal(store.answerFromBank(pending, bank, now), false);
+    assert.equal(pending.resolution, 'pending');
+
+    // Adamya makes it general: it fills in everywhere, and his choice sticks for the next confirmation.
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [];
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-new', question: hear('q1'), answer: 'linkedin', confirmedAt: now,
+        context: { company: 'Notion' } });
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-new', question: hear('q1'), answer: 'linkedin', confirmedAt: now,
+        context: { company: 'Notion' }, scope: 'general' });
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-old', question: hear('q2'), answer: 'site', confirmedAt: now,
+        context: { company: 'Stripe' } });
+    });
+    const after = store.readJobApplicationsStore().answerBank;
+    assert.deepEqual(after.map((entry) => [entry.scope, entry.scopeSetBy, entry.context?.company, entry.answer]),
+      [['general', 'adamya', 'Stripe', 'site']], 'the Notion context copy is superseded; Stripe replaced the general answer');
+    const filled = hear('q4');
+    assert.equal(store.answerFromBank(filled, after, now), true);
+    assert.equal(filled.answer, 'site');
+  });
+
+  test('review confirms save with the shown scope unless Adamya changed it', async () => {
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [];
+      data.reviewItems = [];
+      data.applications['saved-new'] = {
+        listingId: 'saved-new', status: 'submitted', resumeVariant: 'mle', attemptCount: 1,
+        statusHistory: [{ status: 'submitted', changedAt: now }], submittedAt: now,
+        questions: [
+          { ...hear('hear'), resolution: 'auto-resolved', answer: 'site' },
+          { id: 'auth', prompt: 'Are you authorized to work in the US?', kind: 'text', required: true,
+            resolution: 'auto-resolved', answer: 'Yes', discoveredAt: now },
+          { id: 'why', prompt: 'Why Example?', kind: 'text', required: true, resolution: 'auto-resolved', answer: 'Because.', discoveredAt: now },
+        ],
+        createdAt: now, updatedAt: now,
+      };
+      data.reviewItems = ['hear', 'auth', 'why'].map((questionId) => ({
+        id: `review-${questionId}`, listingId: 'saved-new', questionId, question: questionId,
+        answerUsed: data.applications['saved-new'].questions.find((question) => question.id === questionId)!.answer!,
+        clarificationPrompt: 'Check this', confidence: 0.9, company: 'Example', role: 'Machine Learning Engineer',
+        createdAt: now, status: 'pending' as const,
+      }));
+    });
+    const view = store.buildJobApplicationsView();
+    assert.deepEqual(view.reviewItems.map((item) => item.answerScope), ['context', 'general', 'context']);
+    assert.equal(store.readJobApplicationsStore().reviewItems[0].answerScope, undefined, 'view-only');
+
+    assert.equal((await postReview({ reviewId: 'review-hear', action: 'confirm' })).status, 200);
+    const response = await postReview({ listingId: 'saved-new', action: 'confirm-all', scopes: { 'review-why': 'general' } });
+    assert.equal(response.status, 200);
+    const bank = store.readJobApplicationsStore().answerBank;
+    const scopeOf = (prompt: string) => bank.find((entry) => entry.prompt === prompt);
+    assert.equal(scopeOf('How did you hear about this opportunity?')?.scope, 'context');
+    assert.equal(scopeOf('How did you hear about this opportunity?')?.context?.company, 'Example');
+    assert.equal(scopeOf('Are you authorized to work in the US?')?.scope, 'general');
+    assert.equal(scopeOf('Why Example?')?.scope, 'general');
+    assert.equal(scopeOf('Why Example?')?.scopeSetBy, 'adamya');
+    assert.equal((await postReview({ listingId: 'saved-new', action: 'confirm-all', scopes: { x: 'everywhere' } })).status, 400);
+  });
+
+  test('moving a saved answer between scopes keeps one general answer per question', async () => {
+    const answerBankRoute = await import('../src/app/api/jobs/applications/answer-bank/route');
+    const post = (body: unknown) => answerBankRoute.POST(new NextRequest('http://localhost/api/jobs/applications/answer-bank', {
+      method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
+    }));
+    await store.mutateJobApplicationsStore((data) => {
+      data.answerBank = [];
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-new', question: hear('q1'), answer: 'site', confirmedAt: now,
+        context: { company: 'Notion' }, scope: 'general' });
+      store.upsertConfirmedAnswer({ store: data, listingId: 'saved-old', question: hear('q2'), answer: 'linkedin', confirmedAt: now,
+        context: { company: 'Stripe' }, scope: 'context' });
+    });
+    const [notion, stripe] = store.readJobApplicationsStore().answerBank;
+    assert.equal((await post({ action: 'scope', id: stripe.id, scope: 'everywhere' })).status, 400);
+    assert.equal((await post({ action: 'scope', id: 'missing', scope: 'general' })).status, 404);
+    assert.equal((await post({ action: 'scope', id: stripe.id, scope: 'general' })).status, 200);
+    const bank = store.readJobApplicationsStore().answerBank;
+    assert.deepEqual(bank.map((entry) => [entry.id, entry.scope]), [[notion.id, 'context'], [stripe.id, 'general']]);
+    assert.equal(bank[1].scopeSetBy, 'adamya');
   });
 });
 
