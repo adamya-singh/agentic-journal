@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { BugsFeaturesButton } from '@/components/bugs-features/BugsFeaturesButton';
+import { OpenClawButton } from '@/components/OpenClawButton';
 
 const NAV_LINKS = [
   { href: '/', label: 'Journal' },
@@ -62,6 +63,7 @@ export function AppHeader({ title, subtitle, actions, settings }: AppHeaderProps
               </Link>
             ))}
           </nav>
+          <OpenClawButton />
           <BugsFeaturesButton />
           {actions}
           {settings}
