@@ -498,6 +498,14 @@ export default function MediaPage() {
             </p>
           )}
         </div>
+        {/* These load their own data, so they start alongside the library, not after it. */}
+        <TbpnTeaser />
+        <FeedTeaser />
+        <YouTubeIntake
+          syncing={youtubeSyncing}
+          onLibraryChanged={() => void load()}
+          onSync={syncYouTube}
+        />
         {!data && !error && (
           <p role="status" className="py-10 text-center text-gray-500">
             Loading your media…
@@ -505,13 +513,6 @@ export default function MediaPage() {
         )}
         {data && (
           <>
-            <TbpnTeaser />
-            <FeedTeaser />
-            <YouTubeIntake
-              syncing={youtubeSyncing}
-              onLibraryChanged={() => void load()}
-              onSync={syncYouTube}
-            />
             <section aria-labelledby="ranking-heading" className="mb-10">
               <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>

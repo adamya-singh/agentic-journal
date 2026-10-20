@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, Loader2, RotateCcw, X } from 'lucide-react';
 import type {
   Bucket,
@@ -120,6 +120,8 @@ function Thumb({
   );
 }
 
+// Videos per page of a grid; four columns at desktop width.
+const PAGE = 24;
 type GridFilter = { channel: string } | { bucket: Bucket } | { oneOffs: true };
 const filterKey = (f: GridFilter) =>
   'channel' in f
@@ -139,28 +141,42 @@ function VideoGrid({
   onDecided: (previous: Previous, label: string) => void;
 }) {
   const [rows, setRows] = useState<VideoRow[]>([]);
-  const [total, setTotal] = useState(0);
+  const [total, setTotal] = useState<number>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string>();
+  const [loadingMore, setLoadingMore] = useState(false);
+  // The filter arrives as a fresh object on every render; key the requests on its value,
+  // or each re-render of the page (it polls every few seconds) would refetch the grid.
+  const query = filterKey(filter);
+  const shown = useRef(PAGE);
   const load = useCallback(
-    async (offset = 0) => {
+    async (offset: number, limit = PAGE) => {
       try {
         const r = await call<{ total: number; videos: VideoRow[] }>(
-          `/videos?${filterKey(filter)}&offset=${offset}`,
+          `/videos?${query}&offset=${offset}&limit=${limit}`,
         );
         setTotal(r.total);
-        setRows((old) => (offset ? [...old, ...r.videos] : r.videos));
+        setRows((old) => {
+          const next = offset ? [...old, ...r.videos] : r.videos;
+          shown.current = Math.max(PAGE, next.length);
+          return next;
+        });
         setError('');
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Videos could not be loaded.');
       }
     },
-    [filter],
+    [query],
   );
   // Reload what is shown so far after decisions elsewhere (bulk actions, undo).
   useEffect(() => {
-    void load();
+    void load(0, shown.current);
   }, [load, version]);
+  const more = async () => {
+    setLoadingMore(true);
+    await load(rows.length);
+    setLoadingMore(false);
+  };
   const set = async (v: VideoRow, status: VideoStatus) => {
     const next = v.status === status ? 'pending' : status;
     setBusy(v.id);
@@ -179,11 +195,14 @@ function VideoGrid({
   return (
     <div className="col-span-full border-t border-gray-200 pt-3 dark:border-gray-800">
       {error && <p className="mb-2 text-sm text-red-600">{error}</p>}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {/* Columns follow the grid's own width, not the window's: it sits in a full-width
+          channel card or under the group cards. Each card's single column may shrink below
+          the thumbnail's natural 320px, so cards never spill into their neighbours. */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,270px),1fr))] gap-3">
         {rows.map((v) => (
           <div
             key={v.id}
-            className={`grid gap-1.5 rounded-lg border p-1.5 transition-opacity ${
+            className={`grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-1.5 rounded-lg border p-1.5 transition-opacity ${
               v.status === 'kept'
                 ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40'
                 : v.status === 'skipped'
@@ -230,19 +249,27 @@ function VideoGrid({
           </div>
         ))}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-500">
-        <span>
-          Showing {rows.length} of {total}. Kept videos join Your library; skipped ones stay hidden.
-        </span>
-        {rows.length < total && (
-          <button
-            className={`${button} ${small} ${outline}`}
-            onClick={() => void load(rows.length)}
-          >
-            Show more
-          </button>
-        )}
-      </div>
+      {total === undefined && !error ? (
+        <p role="status" className="flex items-center gap-2 py-6 text-sm text-gray-500">
+          <Loader2 size={14} className="animate-spin" /> Loading videos…
+        </p>
+      ) : (
+        <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-500">
+          <span>
+            Showing {rows.length} of {total}. Kept videos join Your library; skipped ones stay
+            hidden.
+          </span>
+          {rows.length < (total ?? 0) && (
+            <button
+              className={`${button} ${small} ${outline}`}
+              disabled={loadingMore}
+              onClick={() => void more()}
+            >
+              {loadingMore && <Loader2 size={12} className="animate-spin" />} Show more
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -409,11 +436,14 @@ export function YouTubeIntake({
   useEffect(() => {
     void load();
   }, [load]);
-  // Only an import changes the queue on its own.
+  // Only an import changes the queue on its own: poll while one runs, then read once more.
   useEffect(() => {
-    if (!syncing) return void load();
+    if (!syncing) return;
     const t = setInterval(() => void load(), 4000);
-    return () => clearInterval(t);
+    return () => {
+      clearInterval(t);
+      void load();
+    };
   }, [syncing, load]);
   useEffect(() => {
     if (!toast) return;
@@ -571,6 +601,7 @@ export function YouTubeIntake({
     );
 
   const channels = data.channels.slice(0, shown);
+  const openBucket = BUCKETS.find((b) => open === `bucket:${b.id}`);
   return (
     <section aria-labelledby="youtube-heading" className="mb-10">
       {statusBand}
@@ -617,7 +648,11 @@ export function YouTubeIntake({
           return (
             <div
               key={b.id}
-              className={`grid gap-2 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900 ${n ? '' : 'opacity-60'}`}
+              className={`grid content-start gap-2 rounded-xl border bg-white p-4 dark:bg-gray-900 ${
+                isOpen
+                  ? 'border-indigo-300 dark:border-indigo-800'
+                  : 'border-gray-200 dark:border-gray-800'
+              } ${n ? '' : 'opacity-60'}`}
             >
               <div className="flex items-baseline justify-between gap-2">
                 <b>{b.title}</b>
@@ -646,16 +681,18 @@ export function YouTubeIntake({
                   {isOpen ? 'Close' : 'Look through'}
                 </button>
               </div>
-              {isOpen && (
-                <VideoGrid
-                  filter={{ bucket: b.id }}
-                  version={version}
-                  onDecided={() => void refresh()}
-                />
-              )}
             </div>
           );
         })}
+        {/* The open group's videos get the full width under both cards, not half of it. */}
+        {openBucket && (
+          <VideoGrid
+            key={openBucket.id}
+            filter={{ bucket: openBucket.id }}
+            version={version}
+            onDecided={() => void refresh()}
+          />
+        )}
       </div>
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
