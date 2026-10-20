@@ -11,6 +11,7 @@ import type {
   VideoStatus,
   YouTubeSummary,
 } from '@/lib/media/youtube-store';
+import { ChannelRules } from './ChannelRules';
 
 const button =
   'inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors hover:bg-gray-100 dark:hover:bg-gray-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -657,6 +658,7 @@ export function YouTubeIntake({
           );
         })}
       </div>
+      <ChannelRules version={version} onChanged={() => void load()} />
       <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h4 className="font-semibold">Channels</h4>

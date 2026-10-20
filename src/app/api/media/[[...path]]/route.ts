@@ -6,8 +6,10 @@ import {
   decide,
   decideBucket,
   decideChannel,
+  channelRules,
   listVideos,
   restore,
+  setChannelRules,
   summary,
   unkeep,
 } from '@/lib/media/youtube-store';
@@ -69,6 +71,7 @@ export async function GET(req: NextRequest) {
       });
       return result(feedView(body));
     }
+    if (action === 'youtube/rules') return result({ channels: channelRules() });
     if (action === 'youtube/videos') {
       const offset = z.coerce.number().int().min(0).catch(0).parse(q.get('offset'));
       const bucket = q.get('bucket');
@@ -193,6 +196,19 @@ export async function POST(req: NextRequest) {
         .strict()
         .parse(await req.json());
       return result(await decideChannel(body.channel, body.status, body.remember));
+    }
+    if (action === 'youtube/rules') {
+      const body = z
+        .object({
+          rules: z
+            .record(channelKey, z.enum(['keep', 'skip']).nullable())
+            .refine((r) => Object.keys(r).length >= 1 && Object.keys(r).length <= 500, {
+              message: 'Send between 1 and 500 channels.',
+            }),
+        })
+        .strict()
+        .parse(await req.json());
+      return result(await setChannelRules(body.rules));
     }
     if (action === 'youtube/bucket') {
       const body = z

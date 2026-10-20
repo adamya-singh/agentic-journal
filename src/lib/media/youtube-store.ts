@@ -179,7 +179,13 @@ export const unknownChannelIds = (y: YouTubeStore, limit = 40) =>
 
 // The kept/skipped/pending state before a change, so the page can undo it.
 export type Previous = Record<string, VideoStatus>;
-function decideMany(y: YouTubeStore, s: MediaState, ids: string[], status: VideoStatus): Previous {
+function decideMany(
+  y: YouTubeStore,
+  s: MediaState,
+  ids: string[],
+  status: VideoStatus,
+  by: 'you' | 'rule' = 'you',
+): Previous {
   const previous: Previous = {};
   for (const id of ids) {
     const v = y.videos[id];
@@ -187,7 +193,7 @@ function decideMany(y: YouTubeStore, s: MediaState, ids: string[], status: Video
     const was = isKept(s, id) ? 'kept' : v.status === 'kept' ? 'pending' : v.status;
     if (was === status) continue;
     previous[id] = was;
-    setStatus(y, s, id, status);
+    setStatus(y, s, id, status, by);
   }
   return previous;
 }
@@ -232,6 +238,39 @@ export async function setChannelRule(key: string, rule: 'keep' | 'skip' | null) 
     if (rule) channel.rule = rule;
     else delete channel.rule;
   });
+}
+// Sets several channels' rules at once (null asks each time). A new rule also
+// decides the videos that arrived after your last decision on that channel,
+// as it would have if it had existed then; older waiting videos stay yours.
+export type ChannelRule = 'keep' | 'skip';
+export async function setChannelRules(rules: Record<string, ChannelRule | null>) {
+  return update((y, s) => {
+    const previousRules: Record<string, ChannelRule | null> = {};
+    let previous: Previous = {};
+    for (const [key, rule] of Object.entries(rules)) {
+      const channel = y.channels[key];
+      if (!channel) throw new Error('Channel not found. Refresh the page.');
+      if ((channel.rule ?? null) === rule) continue;
+      previousRules[key] = channel.rule ?? null;
+      if (rule) channel.rule = rule;
+      else delete channel.rule;
+      if (rule) {
+        const ids = arrivedSinceDecided(y, s, key);
+        previous = {
+          ...previous,
+          ...decideMany(y, s, ids, rule === 'keep' ? 'kept' : 'skipped', 'rule'),
+        };
+      }
+    }
+    return { previous, previousRules };
+  });
+}
+// Pending videos of a channel first seen after your last decision on it.
+function arrivedSinceDecided(y: YouTubeStore, s: MediaState, key: string) {
+  let last = '';
+  for (const v of Object.values(y.videos))
+    if (v.channel === key && v.decidedAt && v.decidedAt > last) last = v.decidedAt;
+  return last ? pendingIds(y, s, (v) => v.channel === key && v.firstSeenAt > last) : [];
 }
 export async function decideBucket(bucket: Bucket | 'oneOffs') {
   return update((y, s) => {
@@ -432,4 +471,56 @@ export function listVideos(filter: VideoFilter, offset = 0, limit = 24) {
       }),
     ),
   };
+}
+
+// Every channel you could want a rule for: the ones the page lists (more than a
+// one-off) and any channel that already has a rule. Biggest first.
+export interface ChannelRuleRow {
+  key: string;
+  name: string;
+  handle?: string;
+  rule?: ChannelRule;
+  total: number;
+  kept: number;
+  skipped: number;
+  pending: number;
+  // Of the pending, how many arrived after your last decision on the channel.
+  arrived: number;
+}
+export function channelRules(): ChannelRuleRow[] {
+  const y = readYouTube(),
+    s = readState();
+  const rows = new Map<string, ChannelRuleRow>();
+  const lastDecided = new Map<string, string>();
+  for (const [id, v] of Object.entries(y.videos)) {
+    if (v.channel === UNKNOWN_CHANNEL) continue;
+    const c = y.channels[v.channel];
+    let row = rows.get(v.channel);
+    if (!row) {
+      row = {
+        key: v.channel,
+        name: c?.name || 'Unknown channel',
+        handle: c?.handle,
+        rule: c?.rule,
+        total: 0,
+        kept: 0,
+        skipped: 0,
+        pending: 0,
+        arrived: 0,
+      };
+      rows.set(v.channel, row);
+    }
+    row.total++;
+    row[statusOf(y, s, id)]++;
+    if (v.decidedAt && v.decidedAt > (lastDecided.get(v.channel) || ''))
+      lastDecided.set(v.channel, v.decidedAt);
+  }
+  for (const [id, v] of Object.entries(y.videos)) {
+    const row = rows.get(v.channel),
+      last = lastDecided.get(v.channel);
+    if (row && last && v.firstSeenAt > last && statusOf(y, s, id) === 'pending') row.arrived++;
+  }
+  return [...rows.values()]
+    .filter((c) => c.total > ONE_OFF || c.rule)
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
 }
