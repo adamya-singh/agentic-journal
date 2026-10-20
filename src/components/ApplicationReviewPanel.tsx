@@ -4,10 +4,11 @@
 
 import React from 'react';
 import { isApplicationSubmissionInFlight, stalledSubmissionBlockers } from '@/lib/job-application-cancellation';
-import { CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Images, Loader2, MessageCircleQuestion, Pencil, RotateCcw, Send, ZoomIn } from 'lucide-react';
+import { Building2, CalendarPlus, Check, CheckCheck, ChevronDown, ChevronRight, Clock, Ban, Globe, Images, Loader2, MessageCircleQuestion, Pencil, RotateCcw, Send, ZoomIn } from 'lucide-react';
 import { ScreenshotLightbox } from './ScreenshotLightbox';
 import type {
   JobApplicationAnswer,
+  JobApplicationAnswerScope,
   JobApplicationQuestion,
   JobApplicationRecord,
   JobApplicationReviewItem,
@@ -18,7 +19,8 @@ const COLLAPSED_STORAGE_KEY = 'jobs.reviewPanel.collapsed';
 const LOW_CONFIDENCE = 0.7;
 const RELEASED_NOTICE_MS = 6000;
 
-type ResolveHandler = (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
+type ResolveHandler = (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer, scope?: JobApplicationAnswerScope) => Promise<void>;
+type ScopeChoices = Record<string, JobApplicationAnswerScope>;
 type RedoHandler = (reviewId: string, instructions: string) => Promise<void>;
 
 interface ReviewGroup {
@@ -56,7 +58,7 @@ export function ApplicationReviewPanel({
   applications: JobApplicationsViewData | null;
   onResolve?: ResolveHandler;
   onRedo?: RedoHandler;
-  onConfirmAll?: (listingId: string) => Promise<void>;
+  onConfirmAll?: (listingId: string, scopes?: ScopeChoices) => Promise<void>;
   onOpenApplication?: (listingId: string) => void;
   onExtend?: (listingId: string) => Promise<void>;
   onCancel?: (listingId: string, reason: string) => Promise<void>;
@@ -175,13 +177,13 @@ export function ApplicationReviewPanel({
             open={openGroups[group.listingId] ?? index === 0}
             onToggle={(open) => setOpenGroups((current) => ({ ...current, [group.listingId]: open }))}
             questions={applications?.applications[group.listingId]?.questions}
-            onResolve={onResolve && (async (reviewId, action, answer) => {
-              await onResolve(reviewId, action, answer);
+            onResolve={onResolve && (async (reviewId, action, answer, answerScope) => {
+              await onResolve(reviewId, action, answer, answerScope);
               noteReleased(group, 1);
             })}
             onRedo={onRedo}
-            onConfirmAll={onConfirmAll && (async () => {
-              await onConfirmAll(group.listingId);
+            onConfirmAll={onConfirmAll && (async (scopes) => {
+              await onConfirmAll(group.listingId, scopes);
               noteReleased(group, group.items.length);
             })}
             onOpenApplication={onOpenApplication && (() => onOpenApplication(group.listingId))}
@@ -217,12 +219,14 @@ function ReviewGroupCard({
   questions?: JobApplicationQuestion[];
   onResolve?: ResolveHandler;
   onRedo?: RedoHandler;
-  onConfirmAll?: () => Promise<void>;
+  onConfirmAll?: (scopes?: ScopeChoices) => Promise<void>;
   onOpenApplication?: () => void;
   onExtend?: () => Promise<void>;
   onCancel?: (reason: string) => Promise<void>;
 }) {
   const [busy, setBusy] = React.useState<string | null>(null);
+  // Only the scopes Adamya changed; the rest are saved with the server's default.
+  const [scopeChoices, setScopeChoices] = React.useState<ScopeChoices>({});
   const [error, setError] = React.useState<{ id: string; message: string } | null>(null);
   const [cancelling, setCancelling] = React.useState(false);
   const [cancelReason, setCancelReason] = React.useState('');
@@ -306,7 +310,7 @@ function ReviewGroupCard({
             <button
               type="button"
               disabled={busy !== null}
-              onClick={() => run('all', onConfirmAll)}
+              onClick={() => run('all', () => onConfirmAll(scopeChoices))}
               className="inline-flex min-h-8 items-center gap-1 rounded border border-emerald-300 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 dark:border-emerald-800 dark:text-emerald-300 dark:hover:bg-emerald-950/40"
             >
               <CheckCheck className="h-3.5 w-3.5" />
@@ -359,8 +363,14 @@ function ReviewGroupCard({
               busy={busy === item.id}
               disabled={!onResolve || busy !== null}
               error={error?.id === item.id ? error.message : null}
-              onConfirm={() => run(item.id, () => onResolve!(item.id, 'confirm'))}
-              onCorrect={(answer) => run(item.id, () => onResolve!(item.id, 'correct', answer))}
+              company={group.company}
+              answerScope={scopeChoices[item.id] ?? item.answerScope}
+              onToggleScope={() => setScopeChoices((current) => ({
+                ...current,
+                [item.id]: (current[item.id] ?? item.answerScope) === 'context' ? 'general' : 'context',
+              }))}
+              onConfirm={() => run(item.id, () => onResolve!(item.id, 'confirm', undefined, scopeChoices[item.id]))}
+              onCorrect={(answer) => run(item.id, () => onResolve!(item.id, 'correct', answer, scopeChoices[item.id]))}
               onLeaveBlank={editable
                 ? () => run(item.id, () => onResolve!(item.id, 'leave-blank')) : undefined}
               onRedo={editable && !group.redoBlocked && onRedo
@@ -433,6 +443,9 @@ function ReviewRow({
   busy,
   disabled,
   error,
+  company,
+  answerScope,
+  onToggleScope,
   onConfirm,
   onCorrect,
   onLeaveBlank,
@@ -445,6 +458,10 @@ function ReviewRow({
   busy: boolean;
   disabled: boolean;
   error: string | null;
+  company: string;
+  /** How Confirm saves this answer to the answer bank. */
+  answerScope?: JobApplicationAnswerScope;
+  onToggleScope: () => void;
   onConfirm: () => Promise<boolean>;
   onCorrect: (answer: JobApplicationAnswer) => Promise<boolean>;
   onLeaveBlank?: () => Promise<boolean>;
@@ -505,6 +522,9 @@ function ReviewRow({
             <RotateCcw className="mr-1 inline h-3 w-3 align-[-2px]" aria-hidden />
             Redone from “{formatAnswer(item.redoneFrom.previousAnswer, question)}” after you said: {item.redoneFrom.instructions}
           </p>
+        )}
+        {answerScope && question?.kind !== 'action' && redoNote === null && (
+          <AnswerScopeToggle scope={answerScope} company={company} disabled={disabled} onToggle={onToggleScope} />
         )}
       </div>
       {screenshot && (
@@ -632,6 +652,43 @@ function ReviewRow({
         {error && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{error}</p>}
       </div>
     </li>
+  );
+}
+
+/**
+ * How a confirmed answer is saved: reused on every application, or kept as
+ * this company's answer that OpenClaw only treats as a hint elsewhere.
+ */
+function AnswerScopeToggle({
+  scope,
+  company,
+  disabled,
+  onToggle,
+}: {
+  scope: JobApplicationAnswerScope;
+  company: string;
+  disabled: boolean;
+  onToggle: () => void;
+}) {
+  const context = scope === 'context';
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onToggle}
+      aria-pressed={context}
+      title={context
+        ? `Saved as your answer for ${company}. On other applications OpenClaw only treats it as a hint. Click to reuse it everywhere.`
+        : `Saved to your answer bank and filled in on every application that asks this. Click to keep it for ${company} only.`}
+      className={`mt-1.5 inline-flex min-h-7 max-w-full items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset disabled:opacity-50 ${context
+        ? 'bg-sky-50 text-sky-800 ring-sky-200 hover:bg-sky-100 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800 dark:hover:bg-sky-900/40'
+        : 'bg-slate-50 text-slate-600 ring-slate-200 hover:bg-slate-100 dark:bg-slate-800/60 dark:text-slate-300 dark:ring-slate-700 dark:hover:bg-slate-800'}`}
+    >
+      {context
+        ? <Building2 className="h-3 w-3 shrink-0" aria-hidden />
+        : <Globe className="h-3 w-3 shrink-0" aria-hidden />}
+      <span className="truncate">{context ? `Just for ${company}` : 'Reuse on every application'}</span>
+    </button>
   );
 }
 

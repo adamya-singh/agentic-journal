@@ -217,6 +217,9 @@ export interface JobApplicationAnswerBankMatch {
   tier: 'exact' | 'kind';
   /** false when a select-kind match's stored answer isn't among the new question's options. */
   usable: boolean;
+  /** context: given for another job, a hint only (never filled in on its own). */
+  scope: JobApplicationAnswerScope;
+  context?: JobApplicationAnswerContext;
 }
 
 export interface JobApplicationStatusHistoryEntry {
@@ -429,6 +432,20 @@ export interface JobApplicationReviewItem {
   /** Set on the draft OpenClaw wrote in response to a redo request. */
   redoneFrom?: Omit<JobApplicationRedoRequest, 'requestedAt'>;
   resolvedAt?: string;
+  /** View-time enrichment (never persisted): the scope Confirm saves this answer with. */
+  answerScope?: JobApplicationAnswerScope;
+}
+
+/**
+ * general: Adamya's answer on every application (work authorization, contact
+ * details). context: the answer he gave for one job ("How did you hear about
+ * us?", "Why Notion?"), kept with that job and only ever a hint elsewhere.
+ */
+export type JobApplicationAnswerScope = 'general' | 'context';
+
+export interface JobApplicationAnswerContext {
+  company: string;
+  role?: string;
 }
 
 export interface JobApplicationAnswerBankEntry {
@@ -440,6 +457,11 @@ export interface JobApplicationAnswerBankEntry {
   answer: JobApplicationAnswer;
   confirmedAt: string;
   sourceListingId: string;
+  scope: JobApplicationAnswerScope;
+  /** Set when Adamya chose the scope himself rather than the Journal's default. */
+  scopeSetBy?: 'adamya';
+  /** The job the answer was given for. */
+  context?: JobApplicationAnswerContext;
 }
 
 export interface JobApplicationsStoreData {

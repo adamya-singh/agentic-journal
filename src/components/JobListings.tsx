@@ -5,6 +5,7 @@ import { CheckCheck, ChevronDown, ChevronRight, ExternalLink, Images, Search, St
 import type {
   JobApplicationCategory,
   JobApplicationAnswer,
+  JobApplicationAnswerScope,
   JobApplicationRecord,
   JobApplicationResumeVariant,
   JobApplicationsViewData,
@@ -49,10 +50,10 @@ interface JobListingsProps {
     application?: JobApplicationRecord;
     worker?: { queued?: boolean; enabled?: boolean };
   } | void>;
-  onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer) => Promise<void>;
+  onApplicationReview?: (reviewId: string, action: 'confirm' | 'correct' | 'leave-blank', answer?: JobApplicationAnswer, scope?: JobApplicationAnswerScope) => Promise<void>;
   onApplicationReviewRedo?: (reviewId: string, instructions: string) => Promise<void>;
   onApplicationCancel?: (listingId: string, reason: string) => Promise<void>;
-  onApplicationReviewConfirmAll?: (listingId: string) => Promise<void>;
+  onApplicationReviewConfirmAll?: (listingId: string, scopes?: Record<string, JobApplicationAnswerScope>) => Promise<void>;
   onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
   /** Pushes an application's next autopilot date (draft or auto-submit) back by a day. */
   onExtendAutopilot?: (listingId: string) => Promise<void>;
