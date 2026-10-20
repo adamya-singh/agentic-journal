@@ -76,6 +76,9 @@ export const BRIEF_CSS = `
 .hzb summary::-webkit-details-marker{display:none}
 .hzb summary::before{content:"▸ ";color:#ffd2a8}
 .hzb details[open] summary::before{content:"▾ "}
+.hzb-imgs{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.hzb-imgs a{display:block;max-width:100%}
+.hzb-imgs img{display:block;max-width:100%;max-height:160px;border-radius:6px;border:1px solid rgba(255,255,255,.12);object-fit:contain;background:rgba(0,0,0,.25)}
 .hzb-md{font-size:13px;color:#d6dde8;margin-top:8px;line-height:1.55;overflow-wrap:anywhere}
 .hzb-md p,.hzb-md ul,.hzb-md ol{margin:6px 0}
 .hzb-md ul,.hzb-md ol{padding-left:18px}
@@ -229,6 +232,16 @@ function Head({ brief }: { brief: TaskBrief }) {
       </div>
       {w.note && <p className="hzb-note">{w.note}</p>}
       {brief.stakes && <p className="hzb-stakes">{brief.stakes}{brief.stakesOc && <span className="hzb-oc" title="OpenClaw wrote this line">OpenClaw</span>}</p>}
+      {brief.images?.length > 0 && (
+        <div className="hzb-imgs">
+          {brief.images.map((src) => (
+            <a key={src} href={src} target="_blank" rel="noopener noreferrer" title="Open image">
+              {/* eslint-disable-next-line @next/next/no-img-element -- notes images are local API URLs */}
+              <img src={src} alt="Attached image" loading="lazy" />
+            </a>
+          ))}
+        </div>
+      )}
     </>
   );
 }

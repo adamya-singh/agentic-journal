@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Loader2, X } from 'lucide-react';
+import { ImageIcon, Loader2, X } from 'lucide-react';
 import { formatProjectTag } from '@/lib/projects';
 import type { CaptureListType } from '@/lib/capture/types';
 import type { CaptureToastItem } from './QuickCaptureProvider';
@@ -22,6 +22,20 @@ function listLabel(listType?: CaptureListType): string {
   if (listType === 'have-to-do') return 'Have to Do';
   if (listType === 'want-to-do') return 'Want to Do';
   return 'Misc Notes';
+}
+
+/** The typed text, or what an image-only capture is called; an icon marks pasted images. */
+function CaptureText({ toast }: { toast: CaptureToastItem }) {
+  const count = toast.images?.length ?? 0;
+  const text = toast.text || (count === 1 ? 'Pasted image' : `${count} pasted images`);
+  return (
+    <>
+      {count > 0 && toast.text && (
+        <ImageIcon className="inline w-3.5 h-3.5 mr-1 -mt-0.5 text-gray-400" aria-label={`${count} image${count === 1 ? '' : 's'}`} />
+      )}
+      {text}
+    </>
+  );
 }
 
 function formatDueDate(dueDate: string): string {
@@ -103,7 +117,7 @@ function CaptureToast({
       {toast.phase === 'saving' && (
         <div className="flex items-center gap-2 text-gray-600 dark:text-gray-300">
           <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-          <span className="truncate">{toast.text}</span>
+          <span className="truncate"><CaptureText toast={toast} /></span>
         </div>
       )}
 
@@ -111,7 +125,7 @@ function CaptureToast({
         <div className="flex items-center gap-3">
           <div className="min-w-0">
             <div className="truncate text-gray-900 dark:text-gray-100">
-              {toast.undone ? 'Undone' : toast.storedText ?? toast.text}
+              {toast.undone ? 'Undone' : toast.storedText ?? <CaptureText toast={toast} />}
             </div>
             {!toast.undone && (
               <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -147,7 +161,7 @@ function CaptureToast({
       {toast.phase === 'error' && (
         <div className="flex items-center gap-3">
           <div className="min-w-0">
-            <div className="truncate text-gray-900 dark:text-gray-100">{toast.text}</div>
+            <div className="truncate text-gray-900 dark:text-gray-100"><CaptureText toast={toast} /></div>
             <div className="text-xs text-red-500">Couldn&apos;t save</div>
           </div>
           <button

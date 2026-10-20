@@ -47,7 +47,7 @@ export function QuickCaptureOverlay({ open, onClose }: QuickCaptureOverlayProps)
             <div className="rounded-xl bg-white dark:bg-gray-800 shadow-2xl border border-gray-200 dark:border-gray-700 p-2">
               <QuickCaptureInput variant="overlay" autoFocus />
               <div className="px-2 pt-1.5 pb-0.5 text-[11px] text-gray-400 dark:text-gray-500">
-                Enter to capture · stays open for more · Esc to close
+                Enter to capture · paste images · stays open for more · Esc to close
               </div>
             </div>
           </motion.div>

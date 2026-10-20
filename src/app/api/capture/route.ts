@@ -10,6 +10,14 @@ import { readProjectRoadmaps } from '../projects/roadmap-store-utils';
 import { readProjectPreferences } from '../projects/preferences-store-utils';
 import { addMiscTask } from '../tasks/misc/misc-store-utils';
 import { normalizeProjectList } from '@/lib/projects';
+import {
+  CaptureImageError,
+  MAX_CAPTURE_IMAGES,
+  captureImagesMarkdown,
+  removeCaptureImages,
+  saveCaptureImages,
+  type CaptureImage,
+} from '@/lib/capture/images';
 import type { CaptureClassification, CaptureResponse } from '@/lib/capture/types';
 import type { ListType } from '@/lib/types';
 
@@ -28,15 +36,18 @@ const ClassificationSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  let imageNames: string[] = [];
   try {
-    const body = (await request.json()) as { text?: unknown };
-    const text = typeof body.text === 'string' ? body.text.trim() : '';
-    if (!text) {
+    const { text, images } = await readCaptureBody(request);
+    if (!text && !images.length) {
       return NextResponse.json({ success: false, error: 'text is required' }, { status: 400 });
     }
+    imageNames = saveCaptureImages(images);
+    const imagesMarkdown = captureImagesMarkdown(imageNames);
 
+    // An image with no words has nothing to classify; it waits in Misc Notes for triage.
     let classification: CaptureClassification | null = null;
-    if (process.env.CAPTURE_LLM_DISABLED !== '1') {
+    if (text && process.env.CAPTURE_LLM_DISABLED !== '1') {
       try {
         classification = await classifyCapture(text);
       } catch (error) {
@@ -45,7 +56,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!classification) {
-      const task = addMiscTask(text);
+      const task = addMiscTask(
+        text || (images.length === 1 ? 'Pasted image' : `${images.length} pasted images`),
+        imagesMarkdown || undefined,
+      );
       const response: CaptureResponse = {
         success: true,
         taskId: task.id,
@@ -67,11 +81,12 @@ export async function POST(request: NextRequest) {
         projects: classification.projects,
         dueDate: classification.dueDate,
         isDaily: classification.isDaily,
-        notesMarkdown: `Captured: "${text}"`,
+        notesMarkdown: [`Captured: "${text}"`, imagesMarkdown].filter(Boolean).join('\n\n'),
       }),
     });
     const addData = await addResponse.json();
     if (!addResponse.ok || !addData.success) {
+      removeCaptureImages(imageNames);
       return NextResponse.json(
         { success: false, error: addData.error || 'Failed to save capture' },
         { status: 502 },
@@ -108,9 +123,33 @@ export async function POST(request: NextRequest) {
     };
     return NextResponse.json(response);
   } catch (error) {
+    removeCaptureImages(imageNames);
+    if (error instanceof CaptureImageError) {
+      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+    }
     console.error('Error handling capture:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
+}
+
+/** JSON `{ text }`, or multipart with a `text` field and `images` files when images were pasted. */
+async function readCaptureBody(
+  request: NextRequest,
+): Promise<{ text: string; images: CaptureImage[] }> {
+  if (!request.headers.get('content-type')?.includes('multipart/form-data')) {
+    const body = (await request.json()) as { text?: unknown };
+    return { text: typeof body.text === 'string' ? body.text.trim() : '', images: [] };
+  }
+  const form = await request.formData();
+  const text = form.get('text');
+  const files = form.getAll('images').filter((value): value is File => typeof value !== 'string');
+  if (files.length > MAX_CAPTURE_IMAGES) {
+    throw new CaptureImageError(`Keep it to ${MAX_CAPTURE_IMAGES} images or fewer.`);
+  }
+  const images = await Promise.all(
+    files.map(async (file) => ({ data: Buffer.from(await file.arrayBuffer()), type: file.type })),
+  );
+  return { text: typeof text === 'string' ? text.trim() : '', images };
 }
 
 async function queuePrioritizationCron(): Promise<void> {

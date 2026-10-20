@@ -70,6 +70,7 @@ export interface TaskBrief {
   sections: BriefSection[];
   history: BriefHistory[];
   notesMarkdown: string | null;
+  images: string[];              // markdown images in the notes (pasted into Quick Capture)
   generatedAt: string;
   agent: BriefAgentStatus | null;  // OpenClaw's background fill for this task, when there is one
 }
@@ -184,6 +185,7 @@ export interface ParsedNotes {
   links: BriefLink[];
   steps: BriefStep[];
   sections: BriefSection[];
+  images: string[];
 }
 
 /** Read the structure the Journal's own writers use: "- **Key:** value" facts, markdown links, "- [ ]" checklists, "## Heading" or "**Heading**" sections. */
@@ -192,6 +194,7 @@ export function parseNotes(notes: string): ParsedNotes {
   const links: BriefLink[] = [];
   const steps: BriefStep[] = [];
   const sections: BriefSection[] = [];
+  const images: string[] = [];
   const seen = new Set<string>();
   const addLink = (label: string, href: string, key: string, src: BriefSource) => {
     if (seen.has(href) || /^#/.test(href)) return;
@@ -215,6 +218,9 @@ export function parseNotes(notes: string): ParsedNotes {
   };
   for (const raw of notes.split('\n')) {
     const line = raw.replace(/\s+$/, '');
+    // An image on its own line is shown as a picture, not listed as a link.
+    const image = /^\s*!\[[^\]]*\]\(<?([^)>\s]+)>?\)$/.exec(line);
+    if (image) { images.push(image[1]); continue; }
     const h = /^#{1,3}\s+(.+)$/.exec(line) || /^\*\*([^*]+)\*\*$/.exec(line.trim());
     if (h) { flush(); title = clean(h[1]); continue; }
     if (/^_.*_$/.test(line.trim())) continue;                      // "_Filled in from employer emails…_"
@@ -243,7 +249,7 @@ export function parseNotes(notes: string): ParsedNotes {
     body.push(line);
   }
   flush();
-  return { intro: intro.join('\n\n').trim(), facts, links, steps, sections };
+  return { intro: intro.join('\n\n').trim(), facts, links, steps, sections, images };
 }
 
 // ───────────── classification ─────────────
@@ -577,6 +583,7 @@ export function buildTaskBrief(input: BriefInputs): TaskBrief | null {
     sections,
     history,
     notesMarkdown: notes || null,
+    images: parsed.images,
     generatedAt: now.toISOString(),
     agent: null,
   };

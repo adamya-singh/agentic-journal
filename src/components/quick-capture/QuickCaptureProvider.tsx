@@ -9,8 +9,10 @@ import { CaptureToastStack } from './CaptureToastStack';
 export interface CaptureToastItem {
   id: string;
   phase: 'saving' | 'done' | 'fallback' | 'error';
-  /** The original fragment as typed. */
+  /** The original fragment as typed; empty for an image-only capture. */
   text: string;
+  /** Images pasted with the capture, kept so Retry can send them again. */
+  images?: File[];
   /** The text actually stored (may be cleaned by the classifier). */
   storedText?: string;
   taskId?: string;
@@ -22,7 +24,7 @@ export interface CaptureToastItem {
 }
 
 interface QuickCaptureContextValue {
-  submitCapture: (text: string) => void;
+  submitCapture: (text: string, images?: File[]) => void;
   openOverlay: () => void;
 }
 
@@ -65,20 +67,31 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
   }, []);
 
   const submitCapture = React.useCallback(
-    (text: string) => {
+    (text: string, images: File[] = []) => {
       const trimmed = text.trim();
-      if (!trimmed) {
+      if (!trimmed && !images.length) {
         return;
       }
       const toastId = crypto.randomUUID();
-      setToasts((current) => [...current, { id: toastId, phase: 'saving', text: trimmed }]);
+      setToasts((current) => [
+        ...current,
+        { id: toastId, phase: 'saving', text: trimmed, ...(images.length ? { images } : {}) },
+      ]);
 
       void (async () => {
         try {
+          let body: BodyInit = JSON.stringify({ text: trimmed });
+          if (images.length) {
+            const form = new FormData();
+            form.set('text', trimmed);
+            for (const image of images) form.append('images', image);
+            body = form;
+          }
           const response = await fetch('/api/capture', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: trimmed }),
+            // Let the browser set the multipart boundary when images ride along.
+            ...(images.length ? {} : { headers: { 'Content-Type': 'application/json' } }),
+            body,
           });
           const data = (await response.json()) as CaptureResponse;
           if (!response.ok || !data.success || !data.taskId) {
@@ -137,7 +150,7 @@ export function QuickCaptureProvider({ children }: { children: React.ReactNode }
   const retryCapture = React.useCallback(
     (toast: CaptureToastItem) => {
       dismissToast(toast.id);
-      submitCapture(toast.text);
+      submitCapture(toast.text, toast.images);
     },
     [dismissToast, submitCapture],
   );

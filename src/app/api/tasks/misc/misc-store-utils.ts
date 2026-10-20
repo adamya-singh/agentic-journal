@@ -30,9 +30,9 @@ export function writeMiscTasks(data: TasksData): void {
   writeJsonFileAtomic(miscFilePath(), data);
 }
 
-export function addMiscTask(text: string): Task {
+export function addMiscTask(text: string, notesMarkdown?: string): Task {
   const data = readMiscTasks();
-  const task: Task = { id: randomUUID(), text };
+  const task: Task = { id: randomUUID(), text, ...(notesMarkdown ? { notesMarkdown } : {}) };
   data.tasks.push(task);
   writeMiscTasks(data);
   return task;
