@@ -102,3 +102,19 @@ test('a task with only a title says so', () => {
   assert.ok(b.flags.some((f) => f.level === 'gap' && /Only the title and due date/.test(f.text)));
   assert.equal(b.next, null);
 });
+
+test('a homework synced with only its title falls back to the course page; with its Canvas link saved it opens the assignment', () => {
+  const b = brief('hw3');
+  assert.equal(b.next?.label, 'Open Course on Canvas');
+  assert.equal(b.next?.href, 'https://rutgers.instructure.com/courses/408904');
+
+  // What canvas-to-journal-sync now writes when it adds an assignment.
+  const href = 'https://rutgers.instructure.com/courses/408904/assignments/4589249';
+  const synced = tasks.map((r) => r.task.id === 'hw3'
+    ? { ...r, task: { ...r.task, notesMarkdown: `- **Canvas:** [Homework 3](${href})` } }
+    : r);
+  const s = buildTaskBrief({ taskId: 'hw3', tasks: synced, completed: [], journal: [], now });
+  assert.equal(s?.next?.label, 'Open it on Canvas');
+  assert.equal(s?.next?.href, href);
+  assert.deepEqual(s?.links.map((l) => l.href), [href, 'https://rutgers.instructure.com/courses/408904']);
+});

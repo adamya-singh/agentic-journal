@@ -10,6 +10,7 @@ import {
   validateAgentReply,
   type AgentRecord,
 } from '../src/lib/brief-agent';
+import { isCanvasItemLink, isGenericLink } from '../src/lib/deep-link';
 
 const now = new Date(2026, 9, 8, 12, 0);   // Thu Oct 8 2026
 const t = (id: string, text: string, extra: Partial<Task> = {}): BriefTaskRef => ({ task: { id, text, ...extra }, listType: 'have-to-do' });
@@ -149,4 +150,93 @@ test('the prompt carries the task, the rules brief and the ids it may use', () =
   assert.match(prompt, /Task: \[Data Context\] Fair Face/);
   assert.match(prompt, /pres \| \[Data Context\] In Person Presentation \| due 2026-10-12/);
   assert.match(prompt, /"kind":"merge"/);
+});
+
+test('generic links are course homes, list pages and front pages, not the item itself', () => {
+  for (const href of [
+    'https://rutgers.instructure.com/courses/408919',
+    'https://rutgers.instructure.com/courses/408919/',
+    'https://rutgers.instructure.com/courses/408919/assignments',
+    'https://rutgers.instructure.com/courses/408919/modules',
+    'https://www.gradescope.com/courses/123456',
+    'https://jobs.ashbyhq.com/',
+    'https://example.com',
+  ]) assert.equal(isGenericLink(href), true, href);
+  for (const href of [
+    'https://rutgers.instructure.com/courses/408919/assignments/4589249',
+    'https://rutgers.instructure.com/courses/408919/discussion_topics/4960575',
+    'https://rutgers.instructure.com/courses/408919/modules/items/15025858',
+    'https://rutgers.instructure.com/courses/408919/pages/homework-3',
+    'https://docs.google.com/spreadsheets/d/1zP0/edit',
+    'https://example.com/?q=apply',
+    '/jobs?application=8bad278e',
+    undefined,
+  ]) assert.equal(isGenericLink(href), false, String(href));
+  assert.equal(isCanvasItemLink('https://rutgers.instructure.com/courses/1/assignments/2'), true);
+  assert.equal(isCanvasItemLink('https://rutgers.instructure.com/courses/1/assignments'), false);
+  assert.equal(isCanvasItemLink('https://example.com/courses/1/assignments/2'), false);
+});
+
+// Regression HW3 (Oct 17): synced from Canvas with only a title, so the rules could only offer the course
+// home. OpenClaw read the assignment, but its link never reached the Start here button.
+test('OpenClaw\'s assignment page replaces the rules\' course-home fallback as Start here', () => {
+  const course = 'https://rutgers.instructure.com/courses/408919';
+  const assignment = `${course}/assignments/4589249`;
+  const hwTasks: BriefTaskRef[] = [
+    t('hw3', '[Regression] Homework 3 - MLR, Model Building, Variable Selection', { dueDate: '2026-10-09', dueTimeStart: '23:59' }),
+    t('cu', '[Regression] Catch up on 10/6 lecture (missed)', { notesMarkdown: `- [Slides](${course}/modules/items/1)` }),
+  ];
+  const brief = buildTaskBrief({ taskId: 'hw3', tasks: hwTasks, completed: [], journal: [], now })!;
+  assert.equal(brief.next?.href, course);
+  const prompt = buildBriefAgentPrompt({ brief, task: hwTasks[0].task, otherTasks: [], now });
+  assert.match(prompt, /"fallback":"only a course\/site home; replace it"/);
+  assert.match(prompt, /most direct page/);
+
+  const hwCtx = { taskId: 'hw3', openTaskIds: new Set(['hw3', 'cu']), today: '2026-10-08' };
+  const mergeWith = (r: Record<string, unknown>) => {
+    const checked = validateAgentReply({ summary: 'Read HW3 on Canvas.', ...r }, hwCtx);
+    assert.ok(checked.ok);
+    if (!checked.ok) throw new Error('unreachable');
+    return mergeAgentLayer(brief, {
+      taskId: 'hw3', fingerprint: 'x', status: 'done', queuedAt: now.toISOString(), startedAt: null,
+      finishedAt: now.toISOString(), error: null, failures: 0, layer: checked.layer, doneActions: [],
+    }, { tasks: new Map(hwTasks.map((r) => [r.task.id, r])), now });
+  };
+  const link = { label: 'Homework 3 - MLR', href: assignment, kind: 'canvas', src: 'canvas' };
+
+  // OpenClaw names the assignment page as next: it wins.
+  let m = mergeWith({ next: { label: 'Open Homework 3', detail: 'PDF and datasets are attached.', href: assignment, src: 'canvas' }, links: [link] });
+  assert.equal(m.next?.href, assignment);
+  assert.equal(m.next?.oc, true);
+  assert.deepEqual(m.links.map((l) => l.href), [assignment, course], 'the course page goes last');
+
+  // OpenClaw left next out (the rules seemed to have one), but found the page: it is promoted.
+  m = mergeWith({ next: null, links: [link] });
+  assert.equal(m.next?.label, 'Open it on Canvas');
+  assert.equal(m.next?.href, assignment);
+
+  // A next without a link keeps its words as the first step, on the assignment page.
+  m = mergeWith({ next: { label: 'Download the datasets', src: 'canvas' }, links: [link] });
+  assert.equal(m.next?.href, assignment);
+  assert.equal(m.next?.detail, 'First: Download the datasets');
+
+  // OpenClaw found nothing more direct: the course page stays.
+  m = mergeWith({ next: { label: 'Open the course', href: course, src: 'canvas' } });
+  assert.equal(m.next?.href, course);
+  assert.equal(m.next?.oc, undefined);
+});
+
+test('a rule next that already opens the item is never replaced', () => {
+  const brief = buildTaskBrief({ taskId: 'ff', tasks: [
+    t('ff', '[Data Context] Fair Face', { dueDate: '2026-10-09', notesMarkdown: '- **Canvas:** [Fair Face](https://rutgers.instructure.com/courses/1/assignments/9)' }),
+  ], completed: [], journal: [], now })!;
+  assert.equal(brief.next?.href, 'https://rutgers.instructure.com/courses/1/assignments/9');
+  const checked = validateAgentReply(reply, ctx);
+  assert.ok(checked.ok);
+  if (!checked.ok) return;
+  const merged = mergeAgentLayer(brief, {
+    taskId: 'ff', fingerprint: 'x', status: 'done', queuedAt: now.toISOString(), startedAt: null,
+    finishedAt: now.toISOString(), error: null, failures: 0, layer: checked.layer, doneActions: [],
+  }, { tasks: new Map(tasks.map((r) => [r.task.id, r])), now });
+  assert.equal(merged.next?.href, 'https://rutgers.instructure.com/courses/1/assignments/9');
 });
