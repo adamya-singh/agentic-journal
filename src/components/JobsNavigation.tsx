@@ -11,6 +11,7 @@ export function JobsNavigation() {
       {[
         ['/jobs', 'Board'],
         ['/jobs/overview', 'Overview'],
+        ['/jobs/interviews', 'Interviews'],
       ].map(([url, label]) => (
         <Link
           key={url}
