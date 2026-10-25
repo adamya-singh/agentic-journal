@@ -277,10 +277,21 @@ export class BrowserIMDb implements IMDbSession {
       const dialog = this.page
         .getByRole('dialog')
         .filter({ has: this.page.getByRole('button', { name: /^Rate \d+($| out of 10)/ }) });
-      await dialog
-        .getByRole('button', { name: new RegExp(`^Rate ${job.rating}($| out of 10)`) })
-        .click();
-      await dialog.getByRole('button', { name: 'Rate', exact: true }).click();
+      // A touch layer (.ipc-starbar__touch) sits over the stars and swallows mouse clicks,
+      // so pick the star and submit with the keyboard, the way a keyboard user would.
+      const star = dialog.getByRole('button', { name: new RegExp(`^Rate ${job.rating}($| out of 10)`) });
+      await star.focus();
+      await this.page.keyboard.press('Enter');
+      // The dialog's bubble shows the picked score; don't submit anything else.
+      await this.page.waitForFunction(
+        ({ rating }) =>
+          [...document.querySelectorAll('[role="dialog"]')].some((d) =>
+            new RegExp(`^\\s*${rating}\\s*Rate this`).test(d.textContent || ''),
+          ),
+        { rating: job.rating },
+      );
+      await dialog.getByRole('button', { name: 'Rate', exact: true }).focus();
+      await this.page.keyboard.press('Enter');
       await dialog.waitFor({ state: 'hidden' });
     }
     await this.page.waitForTimeout(1000);
