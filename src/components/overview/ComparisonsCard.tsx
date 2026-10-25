@@ -11,18 +11,21 @@ const OUTCOME_LABEL: Record<string, string> = {
   offer: 'Offer',
   rejected: 'Rejected',
 };
-const BAR: Record<string, string> = {
-  assessment: 'bg-amber-400 dark:bg-amber-500',
-  interview: 'bg-violet-400 dark:bg-violet-500',
-  offer: 'bg-teal-400 dark:bg-teal-500',
-  rejected: 'bg-red-400 dark:bg-red-500',
+const HEAT: Record<string, string> = {
+  assessment: '#ffb547',
+  interview: '#b59cff',
+  offer: '#7dffb2',
+  rejected: '#ff6b6b',
 };
 const pct = (v: number) => `${Math.round(v * 100)}%`;
+/** How much of the outcome's color a cell gets: none at 0%, then brighter with the rate. */
+const heat = (rate: number) => (rate > 0 ? `${Math.min(62, 10 + rate * 150)}%` : '0%');
 
 /**
- * Outcome rates by resume, role family, and so on, rendered only where two
- * groups are large enough to compare. Rows that pass the pattern threshold
- * are highlighted with their interval so the comparison carries its own caveat.
+ * Outcome rates by resume, role family, and so on, as heat cells, rendered
+ * only where two groups are large enough to compare. Rows that pass the
+ * pattern threshold are marked and spelled out with their interval so the
+ * comparison carries its own caveat.
  */
 export function ComparisonsCard({
   cards,
@@ -70,27 +73,21 @@ export function ComparisonsCard({
           />
         }
       />
-      <div className="space-y-5 px-4 py-4 sm:px-5">
+      <div className="space-y-5 px-4 pb-5 pt-2 sm:px-5">
         {cards.length === 0 && <EmptyLine>{emptyState}</EmptyLine>}
+        {cards.length > 0 && <p className="sub">Brighter cell = higher rate.</p>}
         {cards.map((card) => {
           const flagged = new Set(card.patterns.flatMap((p) => [p.a.value, p.b.value]));
           return (
             <div key={card.dimension}>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                {card.label}
-              </p>
-              <div className="mt-2 overflow-x-auto">
-                <table className="min-w-full text-sm">
+              <div className="overflow-x-auto">
+                <table className="ov-heat">
                   <thead>
-                    <tr className="text-xs text-slate-500 dark:text-slate-400">
-                      <th scope="col" className="py-1 pr-3 text-left font-medium">
-                        Group
-                      </th>
-                      <th scope="col" className="py-1 pr-3 text-right font-medium">
-                        n
-                      </th>
+                    <tr>
+                      <th scope="col">{card.label}</th>
+                      <th scope="col" className="text-right">n</th>
                       {card.outcomes.map((k) => (
-                        <th key={k} scope="col" className="min-w-32 py-1 pr-3 text-left font-medium">
+                        <th key={k} scope="col">
                           {OUTCOME_LABEL[k]}
                         </th>
                       ))}
@@ -100,37 +97,25 @@ export function ComparisonsCard({
                     {card.groups.map((g) => (
                       <tr
                         key={g.value}
-                        className={
-                          flagged.has(g.value)
-                            ? 'bg-indigo-50/60 dark:bg-indigo-950/20'
-                            : g.eligible
-                              ? ''
-                              : 'text-slate-400 dark:text-slate-500'
-                        }
+                        className={flagged.has(g.value) ? 'flag' : g.eligible ? '' : 'thin'}
+                        title={flagged.has(g.value) ? 'Part of a pattern that meets the threshold' : undefined}
                       >
-                        <td className="py-1.5 pr-3">
+                        <td className="max-w-[14rem] truncate">
                           <LinkButton
                             onClick={() => onCite(`${card.label}: ${g.value}`, g.ids)}
-                            className={g.eligible ? '' : 'text-slate-400 dark:text-slate-500'}
                             title={g.eligible ? 'Show these applications' : 'Fewer than ten applications; shown for completeness'}
                           >
                             {g.value}
                           </LinkButton>
                         </td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">{g.n}</td>
+                        <td className="mono text-right text-xs tabular-nums text-slate-400">{g.n}</td>
                         {card.outcomes.map((k) => (
-                          <td key={k} className="py-1.5 pr-3">
-                            <div className="flex items-center gap-2">
-                              <div className="h-2 w-20 shrink-0 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                                <div
-                                  className={`h-full ${BAR[k]}`}
-                                  style={{ width: `${(g.hits[k] / g.n) * 100}%` }}
-                                />
-                              </div>
-                              <span className="whitespace-nowrap text-xs tabular-nums">
-                                {g.hits[k]}/{g.n} · {pct(g.hits[k] / g.n)}
-                              </span>
-                            </div>
+                          <td
+                            key={k}
+                            className="c tabular-nums"
+                            style={{ ['--k' as string]: HEAT[k], ['--p' as string]: heat(g.hits[k] / g.n) }}
+                          >
+                            {g.hits[k]}/{g.n} · {pct(g.hits[k] / g.n)}
                           </td>
                         ))}
                       </tr>
@@ -141,7 +126,7 @@ export function ComparisonsCard({
               {card.patterns.map((p) => (
                 <p
                   key={`${p.outcome}-${p.a.value}-${p.b.value}`}
-                  className="mt-2 text-xs text-slate-600 dark:text-slate-300"
+                  className="mt-2 text-xs text-slate-300"
                 >
                   <span className="font-medium">{OUTCOME_LABEL[p.outcome]}:</span> {p.a.value}{' '}
                   {pct(p.aInterval[0])}–{pct(p.aInterval[1])} versus {p.b.value}{' '}

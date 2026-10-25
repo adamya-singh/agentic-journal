@@ -8,7 +8,8 @@
 //   node scripts/interviews.ts round --process <id|listing:ID> --id <roundId> [--name …] [--at ISO] [--time "1:00 PM"] [--duration "15 min"] [--people "A,B"]
 //   node scripts/interviews.ts person --process <id|listing:ID> --name "…" [--role …] [--email …]
 //   node scripts/interviews.ts domain --company "…" --domain example.com [--if-missing true]   (also fetches the logo)
-//   node scripts/interviews.ts missing-domains                               (companies with no logo domain yet)
+//   node scripts/interviews.ts domains --file companies.tsv [--if-missing true]   (one "Company<TAB>domain" per line; fetches the logos)
+//   node scripts/interviews.ts missing-domains [--all true]                  (companies with no logo domain yet; --all adds every Jobs posting)
 //   node scripts/interviews.ts logos [--force true]
 //   node scripts/interviews.ts import-2025-26 [--from ~/.openclaw/workspace/interviews]
 import fs from 'node:fs';
@@ -115,13 +116,34 @@ try {
     const domain = await store.mutateInterviews((index) => actions.setDomain(index, need('company'), need('domain')));
     const logo = await logos.ensureLogo(domain, true);
     out({ domain, logo: logo ? path.basename(logo.file) : 'not found' });
+  } else if (command === 'domains') {
+    // Batch form of `domain`: one locked write for the whole file, then the logos four at a time.
+    const rows = fs.readFileSync(need('file'), 'utf8').split('\n').map((l) => l.split('\t').map((s) => s.trim())).filter(([c, d]) => c && d);
+    const set = await store.mutateInterviews((index) => rows
+      .filter(([company]) => !(opt('if-missing') === 'true' && index.domains[company.toLowerCase()]))
+      .map(([company, domain]) => actions.setDomain(index, company, domain)));
+    const results: Record<string, string> = {};
+    const queue = [...new Set(set)];
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      for (let domain = queue.shift(); domain; domain = queue.shift()) {
+        const logo = await logos.ensureLogo(domain, true);
+        results[domain] = logo ? path.basename(logo.file) : 'not found';
+      }
+    }));
+    out({ set: set.length, logos: results });
   } else if (command === 'missing-domains') {
     const index = store.readInterviews();
     const { buildCasebook } = await import('../src/lib/interviews/view.ts');
     const { readExtras } = await import('../src/app/api/jobs/overview/store.ts');
     const source = await listingSource();
     const view = buildCasebook({ index, ...source, milestones: readExtras().milestones });
-    out([...new Set(view.processes.filter((p) => !p.domain).map((p) => p.company))]);
+    const missing = view.processes.filter((p) => !p.domain).map((p) => p.company);
+    if (opt('all') === 'true') {
+      // The Board and Overview show logos for every posting, not only interview processes.
+      const { companyDomain } = await import('../src/lib/company-domain.ts');
+      missing.push(...source.listings.filter((l) => !companyDomain(l.company, l.link, index.domains)).map((l) => l.company));
+    }
+    out([...new Set(missing)].sort());
   } else if (command === 'logos') {
     const index = store.readInterviews();
     const results: Record<string, string> = {};

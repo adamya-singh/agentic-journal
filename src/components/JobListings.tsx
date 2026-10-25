@@ -1,7 +1,26 @@
 'use client';
 
 import React from 'react';
-import { CheckCheck, ChevronDown, ChevronRight, ExternalLink, Images, Search, Star, Trash2 } from 'lucide-react';
+import Link from 'next/link';
+import {
+  Archive,
+  CheckCheck,
+  ChevronDown,
+  ChevronRight,
+  CircleX,
+  Cog,
+  ExternalLink,
+  Hand,
+  Images,
+  ListOrdered,
+  Mail,
+  MessageSquareText,
+  Search,
+  Send,
+  Star,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react';
 import type {
   JobApplicationCategory,
   JobApplicationAnswer,
@@ -20,7 +39,10 @@ import { NeedsYouQueue } from './NeedsYouQueue';
 import { WorkerStatusPanel } from './WorkerStatusPanel';
 import { ApplicationReviewPanel } from './ApplicationReviewPanel';
 import { EmailUpdatesPanel } from './EmailUpdatesPanel';
-import { EMPLOYER_STAGE_STYLES } from './EmployerStageBadge';
+import { CompanyLogo } from './mission/CompanyLogo';
+import { BOARD_CSS } from './mission/board-css';
+import { CATEGORY_COLOR, EMPLOYER_STAGE_COLOR } from './mission/colors';
+import { MISSION_JOBS_CSS } from './mission/jobs-css';
 import { JOB_EMPLOYER_STAGE_LABELS, type JobEmailUpdateRequest } from '@/lib/job-email-updates';
 import {
   JOB_BOARD_STAGES,
@@ -98,15 +120,28 @@ const STAGE_HINTS: Record<JobBoardStage, string> = {
   archived: 'Postings you archived before an application went out.',
 };
 
-const STAGE_BARS: Record<JobBoardStage, string> = {
-  needs: 'bg-amber-400',
-  queued: 'bg-slate-300 dark:bg-slate-500',
-  applying: 'bg-blue-500',
-  submitted: 'bg-emerald-500',
-  heard: 'bg-violet-500',
-  closed: 'bg-slate-400 dark:bg-slate-600',
-  archived: 'bg-slate-300 dark:bg-slate-600',
+// The pipeline's hues on the Mission trajectory; amber is the stage waiting on you.
+const STAGE_COLORS: Record<JobBoardStage, string> = {
+  needs: 'var(--now)',
+  queued: 'var(--c-other)',
+  applying: 'var(--em)',
+  submitted: 'var(--c-tech)',
+  heard: 'var(--c-screen)',
+  closed: 'var(--dim)',
+  archived: 'var(--dim)',
 };
+
+const STAGE_ICONS: Record<JobBoardStage, LucideIcon> = {
+  needs: Hand,
+  queued: ListOrdered,
+  applying: Cog,
+  submitted: Send,
+  heard: Mail,
+  closed: CircleX,
+  archived: Archive,
+};
+
+const HEARD_FEED_SIZE = 8;
 
 type RowLayout = 'listing' | 'working' | 'sent' | 'closed';
 
@@ -120,12 +155,12 @@ const STAGE_LAYOUT: Record<JobBoardStage, RowLayout> = {
   archived: 'listing',
 };
 
-// Desktop column templates; below lg each row stacks into a two-line card.
-const ROW_GRID: Record<RowLayout, string> = {
-  listing: 'lg:grid-cols-[1.75rem_minmax(0,1fr)_8.5rem_9rem_7rem_4.5rem_1.25rem]',
-  working: 'lg:grid-cols-[1.75rem_minmax(0,1fr)_8.5rem_9rem_9rem_1.25rem]',
-  sent: 'lg:grid-cols-[minmax(0,1fr)_8.5rem_4.5rem_9.5rem_6.5rem_1.25rem]',
-  closed: 'lg:grid-cols-[minmax(0,1fr)_5rem_minmax(0,1fr)_1.25rem]',
+// Desktop column templates (star, logo, company · role, …); below lg each row stacks into a two-line card.
+const ROW_COLUMNS: Record<RowLayout, string> = {
+  listing: '28px 34px minmax(0,1fr) 9.5rem 10rem 8rem 4.5rem 56px',
+  working: '28px 34px minmax(0,1fr) 9.5rem 10rem 10rem 56px',
+  sent: '34px minmax(0,1fr) 9.5rem 5rem 10rem 6.5rem 56px',
+  closed: '34px minmax(0,1fr) 5.5rem minmax(0,1fr) 56px',
 };
 
 const DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
@@ -336,178 +371,223 @@ export function JobListings({
   const selectedApplication = selectedApplicationId
     ? applications?.applications[selectedApplicationId]
     : undefined;
-  const maxStageCount = Math.max(1, ...JOB_BOARD_STAGES.map((candidate) => stages[candidate].length));
+  const enabledCategories = new Set(applications?.enabledApplicationCategories ?? []);
+  const openApplication = (listingId: string) => setSelectedApplicationId(listingId);
+  const count = (candidate: JobBoardStage) => (loading && !data ? '…' : stages[candidate].length);
+
+  const heardCounts = stages.heard.reduce(
+    (acc, listing) => {
+      if (records[listing.id]?.employerStage === 'rejected') acc.rejected += 1;
+      else acc.moving += 1;
+      return acc;
+    },
+    { rejected: 0, moving: 0 },
+  );
+  const stageNote: Record<JobBoardStage, string> = {
+    needs: review.blocking
+      ? `${questionCount} with questions · ${review.blocking} to approve`
+      : `${questionCount} with questions`,
+    queued: applications ? `${applications.eligibleBacklog} in a category you apply to` : '',
+    applying: 'open now or between attempts',
+    submitted: 'waiting on employers',
+    heard: `${heardCounts.moving} moving · ${heardCounts.rejected} rejected`,
+    closed: 'posting gone or cancelled',
+    archived: 'set aside before applying',
+  };
 
   return (
     <>
-      <div className="flex flex-col gap-8 pb-12 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start">
-        <aside className="order-2 space-y-6 lg:sticky lg:top-4 lg:order-1">
-          <WorkerStatusPanel
-            listings={allListings}
-            applications={applications ?? null}
-            onControl={onApplicationControl}
-            onEmailUpdate={onEmailUpdate}
-            onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
-            onError={setActionError}
-          />
-
-          <fieldset disabled={!applications || !onApplicationCategoriesChange || categoryAction !== null}>
-            <legend className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Apply to
-              {categoryAction && <span className="ml-2 font-normal normal-case tracking-normal">Saving…</span>}
-            </legend>
-            <div className="mt-2 space-y-0.5">
-              {APPLICATION_CATEGORIES.map((category) => (
-                <label
-                  key={category}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 hover:bg-slate-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60 dark:text-slate-200 dark:hover:bg-slate-800/60"
-                >
-                  <input
-                    type="checkbox"
-                    checked={applications?.enabledApplicationCategories.includes(category) ?? false}
-                    onChange={() => toggleApplicationCategory(category)}
-                    className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                  />
-                  <span className="flex-1">{APPLICATION_CATEGORY_LABELS[category]}</span>
-                  <span className="text-xs tabular-nums text-slate-400">{applications?.categoryCounts[category] ?? 0}</span>
-                </label>
-              ))}
-            </div>
-            {applications && applications.workerEnabled && applications.eligibleBacklog === 0 && unstartedQueued > 0 && (
-              <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                None of the {unstartedQueued} queued postings are in a category you apply to, so the worker has nothing new to start.
-              </p>
-            )}
-            {applications && !applications.readiness.ready && (
-              <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                Missing: {applications.readiness.missingFiles.join(', ')}
-              </p>
-            )}
-          </fieldset>
-
-          <nav aria-label="Pipeline">
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Pipeline</h3>
-            <div className="mt-2 space-y-0.5">
-              {JOB_BOARD_STAGES.map((candidate) => {
-                const count = stages[candidate].length;
-                return (
-                  <button
-                    key={candidate}
-                    type="button"
-                    onClick={() => setStage(candidate, true)}
-                    aria-current={stage === candidate ? 'true' : undefined}
-                    className={`flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition ${
-                      stage === candidate
-                        ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-950/50 dark:text-indigo-200'
-                        : 'text-slate-700 hover:bg-slate-50 dark:text-slate-200 dark:hover:bg-slate-800/60'
-                    }`}
-                  >
-                    <span className="w-24 shrink-0">{JOB_BOARD_STAGE_LABELS[candidate]}</span>
-                    <span className="h-1.5 flex-1 rounded-full bg-slate-100 dark:bg-slate-800" aria-hidden="true">
-                      <span
-                        className={`block h-1.5 rounded-full ${STAGE_BARS[candidate]}`}
-                        style={{ width: `${count ? Math.max(4, (count / maxStageCount) * 100) : 0}%` }}
-                      />
-                    </span>
-                    <span className="w-8 shrink-0 text-right text-xs tabular-nums text-slate-500 dark:text-slate-400">
-                      {loading && !data ? '…' : count}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </nav>
-
+      <div className="mi dark">
+        <style>{MISSION_JOBS_CSS + BOARD_CSS}</style>
+        <div className="mi-top">
+          <h1 className="mi-title" style={{ margin: 0 }}>Applications <i>board</i></h1>
           <button
             type="button"
+            className="btn sm"
             onClick={() => setAnswerBankOpen((open) => !open)}
             aria-expanded={answerBankOpen}
-            className="inline-flex items-center gap-1 px-2 text-sm font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200"
           >
-            Saved answers{applications ? ` (${applications.answerBank.length})` : ''}
-            <ChevronRight className={`h-4 w-4 transition ${answerBankOpen ? 'rotate-90' : ''}`} aria-hidden="true" />
+            <MessageSquareText className="i s" aria-hidden="true" />
+            Saved answers
+            {applications && <span className="mono" style={{ color: 'var(--dim)' }}>{applications.answerBank.length}</span>}
           </button>
-        </aside>
+        </div>
 
-        <div className="order-1 min-w-0 space-y-10 lg:order-2">
+        <div className="mi-body">
           {(error || applicationsError || actionError) && (
-            <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300">
-              {error || applicationsError || actionError}
-            </div>
+            <div role="alert" className="err">{error || applicationsError || actionError}</div>
           )}
 
-          <section aria-labelledby="needs-you-heading" className="space-y-4">
-            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-              <h2 id="needs-you-heading" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Needs you
-                <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
-                  {applicationsLoading && !applications ? 'Checking…' : `${waitingCount} waiting`}
-                </span>
-              </h2>
-              {waitingCount > 0 && (
-                <span className="text-xs text-slate-500 dark:text-slate-400">Approvals first, then employer emails, then oldest questions</span>
+          <section className="glass hero" aria-label="Autopilot and pipeline">
+            <WorkerStatusPanel
+              listings={allListings}
+              applications={applications ?? null}
+              onControl={onApplicationControl}
+              onEmailUpdate={onEmailUpdate}
+              onOpenApplication={openApplication}
+              onError={setActionError}
+            />
+
+            <nav className="track" aria-label="Pipeline">
+              {JOB_BOARD_STAGES.map((candidate, index) => {
+                const ghost = candidate === 'closed' || candidate === 'archived';
+                const StageIcon = STAGE_ICONS[candidate];
+                return (
+                  <React.Fragment key={candidate}>
+                    {index === 5 && <span className="div" aria-hidden="true" />}
+                    <button
+                      type="button"
+                      onClick={() => setStage(candidate, true)}
+                      aria-current={stage === candidate ? 'true' : undefined}
+                      className={`node${ghost ? ' ghost' : ''}`}
+                      style={{ ['--k' as string]: STAGE_COLORS[candidate] }}
+                    >
+                      <span className="ring"><StageIcon className="i" aria-hidden="true" /></span>
+                      <b>{count(candidate)}</b>
+                      <span className="l">{JOB_BOARD_STAGE_LABELS[candidate]}</span>
+                      <span className="s">{stageNote[candidate]}</span>
+                    </button>
+                  </React.Fragment>
+                );
+              })}
+            </nav>
+
+            <fieldset className="applyto" disabled={!applications || !onApplicationCategoriesChange || categoryAction !== null}>
+              <legend className="lab">
+                Apply to
+                {categoryAction && <span style={{ textTransform: 'none', letterSpacing: 0 }}> · saving…</span>}
+              </legend>
+              {APPLICATION_CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  className="chip"
+                  aria-pressed={enabledCategories.has(category)}
+                  onClick={() => toggleApplicationCategory(category)}
+                >
+                  <span className="dot" aria-hidden="true" />
+                  {APPLICATION_CATEGORY_LABELS[category]}
+                  <small>{applications?.categoryCounts[category] ?? 0}</small>
+                </button>
+              ))}
+              <span className="hint" style={{ marginLeft: 'auto', fontSize: 12.5 }}>The worker only starts postings in a lit category.</span>
+              {applications && applications.workerEnabled && applications.eligibleBacklog === 0 && unstartedQueued > 0 && (
+                <p className="warn" style={{ margin: 0 }}>
+                  None of the {unstartedQueued} queued postings are in a category you apply to, so the worker has nothing new to start.
+                </p>
               )}
-            </div>
-            {applications && waitingCount === 0 && (
-              <p className="rounded-lg border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                Nothing is waiting on you. Questions, approvals and unmatched employer emails show up here.
-              </p>
-            )}
-            <ApplicationReviewPanel
-              scope="blocking"
-              applications={applications ?? null}
-              onResolve={onApplicationReview}
-              onRedo={onApplicationReviewRedo}
-              onConfirmAll={onApplicationReviewConfirmAll}
-              onCancel={onApplicationCancel}
-              onExtend={onExtendAutopilot}
-              onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
-            />
-            <EmailUpdatesPanel
-              listings={allListings}
-              applications={applications ?? null}
-              onUpdate={onEmailUpdate}
-            />
-            <NeedsYouQueue
-              listings={allListings}
-              applications={applications ?? null}
-              onOpen={(listingId) => setSelectedApplicationId(listingId)}
-              onExtend={onExtendAutopilot}
-            />
-            {review.auditAnswers > 0 && (
-              <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700">
-                <div className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-                  <CheckCheck className="h-4 w-4 shrink-0 text-violet-500" aria-hidden="true" />
-                  <span className="min-w-0 flex-1 text-slate-600 dark:text-slate-300">
-                    <span className="font-medium text-slate-900 dark:text-slate-100">{review.auditAnswers} answers</span>{' '}
-                    on {review.auditApps} sent application{review.auditApps === 1 ? '' : 's'} haven’t been spot-checked. Optional; it trains future drafts.
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setSpotCheckOpen((open) => !open)}
-                    aria-expanded={spotCheckOpen}
-                    className="min-h-8 rounded-md border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                  >
-                    {spotCheckOpen ? 'Hide spot-check' : 'Start spot-check'}
-                  </button>
-                </div>
-                {spotCheckOpen && (
-                  <div className="border-t border-dashed border-slate-300 px-4 py-3 dark:border-slate-700">
-                    <ApplicationReviewPanel
-                      scope="audit"
-                      applications={applications ?? null}
-                      onResolve={onApplicationReview}
-                      onRedo={onApplicationReviewRedo}
-                      onConfirmAll={onApplicationReviewConfirmAll}
-                      onCancel={onApplicationCancel}
-                      onExtend={onExtendAutopilot}
-                      onOpenApplication={(listingId) => setSelectedApplicationId(listingId)}
-                    />
-                  </div>
-                )}
-              </div>
-            )}
+              {applications && !applications.readiness.ready && (
+                <p className="warn" style={{ margin: 0 }}>Missing: {applications.readiness.missingFiles.join(', ')}</p>
+              )}
+            </fieldset>
           </section>
+
+          <div className="split">
+            <section aria-labelledby="needs-you-heading" className="main">
+              <div className="sech" style={{ marginBottom: 0 }}>
+                <h2 id="needs-you-heading">Needs you</h2>
+                <span className="lab">
+                  {applicationsLoading && !applications
+                    ? 'Checking…'
+                    : `${waitingCount} waiting${waitingCount > 0 ? ' · approvals, then emails, then oldest questions' : ''}`}
+                </span>
+              </div>
+              {applications && waitingCount === 0 && (
+                <p className="empty" style={{ margin: 0 }}>
+                  Nothing is waiting on you. Questions, approvals and unmatched employer emails show up here.
+                </p>
+              )}
+              <ApplicationReviewPanel
+                scope="blocking"
+                applications={applications ?? null}
+                onResolve={onApplicationReview}
+                onRedo={onApplicationReviewRedo}
+                onConfirmAll={onApplicationReviewConfirmAll}
+                onCancel={onApplicationCancel}
+                onExtend={onExtendAutopilot}
+                onOpenApplication={openApplication}
+              />
+              <EmailUpdatesPanel listings={allListings} applications={applications ?? null} onUpdate={onEmailUpdate} />
+              <NeedsYouQueue
+                listings={allListings}
+                applications={applications ?? null}
+                onOpen={openApplication}
+                onExtend={onExtendAutopilot}
+              />
+            </section>
+
+            <aside className="side" aria-label="Employer replies">
+              <section aria-labelledby="heard-heading">
+                <div className="sech">
+                  <h2 id="heard-heading">Heard back</h2>
+                  <span className="lab">{stages.heard.length} {stages.heard.length === 1 ? 'reply' : 'replies'}</span>
+                </div>
+                <div className="glass" style={{ padding: '6px 12px' }}>
+                  {stages.heard.length === 0 ? (
+                    <p className="hint" style={{ padding: '10px 4px' }}>No assessments, interviews, offers or rejections yet.</p>
+                  ) : (
+                    <ol className="tl feed">
+                      {stages.heard.slice(0, HEARD_FEED_SIZE).map((listing) => {
+                        const record = records[listing.id];
+                        const employerStage = record?.employerStage;
+                        return (
+                          <li key={listing.id}>
+                            <button type="button" onClick={() => openApplication(listing.id)}>
+                              <CompanyLogo company={listing.company} link={listing.link} size="sm" />
+                              <span className="co">{listing.company}</span>
+                              <span className="w">{formatShortDate(lastEmployerReplyAt(record))}</span>
+                              <span className="st">
+                                {employerStage && (
+                                  <span className="out" style={{ color: EMPLOYER_STAGE_COLOR[employerStage] }}>
+                                    <i />{JOB_EMPLOYER_STAGE_LABELS[employerStage]}
+                                  </span>
+                                )}
+                                <span className="ro">{listing.positionTitle}</span>
+                              </span>
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  )}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '4px 12px', padding: '10px 4px', borderTop: '1px dashed var(--line)', fontSize: 12.5, whiteSpace: 'nowrap' }}>
+                    {stages.heard.length > HEARD_FEED_SIZE ? (
+                      <button type="button" style={{ color: 'var(--em)' }} onClick={() => setStage('heard', true)}>
+                        All {stages.heard.length} in the table
+                      </button>
+                    ) : <span />}
+                    <Link href="/jobs/overview" style={{ color: 'var(--em)' }}>Response times on Overview →</Link>
+                  </div>
+                </div>
+              </section>
+
+              {review.auditAnswers > 0 && (
+                <button type="button" className="more" onClick={() => setSpotCheckOpen((open) => !open)} aria-expanded={spotCheckOpen}>
+                  <CheckCheck className="i" style={{ color: 'var(--c-tech)' }} aria-hidden="true" />
+                  <span>
+                    <b style={{ color: 'var(--ink)' }}>{review.auditAnswers} answers</b> on {review.auditApps} sent application
+                    {review.auditApps === 1 ? '' : 's'} are unchecked. Optional; spot-checks train future drafts.
+                  </span>
+                  <span className="btn sm" style={{ marginLeft: 'auto' }}>{spotCheckOpen ? 'Hide' : 'Spot-check'}</span>
+                </button>
+              )}
+            </aside>
+          </div>
+
+          {spotCheckOpen && review.auditAnswers > 0 && (
+            <section aria-label="Spot-check sent answers" className="glass" style={{ padding: 16 }}>
+              <ApplicationReviewPanel
+                scope="audit"
+                applications={applications ?? null}
+                onResolve={onApplicationReview}
+                onRedo={onApplicationReviewRedo}
+                onConfirmAll={onApplicationReviewConfirmAll}
+                onCancel={onApplicationCancel}
+                onExtend={onExtendAutopilot}
+                onOpenApplication={openApplication}
+              />
+            </section>
+          )}
 
           {answerBankOpen && (
             <div ref={answerBankRef} className="scroll-mt-4">
@@ -516,47 +596,36 @@ export function JobListings({
           )}
 
           <section ref={postingsRef} aria-labelledby="postings-heading" className="scroll-mt-4">
-            <div className="flex flex-wrap items-end justify-between gap-3">
-              <div className="min-w-0">
-                <h2 id="postings-heading" className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                  {JOB_BOARD_STAGE_LABELS[stage]}
-                  <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
-                    {loading && !data ? 'Loading…' : `${stages[stage].length} posting${stages[stage].length === 1 ? '' : 's'}`}
-                  </span>
-                </h2>
-                <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{STAGE_HINTS[stage]}</p>
+            <div className="sech" style={{ marginBottom: 4 }}>
+              <h2 id="postings-heading">{JOB_BOARD_STAGE_LABELS[stage]}</h2>
+              <span className="lab">
+                {loading && !data ? 'Loading…' : `${stages[stage].length} posting${stages[stage].length === 1 ? '' : 's'}`}
+              </span>
+            </div>
+            <p className="hint" style={{ margin: '0 0 14px' }}>{STAGE_HINTS[stage]}</p>
+            <div className="tblhead">
+              <div className="seg" role="group" aria-label="Stage">
+                {JOB_BOARD_STAGES.map((candidate) => (
+                  <button key={candidate} type="button" aria-pressed={stage === candidate} onClick={() => setStage(candidate)}>
+                    {JOB_BOARD_STAGE_LABELS[candidate]} <small>{count(candidate)}</small>
+                  </button>
+                ))}
               </div>
-              <div className="flex w-full items-center gap-2 sm:w-auto">
-                <label className="sr-only" htmlFor="jobs-stage-select">Stage</label>
-                <select
-                  id="jobs-stage-select"
-                  value={stage}
-                  onChange={(event) => setStage(event.target.value as JobBoardStage)}
-                  className="h-9 rounded-md border border-slate-300 bg-white px-2 text-sm text-slate-700 lg:hidden dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                >
-                  {JOB_BOARD_STAGES.map((candidate) => (
-                    <option key={candidate} value={candidate}>
-                      {JOB_BOARD_STAGE_LABELS[candidate]} · {stages[candidate].length}
-                    </option>
-                  ))}
-                </select>
-                <label className="relative min-w-0 flex-1 sm:w-60 sm:flex-none">
-                  <span className="sr-only">Search postings</span>
-                  <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" aria-hidden="true" />
-                  <input
-                    id="jobs-search"
-                    type="search"
-                    value={query}
-                    onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }}
-                    placeholder="Company, role or location"
-                    className="h-9 w-full rounded-md border border-slate-300 bg-white pl-8 pr-2 text-sm text-slate-900 placeholder:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
-                  />
-                </label>
-              </div>
+              <label className="search" style={{ flex: '1 1 220px', maxWidth: 340 }}>
+                <Search className="i s" aria-hidden="true" />
+                <span className="sr-only">Search postings</span>
+                <input
+                  id="jobs-search"
+                  type="search"
+                  value={query}
+                  onChange={(event) => { setQuery(event.target.value); setLimit(PAGE_SIZE); }}
+                  placeholder="Company, role or location"
+                />
+              </label>
             </div>
 
             {stageListings.length === 0 ? (
-              <p className="mt-3 rounded-lg border border-dashed border-slate-300 px-4 py-10 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+              <p className="empty" style={{ margin: 0, padding: '40px 16px' }}>
                 {loading && !data
                   ? 'Loading postings…'
                   : normalizedQuery
@@ -564,9 +633,9 @@ export function JobListings({
                     : `Nothing in ${JOB_BOARD_STAGE_LABELS[stage]} right now.`}
               </p>
             ) : (
-              <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
+              <div className="glass tbl">
                 <ColumnHeader layout={layout} stage={stage} />
-                <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                   {visibleListings.map((listing) => (
                     <PostingRow
                       key={listing.id}
@@ -574,6 +643,7 @@ export function JobListings({
                       stage={stage}
                       layout={layout}
                       application={records[listing.id]}
+                      enabledCategories={enabledCategories}
                       auditCount={review.auditByListing.get(listing.id) ?? 0}
                       open={openRowId === listing.id}
                       onToggle={() => setOpenRowId((current) => (current === listing.id ? null : listing.id))}
@@ -581,17 +651,13 @@ export function JobListings({
                       canChangeStatus={Boolean(onStatusChange)}
                       onToggleStar={() => toggleStar(listing)}
                       onSetStatus={(status) => setStatus(listing, status)}
-                      onOpenApplication={() => setSelectedApplicationId(listing.id)}
+                      onOpenApplication={() => openApplication(listing.id)}
                     />
                   ))}
                 </ul>
                 {stageListings.length > visibleListings.length && (
-                  <button
-                    type="button"
-                    onClick={() => setLimit((current) => current + PAGE_SIZE)}
-                    className="flex w-full items-center justify-center gap-1 border-t border-slate-100 bg-slate-50 px-4 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-300 dark:hover:bg-slate-800"
-                  >
-                    Showing {visibleListings.length} of {stageListings.length} · Show {Math.min(PAGE_SIZE, stageListings.length - visibleListings.length)} more
+                  <button type="button" className="pager" onClick={() => setLimit((current) => current + PAGE_SIZE)}>
+                    Showing {visibleListings.length} of {stageListings.length} · show {Math.min(PAGE_SIZE, stageListings.length - visibleListings.length)} more
                   </button>
                 )}
               </div>
@@ -613,19 +679,17 @@ export function JobListings({
   );
 }
 
-const HEADER_CELL = 'text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
-
 function ColumnHeader({ layout, stage }: { layout: RowLayout; stage: JobBoardStage }) {
   const columns: Record<RowLayout, string[]> = {
-    listing: ['', 'Company · role', 'Type', 'Location', 'Salary', 'Posted', ''],
-    working: ['', 'Company · role', 'Type', 'Location', 'Application', ''],
-    sent: ['Company · role', 'Type', stage === 'heard' ? 'Replied' : 'Sent', 'Employer', 'Answers', ''],
-    closed: ['Company · role', 'Closed', 'Why', ''],
+    listing: ['', '', 'Company · role', 'Type', 'Location', 'Salary', 'Posted', ''],
+    working: ['', '', 'Company · role', 'Type', 'Location', 'Application', ''],
+    sent: ['', 'Company · role', 'Type', stage === 'heard' ? 'Replied' : 'Sent', 'Employer', 'Answers', ''],
+    closed: ['', 'Company · role', 'Closed', 'Why', ''],
   };
   return (
-    <div className={`hidden gap-x-3 bg-slate-50 px-4 py-2 lg:grid dark:bg-slate-800/60 ${ROW_GRID[layout]}`}>
+    <div className="trow h" style={{ ['--cols' as string]: ROW_COLUMNS[layout] }} aria-hidden="true">
       {columns[layout].map((label, index) => (
-        <span key={index} className={HEADER_CELL}>{label}</span>
+        <span key={index} className="lab">{label}</span>
       ))}
     </div>
   );
@@ -636,6 +700,7 @@ function PostingRow({
   stage,
   layout,
   application,
+  enabledCategories,
   auditCount,
   open,
   onToggle,
@@ -649,6 +714,7 @@ function PostingRow({
   stage: JobBoardStage;
   layout: RowLayout;
   application?: JobApplicationRecord;
+  enabledCategories: Set<JobApplicationCategory>;
   auditCount: number;
   open: boolean;
   onToggle: () => void;
@@ -667,6 +733,7 @@ function PostingRow({
   const closedWhy = application?.cancelledAt
     ? `Cancelled${application.closedReason ? `: ${application.closedReason}` : ''}`
     : application?.closedReason || '—';
+  const starred = layout === 'listing' || layout === 'working';
 
   const star = (
     <button
@@ -675,9 +742,10 @@ function PostingRow({
       disabled={!canChangeStatus || pending || !starrable}
       title={!starrable ? 'Only saved postings can be starred' : status === 'starred' ? 'Unstar listing' : 'Star listing'}
       aria-label={status === 'starred' ? 'Unstar listing' : 'Star listing'}
-      className="grid h-7 w-7 place-items-center rounded text-slate-300 transition hover:text-amber-500 disabled:cursor-not-allowed disabled:opacity-50 dark:text-slate-600 dark:hover:text-amber-300"
+      aria-pressed={status === 'starred'}
+      className="star"
     >
-      <Star className={`h-4 w-4 ${status === 'starred' ? 'fill-amber-400 text-amber-500' : ''}`} aria-hidden="true" />
+      <Star className="i s" aria-hidden="true" />
     </button>
   );
   const pill = application ? (
@@ -685,28 +753,26 @@ function PostingRow({
       <ApplicationStatusButton application={application} onClick={onOpenApplication} />
     </span>
   ) : (
-    <span className="text-xs text-slate-400">No application</span>
+    <span className="c d">No application</span>
   );
   const answers = auditCount > 0
-    ? <span className="text-xs text-violet-700 dark:text-violet-300">{auditCount} to check</span>
-    : <span className="text-xs text-slate-400">Checked</span>;
-  const cell = 'hidden min-w-0 truncate text-sm text-slate-600 lg:block dark:text-slate-300';
+    ? <span className="c" style={{ color: 'var(--c-screen)' }}>{auditCount} to check</span>
+    : <span className="c d">Checked</span>;
+  const tags = <CategoryTags categories={listing.applicationCategories} enabled={enabledCategories} />;
 
   return (
     <li>
-      <div
-        onClick={onToggle}
-        className={`grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-4 py-2.5 transition hover:bg-slate-50 dark:hover:bg-slate-800/40 ${ROW_GRID[layout]} ${open ? 'bg-slate-50 dark:bg-slate-800/40' : ''}`}
-      >
-        {(layout === 'listing' || layout === 'working') && <div className="hidden lg:block">{star}</div>}
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{listing.company}</div>
-          <div className="truncate text-sm text-slate-600 dark:text-slate-300">{listing.positionTitle}</div>
+      <div onClick={onToggle} className={`trow${open ? ' open' : ''}`} style={{ ['--cols' as string]: ROW_COLUMNS[layout] }}>
+        {starred && <span className="cells">{star}</span>}
+        <CompanyLogo company={listing.company} link={listing.link} />
+        <div style={{ minWidth: 0 }}>
+          <div className="co">{listing.company}</div>
+          <div className="ro" style={{ color: 'var(--ink2)', fontSize: 13 }}>{listing.positionTitle}</div>
           {/* Below lg the columns fold into one line. */}
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500 lg:hidden dark:text-slate-400">
-            {layout !== 'closed' && <ApplicationCategoryBadges categories={listing.applicationCategories} />}
+          <div className="mob">
+            {layout !== 'closed' && tags}
             {layout === 'closed' ? (
-              <span className="min-w-0 truncate">Closed {formatShortDate(application?.closedAt)} · {closedWhy}</span>
+              <span style={{ minWidth: 0 }}>Closed {formatShortDate(application?.closedAt)} · {closedWhy}</span>
             ) : layout === 'sent' ? (
               <>
                 <span>{stage === 'heard' ? 'Replied' : 'Sent'} {formatShortDate(date)}</span>
@@ -722,46 +788,48 @@ function PostingRow({
             )}
           </div>
         </div>
-        {(layout === 'listing' || layout === 'working') && (
-          <>
-            <div className="hidden lg:block"><ApplicationCategoryBadges categories={listing.applicationCategories} /></div>
-            <div className={cell} title={listing.location}>{listing.location || '—'}</div>
-          </>
-        )}
-        {layout === 'listing' && (
-          <>
-            <div className={cell} title={salary ?? undefined}>{salary ?? <span className="text-slate-400">—</span>}</div>
-            <div className={`${cell} tabular-nums text-slate-500`}>{formatShortDate(listing.postedDate || listing.savedAt)}</div>
-          </>
-        )}
-        {layout === 'working' && <div className="hidden lg:block">{pill}</div>}
-        {layout === 'sent' && (
-          <>
-            <div className="hidden lg:block"><ApplicationCategoryBadges categories={listing.applicationCategories} /></div>
-            <div className={`${cell} tabular-nums`}>{formatShortDate(date)}</div>
-            <div className="hidden lg:block">{pill}</div>
-            <div className="hidden lg:block">{answers}</div>
-          </>
-        )}
-        {layout === 'closed' && (
-          <>
-            <div className={`${cell} tabular-nums`}>{formatShortDate(application?.closedAt)}</div>
-            <div className={cell} title={closedWhy}>{closedWhy}</div>
-          </>
-        )}
-        <div className="flex items-center gap-1">
-          {(layout === 'listing' || layout === 'working') && <span className="lg:hidden">{star}</span>}
+        <span className="cells">
+          {starred && (
+            <>
+              <span>{tags}</span>
+              <span className="c" title={listing.location}>{listing.location || '—'}</span>
+            </>
+          )}
+          {layout === 'listing' && (
+            <>
+              <span className="c m" title={salary ?? undefined}>{salary ?? <span style={{ color: 'var(--dim)' }}>—</span>}</span>
+              <span className="c d">{formatShortDate(listing.postedDate || listing.savedAt)}</span>
+            </>
+          )}
+          {layout === 'working' && <span>{pill}</span>}
+          {layout === 'sent' && (
+            <>
+              <span>{tags}</span>
+              <span className="c d">{formatShortDate(date)}</span>
+              <span>{pill}</span>
+              <span>{answers}</span>
+            </>
+          )}
+          {layout === 'closed' && (
+            <>
+              <span className="c d">{formatShortDate(application?.closedAt)}</span>
+              <span className="c" title={closedWhy}>{closedWhy}</span>
+            </>
+          )}
+        </span>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+          {starred && <span className="mobonly">{star}</span>}
           <button
             type="button"
             onClick={(event) => { stop(event); onToggle(); }}
             aria-expanded={open}
             aria-controls={detailsId}
             aria-label={`${open ? 'Hide' : 'Show'} details for ${listing.company} ${listing.positionTitle}`}
-            className="grid h-7 w-5 place-items-center rounded text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            className="star"
           >
-            {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            {open ? <ChevronDown className="i s" /> : <ChevronRight className="i s" />}
           </button>
-        </div>
+        </span>
       </div>
       {open && (
         <PostingDetails
@@ -801,51 +869,41 @@ function PostingDetails({
   const status = getStatus(listing);
   const source = getSource(listing);
   const salary = displaySalary(listing.salary);
-  const label = 'text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400';
-  const button = 'inline-flex min-h-8 items-center gap-1.5 whitespace-nowrap rounded-md border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800';
 
   return (
-    <div id={id} className="grid gap-5 border-t border-slate-100 bg-slate-50 px-4 py-4 text-sm md:grid-cols-[1fr_1.3fr_1fr] dark:border-slate-800 dark:bg-slate-800/30">
-      <div className="min-w-0">
-        <div className={label}>About</div>
-        <p className="mt-1 text-slate-700 dark:text-slate-200">{listing.companySummary || 'Company description not available yet.'}</p>
+    <div id={id} className="det">
+      <div style={{ minWidth: 0 }}>
+        <div className="lab">About</div>
+        <p>{listing.companySummary || 'Company description not available yet.'}</p>
       </div>
-      <div className="min-w-0">
-        <div className={label}>OpenClaw’s notes</div>
-        <p className="mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">{listing.notes || 'No notes'}</p>
+      <div style={{ minWidth: 0 }}>
+        <div className="lab">OpenClaw’s notes</div>
+        <p className="notes">{listing.notes || 'No notes'}</p>
       </div>
-      <div className="min-w-0 space-y-3">
-        <div>
-          <div className={label}>Details</div>
-          <dl className="mt-1 space-y-0.5 text-slate-600 dark:text-slate-300">
+      <div style={{ minWidth: 0 }}>
+        <div className="lab">Details</div>
+        <dl>
+          <div>
+            <dt>Source · </dt>
+            <dd><a href={source.link} target="_blank" rel="noreferrer" style={{ color: 'var(--em)' }}>{source.name}</a></dd>
+          </div>
+          <div><dt>Location · </dt><dd>{listing.location || 'Not listed'}</dd></div>
+          <div><dt>Salary · </dt><dd>{salary ?? 'Not listed'}</dd></div>
+          <div><dt>Posted · </dt><dd>{formatPostedDate(listing)}</dd></div>
+          <div><dt>Saved · </dt><dd>{formatDate(listing.savedAt ?? listing.createdAt)}</dd></div>
+          {listing.statusHistory.length > 0 && (
             <div>
-              <dt className="inline">Source · </dt>
-              <dd className="inline">
-                <a href={source.link} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-300 dark:hover:text-indigo-200">
-                  {source.name}
-                </a>
-              </dd>
+              <dt>Status changes · </dt>
+              <dd>{listing.statusHistory.map((entry) => `${STATUS_LABELS[entry.status]} ${formatShortDate(entry.changedAt)}`).join(', ')}</dd>
             </div>
-            <div><dt className="inline">Location · </dt><dd className="inline">{listing.location || 'Not listed'}</dd></div>
-            <div><dt className="inline">Salary · </dt><dd className="inline">{salary ?? 'Not listed'}</dd></div>
-            <div><dt className="inline">Posted · </dt><dd className="inline">{formatPostedDate(listing)}</dd></div>
-            <div><dt className="inline">Saved · </dt><dd className="inline">{formatDate(listing.savedAt ?? listing.createdAt)}</dd></div>
-            {listing.statusHistory.length > 0 && (
-              <div>
-                <dt className="inline">Status changes · </dt>
-                <dd className="inline">
-                  {listing.statusHistory.map((entry) => `${STATUS_LABELS[entry.status]} ${formatShortDate(entry.changedAt)}`).join(', ')}
-                </dd>
-              </div>
-            )}
-          </dl>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <a href={listing.link} target="_blank" rel="noreferrer" className={button}>
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /> Open posting
+          )}
+        </dl>
+        <div className="acts">
+          <a href={listing.link} target="_blank" rel="noreferrer" className="btn sm">
+            <ExternalLink className="i s" aria-hidden="true" /> Open posting
           </a>
           {application && (
-            <button type="button" onClick={onOpenApplication} className={button}>Open application</button>
+            <button type="button" onClick={onOpenApplication} className="btn sm">Open application</button>
           )}
           {stage !== 'closed' && stage !== 'heard' && status !== 'archived' && (
             <select
@@ -853,7 +911,6 @@ function PostingDetails({
               disabled={!canChangeStatus || pending}
               onChange={(event) => onSetStatus(event.target.value as JobListingStatus)}
               aria-label={`Status for ${listing.company} ${listing.positionTitle}`}
-              className="h-8 rounded-md border border-slate-300 bg-white px-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
             >
               {ACTIVE_STATUS_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>{option.label}</option>
@@ -862,18 +919,13 @@ function PostingDetails({
           )}
           {status === 'archived' ? (
             stage === 'archived' && (
-              <button type="button" onClick={() => onSetStatus('saved')} disabled={!canChangeStatus || pending} className={button}>
+              <button type="button" onClick={() => onSetStatus('saved')} disabled={!canChangeStatus || pending} className="btn sm">
                 Restore to saved
               </button>
             )
           ) : (
-            <button
-              type="button"
-              onClick={() => onSetStatus('archived')}
-              disabled={!canChangeStatus || pending}
-              className={`${button} text-red-600 dark:text-red-300`}
-            >
-              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Archive
+            <button type="button" onClick={() => onSetStatus('archived')} disabled={!canChangeStatus || pending} className="btn sm danger">
+              <Trash2 className="i s" aria-hidden="true" /> Archive
             </button>
           )}
         </div>
@@ -881,6 +933,14 @@ function PostingDetails({
     </div>
   );
 }
+
+const APPLICATION_STATUS_COLOR: Record<JobApplicationRecord['status'], string> = {
+  unstarted: 'var(--dim)',
+  'in-progress': 'var(--em)',
+  'awaiting-user-input': 'var(--now)',
+  submitted: 'var(--c-tech)',
+  closed: 'var(--dim)',
+};
 
 function ApplicationStatusButton({
   application,
@@ -899,18 +959,6 @@ function ApplicationStatusButton({
     'awaiting-user-input': 'Needs input',
     submitted: 'Submitted',
     closed: 'Closed',
-  };
-  const colors: Record<JobApplicationRecord['status'], string> = {
-    unstarted:
-      'bg-slate-100 text-slate-700 ring-slate-200 dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700',
-    'in-progress':
-      'bg-blue-50 text-blue-700 ring-blue-200 dark:bg-blue-950/40 dark:text-blue-200 dark:ring-blue-800',
-    'awaiting-user-input':
-      'bg-amber-50 text-amber-800 ring-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800',
-    submitted:
-      'bg-emerald-50 text-emerald-700 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-800',
-    closed:
-      'bg-slate-100 text-slate-500 ring-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-700',
   };
   // Submitted applications open onto their verification screenshots, so the
   // pill says so instead of reading as a passive status badge.
@@ -934,29 +982,33 @@ function ApplicationStatusButton({
       aria-label={`${label} — open application details${
         screenshotCount > 0 ? ` and ${screenshotCount} screenshot${screenshotCount === 1 ? '' : 's'}` : ''
       }`}
-      className={`inline-flex min-h-7 items-center gap-1 whitespace-nowrap rounded-full py-0.5 pl-2.5 pr-1.5 text-xs font-semibold ring-1 ring-inset transition hover:brightness-95 active:brightness-90 ${stage ? EMPLOYER_STAGE_STYLES[stage] : colors[application.status]}`}
+      className="pill"
+      style={{ ['--k' as string]: stage ? EMPLOYER_STAGE_COLOR[stage] : APPLICATION_STATUS_COLOR[application.status] }}
     >
       {label}
       {pendingCount > 0 ? ` · ${pendingCount}` : ''}
       {screenshotCount > 0 && (
         <>
           <span aria-hidden="true">·</span>
-          <Images className="h-3.5 w-3.5" aria-hidden="true" />
+          <Images className="i" aria-hidden="true" />
           {screenshotCount}
         </>
       )}
-      <ChevronRight className="h-3.5 w-3.5 opacity-70" aria-hidden="true" />
+      <ChevronRight className="i" aria-hidden="true" />
     </button>
   );
 }
 
-function ApplicationCategoryBadges({ categories }: { categories: JobApplicationCategory[] }) {
+/** Category tags; a category the worker isn't applying to is striped. */
+function CategoryTags({ categories, enabled }: { categories: JobApplicationCategory[]; enabled: Set<JobApplicationCategory> }) {
   return (
-    <span className="flex flex-wrap gap-1">
+    <span className="tags">
       {categories.map((category) => (
         <span
           key={category}
-          className="inline-flex whitespace-nowrap rounded-md bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-700 ring-1 ring-inset ring-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-200 dark:ring-cyan-800"
+          className={enabled.has(category) ? 'kind' : 'kind off'}
+          style={{ ['--k' as string]: CATEGORY_COLOR[category] }}
+          title={enabled.has(category) ? undefined : 'Not a category you apply to right now'}
         >
           {APPLICATION_CATEGORY_LABELS[category]}
         </span>

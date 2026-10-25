@@ -1,14 +1,14 @@
 'use client';
 
 import React from 'react';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Search } from 'lucide-react';
 import {
   relativeTime,
   type Chip as ChipModel,
   type OverviewFilters,
   type Period,
 } from '@/lib/job-overview-view';
-import { Button, Chip, Field, SegmentedControl, Select, TextInput } from './primitives';
+import { Button, Chip, SegmentedControl } from './primitives';
 
 const PERIODS: { value: Period; label: string }[] = [
   { value: 'all', label: 'All time' },
@@ -18,7 +18,8 @@ const PERIODS: { value: Period; label: string }[] = [
 ];
 
 /**
- * The one place filters live. Every number below the bar follows it, except
+ * The one place filters live, as the strip under the HUD title (sticky on wide
+ * screens). Every number below the bar follows it, except
  * the AI report, which says so on its own card.
  */
 export function OverviewFilterBar({
@@ -46,81 +47,81 @@ export function OverviewFilterBar({
 }) {
   const optional = (label: string, key: 'resume' | 'family' | 'category', values: string[]) =>
     values.length > 1 ? (
-      <Field label={label}>
-        <Select value={filters[key]} onChange={(e) => onChange({ [key]: e.target.value })}>
+      <label className="ov-pf">
+        {label}
+        <select value={filters[key]} onChange={(e) => onChange({ [key]: e.target.value })}>
           <option value="">All</option>
           {values.map((v) => (
             <option key={v} value={v}>
               {v}
             </option>
           ))}
-        </Select>
-      </Field>
+        </select>
+      </label>
     ) : null;
   return (
-    <div className="z-20 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95 md:sticky md:top-0">
-      <div className="flex flex-wrap items-end gap-3 px-4 pt-3 sm:px-5">
-        <Field label="Submitted">
-          <SegmentedControl
-            label="Submission period"
-            options={PERIODS}
-            value={filters.period}
-            onChange={(period) =>
-              onChange(period === 'custom' ? { period } : { period, start: '', end: '' })
-            }
-          />
-        </Field>
+    <div className="ov-filters">
+      <div className="ov-frow">
+        <SegmentedControl
+          label="Submission period"
+          size="sm"
+          options={PERIODS}
+          value={filters.period}
+          onChange={(period) =>
+            onChange(period === 'custom' ? { period } : { period, start: '', end: '' })
+          }
+        />
         {filters.period === 'custom' && (
           <>
-            <Field label="From">
-              <TextInput
+            <label className="ov-pf">
+              From
+              <input
                 type="date"
                 value={filters.start}
                 max={filters.end || undefined}
                 onChange={(e) => onChange({ start: e.target.value })}
               />
-            </Field>
-            <Field label="Through">
-              <TextInput
+            </label>
+            <label className="ov-pf">
+              Through
+              <input
                 type="date"
                 value={filters.end}
                 min={filters.start || undefined}
                 onChange={(e) => onChange({ end: e.target.value })}
               />
-            </Field>
+            </label>
           </>
         )}
         {optional('Resume', 'resume', options.resumes)}
-        {optional('Role family', 'family', options.families)}
+        {optional('Family', 'family', options.families)}
         {optional('Category', 'category', options.categories)}
-        <Field label="Search" className="min-w-40 max-w-xs flex-1">
-          <TextInput
+        <label className="ov-pf ov-q">
+          <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="sr-only">Search</span>
+          <input
             type="search"
             value={filters.search}
             placeholder="Company or role"
             onChange={(e) => onChange({ search: e.target.value })}
           />
-        </Field>
+        </label>
         <button
           type="button"
           onClick={onRefresh}
           title="Refreshes on its own every minute; click to refresh now"
-          className="ml-auto inline-flex min-h-9 items-center gap-1 self-end rounded px-2 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+          className="ov-refresh ml-auto"
         >
           <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
           {updatedAt ? `Updated ${relativeTime(new Date(updatedAt).toISOString(), now)}` : 'Loading…'}
         </button>
       </div>
-      <div className="flex flex-wrap items-center gap-2 px-4 py-3 text-xs text-slate-600 dark:text-slate-300 sm:px-5">
-        <span className="font-medium tabular-nums">
-          {scope.submitted} submitted · {scope.records} records
+      <div className="ov-frow">
+        <span className="ov-scope">
+          <b>{scope.submitted}</b> submitted · <b>{scope.records}</b> records
           {scope.merged > 0 && ` · ${scope.merged} merged`}
+          {filters.period !== 'all' && ' · the period applies to submitted applications'}
         </span>
-        {filters.period !== 'all' && (
-          <span className="text-slate-400 dark:text-slate-500">
-            (period applies to submitted applications)
-          </span>
-        )}
         {chips.map((chip) => (
           <Chip key={chip.key} onRemove={() => onRemoveChip(chip.key)}>
             {chip.label}

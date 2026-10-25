@@ -6,12 +6,12 @@ import { ChevronRight } from 'lucide-react';
 /** The methodology in one place, out of the way of the numbers. */
 export function HowToRead() {
   return (
-    <details className="group px-4 py-3 text-sm text-slate-600 dark:text-slate-300 sm:px-5">
-      <summary className="inline-flex cursor-pointer list-none items-center gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 [&::-webkit-details-marker]:hidden">
+    <details className="ov-howto group">
+      <summary>
         <ChevronRight className="h-3.5 w-3.5 transition group-open:rotate-90" aria-hidden="true" />
         How to read these numbers
       </summary>
-      <div className="mt-2 max-w-3xl space-y-2 text-xs leading-5">
+      <div className="mt-3 space-y-2">
         <p>
           Outcomes mean “ever reached”, not a linear funnel: an application can be acknowledged,
           invited to an assessment, and later rejected, and it counts in each. A posting that

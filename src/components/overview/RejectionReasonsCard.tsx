@@ -2,9 +2,10 @@
 
 import React from 'react';
 import { MessageSquareText } from 'lucide-react';
+import { CompanyLogo } from '@/components/mission/CompanyLogo';
 import type { OverviewRow } from '@/lib/job-overview';
 import { formatEastern } from '@/lib/job-overview-view';
-import { Card, CardHeader, EmptyLine, InfoTip, LinkButton } from './primitives';
+import { Card, CardHeader, EmptyLine, InfoTip } from './primitives';
 
 /** Employer-stated rejection reasons only. Generic rejections say nothing, and this card says so once. */
 export function RejectionReasonsCard({
@@ -34,7 +35,7 @@ export function RejectionReasonsCard({
         }
         subtitle={`${rejected.length} rejection${rejected.length === 1 ? '' : 's'} in this view`}
       />
-      <div className="px-4 py-4 sm:px-5">
+      <div className="px-4 pb-5 pt-2 sm:px-5">
         {rejected.length === 0 ? (
           <EmptyLine>No rejections in this view.</EmptyLine>
         ) : stated.length === 0 ? (
@@ -43,33 +44,35 @@ export function RejectionReasonsCard({
             generic and gave no reason.
           </EmptyLine>
         ) : (
-          <ul className="space-y-3">
+          <div className="grid gap-6">
             {stated.map((r) => (
-              <li key={r.id} className="text-sm">
-                <LinkButton onClick={() => onOpen(r.id)}>
-                  {r.company} · {r.role}
-                </LinkButton>
-                <span className="ml-2 text-xs text-slate-400 dark:text-slate-500">
-                  {formatEastern(r.first.rejected?.receivedAt, 'date')}
-                </span>
-                <p className="mt-0.5 text-slate-700 dark:text-slate-200">
-                  {r.first.rejected?.outcomeReason ?? 'Reason not stated'}
-                </p>
-                {r.first.rejected?.supportingParaphrase && (
-                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
-                    “{r.first.rejected.supportingParaphrase}”
-                  </p>
-                )}
-              </li>
+              <figure key={r.id} className="m-0 grid gap-3">
+                <blockquote className="ov-quote">
+                  “{r.first.rejected?.supportingParaphrase ?? r.first.rejected?.outcomeReason}”
+                </blockquote>
+                <figcaption className="grid gap-1">
+                  <button type="button" onClick={() => onOpen(r.id)} className="flex min-w-0 items-center gap-2.5 text-left">
+                    <CompanyLogo company={r.company} link={r.url} size="sm" />
+                    <span className="mono min-w-0 text-xs text-slate-300">
+                      <span className="text-slate-100">{r.company}</span> · {r.role} ·{' '}
+                      {formatEastern(r.first.rejected?.receivedAt, 'date')}
+                    </span>
+                  </button>
+                  {r.first.rejected?.supportingParaphrase && (
+                    <span className="mono text-xs text-slate-500">
+                      Reason: {r.first.rejected?.outcomeReason ?? 'not stated'}
+                    </span>
+                  )}
+                </figcaption>
+              </figure>
             ))}
             {stated.length < rejected.length && (
-              <li>
-                <EmptyLine>
-                  {rejected.length - stated.length} more gave no reason.
-                </EmptyLine>
-              </li>
+              <div className="ov-nobig">
+                <b>{rejected.length - stated.length}</b>
+                <span>more gave no reason</span>
+              </div>
             )}
-          </ul>
+          </div>
         )}
       </div>
     </Card>

@@ -5,6 +5,7 @@ import { JobsNavigation } from '@/components/JobsNavigation';
 import { AppHeader } from '@/components/AppHeader';
 import { JobListings } from '@/components/JobListings';
 import { useJobBoardState } from '@/lib/useJobBoardState';
+import { missionSerif } from '@/components/mission/fonts';
 
 export default function JobsPage() {
   const {
@@ -48,9 +49,9 @@ export default function JobsPage() {
   }, [jobApplicationsData]);
 
   return (
-    <div className="min-h-screen bg-white dark:bg-gray-900">
+    <div className={`min-h-screen bg-white dark:bg-gray-900 ${missionSerif.variable}`}>
       <AppHeader title="Jobs" subtitle="OpenClaw-maintained job board and application pipeline" />
-      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
+      <div className="mx-auto max-w-[1480px] px-3 py-4 sm:px-4 sm:py-6">
         <JobsNavigation />
         <JobListings
           data={jobListingsData}

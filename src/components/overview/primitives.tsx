@@ -4,15 +4,15 @@ import React from 'react';
 import { Info, X } from 'lucide-react';
 
 /**
- * Small styled building blocks for the overview, copied from the Board's
- * visual vocabulary (slate neutrals, indigo accent, colored panel bands) so
- * the two jobs pages read as one product.
+ * Small styled building blocks for the overview. Each carries an ov-* marker
+ * class: inside the Mission HUD (.mi) the overview CSS restyles them, while
+ * the detail modal, which sits outside it, keeps these site-theme classes.
  */
 
 export function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
     <div
-      className={`rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 ${className}`}
+      className={`ov-card rounded-lg border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 ${className}`}
     >
       {children}
     </div>
@@ -36,19 +36,19 @@ export function CardHeader({
 }) {
   return (
     <div
-      className={`flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between sm:px-5 ${className}`}
+      className={`ov-ch flex flex-col gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between sm:px-5 ${className}`}
     >
       <div className="flex min-w-0 items-center gap-3">
         {icon && (
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
+          <div className="ov-ic flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300">
             {icon}
           </div>
         )}
         <div className="min-w-0">
-          <Heading className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          <Heading className="ov-h text-base font-semibold text-slate-900 dark:text-slate-100">
             {title}
           </Heading>
-          {subtitle && <p className="text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
+          {subtitle && <p className="ov-sub text-xs text-slate-500 dark:text-slate-400">{subtitle}</p>}
         </div>
       </div>
       {right && <div className="flex shrink-0 flex-wrap items-center gap-2">{right}</div>}
@@ -74,7 +74,7 @@ export function Band({
   'children' | 'className'
 >) {
   return (
-    <section className={`border-b ${BAND[tone]} ${className}`} {...rest}>
+    <section className={`ov-band ov-band-${tone} border-b ${BAND[tone]} ${className}`} {...rest}>
       {children}
     </section>
   );
@@ -120,7 +120,7 @@ export function Pill({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${PILL[tone]} ${className}`}
+      className={`ov-pill ov-t-${tone} inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${PILL[tone]} ${className}`}
     >
       {children}
     </span>
@@ -144,7 +144,7 @@ export function SegmentedControl<T extends string | number>({
     <div
       role="group"
       aria-label={label}
-      className="inline-flex overflow-hidden rounded-md border border-slate-300 shadow-sm dark:border-slate-700"
+      className="ov-seg inline-flex overflow-hidden rounded-md border border-slate-300 shadow-sm dark:border-slate-700"
     >
       {options.map((option) => (
         <button
@@ -166,7 +166,7 @@ export function SegmentedControl<T extends string | number>({
 }
 
 export const CONTROL =
-  'min-h-9 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-900/60';
+  'ov-ctl min-h-9 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-900/60';
 export function Field({
   label,
   children,
@@ -208,7 +208,7 @@ export function Button({
   type = 'button',
   ...rest
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof BUTTON }) {
-  return <button type={type} className={`${BUTTON[variant]} ${className}`} {...rest} />;
+  return <button type={type} className={`ov-btn ov-btn-${variant} ${BUTTON[variant]} ${className}`} {...rest} />;
 }
 
 /** Text-styled button for opening an application from a list. */
@@ -219,7 +219,7 @@ export function LinkButton({
   return (
     <button
       type="button"
-      className={`text-left font-medium text-indigo-600 hover:underline dark:text-indigo-300 ${className}`}
+      className={`ov-link text-left font-medium text-indigo-600 hover:underline dark:text-indigo-300 ${className}`}
       {...rest}
     />
   );
@@ -227,14 +227,14 @@ export function LinkButton({
 
 export function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+    <p className="ov-lab text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
       {children}
     </p>
   );
 }
 
 export function EmptyLine({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-slate-500 dark:text-slate-400">{children}</p>;
+  return <p className="ov-empty text-sm text-slate-500 dark:text-slate-400">{children}</p>;
 }
 
 /** An "i" button that reveals a short explanation; keeps caveats out of the headings. */
@@ -265,7 +265,7 @@ export function InfoTip({ label, children }: { label: string; children: React.Re
         aria-expanded={open}
         aria-controls={id}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+        className="ov-info inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
       >
         <Info className="h-3.5 w-3.5" aria-hidden="true" />
       </button>
@@ -273,7 +273,7 @@ export function InfoTip({ label, children }: { label: string; children: React.Re
         <span
           id={id}
           role="note"
-          className="absolute left-0 top-6 z-30 w-72 max-w-[80vw] rounded-md border border-slate-200 bg-white p-3 text-xs font-normal normal-case tracking-normal text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
+          className="ov-note absolute left-0 top-6 z-30 w-72 max-w-[80vw] rounded-md border border-slate-200 bg-white p-3 text-xs font-normal normal-case tracking-normal text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"
         >
           <span className="float-right -mr-1 -mt-1">
             <button
@@ -294,7 +294,7 @@ export function InfoTip({ label, children }: { label: string; children: React.Re
 
 export function Chip({ children, onRemove }: { children: React.ReactNode; onRemove: () => void }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-indigo-300 bg-indigo-50 py-1 pl-3 pr-1 text-xs font-medium text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200">
+    <span className="ov-chip inline-flex items-center gap-1 rounded-full border border-indigo-300 bg-indigo-50 py-1 pl-3 pr-1 text-xs font-medium text-indigo-700 dark:border-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-200">
       {children}
       <button
         type="button"
