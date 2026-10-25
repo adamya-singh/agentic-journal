@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Check,
   Clock,
+  Download,
   Film,
   Heart,
   Loader2,
@@ -20,6 +21,7 @@ import {
 import { AppHeader } from '@/components/AppHeader';
 import { Poster, Ranker, TIER_CLASS, VideoFrame } from '@/components/media/Ranker';
 import { YouTubeIntake, YouTubeMark } from '@/components/media/YouTubeIntake';
+import { QuickAdd } from '@/components/media/QuickAdd';
 import { FeedTeaser } from '@/components/media/feed/FeedTeaser';
 import { TbpnTeaser } from '@/components/media/tbpn/TbpnTeaser';
 import { TIERS, isImdb, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
@@ -38,7 +40,16 @@ async function api<T>(path = '', body?: unknown): Promise<T> {
   if (!r.ok || !p.success) throw new Error(p.error || 'Media could not be loaded.');
   return p.data;
 }
-type Filter = 'all' | 'liked' | 'watched' | 'watchlist';
+type Filter = 'all' | 'liked' | 'favorites' | 'watching' | 'watched' | 'watchlist' | 'download';
+const FILTER_LABEL: Record<Filter, string> = {
+  all: 'All media',
+  liked: 'Liked',
+  favorites: 'Favorites',
+  watching: 'Watching',
+  watched: 'Watched',
+  watchlist: 'Watchlist',
+  download: 'On disk',
+};
 
 export default function MediaPage() {
   const [data, setData] = useState<MediaView>();
@@ -137,8 +148,11 @@ export default function MediaPage() {
         match(t) &&
         (filter === 'all' ||
           (filter === 'liked' && isLiked(t)) ||
+          (filter === 'favorites' && t.favorite) ||
+          (filter === 'watching' && t.watching && !t.watched) ||
           (filter === 'watched' && t.watched) ||
-          (filter === 'watchlist' && t.watchlist)),
+          (filter === 'watchlist' && t.watchlist) ||
+          (filter === 'download' && t.download)),
     )
     .map((t, i) => ({ t, i }))
     .sort(
@@ -206,9 +220,27 @@ export default function MediaPage() {
               <Star size={12} fill="currentColor" /> Your {title.yourRating}/10
             </span>
           ) : null}
-          {title.watched && (
+          {title.watched ? (
             <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/75 px-2 py-1 text-xs text-white">
               <Check size={12} /> Watched
+            </span>
+          ) : title.watching ? (
+            <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-md bg-black/75 px-2 py-1 text-xs text-white">
+              <Clock size={12} /> Watching
+            </span>
+          ) : null}
+          {(title.favorite || title.download) && (
+            <span className="absolute right-2 top-2 flex gap-1">
+              {title.favorite && (
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-rose-600 text-white" title="Favorite">
+                  <Heart size={12} fill="currentColor" />
+                </span>
+              )}
+              {title.download && (
+                <span className="grid h-6 w-6 place-items-center rounded-full bg-sky-600 text-white" title="On your keep-on-disk list">
+                  <Download size={12} />
+                </span>
+              )}
             </span>
           )}
         </a>
@@ -285,6 +317,42 @@ export default function MediaPage() {
                   >
                     <ArrowUpDown size={13} /> {rankOf.has(title.id) ? 'Move' : 'Rank'}
                   </button>
+                )}
+                {!recommendation && (
+                  <>
+                    <button
+                      className={`${button} !px-2 !py-1.5 !text-xs ${title.favorite ? 'text-rose-600' : 'text-gray-400'}`}
+                      disabled={busy}
+                      aria-pressed={!!title.favorite}
+                      aria-label={title.favorite ? `Unfavorite ${title.title}` : `Favorite ${title.title}`}
+                      title={title.favorite ? 'Favorite' : 'Mark as a favorite'}
+                      onClick={() =>
+                        void act(
+                          '/title/flags',
+                          { id: title.id, favorite: !title.favorite },
+                          title.favorite ? 'No longer a favorite.' : 'Marked as a favorite.',
+                        )
+                      }
+                    >
+                      <Heart size={13} fill={title.favorite ? 'currentColor' : 'none'} />
+                    </button>
+                    <button
+                      className={`${button} !px-2 !py-1.5 !text-xs ${title.download ? 'text-sky-600' : 'text-gray-400'}`}
+                      disabled={busy}
+                      aria-pressed={!!title.download}
+                      aria-label={title.download ? `Take ${title.title} off the keep-on-disk list` : `Keep ${title.title} on disk`}
+                      title={title.download ? 'On your keep-on-disk list' : 'Keep on disk'}
+                      onClick={() =>
+                        void act(
+                          '/title/flags',
+                          { id: title.id, download: !title.download },
+                          title.download ? 'Off the keep-on-disk list.' : 'Added to the keep-on-disk list.',
+                        )
+                      }
+                    >
+                      <Download size={13} />
+                    </button>
+                  </>
                 )}
                 {youtube && (
                   <button
@@ -469,6 +537,7 @@ export default function MediaPage() {
             </button>
           </div>
         ))}
+        <QuickAdd api={api} onLibraryChanged={() => void load()} />
         <div className="my-6 flex flex-wrap items-center gap-3 border-y border-gray-200 py-4 dark:border-gray-800">
           <label className="flex flex-1 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 dark:border-gray-700 dark:bg-gray-900">
             <Search size={16} className="text-gray-400" />
@@ -634,18 +703,18 @@ export default function MediaPage() {
                   </h3>
                   <p className="mt-1 text-sm text-gray-500">
                     Liked = your IMDb rating of 7–10, or a ranking score of 7+ for YouTube videos.
-                    Watched titles are kept separately.
+                    Favorites, Watching and On disk are yours alone and never go to IMDb.
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {(['all', 'liked', 'watched', 'watchlist'] as const).map((f) => (
+                  {(Object.keys(FILTER_LABEL) as Filter[]).map((f) => (
                     <button
                       key={f}
-                      className={`${button} capitalize ${filter === f ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : ''}`}
+                      className={`${button} ${filter === f ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900' : ''}`}
                       aria-pressed={filter === f}
                       onClick={() => setFilter(f)}
                     >
-                      {f === 'all' ? 'All media' : f}
+                      {FILTER_LABEL[f]}
                     </button>
                   ))}
                 </div>

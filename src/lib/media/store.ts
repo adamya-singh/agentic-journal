@@ -103,7 +103,7 @@ export function view(): MediaView {
     ...rest,
     ranking: rankingOf(s),
     library: titles
-      .filter((t) => t.collections.length)
+      .filter((t) => t.collections.length || t.addedAt)
       .sort((a, b) => (b.yourRating || 0) - (a.yourRating || 0) || a.title.localeCompare(b.title)),
     picks: s.recommendations
       .map((id) => s.titles[id])
@@ -117,6 +117,20 @@ export async function feedback(id: string, value: 'interested' | 'dismissed' | n
     if (!s.titles[id]) throw new Error('Title not found. Refresh the page.');
     if (value === null) delete s.feedback[id];
     else s.feedback[id] = value;
+    writeState(s);
+  });
+}
+// Favorite, keep on disk and watching live only in the Journal.
+export async function setFlags(
+  id: string,
+  flags: Partial<Pick<MediaTitle, 'favorite' | 'download' | 'watching'>>,
+) {
+  return withLock(() => {
+    const s = readState();
+    const t = s.titles[id];
+    if (!t) throw new Error('Title not found. Refresh the page.');
+    for (const [k, v] of Object.entries(flags) as [keyof typeof flags, boolean | undefined][])
+      if (v !== undefined) t[k] = v || undefined;
     writeState(s);
   });
 }
