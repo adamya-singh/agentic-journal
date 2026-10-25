@@ -100,13 +100,18 @@ export default function MediaPage() {
   // YouTube imports have their own status band; this list is IMDb requests.
   const pending = allPending.filter((j) => j.action !== 'youtube-sync');
   const youtubeSyncing = allPending.some((j) => j.action === 'youtube-sync');
+  // A failure stays up until a newer job for the same title and action exists (by time,
+  // not list order: older stores moved pending jobs to the front).
   const failed =
     data?.jobs
       .filter(
-        (j, i, jobs) =>
+        (j, _i, jobs) =>
           j.status === 'failed' &&
-          !jobs.slice(i + 1).some((next) => next.action === j.action && next.titleId === j.titleId),
+          !jobs.some(
+            (other) => other !== j && other.action === j.action && other.titleId === j.titleId && other.createdAt > j.createdAt,
+          ),
       )
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .slice(-3) || [];
   const ranked = data ? rankedList(data.ranking) : [];
   const rankOf = new Map(ranked.map((r) => [r.id, r]));

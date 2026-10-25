@@ -159,7 +159,9 @@ export function addJob(s: MediaState, action: MediaAction, titleId?: string, rat
   if (pending.some((j) => titleId && j.titleId === titleId && j.action === action))
     throw new Error('This title already has a pending change. Wait for it to finish.');
   const id = randomUUID();
-  s.jobs = pending.concat(s.jobs.filter((j) => !isPending(j)).slice(-100));
+  // Keep the last 100 finished jobs and every pending one, in the order they were made.
+  const recent = new Set(s.jobs.filter((j) => !isPending(j)).slice(-100));
+  s.jobs = s.jobs.filter((j) => isPending(j) || recent.has(j));
   s.jobs.push({
     id,
     action,

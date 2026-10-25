@@ -65,7 +65,7 @@ test(
       <button data-testid="watched-button-tt123" aria-label="${watched ? 'Watched' : 'Mark as watched'} A movie" onclick="record('seen')">${watched ? 'Watched' : 'Mark as watched'}</button>
       <button data-testid="tm-box-wl-button" aria-pressed="${watchlist}" onclick="record('watchlist')">Watchlist</button>
       <div data-testid="hero-rating-bar__user-rating">YOUR RATING ${rating ? `${rating}/10` : 'Rate'}<button onclick="document.querySelector('[role=dialog]').hidden=false">Rate A movie</button></div>
-      <div role="dialog" hidden><button aria-label="Rate 8" onclick="window.score=8"></button><button onclick="record('rating',window.score);this.parentElement.hidden=true">Rate</button></div>
+      <div role="dialog" hidden><span class="bubble">?</span>Rate this A movie<div style="position:relative;width:200px;height:40px"><button aria-label="Rate 8" style="width:40px;height:40px" onclick="window.score=8;document.querySelector('.bubble').textContent='8'"></button><div class="ipc-starbar__touch" style="position:absolute;inset:0"></div></div><button onclick="record('rating',window.score);this.parentElement.hidden=true">Rate</button></div>
       </main>`,
       });
     });
