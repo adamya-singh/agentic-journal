@@ -71,15 +71,32 @@ const plain = (html?: string | null) =>
 export const sizedPoster = (url?: string, width = 400) =>
   url ? url.replace(/\._V1_.*\.(jpg|png)$/, `._V1_UX${width}.$1`) : undefined;
 
-interface Suggestion {
-  d?: { id: string; l: string; q?: string; qid?: string; y?: number; yr?: string; s?: string; i?: { imageUrl?: string } }[];
+export interface Suggestion {
+  id: string;
+  l: string; // title
+  q?: string; // label: 'TV series', 'feature'
+  qid?: string; // kind: 'tvSeries', 'movie'
+  y?: number;
+  yr?: string; // a series' run: '2019-2023'
+  s?: string; // top cast
+  i?: { imageUrl?: string };
+}
+// IMDb's suggestion endpoint: a tt id finds that title, any other text searches.
+export async function imdbSuggest(q: string, f: CatalogFetchers = defaultFetchers): Promise<Suggestion[]> {
+  const key = /^tt\d{5,10}$/.test(q)
+    ? q
+    : q.normalize('NFKD').toLowerCase().replace(/[^a-z0-9 ]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
+  if (!key) return [];
+  const s = (await f.json(`https://v3.sg.media-imdb.com/suggestion/${key.startsWith('tt') ? 'x' : key[0]}/${encodeURIComponent(key)}.json`)) as {
+    d?: Suggestion[];
+  } | null;
+  return s?.d || [];
 }
 const SERIES = new Set(['tvSeries', 'tvMiniSeries']);
 const FILMS = new Set(['movie', 'tvMovie', 'video']);
 export async function lookupTitle(id: string, f: CatalogFetchers = defaultFetchers): Promise<CatalogTitle | undefined> {
   if (!/^tt\d{5,10}$/.test(id)) return undefined;
-  const s = (await f.json(`https://v3.sg.media-imdb.com/suggestion/x/${id}.json`)) as Suggestion | null;
-  const hit = s?.d?.find((d) => d.id === id);
+  const hit = (await imdbSuggest(id, f)).find((d) => d.id === id);
   if (!hit || !hit.qid || !(SERIES.has(hit.qid) || FILMS.has(hit.qid))) return undefined;
   return {
     id,
@@ -162,10 +179,7 @@ export async function searchShows(q: string, f: CatalogFetchers = defaultFetcher
 }
 // IMDb's suggestion search, for films (TVmaze only knows TV).
 export async function searchTitles(q: string, f: CatalogFetchers = defaultFetchers) {
-  const slug = q.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim().replace(/\s+/g, '_');
-  if (!slug) return [];
-  const s = (await f.json(`https://v3.sg.media-imdb.com/suggestion/${slug[0]}/${encodeURIComponent(slug)}.json`)) as Suggestion | null;
-  return (s?.d || [])
+  return (await imdbSuggest(q, f))
     .filter((d) => d.id?.startsWith('tt') && d.qid && (SERIES.has(d.qid) || FILMS.has(d.qid)))
     .slice(0, 8)
     .map((d) => ({

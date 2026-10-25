@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { view, enqueue, feedback, rank, syncRatings } from '@/lib/media/store';
+import { view, enqueue, feedback, rank, setFlags, syncRatings } from '@/lib/media/store';
+import {
+  addText,
+  clarify,
+  confirm,
+  dismissAddition,
+  dismissEntry,
+  inboxView,
+  retryEntry,
+} from '@/lib/media/inbox';
+import { kickInbox } from '@/lib/media/inbox-worker';
 import {
   confirmAccount,
   decide,
@@ -114,6 +124,10 @@ export async function GET(req: NextRequest) {
       return result(summary(sort));
     }
     if (action === 'feed/summary') return result(feedTeaser(track.catch('pretrain').parse(q.get('track'))));
+    if (action === 'inbox') {
+      kickInbox();
+      return result(inboxView());
+    }
     if (action === 'tbpn') {
       await ensureFresh();
       return result(tbpnView());
@@ -426,6 +440,66 @@ export async function POST(req: NextRequest) {
       return result({ ...done, view: view() });
     }
     if (action === 'ranking/sync') return result({ ...(await syncRatings()), view: view() }, 202);
+    if (action === 'inbox/add') {
+      const body = z
+        .object({ text: z.string().trim().min(1).max(2000) })
+        .strict()
+        .parse(await req.json());
+      await addText(body.text);
+      kickInbox();
+      return result(inboxView(), 201);
+    }
+    if (action === 'inbox/confirm') {
+      const body = z
+        .object({
+          id: z.string().uuid(),
+          pick: z.string().regex(/^tt\d+$/),
+          settings: z
+            .object({
+              status: z.enum(['finished', 'watching', 'want', 'none']),
+              favorite: z.boolean(),
+              download: z.boolean(),
+            })
+            .strict(),
+        })
+        .strict()
+        .parse(await req.json());
+      const title = await confirm(body.id, body.pick, body.settings);
+      return result({ title: title.title, inbox: inboxView() });
+    }
+    if (action === 'inbox/clarify') {
+      const body = z
+        .object({ id: z.string().uuid(), hint: z.string().trim().min(1).max(500) })
+        .strict()
+        .parse(await req.json());
+      await clarify(body.id, body.hint);
+      kickInbox();
+      return result(inboxView());
+    }
+    if (['inbox/dismiss', 'inbox/dismiss-entry', 'inbox/retry'].includes(action)) {
+      const { id } = z.object({ id: z.string().uuid() }).strict().parse(await req.json());
+      if (action === 'inbox/dismiss') await dismissAddition(id);
+      else if (action === 'inbox/dismiss-entry') await dismissEntry(id);
+      else {
+        await retryEntry(id);
+        kickInbox();
+      }
+      return result(inboxView());
+    }
+    if (action === 'title/flags') {
+      const body = z
+        .object({
+          id: titleId,
+          favorite: z.boolean().optional(),
+          download: z.boolean().optional(),
+          watching: z.boolean().optional(),
+        })
+        .strict()
+        .parse(await req.json());
+      const { id, ...flags } = body;
+      await setFlags(id, flags);
+      return result(view());
+    }
     if (action === 'action') {
       const body = z
         .discriminatedUnion('action', [

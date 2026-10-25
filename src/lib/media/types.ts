@@ -16,6 +16,11 @@ export interface MediaTitle {
   // Kept YouTube videos are titles too (id `yt:<videoId>`); they are never written to IMDb.
   source?: 'imdb' | 'youtube';
   channel?: string;
+  // Journal-only, set from quick add or a library card; never written to IMDb.
+  favorite?: boolean;
+  download?: boolean; // wanted on disk
+  watching?: boolean;
+  addedAt?: string; // added through quick add; shown in the library before IMDb confirms
 }
 export interface Coverage {
   total: number | null;
