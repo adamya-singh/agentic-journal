@@ -7,6 +7,15 @@ export const FEED_SOURCES: FeedSource[] = ['youtube', 'x', 'imdb'];
 // the current short-term compass.
 export type CompassKind = 'long' | 'short';
 export const COMPASS_KINDS: CompassKind[] = ['long', 'short'];
+// A lens is what an item is judged against: a compass (Pretrain) or your
+// taste card (Unwind). Each track keeps its own votes and its own queue.
+export type Lens = CompassKind | 'taste';
+export const LENSES: Lens[] = ['long', 'short', 'taste'];
+export type Track = 'pretrain' | 'unwind';
+export const trackOf = (lens: Lens): Track => (lens === 'taste' ? 'unwind' : 'pretrain');
+export const lensesOf = (track: Track): Lens[] => (track === 'unwind' ? ['taste'] : ['long', 'short']);
+// Votes from before Unwind existed were all Pretrain votes.
+export const votedTrack = (item: { votedIn?: Track }): Track => item.votedIn ?? 'pretrain';
 // candidate = judged aligned but held back; new = in the queue, unseen;
 // seen = shown without a vote; skipped = passed over twice or skipped by you.
 export type FeedItemState = 'candidate' | 'new' | 'seen' | 'up' | 'down' | 'skipped';
@@ -18,6 +27,9 @@ export interface Alignment {
   why: string; // one specific sentence, in Adamya's terms
   judgedAt: string;
   judgedBy: string; // 'gemini-2.5-flash' | 'openclaw' | 'claude'
+  // Taste judgments only: would you enjoy it, and is it still you. Both 0–1.
+  fun?: number;
+  fit?: number;
 }
 export interface FeedCreator {
   key: string; // '@dwarkeshpatel' | 'x:@sailaunderscore' | 'imdb'
@@ -31,13 +43,15 @@ export interface FeedItem {
   url: string;
   creator: FeedCreator;
   publishedAt?: string;
-  alignment: Partial<Record<CompassKind, Alignment>>;
+  alignment: Partial<Record<Lens, Alignment>>;
   addedBy: string; // 'claude:seed' | 'openclaw' | 'you'
   addedAt: string;
   state: FeedItemState;
   seenCount: number;
   seenAt?: string;
   votedAt?: string;
+  // The track you voted or skipped it in; its votes teach only that track.
+  votedIn?: Track;
   // YouTube uploads found outside your history (OpenClaw's RSS pass) carry their own facts.
   durationSec?: number;
   channelId?: string;
@@ -54,8 +68,12 @@ export interface FeedState {
   vocabulary: string[];
   items: Record<string, FeedItem>;
   // Judged not aligned under that compass; never re-judged under it.
-  rejected: Record<string, { at: string; compass: CompassKind }[]>;
+  rejected: Record<string, { at: string; compass: Lens }[]>;
   curator: { runs: CuratorRun[] };
+  // Unwind's tags, kept apart from Pretrain's vocabulary.
+  tasteVocabulary?: string[];
+  // The taste card version the `taste` judgments were made against.
+  tasteJudged?: { version: number; at: string };
   // The short-term compass period the `short` judgments belong to. A new period id wipes them.
   shortJudged?: { period: string; version?: number; at: string };
 }
@@ -83,3 +101,20 @@ export const DEFAULT_VOCABULARY: Record<string, string> = {
   'tech news': 'news and recaps of the tech week',
   humor: 'funny, light, still worth it',
 };
+
+// Unwind's seed vocabulary: moods of entertainment, not things to learn.
+export const UNWIND_VOCABULARY: Record<string, string> = {
+  'tech satire': 'comedy about startups, big tech and the people in it',
+  'founder drama': 'stories of building companies, scams and empires',
+  'underdog grind': 'someone failing, restarting and grinding to excellence',
+  'big-screen spectacle': 'blockbusters made to be seen big: action, flight, superheroes',
+  'power games': 'boardrooms, dynasties, deals and who wins',
+  'smart docs': 'documentaries and explainers told like thrillers',
+  'desi slice of life': 'Indian stories of hostels, families, exams and friends',
+  'sci-fi with ideas': 'science fiction that is about something',
+  'sketch & standup': 'short comedy that is actually clever',
+  'behind the scenes': 'how a show, film or company was really made',
+};
+export const vocabularyOf = (f: Pick<FeedState, 'vocabulary' | 'tasteVocabulary'>, lens: Lens) =>
+  lens === 'taste' ? (f.tasteVocabulary ?? Object.keys(UNWIND_VOCABULARY)) : f.vocabulary;
+export const describeTag = (tag: string) => DEFAULT_VOCABULARY[tag] ?? UNWIND_VOCABULARY[tag];

@@ -58,11 +58,20 @@ const SOURCES: { value: FeedSource | 'all'; label: string }[] = [
   { value: 'x', label: 'Posts' },
   { value: 'imdb', label: 'Films' },
 ];
+// Unwind's films and shows live on /media/unwind; its feed is clips and posts.
+const UNWIND_SOURCES: { value: FeedSource | 'all'; label: string }[] = [
+  { value: 'all', label: 'Everything' },
+  { value: 'youtube', label: 'Clips' },
+  { value: 'x', label: 'Posts' },
+];
 
 export default function FeedPage() {
   const [ready, setReady] = useState(false);
   const [view, setView] = useState<View>('stream');
   const [compass, setCompass] = useState<CompassKind>('long');
+  const unwind = compass === 'taste';
+  // The Pretrain compass to go back to when you leave Unwind.
+  const lastPretrain = useRef<CompassKind>('long');
   const [filter, setFilter] = useState<FeedFilter>('queue');
   const [source, setSource] = useState<FeedSource | 'all'>('all');
   const [autoplay, setAutoplay] = useState(true);
@@ -75,6 +84,11 @@ export default function FeedPage() {
   const [adding, setAdding] = useState(false);
   const [toast, setToast] = useState<{ text: string; undo?: () => void }>();
   const [helpOpen, setHelpOpen] = useState(false);
+  useEffect(() => {
+    if (compass !== 'taste') lastPretrain.current = compass;
+    // Films are not part of Unwind's feed.
+    else setSource((s) => (s === 'imdb' ? 'all' : s));
+  }, [compass]);
 
   // Preferences: URL first, then what you used last time.
   useEffect(() => {
@@ -90,7 +104,11 @@ export default function FeedPage() {
       return v && allowed.includes(v) ? v : saved && allowed.includes(saved) ? saved : fallback;
     }
     setView(pick<View>('view', ['stream', 'theater'], 'stream', saved.view));
-    setCompass(pick<CompassKind>('compass', ['long', 'short'], 'long', saved.compass));
+    setCompass(
+      p.get('track') === 'unwind'
+        ? 'taste'
+        : pick<CompassKind>('compass', ['long', 'short'], 'long', saved.compass === 'taste' ? undefined : saved.compass),
+    );
     setFilter(pick<FeedFilter>('filter', ['queue', 'voted', 'skipped'], 'queue'));
     setSource(pick<FeedSource | 'all'>('source', ['youtube', 'x', 'imdb', 'all'], 'all'));
     if (saved.autoplay === false) setAutoplay(false);
@@ -100,12 +118,13 @@ export default function FeedPage() {
     if (!ready) return;
     const p = new URLSearchParams();
     if (view !== 'stream') p.set('view', view);
-    if (compass !== 'long') p.set('compass', compass);
+    if (compass === 'taste') p.set('track', 'unwind');
+    else if (compass !== 'long') p.set('compass', compass);
     if (filter !== 'queue') p.set('filter', filter);
     if (source !== 'all') p.set('source', source);
     window.history.replaceState(null, '', `${window.location.pathname}${p.size ? `?${p}` : ''}`);
     try {
-      localStorage.setItem(PREFS, JSON.stringify({ view, compass, autoplay }));
+      localStorage.setItem(PREFS, JSON.stringify({ view, compass: lastPretrain.current, autoplay }));
     } catch {
       /* Private window. */
     }
@@ -178,7 +197,7 @@ export default function FeedPage() {
     if (!link.trim()) return;
     setAdding(true);
     try {
-      const r = await feedApi<{ added: boolean }>('feed/add', { url: link.trim() });
+      const r = await feedApi<{ added: boolean }>('feed/add', { url: link.trim(), track: unwind ? 'unwind' : 'pretrain' });
       showToast(r.added ? 'Added to your feed' : 'Already in your feed');
       setLink('');
       setAddOpen(false);
@@ -322,19 +341,48 @@ export default function FeedPage() {
         <AppHeader title="Media" subtitle="Your feed" />
         <main className="mx-auto max-w-[1500px] px-4 pb-24 pt-6 sm:px-8 sm:pt-8">
           {/* Hero */}
-          <div className="relative mb-5 overflow-hidden rounded-3xl bg-gradient-to-br from-[#0b1730] via-[#1b3f6e] to-[#c9825a] px-5 py-6 text-white shadow-[0_30px_60px_-30px_rgba(11,23,48,.7)] sm:px-8 sm:py-8">
-            <div aria-hidden className="pointer-events-none absolute -bottom-28 -right-14 h-44 w-44 opacity-80 sm:-bottom-24 sm:right-24 sm:h-56 sm:w-56 sm:opacity-90 rounded-full bg-[radial-gradient(circle_at_50%_45%,#fff6d8_0_28%,#ffd27a_50%,#ff9a3c_75%,transparent_76%)] blur-[1px]" />
+          <div className={`relative mb-5 overflow-hidden rounded-3xl bg-gradient-to-br px-5 py-6 text-white sm:px-8 sm:py-8 ${unwind ? 'from-[#120a26] via-[#3b1d62] to-[#d9706a] shadow-[0_30px_60px_-30px_rgba(40,10,60,.75)]' : 'from-[#0b1730] via-[#1b3f6e] to-[#c9825a] shadow-[0_30px_60px_-30px_rgba(11,23,48,.7)]'}`}>
+            <div aria-hidden className={`pointer-events-none absolute -bottom-28 -right-14 h-44 w-44 opacity-80 sm:-bottom-24 sm:right-24 sm:h-56 sm:w-56 sm:opacity-90 rounded-full blur-[1px] ${unwind ? 'sm:-bottom-36 bg-[radial-gradient(circle_at_50%_45%,#ffe2c4_0_24%,#ffab7a_48%,#e8606a_72%,transparent_74%)]' : 'bg-[radial-gradient(circle_at_50%_45%,#fff6d8_0_28%,#ffd27a_50%,#ff9a3c_75%,transparent_76%)]'}`} />
+            {unwind && <div aria-hidden className="pointer-events-none absolute right-10 top-8 h-6 w-6 rounded-full shadow-[7px_-5px_0_0_#f6e7c8] sm:right-28" />}
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(1px_1px_at_12%_22%,rgba(255,255,255,.9),transparent_60%),radial-gradient(1px_1px_at_32%_12%,rgba(255,255,255,.7),transparent_60%),radial-gradient(1.5px_1.5px_at_58%_30%,rgba(255,255,255,.8),transparent_60%),radial-gradient(1px_1px_at_76%_16%,rgba(255,255,255,.6),transparent_60%),radial-gradient(1px_1px_at_88%_40%,rgba(255,255,255,.7),transparent_60%)]" />
             <div className="relative max-w-3xl">
-              <Link href="/media" className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-white/60 hover:text-white">
-                <ArrowLeft size={13} /> Media
-              </Link>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-amber-200/90">Your feed</p>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <Link href={unwind ? '/media/unwind' : '/media'} className="inline-flex items-center gap-1 text-xs font-medium text-white/60 hover:text-white">
+                  <ArrowLeft size={13} /> {unwind ? 'Unwind' : 'Media'}
+                </Link>
+                <div role="radiogroup" aria-label="Track" className="inline-flex rounded-full border border-white/20 bg-white/10 p-1 backdrop-blur">
+                  {(['pretrain', 'unwind'] as const).map((t) => {
+                    const on = (t === 'unwind') === unwind;
+                    return (
+                      <button
+                        key={t}
+                        type="button"
+                        role="radio"
+                        aria-checked={on}
+                        onClick={() => setCompass(t === 'unwind' ? 'taste' : lastPretrain.current)}
+                        className={`rounded-full px-4 py-1.5 text-[13px] font-semibold transition ${on ? (t === 'unwind' ? 'bg-white text-[#3b1f5e]' : 'bg-white text-[#0b1730]') : 'text-white/75 hover:text-white'}`}
+                      >
+                        {t === 'unwind' ? 'Unwind' : 'Pretrain'}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <p className={`text-[11px] font-semibold uppercase tracking-[0.2em] ${unwind ? 'text-pink-200/90' : 'text-amber-200/90'}`}>{unwind ? 'Your feed · Unwind' : 'Your feed'}</p>
               <h2 className="mt-1.5 font-[family-name:var(--font-instrument-serif)] text-[38px] leading-[1] sm:text-[52px]">
-                Pretrain <em className="text-[#ffd27a]">on purpose.</em>
+                {unwind ? (
+                  <>Unwind <em className="text-[#ffc2a8]">in character.</em></>
+                ) : (
+                  <>Pretrain <em className="text-[#ffd27a]">on purpose.</em></>
+                )}
               </h2>
               <p className="mt-3 max-w-2xl text-sm leading-relaxed text-white/75">
-                {compassInfo?.available ? (
+                {unwind ? (
+                  <>
+                    Tuned to your taste card: <span className="text-white/90">{compassInfo?.excerpt.slice(0, 150)}{(compassInfo?.excerpt.length ?? 0) > 150 ? '…' : ''}</span>{' '}
+                    <Link href="/media/unwind/taste" className="font-semibold text-[#ffc2a8] underline-offset-2 hover:underline">Edit it</Link>
+                  </>
+                ) : compassInfo?.available ? (
                   <>
                     Tuned to your {compass === 'long' ? 'long-term' : 'short-term'} compass{period ? ` (${period})` : ''}: <span className="text-white/90">{compassInfo.excerpt.slice(0, 150)}{compassInfo.excerpt.length > 150 ? '…' : ''}</span>
                   </>
@@ -346,7 +394,7 @@ export default function FeedPage() {
                 <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/60">
                   <span><span className="font-semibold text-white">{summary.counts.queue[compass]}</span> waiting</span>
                   <span><span className="font-semibold text-emerald-300">{summary.learned.ups}</span> up · <span className="font-semibold text-rose-300">{summary.learned.downs}</span> down</span>
-                  {summary.curator.addedToday > 0 && <span><span className="font-semibold text-amber-200">{summary.curator.addedToday}</span> new from OpenClaw today</span>}
+                  {summary.curator.addedToday > 0 && <span><span className={`font-semibold ${unwind ? 'text-pink-200' : 'text-amber-200'}`}>{summary.curator.addedToday}</span> new from OpenClaw today</span>}
                 </p>
               )}
             </div>
@@ -364,7 +412,7 @@ export default function FeedPage() {
                   { value: 'theater', label: <><Tv size={14} /> Theater</> },
                 ]}
               />
-              <Segmented
+              {!unwind && <Segmented
                 label="Compass"
                 value={compass}
                 onChange={setCompass}
@@ -377,7 +425,7 @@ export default function FeedPage() {
                     title: shortUsable ? undefined : data?.compasses.short.available ? 'OpenClaw hasn’t judged the feed against it yet' : 'No short-term compass yet',
                   },
                 ]}
-              />
+              />}
               <Segmented
                 label="Show"
                 value={filter}
@@ -389,7 +437,7 @@ export default function FeedPage() {
                 ]}
               />
               <div className="flex shrink-0 gap-1">
-                {SOURCES.map((s) => (
+                {(unwind ? UNWIND_SOURCES : SOURCES).map((s) => (
                   <button
                     key={s.value}
                     type="button"

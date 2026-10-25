@@ -1,10 +1,13 @@
 import { view, enqueue, feedback } from '../src/lib/media/store.ts';
 import { summary } from '../src/lib/media/youtube-store.ts';
 import { FEED_USAGE, feedCommand } from '../src/lib/media/feed-cli.ts';
+import { UNWIND_USAGE, unwindCommand } from '../src/lib/media/unwind-cli.ts';
 const [command, ...args] = process.argv.slice(2);
 try {
   let data: unknown;
   if (command?.startsWith('feed-') && (data = await feedCommand(command, args)) !== undefined) {
+    /* handled */
+  } else if (/^(unwind|library)-/.test(command || '') && (data = await unwindCommand(command, args)) !== undefined) {
     /* handled */
   } else if (command === 'status' || command === 'list') data = view();
   else if (command === 'sync') data = { jobId: await enqueue('sync') };
@@ -26,7 +29,9 @@ try {
   } else
     throw new Error(
       'Usage: media.ts list|status|sync|youtube-sync|youtube-summary|seen ttID|watchlist ttID|rate ttID 1-10|dismiss ttID|interested ttID|restore ttID|' +
-        FEED_USAGE,
+        FEED_USAGE +
+        ' | ' +
+        UNWIND_USAGE,
     );
   console.log(JSON.stringify({ success: true, data }));
 } catch (e) {

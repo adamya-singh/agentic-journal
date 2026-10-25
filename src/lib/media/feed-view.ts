@@ -1,10 +1,11 @@
 import { readCompass, excerpt, type Compass } from './compass.ts';
 import { addItems, idFromUrl, page, readFeed, summarize, type FeedPage, type FeedSummary, type PageQuery } from './feed-store.ts';
-import type { CompassKind } from './feed-types.ts';
+import { lensesOf, type CompassKind, type Lens, type Track } from './feed-types.ts';
+import { readUnwind, tasteTarget } from './unwind-store.ts';
 
 // What /media/feed loads: the first page, what your votes taught it, and both compasses.
 export interface CompassView {
-  kind: CompassKind;
+  kind: Lens;
   available: boolean;
   usable: boolean; // available and at least one item judged under it
   title?: string;
@@ -17,8 +18,8 @@ export interface CompassView {
 }
 export interface FeedView extends FeedPage {
   summary: FeedSummary;
-  compass: CompassKind;
-  compasses: Record<CompassKind, CompassView>;
+  compass: Lens;
+  compasses: Record<Lens, CompassView>;
 }
 export function compassView(kind: CompassKind, judged: number): CompassView {
   const c = readCompass(kind);
@@ -35,6 +36,20 @@ export function compassView(kind: CompassKind, judged: number): CompassView {
     source: c.source,
   };
 }
+// Unwind's "compass" is your taste card.
+export function tasteView(judged: number): CompassView {
+  const u = readUnwind();
+  return {
+    kind: 'taste',
+    available: true,
+    usable: judged > 0,
+    title: 'Taste card',
+    excerpt: excerpt(u.taste.summary),
+    text: tasteTarget(u).text,
+    updatedAt: u.taste.updatedAt,
+    source: '/media/unwind/taste',
+  };
+}
 export function feedView(q: PageQuery): FeedView {
   const f = readFeed();
   const summary = summarize(f, q.compass);
@@ -45,12 +60,13 @@ export function feedView(q: PageQuery): FeedView {
     compasses: {
       long: compassView('long', summary.judged.long),
       short: compassView('short', summary.judged.short),
+      taste: tasteView(summary.judged.taste),
     },
   };
 }
 
 // Paste a link into the feed. YouTube videos outside your history get their title from oEmbed.
-export async function addLink(url: string) {
+export async function addLink(url: string, track: Track = 'pretrain') {
   const id = idFromUrl(url);
   if (!id) throw new Error('Paste a YouTube, X or IMDb link.');
   let title: string | undefined, creator: { key: string; name: string; handle?: string } | undefined;
@@ -72,17 +88,19 @@ export async function addLink(url: string) {
     }
   }
   const you = { confidence: 0.85, tags: [], why: 'You added this yourself.', judgedBy: 'you' };
-  const res = await addItems([{ id, url, title, creator, alignment: { long: you, short: you } }], 'you');
+  const alignment = Object.fromEntries(lensesOf(track).map((l) => [l, you]));
+  const res = await addItems([{ id, url, title, creator, alignment }], 'you');
   if (res.unknown.length) throw new Error(res.unknown[0].reason);
   return { id, added: res.added.length > 0 };
 }
 
 // The /media entry card: counts plus a peek at the top of the queue.
-export function feedTeaser() {
+export function feedTeaser(track: Track = 'pretrain') {
   const f = readFeed();
-  const top = page({ compass: 'long', filter: 'queue', limit: 4 }, f).items;
+  const lens: Lens = track === 'unwind' ? 'taste' : 'long';
+  const top = page({ compass: lens, filter: 'queue', limit: 4 }, f).items;
   return {
-    summary: summarize(f, 'long'),
+    summary: summarize(f, lens),
     preview: top.map((c) => ({
       id: c.id,
       source: c.source,

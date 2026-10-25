@@ -34,6 +34,7 @@
     "bookmarks:transcripts": "node --env-file-if-exists=.env scripts/bookmarks-transcribe.ts",
     "media": "node --env-file-if-exists=.env scripts/media.ts",
     "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts",
+    "library:worker": "node --env-file-if-exists=.env scripts/library-worker.ts",
     "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts"
   },
   "dependencies": {

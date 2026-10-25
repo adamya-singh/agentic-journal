@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { mediaRoot, withLock } from './store.ts';
 import { readYouTube } from './youtube-store.ts';
 import { VIDEO_ID, thumbnailUrl, watchUrl } from './youtube-links.ts';
+import { page, parseClock } from './youtube-page.ts';
+
+export { parseClock };
 
 // Diet TBPN, TBPN's daily recap, played on the Media page. Episodes come from the
 // public playlist (no sign-in needed). How far you got comes from two places: your
@@ -72,10 +75,6 @@ export interface PlaylistItem {
   title: string;
   durationSec?: number;
 }
-export function parseClock(s: string): number | undefined {
-  if (!/^\d+(:\d{2}){1,2}$/.test(s)) return undefined;
-  return s.split(':').reduce((a, p) => a * 60 + Number(p), 0);
-}
 const cleanTitle = (t: string) => t.replace(/\s*\|\s*Diet TBPN\s*$/i, '').trim();
 function badgeClock(o: unknown): number | undefined {
   if (!o || typeof o !== 'object') return undefined;
@@ -117,16 +116,6 @@ export function parsePublishDate(html: string): string | undefined {
   return Number.isNaN(t) ? undefined : new Date(t).toISOString();
 }
 
-const HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36',
-  'Accept-Language': 'en-US,en;q=0.9',
-};
-async function page(url: string) {
-  const r = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(20_000) });
-  if (!r.ok) throw new Error(`YouTube answered ${r.status}.`);
-  return r.text();
-}
 export interface Fetchers {
   playlist: () => Promise<string>;
   watch: (videoId: string) => Promise<string>;

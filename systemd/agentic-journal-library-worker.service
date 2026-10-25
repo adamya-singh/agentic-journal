@@ -1,0 +1,24 @@
+[Unit]
+Description=Agentic Journal Unwind library: match local video files and make them browser-playable
+After=network-online.target agentic-journal.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+Environment=NODE_ENV=production
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStart=/usr/bin/env node scripts/library-worker.ts
+# Transcodes are background work: never let them slow the Journal or OpenClaw.
+Nice=15
+CPUQuota=400%
+IOSchedulingClass=idle
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=35
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

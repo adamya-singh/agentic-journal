@@ -1,7 +1,7 @@
 import { generateObject } from 'ai';
 import { vertex } from '@ai-sdk/google-vertex';
 import { z } from 'zod';
-import { DEFAULT_VOCABULARY, type CompassKind } from './feed-types.ts';
+import { describeTag, type Lens } from './feed-types.ts';
 import type { Compass } from './compass.ts';
 import type { JudgeInput } from './feed-pools.ts';
 
@@ -16,13 +16,30 @@ export const Verdict = z.object({
   confidence: z.number(),
   tags: z.array(z.string()),
   why: z.string(),
+  fun: z.number().optional(),
+  fit: z.number().optional(),
 });
 export type Verdict = z.infer<typeof Verdict>;
 const Verdicts = z.object({ verdicts: z.array(Verdict) });
+const TasteVerdicts = z.object({
+  verdicts: z.array(
+    z.object({ id: z.string(), fun: z.number(), fit: z.number(), tags: z.array(z.string()), why: z.string() }),
+  ),
+});
+// Unwind judges against your taste card instead of a compass.
+export interface TasteTarget {
+  kind: 'taste';
+  text: string;
+  version: number;
+}
+export type JudgeTarget = Compass | TasteTarget;
+// In Unwind when both hold: you would enjoy it, and it is still you.
+export const FUN_MIN = 0.6,
+  FIT_MIN = 0.45;
 
 export function judgePrompt(compass: Compass, vocabulary: string[], items: JudgeInput[]) {
   const vocab = vocabulary
-    .map((t) => `- ${t}${DEFAULT_VOCABULARY[t] ? `: ${DEFAULT_VOCABULARY[t]}` : ''}`)
+    .map((t) => `- ${t}${describeTag(t) ? `: ${describeTag(t)}` : ''}`)
     .join('\n');
   const period =
     compass.kind === 'short' && compass.period
@@ -59,13 +76,78 @@ ${items.map((i) => `${i.id} | ${i.source} | ${i.creator} | ${i.title || '-'} | $
 Return one verdict per item, same ids.`;
 }
 
+export function tastePrompt(taste: TasteTarget, vocabulary: string[], items: JudgeInput[]) {
+  const vocab = vocabulary.map((t) => `- ${t}${describeTag(t) ? `: ${describeTag(t)}` : ''}`).join('\n');
+  return `You curate the Unwind side of Adamya's personal feed: entertainment he watches to relax. He still believes everything he watches shapes him, so Unwind holds fun things that fit who he is, never brainrot. You judge items from his own YouTube watch history, his saved X bookmarks and his IMDb recommendations.
+
+His taste card:
+"""
+${taste.text.slice(0, 5000)}
+"""
+
+Score every item on two axes, each 0 to 1:
+- fun: would he actually enjoy this on an evening off? Funny, gripping, beautiful, satisfying. 0.9+ = he would seek it out (Silicon Valley's best scenes, a great Bollywood underdog film, a Fern documentary told like a thriller). 0.6 = pleasant. Lectures, tutorials, news and dry interviews are low fun even when they are good.
+- fit: would the person he is becoming be fine having watched it? Smart, well made, ambitious, warm or clever = high. Pure stimulation, rage bait, gossip, reaction videos, prank and stunt channels, Reddit story narrations, gaming let's-plays, outrage politics, thirst traps, clickbait = low, however fun.
+News, news recaps, podcasts, interviews, lectures, tutorials and talks belong to his other feed (Pretrain), however good: give them fun at most 0.5. Unwind is shows, films, sketches, comedy, story-driven documentaries, behind-the-scenes and trailers for great shows and films.
+
+Tags: 1 to 3 from this vocabulary, exact spelling. Only if none fits, one new short lowercase tag.
+${vocab}
+
+why: ONE sentence, at most 140 characters: what it is, then why it is a good evening for him. Never use the words "align", "aligns", "compass", "taste card", "fun", "fit", "this video" or "this post". Examples:
+- "Mike Judge's TechCrunch Disrupt montage: every pitch you will hear this year, in ninety seconds."
+- "A true hacking story told like a heist film."
+For items that do not belong, give the reason in a few words.
+
+Items (id | source | creator | title | details):
+${items.map((i) => `${i.id} | ${i.source} | ${i.creator} | ${i.title || '-'} | ${i.detail}`).join('\n')}
+
+Return one verdict per item, same ids.`;
+}
+
+async function judgeTaste(taste: TasteTarget, vocabulary: string[], items: JudgeInput[]): Promise<Verdict[]> {
+  const { object } = await generateObject({
+    model: vertex(JUDGE_MODEL()),
+    schema: TasteVerdicts,
+    prompt: tastePrompt(taste, vocabulary, items),
+    maxOutputTokens: 130 * items.length + 500,
+    abortSignal: AbortSignal.timeout(120_000),
+    providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
+  });
+  const ids = new Set(items.map((i) => i.id));
+  const clamp = (n: number) => Math.max(0, Math.min(1, n));
+  return object.verdicts
+    .filter((v) => ids.has(v.id))
+    .map((v) => {
+      const fun = clamp(v.fun),
+        fit = clamp(v.fit);
+      return {
+        id: v.id,
+        fun,
+        fit,
+        aligned: fun >= FUN_MIN && fit >= FIT_MIN,
+        confidence: Math.round(((fun + fit) / 2) * 100) / 100,
+        tags: cleanTags(v.tags, vocabulary),
+        why: v.why.trim().slice(0, 220),
+      };
+    });
+}
+// Keep vocabulary tags, plus at most one new one.
+function cleanTags(tags: string[], vocabulary: string[]) {
+  const vocab = new Set(vocabulary);
+  return [
+    ...tags.filter((t) => vocab.has(t)),
+    ...tags.filter((t) => !vocab.has(t)).slice(0, 1).map((t) => t.toLowerCase().slice(0, 30)),
+  ].slice(0, 3);
+}
+
 export async function judgeBatch(
-  compass: Compass,
+  compass: JudgeTarget,
   vocabulary: string[],
   items: JudgeInput[],
 ): Promise<Verdict[]> {
   if (process.env.FEED_LLM_DISABLED === '1') throw new Error('The feed judge is disabled (FEED_LLM_DISABLED=1).');
   if (!items.length) return [];
+  if (compass.kind === 'taste') return judgeTaste(compass, vocabulary, items);
   const { object } = await generateObject({
     model: vertex(JUDGE_MODEL()),
     schema: Verdicts,
@@ -75,20 +157,23 @@ export async function judgeBatch(
     providerOptions: { google: { thinkingConfig: { thinkingBudget: 0 } } },
   });
   const ids = new Set(items.map((i) => i.id));
-  const vocab = new Set(vocabulary);
   return object.verdicts
     .filter((v) => ids.has(v.id))
     .map((v) => ({
       ...v,
       confidence: Math.max(0, Math.min(1, v.confidence)),
       aligned: v.aligned && v.confidence >= 0.45,
-      // Keep vocabulary tags, plus at most one new one.
-      tags: [
-        ...v.tags.filter((t) => vocab.has(t)),
-        ...v.tags.filter((t) => !vocab.has(t)).slice(0, 1).map((t) => t.toLowerCase().slice(0, 30)),
-      ].slice(0, 3),
+      tags: cleanTags(v.tags, vocabulary),
       why: v.why.trim().slice(0, 220),
     }));
 }
 
-export const judgedBy = (kind: CompassKind) => `${JUDGE_MODEL()}:${kind}`;
+export const judgedBy = (kind: Lens) => `${JUDGE_MODEL()}:${kind}`;
+// The alignment a verdict becomes in the feed.
+export const alignmentOf = (v: Verdict, kind: Lens) => ({
+  confidence: v.confidence,
+  tags: v.tags,
+  why: v.why,
+  judgedBy: judgedBy(kind),
+  ...(v.fun !== undefined ? { fun: v.fun, fit: v.fit } : {}),
+});

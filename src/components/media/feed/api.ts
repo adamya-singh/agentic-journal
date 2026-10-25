@@ -1,8 +1,10 @@
 import type { FeedCard, FeedFilter, FeedPage, FeedSummary } from '@/lib/media/feed-store';
 import type { FeedView, CompassView } from '@/lib/media/feed-view';
-import type { CompassKind, FeedSource } from '@/lib/media/feed-types';
+import type { FeedSource, Lens, Track } from '@/lib/media/feed-types';
 
-export type { FeedCard, FeedFilter, FeedPage, FeedSummary, FeedView, CompassView, CompassKind, FeedSource };
+// On the client a "compass" is any lens: long-term, short-term, or Unwind's taste card.
+export type CompassKind = Lens;
+export type { FeedCard, FeedFilter, FeedPage, FeedSummary, FeedView, CompassView, FeedSource, Lens, Track };
 
 export async function feedApi<T>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(`/api/media/${path}`, {

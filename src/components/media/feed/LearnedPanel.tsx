@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Compass, Bot, ChevronDown, TrendingDown, TrendingUp } from 'lucide-react';
+import Link from 'next/link';
+import { Compass, Bot, ChevronDown, Moon, TrendingDown, TrendingUp } from 'lucide-react';
 import { ago, shortDate, type CompassKind, type CompassView, type FeedSummary } from './api';
 
 function Section({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
@@ -21,8 +22,22 @@ export function CompassCard({ compass }: { compass: CompassView }) {
     ? [compass.period.start && shortDate(compass.period.start), compass.period.end && shortDate(compass.period.end)].filter(Boolean).join(' – ') || compass.period.label
     : undefined;
   return (
-    <Section title={compass.kind === 'long' ? 'Long-term compass' : 'Short-term compass'} icon={<Compass size={13} />}>
-      {compass.available ? (
+    <Section
+      title={compass.kind === 'taste' ? 'Taste card' : compass.kind === 'long' ? 'Long-term compass' : 'Short-term compass'}
+      icon={compass.kind === 'taste' ? <Moon size={13} /> : <Compass size={13} />}
+    >
+      {compass.kind === 'taste' ? (
+        <>
+          <p className="text-[13px] leading-relaxed text-gray-700 dark:text-gray-300">{compass.excerpt}</p>
+          <Link href="/media/unwind/taste" className="mt-2 inline-flex text-xs font-semibold text-violet-600 hover:underline dark:text-violet-300">
+            Edit your taste card →
+          </Link>
+          <p className="mt-2.5 text-[11px] text-gray-400">Separate from Pretrain: votes here never move your Pretrain feed.</p>
+          {!compass.usable && (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">Nothing has been judged against it yet. OpenClaw fills Unwind on its next pass.</p>
+          )}
+        </>
+      ) : compass.available ? (
         <>
           {compass.title && <p className="font-[family-name:var(--font-instrument-serif)] text-xl leading-tight">{compass.title}</p>}
           {period && <p className="mb-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">{period}</p>}

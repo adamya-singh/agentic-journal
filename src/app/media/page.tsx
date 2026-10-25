@@ -21,6 +21,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { Poster, Ranker, TIER_CLASS, VideoFrame } from '@/components/media/Ranker';
 import { YouTubeIntake, YouTubeMark } from '@/components/media/YouTubeIntake';
 import { FeedTeaser } from '@/components/media/feed/FeedTeaser';
+import { UnwindTeaser } from '@/components/media/unwind/UnwindTeaser';
 import { TbpnTeaser } from '@/components/media/tbpn/TbpnTeaser';
 import { TIERS, isImdb, outOfSync, pendingCount, rankedList, unsorted } from '@/lib/media/ranking';
 import type { MediaTitle, MediaView, Tier } from '@/lib/media/types';
@@ -500,7 +501,11 @@ export default function MediaPage() {
         </div>
         {/* These load their own data, so they start alongside the library, not after it. */}
         <TbpnTeaser />
-        <FeedTeaser />
+        {/* Two tracks, same size: Pretrain first (it stacks on top on a phone). */}
+        <div className="mb-8 grid gap-4 md:grid-cols-2">
+          <FeedTeaser />
+          <UnwindTeaser />
+        </div>
         <YouTubeIntake
           syncing={youtubeSyncing}
           onLibraryChanged={() => void load()}
