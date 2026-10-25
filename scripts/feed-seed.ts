@@ -175,8 +175,8 @@ async function write() {
     const res = addTo(f, items, 'claude:seed');
     rejectIn(f, notAligned, compassKind);
     // New tags the judge coined join the vocabulary so OpenClaw keeps using them.
+    // Unwind's vocabulary stays curated: one-off tags the judge coins stay on their items only.
     if (taste) {
-      f.tasteVocabulary = [...new Set([...(f.tasteVocabulary ?? Object.keys(UNWIND_VOCABULARY)), ...res.unknownTags])];
       f.tasteJudged = { version: readUnwind().taste.version, at: new Date().toISOString() };
     } else f.vocabulary = [...new Set([...f.vocabulary, ...res.unknownTags])];
     f.curator.runs.push({

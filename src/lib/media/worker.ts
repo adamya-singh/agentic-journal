@@ -111,10 +111,11 @@ export async function processNext(
       if (job.action === 'rating') await syncRatings();
     } catch (e) {
       // The job record keeps a safe message; the log gets the first line of the raw cause.
-      if (!(e instanceof IMDbError))
+      const raw = e instanceof IMDbError ? (e.cause as Error | undefined) : (e as Error);
+      if (raw)
         console.error(
-          `Media ${job.action} job failed:`,
-          String((e as Error)?.message).split('\n')[0],
+          `Media ${job.action} job failed${job.titleId ? ` (${job.titleId})` : ''}:`,
+          String(raw?.message).split('\n')[0].slice(0, 300),
         );
       await finish(
         job,

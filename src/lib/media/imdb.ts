@@ -71,6 +71,7 @@ export async function connectIMDb(expectedId?: string): Promise<IMDbSession> {
     // Do not surface raw process/browser errors, which can include authentication URLs.
     throw new IMDbError(
       'Could not access IMDb. Check the local OpenClaw browser, login, and any CAPTCHA, then retry.',
+      { cause: e },
     );
   }
 }

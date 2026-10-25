@@ -64,7 +64,6 @@ export async function judgeFeed(o: {
     );
     rejectIn(feed, [...ruledOut, ...verdicts.filter((v) => !v.aligned).map((v) => v.id)], o.compass);
     if (o.compass === 'taste') {
-      feed.tasteVocabulary = [...new Set([...vocabularyOf(feed, 'taste'), ...res.unknownTags])];
       feed.tasteJudged = { version: target.kind === 'taste' ? target.version : 0, at: new Date().toISOString() };
     } else feed.vocabulary = [...new Set([...feed.vocabulary, ...res.unknownTags])];
     if (o.compass === 'short' && period && target.kind === 'short')
