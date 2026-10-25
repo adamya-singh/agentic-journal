@@ -158,7 +158,7 @@ export default function TastePage() {
                 {draft.moods.map((m, i) => (
                   <li key={i} className="flex items-center gap-2">
                     <label className="sr-only" htmlFor={`mood-${i}`}>Mood</label>
-                    <input id={`mood-${i}`} value={m.name} onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={`${input} !w-40 shrink-0 font-semibold`} />
+                    <input id={`mood-${i}`} value={m.name} onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={`${input} !w-48 shrink-0 font-semibold`} />
                     <label className="sr-only" htmlFor={`mood-ex-${i}`}>Examples</label>
                     <input id={`mood-ex-${i}`} value={m.examples} placeholder="Examples" onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, examples: e.target.value } : x)) })} className={input} />
                     <button type="button" aria-label={`Remove ${m.name}`} onClick={() => edit({ moods: draft.moods.filter((_, j) => j !== i) })} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10">

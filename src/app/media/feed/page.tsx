@@ -343,7 +343,7 @@ export default function FeedPage() {
           {/* Hero */}
           <div className={`relative mb-5 overflow-hidden rounded-3xl bg-gradient-to-br px-5 py-6 text-white sm:px-8 sm:py-8 ${unwind ? 'from-[#120a26] via-[#3b1d62] to-[#d9706a] shadow-[0_30px_60px_-30px_rgba(40,10,60,.75)]' : 'from-[#0b1730] via-[#1b3f6e] to-[#c9825a] shadow-[0_30px_60px_-30px_rgba(11,23,48,.7)]'}`}>
             <div aria-hidden className={`pointer-events-none absolute -bottom-28 -right-14 h-44 w-44 opacity-80 sm:-bottom-24 sm:right-24 sm:h-56 sm:w-56 sm:opacity-90 rounded-full blur-[1px] ${unwind ? 'sm:-bottom-36 bg-[radial-gradient(circle_at_50%_45%,#ffe2c4_0_24%,#ffab7a_48%,#e8606a_72%,transparent_74%)]' : 'bg-[radial-gradient(circle_at_50%_45%,#fff6d8_0_28%,#ffd27a_50%,#ff9a3c_75%,transparent_76%)]'}`} />
-            {unwind && <div aria-hidden className="pointer-events-none absolute right-10 top-8 h-6 w-6 rounded-full shadow-[7px_-5px_0_0_#f6e7c8] sm:right-28" />}
+            {unwind && <div aria-hidden className="pointer-events-none absolute right-[38%] top-16 h-6 w-6 rounded-full shadow-[7px_-5px_0_0_#f6e7c8]" />}
             <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(1px_1px_at_12%_22%,rgba(255,255,255,.9),transparent_60%),radial-gradient(1px_1px_at_32%_12%,rgba(255,255,255,.7),transparent_60%),radial-gradient(1.5px_1.5px_at_58%_30%,rgba(255,255,255,.8),transparent_60%),radial-gradient(1px_1px_at_76%_16%,rgba(255,255,255,.6),transparent_60%),radial-gradient(1px_1px_at_88%_40%,rgba(255,255,255,.7),transparent_60%)]" />
             <div className="relative max-w-3xl">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-3">

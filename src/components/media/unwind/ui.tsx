@@ -25,7 +25,7 @@ export function DuskSky({ sun = 'lg' }: { sun?: 'lg' | 'sm' }) {
         aria-hidden
         className={`pointer-events-none absolute rounded-full bg-[radial-gradient(circle_at_50%_45%,#ffe2c4_0_24%,#ffab7a_48%,#e8606a_72%,transparent_74%)] ${sun === 'lg' ? '-bottom-40 right-6 h-72 w-72 sm:right-20' : '-bottom-28 right-8 h-48 w-48'}`}
       />
-      <div aria-hidden className="pointer-events-none absolute right-10 top-7 h-6 w-6 rounded-full shadow-[7px_-5px_0_0_#f6e7c8] sm:right-24" />
+      <div aria-hidden className="pointer-events-none absolute right-[38%] top-14 h-6 w-6 rounded-full shadow-[7px_-5px_0_0_#f6e7c8]" />
     </>
   );
 }
