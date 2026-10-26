@@ -13,6 +13,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { jobsDataDir } from '@/lib/backend-data';
 import type {
+  AssessmentPreview,
   JobApplicationCategory,
   JobApplicationCategoryCounts,
   JobApplicationAnswer,
@@ -1795,8 +1796,10 @@ function normalizeApplicationRecord(
   if (isRecord(value.assessmentTask)) {
     const taskId = normalizeString(value.assessmentTask.taskId);
     const createdAt = normalizeString(value.assessmentTask.createdAt);
+    const preview = normalizeAssessmentPreview(value.assessmentTask.preview);
     if (taskId && createdAt) record.assessmentTask = { taskId, createdAt,
       ...(normalizeString(value.assessmentTask.emailDueDate) ? { emailDueDate: normalizeString(value.assessmentTask.emailDueDate) } : {}),
+      ...(preview ? { preview } : {}),
     };
   }
   if (isRecord(value.interviewTask)) {
@@ -2157,6 +2160,25 @@ function normalizePageUrl(value: string | undefined): string {
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+const PREVIEW_STATUSES: AssessmentPreview['status'][] = ['requested', 'saved', 'blocked', 'failed'];
+
+function normalizeAssessmentPreview(value: unknown): AssessmentPreview | undefined {
+  if (!isRecord(value)) return undefined;
+  const url = normalizeString(value.url);
+  const status = PREVIEW_STATUSES.find((item) => item === value.status);
+  if (!url || !status) return undefined;
+  const optional = (key: 'requestedAt' | 'at' | 'processId' | 'noteId' | 'error') =>
+    normalizeString(value[key]) ? { [key]: normalizeString(value[key]) } : {};
+  const summary = Array.isArray(value.summary)
+    ? value.summary.map(normalizeString).filter(Boolean)
+    : [];
+  return {
+    url, status, attempts: normalizeNonNegativeInteger(value.attempts),
+    ...optional('requestedAt'), ...optional('at'), ...optional('processId'), ...optional('noteId'), ...optional('error'),
+    ...(summary.length ? { summary } : {}),
+  };
 }
 
 function normalizeNonNegativeInteger(value: unknown): number {

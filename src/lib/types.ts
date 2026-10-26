@@ -262,6 +262,27 @@ export type JobEmployerStage = 'received' | 'assessment' | 'interview' | 'offer'
 
 export type JobSimplifyTrackerStatus = 'Applied' | 'Screen' | 'Interviewing' | 'Offer' | 'Rejected';
 
+/**
+ * OpenClaw opening the OA link before Adamya does, without pressing start, and
+ * saving what the landing page shows. One per OA link; a new link means a new preview.
+ */
+export interface AssessmentPreview {
+  /** The OA link this preview is for. */
+  url: string;
+  /** requested: OpenClaw was woken for it; saved: the page was captured; blocked: a sign-in or similar wall was all it could see; failed: the run broke. */
+  status: 'requested' | 'saved' | 'blocked' | 'failed';
+  attempts: number;
+  requestedAt?: string;
+  /** When OpenClaw saved, gave up on, or failed the preview. */
+  at?: string;
+  /** Short bullets shown on the OA task: format, time limit, rules. */
+  summary?: string[];
+  /** The full capture: an 'oa' note in the Interviews casebook. */
+  processId?: string;
+  noteId?: string;
+  error?: string;
+}
+
 export interface JobEmployerUpdate {
   enrichedAt?: string;
   eventKind?: 'stage-change' | 'assessment-reminder' | 'still-reviewing';
@@ -402,7 +423,7 @@ export interface JobApplicationRecord {
   employerStage?: JobEmployerStage;
   employerUpdates?: JobEmployerUpdate[];
   /** The journal task created when the employer sent an online assessment. */
-  assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string };
+  assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string; preview?: AssessmentPreview };
   /** The journal task created when the employer invited Adamya to book an interview. */
   interviewTask?: { taskId: string; createdAt: string; gmailMessageId?: string };
   /** Live worker progress report; only meaningful while a lease is active. */

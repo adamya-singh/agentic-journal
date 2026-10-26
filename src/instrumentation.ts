@@ -42,10 +42,17 @@ export async function register(): Promise<void> {
   syncJobEmailUpdatesCron().then((result) => {
     if (!result.success) console.error('Job email updates cron reconcile failed:', result.error);
   }).catch((error) => console.error('Job email updates cron reconcile failed:', error));
+  // OA links that still have no preview (OpenClaw opens them without starting): retried here.
+  const { wakeAssessmentPreviewsIfDue } = await import('./app/api/jobs/assessment-preview-utils');
+  const wakePreviews = () => {
+    wakeAssessmentPreviewsIfDue().catch((error) => console.error('OA preview wake failed:', error));
+  };
+  setTimeout(wakePreviews, 90_000).unref();
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {
       console.error('Scheduled job application reconcile failed:', error);
     });
+    wakePreviews();
   }, RECONCILE_INTERVAL_MS);
   interval.unref();
 

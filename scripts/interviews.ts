@@ -16,7 +16,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { register } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
+// OpenClaw runs this from its own workspace, and the data dir otherwise follows the working directory.
+process.env.BACKEND_DATA_DIR ||= path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'backend', 'data');
 register('./test-alias-loader.mjs', import.meta.url);
 const store = await import('../src/lib/interviews/store.ts');
 const actions = await import('../src/lib/interviews/actions.ts');

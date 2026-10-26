@@ -3,6 +3,13 @@ import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { processDir, readInterviews, readNoteBody } from '@/lib/interviews/store';
 
+// Attached files: the offer letter PDF, and what OpenClaw saved from an OA page (screenshots, prompt files).
+const RAW_TYPES: Record<string, string> = {
+  pdf: 'application/pdf', md: 'text/markdown; charset=utf-8', txt: 'text/plain; charset=utf-8', csv: 'text/csv; charset=utf-8',
+  json: 'application/json', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+  zip: 'application/zip', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
@@ -28,7 +35,7 @@ export async function GET(request: NextRequest) {
   try {
     if (q.get('raw') === '1') {
       const file = path.join(processDir(process), path.basename(note.file));
-      const type = note.file.endsWith('.pdf') ? 'application/pdf' : 'text/markdown; charset=utf-8';
+      const type = RAW_TYPES[path.extname(note.file).slice(1).toLowerCase()] ?? 'application/octet-stream';
       return new NextResponse(fs.readFileSync(file), {
         headers: { 'content-type': type, 'content-disposition': `inline; filename="${path.basename(note.file)}"`, 'x-content-type-options': 'nosniff' },
       });

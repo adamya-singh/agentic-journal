@@ -126,6 +126,8 @@ export interface RoundView {
 
 export interface NoteView extends Omit<StoredNote, 'file' | 'importedFrom'> {
   path?: string;
+  /** For attached files: the extension, so the page can show an image inline. */
+  ext?: string;
   draft?: boolean;
 }
 

@@ -66,7 +66,7 @@ export function Casebook() {
   }, []);
   React.useEffect(() => { void load(); }, [load]);
 
-  // Deep links: /jobs/interviews?process=<id|listing:ID>&view=questions
+  // Deep links: /jobs/interviews?process=<id|listing:ID>&view=questions, or &note=<id> to open one note
   const linked = React.useRef(false);
   React.useEffect(() => {
     if (!data || linked.current) return;
@@ -76,7 +76,8 @@ export function Casebook() {
     if (v === 'questions' || v === 'people') setView(v);
     const want = params.get('process');
     const p = want && data.processes.find((x) => x.key === want || `listing:${x.listingId}` === want || x.listingId === want);
-    if (p) { setSeason(p.season); setSel(sid(p)); }
+    const note = params.get('note');
+    if (p) { setSeason(p.season); setSel(sid(p)); if (note && p.notes.some((n) => n.id === note)) setDoc(note); }
   }, [data]);
 
   const now = React.useMemo(() => new Date(data?.now ?? Date.now()), [data?.now]);
@@ -536,7 +537,10 @@ function Reader({ p, note, reload }: { p: ProcessView; note?: NoteView; reload: 
         {note.path && <span className="p">from ~/.openclaw/workspace/{note.path}</span>}
       </div>
       {note.kind === 'file' ? (
-        <div className="empty"><Icon name="clip" /><div style={{ margin: '8px 0 12px' }}><b style={{ color: 'var(--ink)' }}>{note.title}</b><br />{kb(note.bytes)}</div><a className="btn" href={raw} target="_blank" rel="noreferrer"><Icon name="ext" small />Open the PDF</a></div>
+        ['png', 'jpg', 'jpeg', 'webp'].includes(note.ext ?? '')
+          // eslint-disable-next-line @next/next/no-img-element -- a private screenshot served by this app
+          ? <a href={raw} target="_blank" rel="noreferrer"><img src={raw} alt={note.title} style={{ maxWidth: '100%', border: '1px solid var(--line)', borderRadius: 8 }} /></a>
+          : <div className="empty"><Icon name="clip" /><div style={{ margin: '8px 0 12px' }}><b style={{ color: 'var(--ink)' }}>{note.title}</b><br />{kb(note.bytes)}</div><a className="btn" href={raw} target="_blank" rel="noreferrer"><Icon name="ext" small />{note.ext === 'pdf' ? 'Open the PDF' : 'Open the file'}</a></div>
       ) : editing ? (
         <form style={{ display: 'grid', gap: 10 }} onSubmit={async (e) => {
           e.preventDefault();

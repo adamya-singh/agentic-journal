@@ -148,8 +148,8 @@ export function reachOf(view: Pick<ProcessView, 'outcome' | 'rounds'>): number {
 function noteViews(stored: InterviewProcess | undefined): NoteView[] {
   return (stored?.notes ?? []).map(({ importedFrom, ...n }) => {
     const { file, ...rest } = n;
-    void file;
-    return { ...rest, ...(importedFrom ? { path: importedFrom } : {}) };
+    const ext = n.kind === 'file' ? file.split('.').pop()?.toLowerCase() : undefined;
+    return { ...rest, ...(importedFrom ? { path: importedFrom } : {}), ...(ext ? { ext } : {}) };
   });
 }
 
