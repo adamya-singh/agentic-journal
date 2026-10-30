@@ -26,6 +26,9 @@ const SYNC_RECOGNIZE_MAX_PIECE_SECONDS = 55;
 // Clips up to this long skip batch recognition, which has hung for minutes
 // and returned truncated transcripts on the worker's short rolling clips.
 const DEFAULT_SYNC_MAX_SECONDS = 300;
+// The client library lets a Recognize call wait 5000 seconds; a 55-second
+// piece normally answers in under 10.
+const DEFAULT_SYNC_REQUEST_TIMEOUT_SECONDS = 60;
 const DEFAULT_MODEL = 'chirp_3';
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 const DEFAULT_LOCATION = 'us';
@@ -481,6 +484,10 @@ function resolveConfig(args, timezone) {
       process.env.OMI_STT_OPERATION_TIMEOUT_SECONDS,
       DEFAULT_OPERATION_TIMEOUT_SECONDS,
     ),
+    syncRequestTimeoutSeconds: parsePositiveInteger(
+      process.env.OMI_STT_SYNC_REQUEST_TIMEOUT_SECONDS,
+      DEFAULT_SYNC_REQUEST_TIMEOUT_SECONDS,
+    ),
     syncMaxSeconds: parseNonNegativeInteger(
       process.env.OMI_STT_SYNC_MAX_SECONDS,
       DEFAULT_SYNC_MAX_SECONDS,
@@ -791,6 +798,7 @@ async function recognizeSegmentInPieces({ speechClient, config, segment, localSe
       ]);
       const [response] = await speechClient.recognize(
         buildRecognizeRequest({ config, content: await fsp.readFile(piecePath) }),
+        { timeout: secondsToMillis(config.syncRequestTimeoutSeconds) },
       );
       responses.push(toJsonSafe(response));
     } finally {
@@ -1157,6 +1165,7 @@ export {
   formatLocalDate,
   planRecognizePieces,
   shouldUseSyncRecognize,
+  writeStatus,
   getValidTimezone,
   readManifest,
   readManifestMaybe,

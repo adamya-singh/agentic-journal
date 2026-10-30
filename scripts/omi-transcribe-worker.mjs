@@ -15,6 +15,7 @@ import {
   readStatus,
   resolveConfig,
   runTranscribeDay,
+  writeStatus,
 } from './omi-transcribe-day.mjs';
 
 const DEFAULT_POLL_SECONDS = 15;
@@ -82,6 +83,9 @@ async function runWorkerCycle({ args, workerConfig }) {
       workerConfig.timezone,
     );
     const completedChunkIds = collectCompletedChunkIds(date, manifestEntries);
+    if (!args.dryRun) {
+      pruneSupersededSegments(date, completedChunkIds);
+    }
     const rollingSegments = buildRollingSegments(manifestEntries, transcribeConfig, {
       completedChunkIds,
       batchSeconds: workerConfig.batchSeconds,
@@ -156,6 +160,34 @@ function collectCompletedChunkIds(date, manifestEntries = []) {
     addChunkIdsFromCompletedRange(chunkIds, manifestEntries, segment);
   }
   return chunkIds;
+}
+
+// Rolling clips are re-cut as audio arrives, so a failed clip's chunks can
+// later be transcribed under a different id. Drop those leftovers so they
+// stop counting as failed.
+function pruneSupersededSegments(date, completedChunkIds) {
+  const status = readStatus(date);
+  const supersededIds = findSupersededSegmentIds(status.segments, completedChunkIds);
+  if (supersededIds.length === 0) {
+    return;
+  }
+  for (const id of supersededIds) {
+    delete status.segments[id];
+  }
+  writeStatus(date, status);
+  console.log(`Omi worker ${date}: dropped superseded batches ${supersededIds.join(', ')}`);
+}
+
+function findSupersededSegmentIds(segments = {}, completedChunkIds = new Set()) {
+  return Object.entries(segments)
+    .filter(
+      ([_id, segment]) =>
+        segment.status !== 'completed' &&
+        Array.isArray(segment.chunkIds) &&
+        segment.chunkIds.length > 0 &&
+        segment.chunkIds.every((chunkId) => completedChunkIds.has(chunkId)),
+    )
+    .map(([id]) => id);
 }
 
 function addChunkIdsFromCompletedRange(chunkIds, manifestEntries, segment) {
@@ -320,4 +352,10 @@ function sleep(milliseconds) {
   });
 }
 
-export { isRetryable, resolveDates, resolveWorkerConfig, runWorkerCycle };
+export {
+  findSupersededSegmentIds,
+  isRetryable,
+  resolveDates,
+  resolveWorkerConfig,
+  runWorkerCycle,
+};

@@ -35,6 +35,8 @@ test('the sync limit defaults to five minutes and accepts 0', async () => {
     assert.equal(resolveConfig({}, 'America/New_York').syncMaxSeconds, 300);
     process.env.OMI_STT_SYNC_MAX_SECONDS = '0';
     assert.equal(resolveConfig({}, 'America/New_York').syncMaxSeconds, 0);
+    // Each sync call gets its own deadline instead of the library's 5000 seconds.
+    assert.equal(resolveConfig({}, 'America/New_York').syncRequestTimeoutSeconds, 60);
   } finally {
     if (original === undefined) delete process.env.OMI_STT_SYNC_MAX_SECONDS;
     else process.env.OMI_STT_SYNC_MAX_SECONDS = original;
