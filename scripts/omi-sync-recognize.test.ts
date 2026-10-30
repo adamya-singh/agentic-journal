@@ -8,12 +8,37 @@ import {
   shouldUseSyncRecognize,
 } from './omi-transcribe-day.mjs';
 
-test('first attempts use batch recognition and every retry uses sync', () => {
-  assert.equal(shouldUseSyncRecognize(undefined), false);
-  assert.equal(shouldUseSyncRecognize({ status: 'pending', retryCount: 0 }), false);
-  assert.equal(shouldUseSyncRecognize({ status: 'failed', retryCount: 1 }), true);
+test('short clips use sync from the first try and long clips use batch', () => {
+  const config = { syncMaxSeconds: 300 };
+  const workerClip = { durationSeconds: 90.4 };
+  const manualSegment = { durationSeconds: 600 };
+  assert.equal(shouldUseSyncRecognize(undefined, workerClip, config), true);
+  assert.equal(shouldUseSyncRecognize({ status: 'pending', retryCount: 0 }, workerClip, config), true);
+  assert.equal(shouldUseSyncRecognize(undefined, manualSegment, config), false);
+  // Setting the limit to 0 sends first tries back to batch.
+  assert.equal(shouldUseSyncRecognize(undefined, workerClip, { syncMaxSeconds: 0 }), false);
+});
+
+test('every retry uses sync, whatever the clip length', () => {
+  const config = { syncMaxSeconds: 300 };
+  const manualSegment = { durationSeconds: 600 };
+  assert.equal(shouldUseSyncRecognize({ status: 'failed', retryCount: 1 }, manualSegment, config), true);
   // A worker restart mid-retry leaves the batch "running" with its count.
-  assert.equal(shouldUseSyncRecognize({ status: 'running', retryCount: 2 }), true);
+  assert.equal(shouldUseSyncRecognize({ status: 'running', retryCount: 2 }, manualSegment, config), true);
+});
+
+test('the sync limit defaults to five minutes and accepts 0', async () => {
+  const { resolveConfig } = await import('./omi-transcribe-day.mjs');
+  const original = process.env.OMI_STT_SYNC_MAX_SECONDS;
+  try {
+    delete process.env.OMI_STT_SYNC_MAX_SECONDS;
+    assert.equal(resolveConfig({}, 'America/New_York').syncMaxSeconds, 300);
+    process.env.OMI_STT_SYNC_MAX_SECONDS = '0';
+    assert.equal(resolveConfig({}, 'America/New_York').syncMaxSeconds, 0);
+  } finally {
+    if (original === undefined) delete process.env.OMI_STT_SYNC_MAX_SECONDS;
+    else process.env.OMI_STT_SYNC_MAX_SECONDS = original;
+  }
 });
 
 test('pieces split the clip evenly and stay under the sync audio limit', () => {

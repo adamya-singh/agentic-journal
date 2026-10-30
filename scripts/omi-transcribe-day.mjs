@@ -23,6 +23,9 @@ const DEFAULT_OPERATION_POLL_SECONDS = 15;
 const DEFAULT_OPERATION_TIMEOUT_SECONDS = 300;
 // Synchronous Recognize takes at most 60 seconds of audio per request.
 const SYNC_RECOGNIZE_MAX_PIECE_SECONDS = 55;
+// Clips up to this long skip batch recognition, which has hung for minutes
+// and returned truncated transcripts on the worker's short rolling clips.
+const DEFAULT_SYNC_MAX_SECONDS = 300;
 const DEFAULT_MODEL = 'chirp_3';
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 const DEFAULT_LOCATION = 'us';
@@ -181,9 +184,8 @@ async function runTranscribeDay(args, options = {}) {
       `\nTranscribing ${segment.id} (${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)})`,
     );
     const existingSegmentStatus = status.segments[segment.id];
-    // Batch operations sometimes hang or fail inside Google for one clip, so
-    // retries skip GCS and the long-running operation entirely.
-    const useSyncRecognize = shouldUseSyncRecognize(existingSegmentStatus);
+    // Short clips and retries skip GCS and the long-running batch operation.
+    const useSyncRecognize = shouldUseSyncRecognize(existingSegmentStatus, segment, config);
     const shouldResumeOperation =
       !useSyncRecognize &&
       existingSegmentStatus?.status === 'running' &&
@@ -227,7 +229,7 @@ async function runTranscribeDay(args, options = {}) {
       let responseJson;
       let fileResult;
       if (useSyncRecognize) {
-        console.log(`Retrying ${segment.id} with synchronous recognition`);
+        console.log(`Using synchronous recognition for ${segment.id}`);
         await concatenateSegment(segment, localSegmentPath, listPath);
         const pieces = await recognizeSegmentInPieces({
           speechClient,
@@ -478,6 +480,10 @@ function resolveConfig(args, timezone) {
     operationTimeoutSeconds: parsePositiveInteger(
       process.env.OMI_STT_OPERATION_TIMEOUT_SECONDS,
       DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    ),
+    syncMaxSeconds: parseNonNegativeInteger(
+      process.env.OMI_STT_SYNC_MAX_SECONDS,
+      DEFAULT_SYNC_MAX_SECONDS,
     ),
     timezone,
     finalize: args.finalize,
@@ -744,8 +750,11 @@ function buildBatchRecognizeRequest({ config, segment, gcsUri }) {
   };
 }
 
-function shouldUseSyncRecognize(existingSegmentStatus) {
-  return Number(existingSegmentStatus?.retryCount || 0) > 0;
+function shouldUseSyncRecognize(existingSegmentStatus, segment, config) {
+  if (Number(existingSegmentStatus?.retryCount || 0) > 0) {
+    return true;
+  }
+  return Number(segment?.durationSeconds || 0) <= Number(config?.syncMaxSeconds || 0);
 }
 
 function planRecognizePieces(audioSeconds, maxPieceSeconds = SYNC_RECOGNIZE_MAX_PIECE_SECONDS) {
@@ -1023,6 +1032,14 @@ function getValidTimezone(timezone) {
 function parsePositiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value, fallback) {
+  if (value === undefined || value === '') {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function firstNonEmpty(...values) {
