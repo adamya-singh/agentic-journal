@@ -5,6 +5,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mediaRoot, withLock } from './store.ts';
 import { episodeKey } from './catalog.ts';
+import { stackConfig } from './stack-config.ts';
 
 // Your local library: video files you put in a folder, matched to the shows
 // and films in Unwind and made playable in the browser. Anything that can put
@@ -131,7 +132,8 @@ export const normTitle = (s: string) =>
 export const guessKey = (g: Guess) => (g.season !== undefined && g.number !== undefined ? episodeKey(g.season, g.number) : 'film');
 
 // ---- scanning ----
-function walk(dir: string, rootAbs: string, out: string[]) {
+function walk(dir: string, rootAbs: string, out: string[], managedRoot: string) {
+  if (dir === managedRoot || dir.startsWith(managedRoot + path.sep)) return;
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -141,7 +143,7 @@ function walk(dir: string, rootAbs: string, out: string[]) {
   for (const e of entries) {
     if (e.name.startsWith('.')) continue;
     const abs = path.join(dir, e.name);
-    if (e.isDirectory()) walk(abs, rootAbs, out);
+    if (e.isDirectory()) walk(abs, rootAbs, out, managedRoot);
     else if (e.isFile() && VIDEO.test(e.name) && !PARTIAL.test(e.name)) out.push(path.relative(rootAbs, abs));
   }
 }
@@ -151,7 +153,7 @@ export async function scan(now = Date.now()) {
   const root = libraryRoot();
   for (const d of [...LIBRARY_DIRS, READY]) fs.mkdirSync(path.join(root, d), { recursive: true, mode: 0o700 });
   const rels: string[] = [];
-  walk(path.resolve(root), path.resolve(root), rels);
+  walk(path.resolve(root), path.resolve(root), rels, path.resolve(stackConfig().dataRoot, 'library'));
   return withLibrary((l) => {
     const seen = new Set<string>();
     const res = { added: 0, settled: 0, removed: 0 };

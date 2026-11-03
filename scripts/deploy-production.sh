@@ -20,6 +20,8 @@ OMI_WORKER_SERVICE="agentic-journal-omi-worker.service"
 BOOKMARKS_WORKER_SERVICE="agentic-journal-bookmarks-worker.service"
 MEDIA_WORKER_SERVICE="agentic-journal-media-worker.service"
 LIBRARY_WORKER_SERVICE="agentic-journal-library-worker.service"
+ACQUISITION_WORKER_SERVICE="agentic-journal-acquisition-worker.service"
+ACQUISITION_GUARD_SERVICE="agentic-journal-acquisition-guard.service"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
@@ -110,12 +112,16 @@ install_unit_if_changed "$OMI_WORKER_SERVICE"
 install_unit_if_changed "$BOOKMARKS_WORKER_SERVICE"
 install_unit_if_changed "$MEDIA_WORKER_SERVICE"
 install_unit_if_changed "$LIBRARY_WORKER_SERVICE"
+install_unit_if_changed "$ACQUISITION_WORKER_SERVICE"
+install_unit_if_changed "$ACQUISITION_GUARD_SERVICE"
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$PROD_SERVICE" >/dev/null
 systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$BOOKMARKS_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$MEDIA_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$LIBRARY_WORKER_SERVICE" >/dev/null
+systemctl_cmd enable "$ACQUISITION_WORKER_SERVICE" >/dev/null
+systemctl_cmd enable "$ACQUISITION_GUARD_SERVICE" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."
@@ -124,6 +130,8 @@ systemctl_cmd stop "$OMI_WORKER_SERVICE" || true
 systemctl_cmd stop "$BOOKMARKS_WORKER_SERVICE" || true
 systemctl_cmd stop "$MEDIA_WORKER_SERVICE" || true
 systemctl_cmd stop "$LIBRARY_WORKER_SERVICE" || true
+systemctl_cmd stop "$ACQUISITION_WORKER_SERVICE" || true
+systemctl_cmd stop "$ACQUISITION_GUARD_SERVICE" || true
 systemctl_cmd stop "$PROD_SERVICE" || true
 
 echo
@@ -181,6 +189,8 @@ restore_previous_build() {
   systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
   systemctl_cmd start "$MEDIA_WORKER_SERVICE"
   systemctl_cmd start "$LIBRARY_WORKER_SERVICE"
+  systemctl_cmd start "$ACQUISITION_WORKER_SERVICE"
+  systemctl_cmd start "$ACQUISITION_GUARD_SERVICE"
   wait_for_http "Next root" "http://127.0.0.1:3000/" 60 || true
 }
 
@@ -219,6 +229,8 @@ systemctl_cmd start "$OMI_WORKER_SERVICE"
 systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
 systemctl_cmd start "$MEDIA_WORKER_SERVICE"
 systemctl_cmd start "$LIBRARY_WORKER_SERVICE"
+systemctl_cmd start "$ACQUISITION_WORKER_SERVICE"
+systemctl_cmd start "$ACQUISITION_GUARD_SERVICE"
 
 echo
 echo "Verifying local endpoints..."

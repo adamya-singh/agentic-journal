@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { acquisitionView } from '@/lib/media/acquisition-view';
+import { readAcquisitions, requestAcquisition, cancelAcquisition, retryAcquisition, stageAcquisition, knownTitle } from '@/lib/media/acquisition-store';
+import { createPlayback, progressPlayback, stopPlayback } from '@/lib/media/jellyfin-playback';
+import { readUnwind as acquisitionUnwind } from '@/lib/media/unwind-store';
+import { readState } from '@/lib/media/store';
 import { view, enqueue, feedback, rank, setFlags, syncRatings } from '@/lib/media/store';
 import {
   addText,
@@ -119,6 +124,7 @@ export async function GET(req: NextRequest) {
     const q = req.nextUrl.searchParams;
     const stream = action.match(/^unwind\/(?:stream\/([a-f0-9]{16})|subs\/([a-f0-9]{16})\/(\d{1,2}))$/);
     if (stream) return stream[1] ? serveLibrary(req, stream[1]) : serveLibrary(req, stream[2], Number(stream[3]));
+    if (action === 'acquisition') return result(acquisitionView());
     if (action === 'youtube') {
       const sort = z.enum(['videos', 'hours', 'recent']).catch('videos').parse(q.get('sort'));
       return result(summary(sort));
@@ -207,6 +213,48 @@ export async function POST(req: NextRequest) {
     );
   try {
     const action = req.nextUrl.pathname.replace('/api/media/', '');
+    if (action === 'acquisition/prepare') {
+      const { id } = z.object({ id: showId }).strict().parse(await req.json());
+      const t = knownTitle(id);
+      if (t.kind === 'series' && !acquisitionUnwind().shows[id]) {
+        const added = await addShows([{ id }], 'you');
+        if (added.unknown.length) throw new Error(added.unknown[0].reason);
+      }
+      const seasons = [...new Set(acquisitionUnwind().shows[id]?.episodes?.map((ep) => ep.season) || [])].sort((a, b) => a - b);
+      return result({ ...t, seasons, selected: readAcquisitions().requests[id]?.seasons || [] });
+    }
+    if (action === 'acquisition/request') {
+      const body = z.object({ id: showId, seasons: z.array(z.number().int().min(0).max(999)).max(1000).optional() }).strict().parse(await req.json());
+      const t = knownTitle(body.id);
+      if (t.kind === 'series') {
+        const known = new Set(acquisitionUnwind().shows[body.id]?.episodes?.map((ep) => ep.season) || []);
+        if (!body.seasons?.length || body.seasons.some((season) => !known.has(season))) throw new Error('Choose seasons from this title’s episode list.');
+      }
+      return result(await requestAcquisition(body.id, body.seasons), 202);
+    }
+    if (action === 'acquisition/bulk') {
+      const { ids } = z.object({ ids: z.array(showId).min(1).max(100) }).strict().parse(await req.json());
+      const titles = readState().titles;
+      const requested = readAcquisitions().requests;
+      if (ids.some((id) => !requested[id]?.wanted && !titles[id]?.download)) throw new Error('Bulk requests must already be selected to keep on disk.');
+      for (const id of new Set(ids)) await stageAcquisition(id);
+      return result(acquisitionView(), 202);
+    }
+    if (['acquisition/cancel', 'acquisition/retry'].includes(action)) {
+      const { id } = z.object({ id: showId }).strict().parse(await req.json());
+      if (action.endsWith('cancel')) await cancelAcquisition(id); else await retryAcquisition(id);
+      return result(acquisitionView());
+    }
+    if (action === 'playback/start') {
+      const body = z.object({ id: showId, key: epKey, audioIndex: z.number().int().min(0).max(100).optional(), bitrate: z.number().int().min(1_000_000).max(20_000_000).optional(), h264: z.boolean().optional() }).strict().parse(await req.json());
+      return result(await createPlayback(body));
+    }
+    if (['playback/progress', 'playback/stop'].includes(action)) {
+      const body = z.object({ token: z.string().regex(/^[a-f0-9]{64}$/), position: z.number().min(0).max(86400).optional(), paused: z.boolean().optional() }).strict().parse(await req.json());
+      if (action.endsWith('stop')) await stopPlayback(body.token);
+      else await progressPlayback(body.token, body.position || 0, body.paused);
+      return result({ ok: true });
+    }
     if (action === 'sync') return result({ jobId: await enqueue('sync') }, 202);
     if (action === 'feedback') {
       const body = z
@@ -310,6 +358,7 @@ export async function POST(req: NextRequest) {
     if (action === 'unwind/want') {
       const body = z.object({ id: showId, on: z.boolean() }).strict().parse(await req.json());
       await want(body.id, body.on);
+      if (body.on) await stageAcquisition(body.id); else await cancelAcquisition(body.id);
       return result(unwindView());
     }
     if (action === 'unwind/add') {
@@ -465,6 +514,7 @@ export async function POST(req: NextRequest) {
         .strict()
         .parse(await req.json());
       const title = await confirm(body.id, body.pick, body.settings);
+      if (body.settings.download) await stageAcquisition(body.pick);
       return result({ title: title.title, inbox: inboxView() });
     }
     if (action === 'inbox/clarify') {
@@ -497,6 +547,10 @@ export async function POST(req: NextRequest) {
         .strict()
         .parse(await req.json());
       const { id, ...flags } = body;
+      if (flags.download !== undefined) {
+        if (flags.download) await stageAcquisition(id); else await cancelAcquisition(id);
+        delete flags.download;
+      }
       await setFlags(id, flags);
       return result(view());
     }

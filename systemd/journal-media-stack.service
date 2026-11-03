@@ -1,0 +1,18 @@
+[Unit]
+Description=Journal media containers
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+ExecStartPre=/usr/bin/env node scripts/media-stack.ts check-storage
+ExecStart=/usr/bin/env node scripts/media-stack.ts up
+ExecStop=/usr/bin/env node scripts/media-stack.ts down
+TimeoutStartSec=180
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

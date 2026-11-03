@@ -2,9 +2,10 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Check, ChevronDown, Link2, Loader2, Search, SkipForward, Star, X } from 'lucide-react';
+import { Check, ChevronDown, Link2, Loader2, Search, SkipForward, X } from 'lucide-react';
 import { AppHeader } from '@/components/AppHeader';
 import { clock, feedApi } from '@/components/media/feed/api';
+import { KeepOnDisk } from '@/components/media/MediaDownloads';
 import { UnwindPlayer } from '@/components/media/unwind/UnwindPlayer';
 import { DUSK, DuskSky, PosterImg, Progress, minutesLabel, outline, primary } from '@/components/media/unwind/ui';
 import type { WatchView } from '@/lib/media/unwind-view';
@@ -53,15 +54,6 @@ function NoSource({ v, onChanged }: { v: WatchView; onChanged: () => void }) {
       setBusy(undefined);
     }
   };
-  const want = async () => {
-    setBusy('want');
-    try {
-      await feedApi('unwind/want', { id: v.show.id, on: !v.show.wanted });
-      onChanged();
-    } finally {
-      setBusy(undefined);
-    }
-  };
   return (
     <div className={`relative flex aspect-video flex-col justify-center overflow-hidden rounded-2xl ${DUSK} p-6 text-white sm:p-10`}>
       <DuskSky sun="sm" />
@@ -69,15 +61,14 @@ function NoSource({ v, onChanged }: { v: WatchView; onChanged: () => void }) {
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#ffc2a8]">Nothing plays this here yet</p>
         <h2 className="mt-1 text-xl font-bold sm:text-2xl">{v.show.kind === 'film' ? v.show.title : `${v.show.title} · ${v.episode.label}`}</h2>
         <p className="mt-2 text-sm text-white/80">
-          Put the file in your library’s inbox folder and it plays here once it is ready, or use an upload the studio posted itself.
+          Choose what to keep on disk below. Completed downloads will play here once they are ready, or use an upload the studio posted itself.
         </p>
         <div className="mt-4 flex flex-wrap gap-2">
+          <KeepOnDisk id={v.show.id} selected={v.show.wanted} onChanged={onChanged} />
           <button type="button" onClick={() => void find()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-sm font-semibold text-[#3b1f5e] hover:bg-white/90 disabled:opacity-60">
             {busy === 'find' ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} Look for an official upload
           </button>
-          <button type="button" onClick={() => void want()} disabled={!!busy} className="inline-flex items-center gap-1.5 rounded-full border border-white/30 px-4 py-2 text-sm font-semibold text-white hover:bg-white/10 disabled:opacity-60">
-            <Star size={15} fill={v.show.wanted ? 'currentColor' : 'none'} /> {v.show.wanted ? 'On your wanted list' : 'Add to wanted list'}
-          </button>
+
         </div>
         <form onSubmit={add} className="mt-3 flex max-w-md gap-2">
           <label htmlFor="source-url" className="sr-only">
@@ -133,7 +124,7 @@ export default function WatchPage() {
   };
   const reload = () => v && void load(v.show.id, v.key);
 
-  const source = useMemo(() => v?.sources.find((s) => !failed.has(s.fileId || s.videoId || '')), [v, failed]);
+  const source = useMemo(() => v?.sources.find((s) => !failed.has(s.itemId || s.fileId || s.videoId || '')), [v, failed]);
   const savePosition = useCallback(
     (seconds: number, duration?: number, done = false) => {
       if (!v) return;
@@ -177,6 +168,7 @@ export default function WatchPage() {
             </>
           )}
         </nav>
+        {v && <div className="mb-3"><KeepOnDisk id={v.show.id} selected={v.show.wanted} onChanged={reload} /></div>}
         {error && (
           <div role="alert" className="mb-4 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
             {error}
@@ -194,7 +186,7 @@ export default function WatchPage() {
             <section aria-label="Now playing" className="min-w-0 flex-[999_1_640px]">
               {source ? (
                 <UnwindPlayer
-                  key={`${v.key}:${source.fileId || source.videoId}`}
+                  key={`${v.key}:${source.itemId || source.fileId || source.videoId}`}
                   source={source}
                   title={v.episode.label}
                   resumeAt={v.episode.resumeAt}
@@ -205,7 +197,7 @@ export default function WatchPage() {
                     savePosition(86_400, undefined, true);
                     setEnded(true);
                   }}
-                  onFailed={() => setFailed((f) => new Set(f).add(source.fileId || source.videoId || ''))}
+                  onFailed={() => setFailed((f) => new Set(f).add(source.itemId || source.fileId || source.videoId || ''))}
                 />
               ) : (
                 <NoSource v={v} onChanged={reload} />

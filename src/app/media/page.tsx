@@ -1,4 +1,8 @@
 'use client';
+import { KeepOnDisk, MediaDownloads } from '@/components/media/MediaDownloads';
+import type { AcquisitionView } from '@/lib/media/acquisition-view';
+import { ACQUISITION_LABELS } from '@/lib/media/acquisition-types';
+import Link from 'next/link';
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
@@ -41,7 +45,7 @@ async function api<T>(path = '', body?: unknown): Promise<T> {
   if (!r.ok || !p.success) throw new Error(p.error || 'Media could not be loaded.');
   return p.data;
 }
-type Filter = 'all' | 'liked' | 'favorites' | 'watching' | 'watched' | 'watchlist' | 'download';
+type Filter = 'all' | 'liked' | 'favorites' | 'watching' | 'watched' | 'watchlist' | 'download' | 'available';
 const FILTER_LABEL: Record<Filter, string> = {
   all: 'All media',
   liked: 'Liked',
@@ -49,11 +53,14 @@ const FILTER_LABEL: Record<Filter, string> = {
   watching: 'Watching',
   watched: 'Watched',
   watchlist: 'Watchlist',
-  download: 'On disk',
+  download: 'Keep on disk',
+  available: 'Available',
 };
 
 export default function MediaPage() {
   const [data, setData] = useState<MediaView>();
+  const [downloads, setDownloads] = useState<AcquisitionView>();
+  const updateDownloads = useCallback((v: AcquisitionView) => setDownloads(v), []);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -158,7 +165,8 @@ export default function MediaPage() {
           (filter === 'watching' && t.watching && !t.watched) ||
           (filter === 'watched' && t.watched) ||
           (filter === 'watchlist' && t.watchlist) ||
-          (filter === 'download' && t.download)),
+          (filter === 'download' && t.download) ||
+          (filter === 'available' && !!downloads?.requests[t.id]?.items.length)),
     )
     .map((t, i) => ({ t, i }))
     .sort(
@@ -342,22 +350,9 @@ export default function MediaPage() {
                     >
                       <Heart size={13} fill={title.favorite ? 'currentColor' : 'none'} />
                     </button>
-                    <button
-                      className={`${button} !px-2 !py-1.5 !text-xs ${title.download ? 'text-sky-600' : 'text-gray-400'}`}
-                      disabled={busy}
-                      aria-pressed={!!title.download}
-                      aria-label={title.download ? `Take ${title.title} off the keep-on-disk list` : `Keep ${title.title} on disk`}
-                      title={title.download ? 'On your keep-on-disk list' : 'Keep on disk'}
-                      onClick={() =>
-                        void act(
-                          '/title/flags',
-                          { id: title.id, download: !title.download },
-                          title.download ? 'Off the keep-on-disk list.' : 'Added to the keep-on-disk list.',
-                        )
-                      }
-                    >
-                      <Download size={13} />
-                    </button>
+                    <KeepOnDisk id={title.id} selected={!!title.download} onChanged={() => void load()} />
+                    {downloads?.requests[title.id] && <span className="text-xs text-gray-500">{ACQUISITION_LABELS[downloads.requests[title.id].status]}</span>}
+                    {!!downloads?.requests[title.id]?.items.length && <Link className="rounded-lg bg-sky-600 px-2 py-1.5 text-xs font-semibold text-white" href={`/media/unwind/watch?id=${title.id}&ep=${downloads.requests[title.id].items[0].key}`}>Play</Link>}
                   </>
                 )}
                 {youtube && (
@@ -574,6 +569,7 @@ export default function MediaPage() {
           )}
         </div>
         {/* These load their own data, so they start alongside the library, not after it. */}
+        <MediaDownloads onChange={updateDownloads} />
         <TbpnTeaser />
         {/* Two tracks, same size: Pretrain first (it stacks on top on a phone). */}
         <div className="mb-8 grid gap-4 md:grid-cols-2">

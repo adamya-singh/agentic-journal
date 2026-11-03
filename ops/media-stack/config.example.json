@@ -1,0 +1,14 @@
+{
+  "enabled": false,
+  "networkMode": "vpn",
+  "dataRoot": "/home/openclaw/media-stack/data",
+  "storageId": "agentic-journal-media-v1",
+  "budgetGiB": 150,
+  "minimumFreeGiB": 50,
+  "sonarr": {"url":"http://127.0.0.1:8989","apiKey":"","profileId":1},
+  "radarr": {"url":"http://127.0.0.1:7878","apiKey":"","profileId":1},
+  "prowlarr": {"url":"http://127.0.0.1:9696","apiKey":""},
+  "qbittorrent": {"url":"http://127.0.0.1:8080","username":"journal","password":""},
+  "jellyfin": {"url":"http://127.0.0.1:8096","apiKey":"","userId":"","adminKey":""},
+  "vpnStatusFile":"/home/openclaw/media-stack/runtime/vpn.json"
+}

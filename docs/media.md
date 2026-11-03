@@ -1,5 +1,7 @@
 # IMDb media page
 
+Local downloads, selected seasons, storage limits, and integrated Jellyfin playback are documented in [Media stack setup](media-stack.md). The Media page shows download intent separately from actual availability.
+
 Open `/media`. IMDb remains the source of title metadata, personal ratings, watch history, Watchlist membership, and personalized Top Picks. Journal keeps a private local cache so browsing does not depend on IMDb being online. It does not equate watching with liking: the Liked filter uses personal IMDb ratings of 7–10, never IMDb aggregate scores. Movies, series, episodes, and anime keep their canonical `tt…` identity.
 
 Click **Connect IMDb** / **Refresh IMDb** to enqueue a manual refresh. The worker connects to the existing local OpenClaw `openclaw` browser profile; sign in there first. It discovers account-menu links, pins the collection author's account ID, checks account identity, loads all available history pages, and records per-collection coverage. Empty collections are recognized from IMDb's explicit empty-state message; missing count widgets alone are not evidence of zero. Partial imports preserve previously known membership. IMDb Top Picks are preferred; More Like This is a fallback with an explicit seed explanation. Already watched and dismissed titles are excluded from the recommendation view.

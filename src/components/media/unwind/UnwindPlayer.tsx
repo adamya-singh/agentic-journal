@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
+import { JellyfinPlayer } from './JellyfinPlayer';
 import { Play } from 'lucide-react';
 import { clock } from '@/components/media/feed/api';
 import { useYouTubeResume } from '@/components/media/useYouTubeResume';
@@ -94,7 +95,7 @@ export function UnwindPlayer(props: Props) {
   return (
     <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-black shadow-[0_30px_60px_-30px_rgba(18,10,38,.8)]">
       {started ? (
-        source.kind === 'file' ? <FilePlayer {...props} /> : <TubePlayer {...props} />
+        source.kind === 'jellyfin' ? <JellyfinPlayer id={source.showId!} episodeKey={source.episodeKey!} resumeAt={resumeAt} poster={poster} onPosition={props.onPosition} onEnded={props.onEnded} onFailed={props.onFailed} /> : source.kind === 'file' ? <FilePlayer {...props} /> : <TubePlayer {...props} />
       ) : (
         <button
           type="button"
@@ -114,7 +115,7 @@ export function UnwindPlayer(props: Props) {
             <span className="absolute bottom-4 left-4 rounded-md bg-black/75 px-2 py-1 text-sm font-medium text-white">Resume at {clock(resumeAt)}</span>
           )}
           <span className="absolute bottom-4 right-4 rounded-md bg-black/60 px-2 py-1 text-xs font-medium text-white/85">
-            {source.kind === 'file' ? 'From your library' : `YouTube · ${source.channel || 'official upload'}`}
+            {source.kind !== 'youtube' ? 'From your library' : `YouTube · ${source.channel || 'official upload'}`}
           </span>
         </button>
       )}

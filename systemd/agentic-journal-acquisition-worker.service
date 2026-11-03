@@ -1,0 +1,20 @@
+[Unit]
+Description=Agentic Journal media requests and library reconciliation
+After=network-online.target journal-media-stack.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStart=/usr/bin/env node scripts/acquisition-worker.ts
+Restart=on-failure
+RestartSec=10
+Nice=10
+MemoryMax=384M
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

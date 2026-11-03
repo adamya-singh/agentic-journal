@@ -1,0 +1,6 @@
+services:
+  qbittorrent:
+    networks: !reset []
+    ports: !reset []
+    network_mode: service:gluetun
+    depends_on: {gluetun: {condition: service_healthy}}

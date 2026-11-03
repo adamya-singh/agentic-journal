@@ -35,7 +35,9 @@
     "media": "node --env-file-if-exists=.env scripts/media.ts",
     "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts",
     "library:worker": "node --env-file-if-exists=.env scripts/library-worker.ts",
-    "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts"
+    "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts",
+    "media:stack": "node --env-file-if-exists=.env scripts/media-stack.ts",
+    "media:acquisition": "node --env-file-if-exists=.env scripts/acquisition-worker.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",
@@ -62,6 +64,7 @@
     "cmdk": "^1.1.1",
     "diff": "^8.0.2",
     "framer-motion": "^12.23.11",
+    "hls.js": "1.6.16",
     "lucide-react": "^0.532.0",
     "motion": "^12.23.12",
     "motion-plus-react": "^1.5.1",

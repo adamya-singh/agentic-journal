@@ -355,6 +355,9 @@ export async function confirm(id: string, pick: string, settings: Settings) {
     Object.assign(found, { state: 'added', pick, settings, doneAt: new Date().toISOString() });
     prune(inbox);
   });
+  const { stageAcquisition, cancelAcquisition, readAcquisitions } = await import('./acquisition-store.ts');
+  if (settings.download) await stageAcquisition(pick);
+  else if (readAcquisitions().requests[pick]?.wanted) await cancelAcquisition(pick);
   return title;
 }
 

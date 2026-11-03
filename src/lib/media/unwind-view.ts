@@ -1,3 +1,4 @@
+import { readAcquisitions } from './acquisition-store.ts';
 import { page, readFeed, type FeedCard } from './feed-store.ts';
 import { rankingOf, readState } from './store.ts';
 import { libraryFile, readLibrary, type Library } from './library.ts';
@@ -25,7 +26,10 @@ const GUESS_EPISODE = 45,
   GUESS_FILM = 150;
 
 export interface PlayableSource {
-  kind: 'youtube' | 'file';
+  kind: 'youtube' | 'file' | 'jellyfin';
+  showId?: string;
+  episodeKey?: string;
+  itemId?: string;
   videoId?: string;
   channel?: string;
   fileId?: string;
@@ -108,7 +112,7 @@ export function episodeRef(s: Show, key: string, lib: Library): EpisodeRef {
     minutes: runtimeOf(s, key),
     resumeAt: resumeAt(s, key),
     durationSec: s.positions[key]?.durationSec,
-    playable: sourcesPlayable(s.sources[key], lib),
+    playable: sourcesPlayable(s.sources[key], lib) || !!readAcquisitions().requests[s.id]?.items.some((x) => x.key === key),
   };
 }
 
@@ -133,7 +137,7 @@ export function showCard(s: Show, u: UnwindStore, lib: Library, ranked: Set<stri
     watched: s.watched.filter((k) => keys.includes(k)).length,
     total: keys.length,
     next: next ? episodeRef(s, next, lib) : undefined,
-    wanted: !!u.wanted[s.id],
+    wanted: !!readAcquisitions().requests[s.id]?.wanted || !!u.wanted[s.id],
     ranked: ranked.has(s.id),
     finishedAt: s.finishedAt,
     lastWatchedAt: s.lastWatchedAt,
@@ -288,6 +292,8 @@ export function watchView(id: string, key?: string, u = readUnwind(), lib = read
   const k = key && (keys.includes(key) || s.episodes?.some((e) => e.key === key)) ? key : nextKey(s) || keys.at(-1);
   if (!k) return undefined;
   const sources: PlayableSource[] = [];
+  const acquired = readAcquisitions().requests[id]?.items.filter((x) => x.key === k) || [];
+  if (acquired.length === 1) sources.push({ kind: 'jellyfin', showId: id, episodeKey: k, itemId: acquired[0].itemId });
   for (const src of s.sources[k] || []) {
     if (src.kind === 'youtube')
       sources.push({ kind: 'youtube', videoId: src.videoId, channel: src.channel, durationSec: src.durationSec });
@@ -304,7 +310,7 @@ export function watchView(id: string, key?: string, u = readUnwind(), lib = read
     }
   }
   // A file that plays here is the better experience; YouTube is the fallback.
-  sources.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'file' ? -1 : 1));
+  sources.sort((a, b) => ({ jellyfin: 0, file: 1, youtube: 2 })[a.kind] - ({ jellyfin: 0, file: 1, youtube: 2 })[b.kind]);
   const i = keys.indexOf(k);
   const r = rankingOf(readState());
   const ranked = new Set([...Object.values(r.tiers).flat(), ...Object.values(r.pending).flat(), ...r.skipped]);
