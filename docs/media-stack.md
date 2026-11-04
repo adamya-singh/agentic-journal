@@ -91,7 +91,22 @@ The first command previews the operation. Execution stops the media services, co
 
 The WD20EARS HDD (partition UUID `317D75F1159CD40F`) is mounted by `/etc/fstab` at `/mnt/journal-media`, directly over USB 3. Its existing NTFS backup folders are preserved. Journal's separate destination is `/mnt/journal-media/agentic-journal`. Before migration, NTFS3 passed write, permission, atomic-rename, allocated-block accounting, hardlink, and `rsync -aHnc` verification probes. Do not assume those checks apply to another filesystem or mount configuration.
 
-The mount uses `uid=1000,gid=1000,acl,nosuid,nodev,noexec,nofail` and a ten-second device timeout. Host drop-ins named `hdd-mount.conf` for `journal-media-stack`, `agentic-journal-acquisition-worker`, and `agentic-journal-acquisition-guard` require this mount and bind their lifetime to it. Do not unplug the drive while these services are using it. The earlier hub connection failed with USB resets; use the tested direct connection.
+The mount uses `uid=1000,gid=1000,force,acl,nosuid,nodev,noexec,nofail` and a ten-second device timeout. The `force` option enables NTFS3 to automatically mount the volume on boot or reconnect even if an unexpected power loss or USB disconnect marked the journal dirty (preventing manual `ntfsfix` intervention). Host drop-ins named `hdd-mount.conf` for `journal-media-stack`, `agentic-journal-acquisition-worker`, and `agentic-journal-acquisition-guard` require this mount and bind their lifetime to it. Do not unplug the drive while these services are using it. The earlier hub connection failed with USB resets; use the tested direct connection.
+
+#### USB enclosure driver quirk (JMicron JMS578 / AMD xHCI)
+
+The external SATA-to-USB enclosure uses a JMicron JMS578 bridge (`152d:0578`). Under heavy concurrent write bursts (e.g. multi-torrent downloading), the kernel's default `uas` (USB Attached SCSI) driver can experience endpoint queue timeouts that cause the laptop's motherboard AMD Raven xHCI USB 3.1 host controller to hang and crash (`xHCI host controller not responding, assume dead`).
+
+To permanently prevent host controller crashes:
+- `/etc/modprobe.d/usb-storage-jmicron.conf` configures `options usb-storage quirks=152d:0578:u` (where `u` = `US_FL_IGNORE_UAS`), forcing the drive onto the standard, synchronous `usb-storage` (Bulk-Only Transport) driver while retaining full USB 3.0 SuperSpeed (5000M) rates.
+- The quirk is baked into the host initramfs via `update-initramfs -u` so it applies across reboots.
+- If an AMD xHCI host controller ever locks up in hardware, it can be reset without a system reboot by unbinding and rebinding the PCI device:
+  ```bash
+  echo "0000:04:00.3" | sudo tee /sys/bus/pci/drivers/xhci_hcd/unbind
+  sleep 1
+  echo "0000:04:00.3" | sudo tee /sys/bus/pci/drivers/xhci_hcd/bind
+  ```
+
 
 The media budget is 1,000 GiB, with 50 GiB minimum free space. Service configuration, databases, credentials, and the transcode cache remain on the internal SSD. Migration preserved the paused acquisition setting; downloads were explicitly resumed by the user after the copy, checksum comparison, hardlink checks, and playback verification passed on October 27, 2026.
 
