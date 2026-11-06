@@ -175,7 +175,8 @@ export async function createPlayback(
       SubtitleProfiles: [
         { Format: 'vtt', Method: 'External' },
         { Format: 'srt', Method: 'External' },
-        { Format: 'ass', Method: 'Encode' },
+        { Format: 'ass', Method: 'External' },
+        { Format: 'ssa', Method: 'External' },
         { Format: 'pgssub', Method: 'Encode' },
       ],
     };
@@ -192,6 +193,7 @@ export async function createPlayback(
         EnableTranscoding: true,
         MaxStreamingBitrate: input.bitrate || 12_000_000,
         AudioStreamIndex: input.audioIndex,
+        SubtitleStreamIndex: -1,
       },
     );
     const source = info.MediaSources[0];
