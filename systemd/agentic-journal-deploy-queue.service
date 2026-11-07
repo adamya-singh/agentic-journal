@@ -1,0 +1,15 @@
+[Unit]
+Description=Agentic Journal: run a queued deploy once nothing is playing and no OpenClaw chat is active
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+# The user session lets the Next build run in its memory-bounded scope, and puts the deploy lock
+# where a deploy started from a shell looks for it (scripts/deploy-production.sh).
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+ExecStart=/usr/bin/env node scripts/deploy-queue.ts check
+TimeoutStartSec=2h

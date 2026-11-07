@@ -22,6 +22,9 @@ MEDIA_WORKER_SERVICE="agentic-journal-media-worker.service"
 LIBRARY_WORKER_SERVICE="agentic-journal-library-worker.service"
 ACQUISITION_WORKER_SERVICE="agentic-journal-acquisition-worker.service"
 ACQUISITION_GUARD_SERVICE="agentic-journal-acquisition-guard.service"
+# Runs this script for queued deploys; installed here but never stopped, since it may be the caller.
+DEPLOY_QUEUE_SERVICE="agentic-journal-deploy-queue.service"
+DEPLOY_QUEUE_TIMER="agentic-journal-deploy-queue.timer"
 SYSTEMD_DIR="${ROOT_DIR}/systemd"
 
 systemctl_cmd() {
@@ -114,6 +117,8 @@ install_unit_if_changed "$MEDIA_WORKER_SERVICE"
 install_unit_if_changed "$LIBRARY_WORKER_SERVICE"
 install_unit_if_changed "$ACQUISITION_WORKER_SERVICE"
 install_unit_if_changed "$ACQUISITION_GUARD_SERVICE"
+install_unit_if_changed "$DEPLOY_QUEUE_SERVICE"
+install_unit_if_changed "$DEPLOY_QUEUE_TIMER"
 systemctl_cmd daemon-reload
 systemctl_cmd enable "$PROD_SERVICE" >/dev/null
 systemctl_cmd enable "$OMI_WORKER_SERVICE" >/dev/null
@@ -122,6 +127,7 @@ systemctl_cmd enable "$MEDIA_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$LIBRARY_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$ACQUISITION_WORKER_SERVICE" >/dev/null
 systemctl_cmd enable "$ACQUISITION_GUARD_SERVICE" >/dev/null
+systemctl_cmd enable --now "$DEPLOY_QUEUE_TIMER" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."
