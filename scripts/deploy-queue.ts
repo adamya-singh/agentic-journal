@@ -1,5 +1,6 @@
 // Queue a production deploy for when nobody is using the laptop (see src/lib/deploy-queue.ts).
-//   npm run deploy:queue    ask for a deploy of whatever is checked out when it runs
+//   npm run deploy:production (or deploy:queue)  ask for a deploy of whatever is checked out when it runs
+//   npm run deploy:now      deploy immediately instead (scripts/deploy-production.sh)
 //   npm run deploy:status   what is queued, what it is waiting on, how the last one went
 //   npm run deploy:cancel   drop the queued deploy
 // `check` is what agentic-journal-deploy-queue.timer runs every 5 minutes.

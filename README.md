@@ -159,12 +159,12 @@ npm run start:production
 # Check Pi/Tailscale access and service health
 npm run status:local-access
 
-# Rebuild and restart production on the Pi
+# Deploy production once nothing is playing and no OpenClaw chat has been active for 15 minutes
 npm run deploy:production
-
-# Or deploy once nothing is playing and no OpenClaw chat has been active for 15 minutes
-npm run deploy:queue
 npm run deploy:status
+
+# Deploy right now, even if someone is using it
+npm run deploy:now
 
 # Dry-run one Omi worker cycle
 npm run omi:worker -- --once --dry-run
@@ -229,15 +229,19 @@ This checks:
 
 ### Production Rebuild And Restart
 
-If the app fails after a reboot, rebuild the ignored production artifacts and restart both services:
+Deploys are queued by default:
 
 ```bash
-npm run deploy:production
+npm run deploy:production   # same as npm run deploy:queue
 ```
 
-This performs a clean Next.js build, a clean Mastra build, installs Mastra's generated production dependencies, restarts `agentic-journal`, and probes the local endpoints.
+A deploy performs a clean Next.js build, a clean Mastra build, installs Mastra's generated production dependencies, restarts `agentic-journal`, and probes the local endpoints. The Journal is down for 10+ minutes while it builds, so the request waits: `agentic-journal-deploy-queue.timer` looks every 5 minutes and deploys whatever is checked out once nothing has played on Jellyfin (PS4 or Journal) and no OpenClaw chat has been active for 15 minutes, staying clear of the 05:00 daily reboot. Cron runs and the heartbeat do not count as activity. `npm run deploy:status` shows what it is waiting on and how the last queued deploy went; `npm run deploy:cancel` drops the request.
 
-The Journal is down for 10+ minutes while it builds. To avoid interrupting someone, run `npm run deploy:queue` instead: `agentic-journal-deploy-queue.timer` looks every 5 minutes and deploys whatever is checked out once nothing has played on Jellyfin (PS4 or Journal) and no OpenClaw chat has been active for 15 minutes, staying clear of the 05:00 daily reboot. Cron runs and the heartbeat do not count as activity. `npm run deploy:status` shows what it is waiting on and how the last queued deploy went; `npm run deploy:cancel` drops the request.
+If the app is already down (for example it fails after a reboot), deploy immediately instead:
+
+```bash
+npm run deploy:now
+```
 
 ### Development Mode Over The Same Tailscale URL
 
