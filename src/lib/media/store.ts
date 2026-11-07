@@ -18,6 +18,7 @@ import {
   withoutTitle,
   type RankOp,
 } from './ranking.ts';
+import { lockOwner, ownerGone } from '../lock-owner.ts';
 
 // Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
 // dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
@@ -55,7 +56,7 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
   let owned = false;
   for (let n = 0; n < 200 && !owned; n++) {
     try {
-      fs.writeFileSync(file, String(process.pid), { flag: 'wx', mode: 0o600 });
+      fs.writeFileSync(file, lockOwner(), { flag: 'wx', mode: 0o600 });
       owned = true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -65,14 +66,7 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
       try {
         fs.mkdirSync(recovery);
         recovering = true;
-        const pid = Number(fs.readFileSync(file, 'utf8'));
-        if (pid > 0) {
-          try {
-            process.kill(pid, 0);
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'ESRCH') fs.unlinkSync(file);
-          }
-        }
+        if (ownerGone(fs.readFileSync(file, 'utf8'))) fs.unlinkSync(file);
       } catch (err) {
         if (!['EEXIST', 'ENOENT'].includes((err as NodeJS.ErrnoException).code || '')) throw err;
       } finally {

@@ -12,6 +12,7 @@ import type {
   BookmarkTranscripts,
   BookmarkSort,
 } from './types.ts';
+import { lockOwner, ownerGone } from '../lock-owner.ts';
 
 // Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
 // dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
@@ -59,7 +60,7 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = '.store-lock'
     try {
       fs.mkdirSync(lock);
       acquired = true;
-      fs.writeFileSync(path.join(lock, 'pid'), String(process.pid));
+      fs.writeFileSync(path.join(lock, 'pid'), lockOwner());
       break;
     } catch (e) {
       if (acquired) fs.rmSync(lock, { recursive: true, force: true });
@@ -71,16 +72,10 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = '.store-lock'
         recovering = true;
         let stale = false;
         try {
-          const pid = Number(fs.readFileSync(path.join(lock, 'pid'), 'utf8'));
-          if (Number.isInteger(pid) && pid > 0) {
-            try {
-              process.kill(pid, 0);
-            } catch (err) {
-              stale = (err as NodeJS.ErrnoException).code === 'ESRCH';
-            }
-          } else {
-            stale = Date.now() - fs.statSync(lock).mtimeMs > 30_000;
-          }
+          const owner = fs.readFileSync(path.join(lock, 'pid'), 'utf8');
+          stale = owner.trim()
+            ? ownerGone(owner)
+            : Date.now() - fs.statSync(lock).mtimeMs > 30_000;
         } catch (err) {
           if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
             try {
