@@ -1,8 +1,8 @@
 # Agentic Journal
 
-Agentic Journal is a personal, Pi-hosted daily operating system for journaling, planning, task management, project tracking, and job lead tracking. It combines a Next.js interface, Cedar-OS chat surfaces, and a Mastra backend agent that can read current app state, update the UI, and persist journal/task/job changes to local JSON storage.
+Agentic Journal is a personal daily operating system, hosted on an Ubuntu laptop, for journaling, planning, task management, project tracking, and job lead tracking. It combines a Next.js interface, Cedar-OS chat surfaces, and a Mastra backend agent that can read current app state, update the UI, and persist journal/task/job changes to local JSON storage.
 
-The app is built for everyday use from a MacBook over Tailscale, with the Raspberry Pi running the production service by default and a quick switch into hot-reloading development mode when editing.
+The app is built for everyday use from a MacBook over Tailscale, with the Ubuntu laptop (`ubuntu-laptop` on the tailnet) running the production service by default and a quick switch into hot-reloading development mode when editing.
 
 ## What It Is
 
@@ -25,7 +25,7 @@ Agentic Journal is an AI-assisted personal journal and planning workspace:
 - **Agentic UI control**: the Mastra journal agent can create journal files, append planned/logged entries, update tasks, reorder priorities, complete tasks, and maintain job listings.
 - **X bookmarks**: a visual reading collection with manual-only X imports, local search, tags, favorites and read status. See [setup and recovery](docs/x-bookmarks.md).
 - **Compass**: a read-only view of OpenClaw's compass repo at `/compass`: the current short-term period with its Focus bets, the long-term North Star mirrors, every recorded period with its log and retro, and the git history with diffs. See [docs/compass.md](docs/compass.md).
-- **Pi-first operations**: production runs as `agentic-journal.service`; development mode can temporarily take over the same Tailscale URL.
+- **Laptop-hosted operations**: production runs as `agentic-journal.service`; development mode can temporarily take over the same Tailscale URL.
 
 ## Architecture
 
@@ -156,7 +156,7 @@ npm run build:mastra
 # Run production Next.js and generated Mastra output together
 npm run start:production
 
-# Check Pi/Tailscale access and service health
+# Check the laptop's Tailscale access and service health
 npm run status:local-access
 
 # Deploy production once nothing is playing and no OpenClaw chat has been active for 15 minutes
@@ -179,7 +179,7 @@ Omi worker notes:
 - Batches that fail `OMI_TRANSCRIBE_MAX_RETRIES` times are skipped permanently. To re-plan them, stop the worker first (`sudo systemctl stop agentic-journal-omi-worker`), then delete or edit `src/backend/data/omi-transcripts/<date>.status.json`, then start the worker again. Editing the file while the worker runs has no effect because it rewrites the file from memory after every batch.
 
 
-## Raspberry Pi / Tailscale Operations
+## Ubuntu Laptop / Tailscale Operations
 
 Use Tailscale as the default access path from your MacBook for both apps:
 
@@ -194,7 +194,7 @@ If your tailnet has Serve disabled, enable it once:
 https://login.tailscale.com/f/serve
 ```
 
-Then on the Raspberry Pi run:
+Then on the Ubuntu laptop run:
 
 ```bash
 npm run setup:tailscale-https
@@ -212,7 +212,7 @@ https://ubuntu-laptop.taile85e97.ts.net
 https://ubuntu-laptop.taile85e97.ts.net:18443
 ```
 
-### Quick Verification On The Pi
+### Quick Verification On The Laptop
 
 ```bash
 npm run status:local-access
@@ -245,7 +245,7 @@ npm run deploy:now
 
 ### Development Mode Over The Same Tailscale URL
 
-For normal everyday usage, the Pi runs the production service. When actively editing the app, switch the same Tailscale URL to hot-reloading dev mode:
+For normal everyday usage, the Ubuntu laptop runs the production service. When actively editing the app, switch the same Tailscale URL to hot-reloading dev mode:
 
 ```bash
 npm run journal:dev
@@ -295,14 +295,14 @@ If OpenClaw over Tailscale shows:
 
 Use this flow:
 
-1. Confirm gateway token from the Pi service config:
+1. Confirm gateway token from the laptop's service config:
 
 ```bash
 systemctl --user cat openclaw-gateway | rg OPENCLAW_GATEWAY_TOKEN
 ```
 
 2. In the OpenClaw Control UI opened at `https://ubuntu-laptop.taile85e97.ts.net:18443`, paste that token in **Control UI settings**.
-3. If pairing is still required, approve from terminal on the Pi:
+3. If pairing is still required, approve from a terminal on the laptop:
 
 ```bash
 # show paired/pending device state

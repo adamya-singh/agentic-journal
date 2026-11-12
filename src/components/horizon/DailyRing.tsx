@@ -38,16 +38,6 @@ const DAILY_CSS = `
 .hzd-row span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .hzd-row small{font:11px var(--hz-mono);color:var(--hz-dim)}
 .hzd-err{margin:4px 0;font:12px var(--hz-sans);color:#ff8a5c}
-/* 3D: dawn-space builds these targets over the ring and the count above the sun. */
-.hz3d-ds,.hz3d-dl,.hz3d-dz{position:absolute;left:0;top:0;border:0;padding:0;background:transparent;pointer-events:none;will-change:transform,opacity}
-.hz3d-dz{border-radius:50%}
-.hz-live .hz3d-dz.hit{pointer-events:auto}
-.hz3d-ds{width:26px;height:26px;border-radius:50%}
-.hz3d-dl{font:10px var(--hz-mono);letter-spacing:1.6px;color:#ffe2c4;white-space:nowrap;padding:3px 8px;border-radius:999px}
-.hz-live .hz3d-ds.hit,.hz-live .hz3d-dl.hit{pointer-events:auto;cursor:pointer}
-.hz3d-dl.hit:hover,.hz3d-dl:focus-visible{background:rgba(10,14,24,.55);outline:none}
-.hz3d-ds:hover::after,.hz3d-ds:focus-visible::after{content:attr(data-label);position:absolute;left:50%;bottom:calc(100% + 6px);transform:translateX(-50%);font:500 12px var(--hz-sans);color:var(--hz-ink);background:rgba(10,14,24,.8);border:1px solid rgba(255,210,168,.5);border-radius:999px;padding:4px 11px;white-space:nowrap}
-.hz3d-ds:focus-visible{outline:none;box-shadow:0 0 0 2px #ffd2a8}
 @media (max-width:760px){.hzd-card.flat{left:50%!important;transform:translateX(-50%)}}
 @media (prefers-reduced-motion:reduce){.hzd-card{animation:none}}
 .hzd-card:not(.flat){animation:none}

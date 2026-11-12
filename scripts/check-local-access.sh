@@ -23,7 +23,7 @@ print_user_status() {
   printf "%-28s active=%-10s enabled=%s\n" "$service_name (user)" "$active_state" "$enabled_state"
 }
 
-echo "Local access checks (Raspberry Pi)"
+echo "Local access checks (Ubuntu laptop)"
 echo "=================================="
 print_system_status tailscaled
 print_system_status agentic-journal

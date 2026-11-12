@@ -7,6 +7,7 @@ import { useRefresh } from '@/lib/RefreshContext';
 import { horizonAnswers, type HorizonData } from '@/lib/horizon';
 import { drawDawn, type PillSpot, type PullView, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
+import { SPACE_CSS } from './space-css';
 import { BriefLayer } from './BriefLayer';
 import { DailyRing } from './DailyRing';
 import { LetGoReasonModal } from '@/components/LetGoReasonModal';
@@ -34,45 +35,7 @@ const CSS = `
 .hz-say button.hz-daily-line:hover,.hz-say button.hz-daily-line:focus-visible{text-decoration-color:var(--hz-em);outline:none}
 .hz-cap{position:absolute;right:3%;top:24px;width:min(34%,420px);z-index:6}
 .hz-loading{position:absolute;inset:0;display:grid;place-items:center;font:13px var(--hz-sans);color:var(--hz-dim);z-index:2}
-.hz3d{position:absolute;inset:0;opacity:0;pointer-events:none}
-.hz-on3d .hz3d{opacity:1}
-.hz3d-bg{position:absolute;left:-100%;width:300%;top:0;height:100%;will-change:transform}
-.hz3d-bg svg{position:absolute;left:0;top:0;width:100%;height:100%;overflow:visible}
-.hz3d canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.hz3d-lab{position:absolute;inset:0;z-index:2}
-.hz3d-tg{position:absolute;left:0;top:0;pointer-events:none;will-change:transform,opacity}
-.hz-live .hz3d-tg.hit{pointer-events:auto;cursor:pointer}
-.hz3d-tg .p{display:flex;align-items:center;justify-content:center;height:28px;padding:0 12px;border-radius:14px;font:500 13px var(--hz-sans);white-space:nowrap;border:1px solid transparent;box-sizing:border-box}
-.hz3d-tg.big .p{font-weight:600}
-.hz3d-tg .d{position:absolute;left:50%;top:100%;transform:translateX(-50%);font:10.5px var(--hz-mono);color:#e6ecf4;opacity:.8;white-space:nowrap}
-.hz3d-tg.ignition .p{background:#fff6ec;color:#1b0d05;box-shadow:0 0 18px 4px rgba(255,179,122,.35)}
-.hz3d-tg.climb .p{background:rgba(255,255,255,.88);color:#10213a}
-.hz3d-tg.altitude .p{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.6);color:#eef2f8}
-.hz3d-tg.orbit .p{background:transparent;border-color:rgba(255,255,255,.28);color:rgba(238,242,248,.75)}
-.hz3d-tg.orbit .d{opacity:.55}
-.hz3d-tg.hold .p{background:#120a06;border-color:#ff5a1f;color:#ff8a5c;font-weight:600}
-.hz-live .hz3d-tg.hit:hover .p{filter:brightness(1.08)}
-.hz3d-zl{position:absolute;left:0;top:0;pointer-events:none;text-align:center;color:#2a1d14;white-space:nowrap;will-change:transform}
-.hz3d-zl b{display:block;font:italic 400 24px var(--hz-serif);line-height:1}
-.hz3d-zl small{display:block;font:9.5px var(--hz-mono);letter-spacing:1.4px;opacity:.7;margin-top:4px}
-.hz3d-you{position:absolute;left:0;top:0;font:10px var(--hz-mono);letter-spacing:2px;color:#5a2a08;pointer-events:none}
-.hz3d-enter{position:absolute;right:24px;bottom:22px;z-index:7;display:flex;align-items:center;gap:9px;font:500 13px var(--hz-sans);color:#f3efe7;background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 16px;cursor:pointer;transition:opacity .3s ease,transform .2s ease}
-.hz3d-enter i{width:8px;height:8px;border-radius:50%;background:#ffd2a8;box-shadow:0 0 0 4px rgba(255,210,168,.2)}
-.hz3d-enter:hover,.hz3d-enter:focus-visible{transform:translateY(-2px);border-color:#ffd2a8;outline:none}
-.hz-live .hz3d-enter{opacity:0;pointer-events:none}
 .hz-sky:not(.hz-settled) .hz3d-btns{pointer-events:none}
-.hz3d-hud{position:absolute;left:0;right:0;bottom:0;z-index:7;display:flex;justify-content:space-between;align-items:flex-end;gap:10px;padding:14px 18px;pointer-events:none;flex-wrap:wrap;opacity:0;transition:opacity .4s ease}
-.hz-live.hz-settled .hz3d-hud{opacity:1}
-.hz3d-where{background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.14);border-radius:12px;padding:8px 13px;min-width:200px;color:#f3efe7}
-.hz3d-where .k{font:500 10px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:#a9b4c4}
-.hz3d-where .v{font:italic 400 22px var(--hz-serif);line-height:1.15}
-.hz3d-where .v span{font:11px var(--hz-mono);font-style:normal;color:#a9b4c4;margin-left:6px}
-.hz3d-where .bar{height:2px;background:rgba(255,255,255,.15);margin-top:6px;border-radius:2px;overflow:hidden}
-.hz3d-where .bar i{display:block;height:100%;width:0;background:#ffd2a8}
-.hz3d-hint{font:12px var(--hz-sans);color:#d6dde8;background:rgba(10,14,24,.5);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:6px 12px}
-.hz3d-btns{display:flex;gap:6px;pointer-events:auto}
-.hz3d-btns button{font:500 12.5px var(--hz-sans);color:#f3efe7;background:rgba(10,14,24,.55);backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:6px 11px;cursor:pointer}
-.hz3d-btns button:hover,.hz3d-btns button:focus-visible{border-color:#ffd2a8;outline:none}
 .hz-ground{background:linear-gradient(#8a6446 0,#5a4030 48px,#241a14 130px,#111827 100%);padding:10px 16px 14px;display:grid;gap:8px}
 .hz-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .hz-row b{font:italic 400 22px var(--hz-serif);color:#f3e3cf;margin-right:6px;min-width:64px}
@@ -268,7 +231,7 @@ export function HorizonHero() {
 
   return (
     <section ref={heroRef} className={`hz-hero ${serif.variable}${far ? ' hz-far' : ''}`} aria-label="Priority horizon">
-      <style dangerouslySetInnerHTML={{ __html: CSS + DONE_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: CSS + SPACE_CSS + DONE_CSS }} />
       <div
         ref={skyRef}
         className="hz-sky"

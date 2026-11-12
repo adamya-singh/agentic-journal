@@ -6,15 +6,18 @@ import {
   needsFill,
   taskFingerprint,
   validateAgentReply,
+  BRIEF_PROMPT_VERSION,
   RUNNING_TIMEOUT_MS,
 } from '@/lib/brief-agent';
+import { iconForKind } from '@/lib/shapes/hook';
 import { extractJsonObject, localDateIso } from '@/lib/done-at';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
 import { readJobApplicationsStore } from '../../jobs/application-store-utils';
 import { runOpenClawAgentTurn } from '@/lib/openclaw-agent';
 import { loadHorizon } from '../horizon/load';
 import { loadRuleBrief, openTaskRefs } from '../brief/build';
-import { mutateAgentRecords, type StoredAgentRecord } from './store';
+import { mutateAgentRecords, readAgentRecord, type StoredAgentRecord } from './store';
+import { readHookWorkRecord } from '../hook-work/store';
 
 const HORIZON_DAYS = 14;
 const SCHEDULE_THROTTLE_MS = 5 * 60_000;
@@ -77,6 +80,7 @@ export function scheduleBriefFills(opts: { force?: string } = {}): void {
           failures: record && record.fingerprint === fingerprint && !forced ? record.failures : 0,
           layer: record?.layer ?? null,
           doneActions: record?.doneActions ?? [],
+          promptVersion: record?.promptVersion,
           rank: forced ? -1 : rank,
         };
       });
@@ -149,7 +153,11 @@ async function fillOne(taskId: string): Promise<void> {
   const others = refs
     .filter((r) => r.task.id !== taskId)
     .map((r) => ({ id: r.task.id, text: r.task.text, due: r.task.dueDate ?? null }));
-  const message = buildBriefAgentPrompt({ brief, task: ref.task, otherTasks: others, now });
+  const message = buildBriefAgentPrompt({
+    brief, task: ref.task, otherTasks: others, now,
+    previousHook: readAgentRecord(taskId)?.layer?.hook ?? null,
+    userWork: readHookWorkRecord(taskId)?.body ?? null,
+  });
 
   let outcome: { layer: NonNullable<StoredAgentRecord['layer']> } | { error: string };
   try {
@@ -162,8 +170,12 @@ async function fillOne(taskId: string): Promise<void> {
       taskId,
       openTaskIds: new Set(refs.map((r) => r.task.id)),
       today: localDateIso(new Date()),
+      icon: iconForKind(brief.kind),
     });
-    if (checked.ok) outcome = { layer: checked.layer };
+    if (checked.ok) {
+      if (checked.problems.length > 0) console.warn(`brief fill ${taskId}: hook problems:`, checked.problems.join('; '));
+      outcome = { layer: checked.layer };
+    }
     else {
       console.warn(`brief fill ${taskId}: unusable reply (${checked.error}):`, reply.slice(0, 500));
       outcome = { error: 'OpenClaw’s answer couldn’t be read.' };
@@ -179,7 +191,7 @@ async function fillOne(taskId: string): Promise<void> {
     if (!r || r.status !== 'running') return;   // forgotten or re-queued meanwhile
     if ('layer' in outcome) {
       // Actions are numbered per fill; a new fill starts with none done.
-      Object.assign(r, { status: 'done', finishedAt, error: null, failures: 0, layer: outcome.layer, doneActions: [] });
+      Object.assign(r, { status: 'done', finishedAt, error: null, failures: 0, layer: outcome.layer, doneActions: [], promptVersion: BRIEF_PROMPT_VERSION });
     } else {
       Object.assign(r, { status: 'failed', finishedAt, error: outcome.error, failures: r.failures + 1 });
     }

@@ -145,7 +145,7 @@ export function useJobBoardState(
   // Silent 5s poll, but only while a worker run is live (an application holds
   // an in-progress claim and the worker is enabled) and the tab is visible —
   // this is what makes the WorkerStatusPanel's progress feel real-time without
-  // hammering the Pi when nothing is happening.
+  // hammering the laptop when nothing is happening.
   const runActive = Boolean(
     jobApplicationsData && jobApplicationsData.workerEnabled && jobApplicationsData.counts.inProgress > 0,
   );

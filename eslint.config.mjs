@@ -11,7 +11,8 @@ const compat = new FlatCompat({
 
 const eslintConfig = [
   {
-    ignores: ['src/backend/.mastra/**'],
+    // src/lib/handwired is vendored (Handwired by Cheng Lou, MIT) and kept identical to upstream.
+    ignores: ['src/backend/.mastra/**', 'src/lib/handwired/**'],
   },
   ...compat.extends('next/core-web-vitals', 'next/typescript'),
 ];
