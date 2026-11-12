@@ -1395,10 +1395,12 @@ export class SunriseEngine {
     if (this.narrow) return {left: 8, top: 8, width: W - 16, height: H - 16}
     // A card to decide is one column; a task opens to most of the screen: its brief, its work or a page, its chats.
     const width = Math.min(card ? 500 : 1480, W - 32)
-    const height = card ? Math.min(680, H - 28) : H - 28
+    // A task's workspace ends where the window does: under the page's bar the sky can reach below what is in view.
+    const seen = card ? H : Math.max(480, Math.min(H, window.innerHeight - Math.max(0, this.root.getBoundingClientRect().top)))
+    const height = card ? Math.min(680, H - 28) : seen - 28
     const centre = from ?? this.toScreen(this.sunCircle())
     const left = Math.max(16, Math.min(W - 16 - width, centre.left + centre.width / 2 - width / 2))
-    const top = Math.max(14, Math.min(H - 14 - height, centre.top + centre.height / 2 - height / 2))
+    const top = Math.max(14, Math.min(seen - 14 - height, centre.top + centre.height / 2 - height / 2))
     return {left: Math.round(left), top: Math.round(top), width, height}
   }
 

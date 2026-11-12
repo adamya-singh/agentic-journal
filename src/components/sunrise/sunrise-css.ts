@@ -74,6 +74,8 @@ const rules = String.raw`
 .thing.ghost .d{opacity:0}
 .thing.ghost:hover{opacity:.7}
 .thing.ghost:hover .face b{opacity:1}
+/* A faint bubble is pressed only where it is drawn: its folded body hangs below it, unseen, and must not take a press meant for the task under it. */
+.thing.ghost .body{pointer-events:none}
 /* Started marks. */
 .thing.started:not(.hook)::after{content:"";position:absolute;right:-3px;top:-3px;width:9px;height:9px;border-radius:50%;background:radial-gradient(circle,#ffb37a 0 40%,rgba(255,140,60,.25) 41% 100%);box-shadow:0 0 8px 2px rgba(255,150,70,.6)}
 .thing.started.hook{border-color:rgba(255,170,100,.8)}

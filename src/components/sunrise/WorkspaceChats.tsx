@@ -8,7 +8,7 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { openClawChatUrl } from '@/lib/openclaw-ui';
-import { MAX_CHAT_MESSAGE, type ChatState, type ChatSurfaceRef, type ChatThreadSummary, type ChatThreadView } from '@/lib/task-chat';
+import { MAX_CHAT_MESSAGE, type ChatState, type ChatSurfaceRef, type ChatThreadSummary, type ChatThreadView, type TaskChatMessage } from '@/lib/task-chat';
 
 export const CHATS_CSS = `
 .srk{display:flex;flex-direction:column;min-height:0;height:100%;font:13.5px/1.45 var(--sans);color:#22130a}
@@ -16,16 +16,16 @@ export const CHATS_CSS = `
 .srk-head h3{margin:0;font:400 24px/1 var(--serif)}
 .srk-head .n{font:500 10.5px var(--mono);padding:2px 7px;border-radius:999px;background:rgba(34,19,10,.08);color:#5b4230}
 .srk-head .sp{margin-left:auto}
-.srk-back{border:0;background:none;padding:2px 0;font:500 13px var(--sans);color:var(--a);cursor:pointer}
+.srp .srk-back{border:0;background:none;padding:2px 0;font:500 13px var(--sans);color:var(--a);cursor:pointer}
 .srk-back:hover{text-decoration:underline}
 .srk-pill{flex:none;font:500 10px var(--mono);letter-spacing:.04em;padding:2px 8px;border-radius:999px;background:rgba(34,19,10,.07);color:#6a4a32;white-space:nowrap}
 .srk-pill.waiting{background:color-mix(in srgb,var(--a) 16%,#fff);color:var(--a)}
 .srk-pill.working{background:#22130a;color:#ffe9d2}
 .srk-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:2px 12px 12px}
-.srk-row{flex:none;position:relative;display:grid;gap:4px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08);cursor:pointer}
+.srk-row{flex:none;position:relative;display:grid;grid-template-columns:minmax(0,1fr);gap:4px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08);cursor:pointer}
 .srk-row:hover{background:#fff;border-color:color-mix(in srgb,var(--a) 35%,#fff)}
 /* The row opens its chat wherever it is pressed; the page chip in it is its own button, on top. */
-.srk-rowmain{display:grid;gap:4px;min-width:0;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer;outline:0}
+.srk-rowmain{display:grid;grid-template-columns:minmax(0,1fr);gap:4px;min-width:0;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer;outline:0}
 .srk-rowmain::after{content:"";position:absolute;inset:0;border-radius:14px}
 .srk-rowmain:focus-visible::after{box-shadow:0 0 0 2px var(--a)}
 .srk-row .srk-about{position:relative;z-index:1}
@@ -33,12 +33,12 @@ export const CHATS_CSS = `
 .srk-row .t b{flex:1;min-width:0;font:600 13.5px/1.3 var(--sans);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .srk-row .l{color:#6a4a32;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .srk-meta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font:10.5px var(--mono);color:#8a6a52}
-.srk-about{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:2px 9px 2px 3px;border-radius:999px;border:1px solid rgba(60,30,10,.16);background:#fff;color:#22130a;font:500 11.5px var(--sans);cursor:pointer}
+.srp .srk-about{display:inline-flex;align-items:center;gap:6px;min-width:0;max-width:100%;padding:2px 9px 2px 3px;border-radius:999px;border:1px solid rgba(60,30,10,.16);background:#fff;color:#22130a;font:500 11.5px var(--sans);cursor:pointer}
 .srk-about small{flex:none;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:1px 6px;border-radius:999px;background:#22130a;color:#fff6ec}
 .srk-about span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 button.srk-about:hover{border-color:var(--a)}
-span.srk-about{cursor:default}
-.srk-thread{flex:none;display:grid;gap:5px;padding:0 16px 10px;border-bottom:1px solid rgba(60,30,10,.1)}
+.srp span.srk-about{cursor:default}
+.srk-thread{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:0 16px 10px;border-bottom:1px solid rgba(60,30,10,.1)}
 .srk-thread b{font:600 15px/1.3 var(--sans)}
 .srk-thread a{color:var(--a);font:500 12px var(--sans);text-underline-offset:3px}
 .srk-log{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:12px 14px}
@@ -50,6 +50,8 @@ span.srk-about{cursor:default}
 .srk-m.openclaw p,.srk-m.openclaw ul,.srk-m.openclaw ol{margin:5px 0}
 .srk-m.openclaw>:first-child{margin-top:0} .srk-m.openclaw>:last-child{margin-bottom:0}
 .srk-m.openclaw ul,.srk-m.openclaw ol{padding-left:18px}
+.srk-m.openclaw ul{list-style:disc}
+.srk-m.openclaw ol{list-style:decimal}
 .srk-m.openclaw a{color:var(--a)}
 .srk-m.openclaw code{font:12px var(--mono);background:rgba(120,70,30,.09);border-radius:5px;padding:1px 4px}
 .srk-m.openclaw pre{overflow:auto;padding:8px 10px;border-radius:9px;background:#22130a;color:#ffe9d2}
@@ -62,13 +64,13 @@ span.srk-about{cursor:default}
 .srk-dots i:nth-child(2){animation-delay:.15s} .srk-dots i:nth-child(3){animation-delay:.3s}
 @keyframes srk-b{0%,60%,100%{opacity:.25}30%{opacity:1}}
 .srk-err{margin:0;font-size:12.5px;color:#a3361a}
-.srk-empty{margin-top:auto;display:grid;gap:10px;color:#6a4a32;font-size:13px}
+.srk-empty{margin-top:auto;display:grid;grid-template-columns:minmax(0,1fr);gap:10px;color:#6a4a32;font-size:13px}
 .srk-empty p{margin:0}
 .srk-sugg{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
 .srk-sugg button{font:13px var(--sans);color:#4a2a14;background:rgba(255,255,255,.75);border:1px solid color-mix(in srgb,var(--a) 30%,transparent);border-radius:999px;padding:5px 12px;cursor:pointer;text-align:left}
 .srk-sugg button:hover{border-color:var(--a);background:#fff}
 .srk-sugg button:disabled{opacity:.5;cursor:default}
-.srk-foot{flex:none;display:grid;gap:7px;padding:10px 12px 12px;border-top:1px solid rgba(60,30,10,.1)}
+.srk-foot{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px 12px;border-top:1px solid rgba(60,30,10,.1)}
 .srk-on{display:flex;align-items:center;gap:8px;min-width:0;font:11px var(--mono);color:#8a6a52}
 .srk-on .srk-about{flex:0 1 auto}
 .srk-meta .srk-about{flex:0 1 auto}
@@ -76,10 +78,10 @@ span.srk-about{cursor:default}
 .srk-box textarea{flex:1;min-width:0;resize:none;max-height:120px;padding:9px 13px;border-radius:16px;border:1px solid rgba(60,30,10,.18);background:rgba(255,255,255,.9);color:#22130a;font:14px/1.4 var(--sans);outline:0;box-shadow:inset 0 1px 2px rgba(40,22,10,.1)}
 .srk-box textarea:focus{border-color:var(--a);box-shadow:inset 0 1px 2px rgba(40,22,10,.1),0 0 0 3px color-mix(in srgb,var(--a) 20%,transparent)}
 .srk-box textarea::placeholder{color:#a08268}
-.srk-send{flex:none;height:38px;padding:0 16px;border-radius:999px;border:1px solid #120a05;background:linear-gradient(180deg,#4a3526,#22130a 55%,#170c06);color:#fff6ec;font:600 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 0 #0c0603}
-.srk-send:disabled{opacity:.4;cursor:default}
+.srp .srk-send{flex:none;height:38px;padding:0 16px;border-radius:999px;border:1px solid #120a05;background:linear-gradient(180deg,#4a3526,#22130a 55%,#170c06);color:#fff6ec;font:600 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 0 #0c0603}
+.srp .srk-send:disabled{cursor:default;background:rgba(34,19,10,.1);border-color:rgba(34,19,10,.1);color:#8a6a52;box-shadow:none}
 /* The same composer in one line, under the surface, while the chats are folded away. */
-.srk-mini{flex:none;display:grid;gap:5px;padding:8px 10px 10px;border-top:1px solid rgba(60,30,10,.1);background:rgba(255,255,255,.55)}
+.srk-mini{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:5px;padding:8px 10px 10px;border-top:1px solid rgba(60,30,10,.1);background:rgba(255,255,255,.55)}
 .srk-mini .st{display:flex;align-items:center;gap:8px;min-width:0;font-size:12.5px;color:#5b4230}
 .srk-mini .st span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srk-mini .st button{flex:none;border:0;background:none;padding:0;color:var(--a);font:500 12.5px var(--sans);cursor:pointer;text-decoration:underline;text-underline-offset:3px}
@@ -275,6 +277,24 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, onShowSurface }
 
 const mdLink = { a: ({ href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props} {...(href?.startsWith('/') ? {} : { target: '_blank', rel: 'noopener noreferrer' })} /> };
 
+/**
+ * One message of a chat. Drawn again only when it changed: the panel redraws on every key typed in the composer
+ * and on every poll, and a long chat would otherwise parse all of its markdown each time.
+ */
+const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface }: { message: TaskChatMessage; onShowSurface: (about: ChatSurfaceRef) => void }) {
+  return (
+    <>
+      <span className={`srk-who ${m.role}`}>{m.role === 'you' ? 'You' : 'OpenClaw'}</span>
+      <div className={`srk-m ${m.role}`}>
+        {m.role === 'openclaw' ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdLink}>{m.text}</ReactMarkdown> : m.text}
+      </div>
+      {m.about && <AboutChip about={m.about} onShow={onShowSurface} said />}
+    </>
+  );
+}, (was, now) => was.onShowSurface === now.onShowSurface && was.message.role === now.message.role && was.message.text === now.message.text
+  && was.message.at === now.message.at && was.message.about?.kind === now.message.about?.kind && was.message.about?.label === now.message.about?.label
+  && was.message.about?.url === now.message.about?.url);
+
 /** The chats panel: the list, or the one chat that is open. */
 export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, below }: {
   chats: TaskChats; about: ChatSurfaceRef | null; autoFocus: boolean; onShowSurface: (about: ChatSurfaceRef) => void; onClose?: () => void;
@@ -353,15 +373,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
             </div>
           </div>
         )}
-        {thread?.messages.map((m, i) => (
-          <React.Fragment key={i}>
-            <span className={`srk-who ${m.role}`}>{m.role === 'you' ? 'You' : 'OpenClaw'}</span>
-            <div className={`srk-m ${m.role}`}>
-              {m.role === 'openclaw' ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdLink}>{m.text}</ReactMarkdown> : m.text}
-            </div>
-            {m.about && <AboutChip about={m.about} onShow={onShowSurface} said />}
-          </React.Fragment>
-        ))}
+        {thread?.messages.map((m, i) => <ChatMessage key={i} message={m} onShowSurface={onShowSurface} />)}
         {pending && <div className="srk-dots" role="status" aria-label="OpenClaw is answering"><i /><i /><i /></div>}
         {thread?.error && <p className="srk-err" role="alert">{thread.error}</p>}
       </div>

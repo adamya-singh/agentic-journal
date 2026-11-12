@@ -24,7 +24,7 @@ export const BROWSER_SURFACE_CSS = `
 .srb-live.on i{background:#34d07f;box-shadow:0 0 0 3px rgba(52,208,127,.22);animation:srp-pulse 2.2s ease-in-out infinite}
 .srb-live.bad{color:#ffb59a}
 .srb-live.bad i{background:#e2661f}
-.srb-top b{flex:none;font-weight:600}
+.srb-top b{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .srb-top span.h{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#bfae9c}
 .srb-top a{margin-left:auto;flex:none;color:#ffd2a8;text-decoration:none;font-size:12px;white-space:nowrap}
 .srb-top a:hover{text-decoration:underline}

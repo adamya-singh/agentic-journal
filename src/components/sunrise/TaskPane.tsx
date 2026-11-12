@@ -85,7 +85,7 @@ const BRIEF_AND_WORK_CSS = `
 .srp-links a small{font:9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--a)}
 .srp-links a span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srp-when{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:14px;font:13px var(--sans);color:#6a4426}
-.srp-chip{border:1px solid rgba(60,30,10,.18);background:rgba(255,255,255,.7);border-radius:999px;padding:4px 12px;font:500 12.5px var(--sans);cursor:pointer;color:#22130a}
+.srp .srp-chip{border:1px solid rgba(60,30,10,.18);background:rgba(255,255,255,.7);border-radius:999px;padding:4px 12px;font:500 12.5px var(--sans);cursor:pointer;color:#22130a}
 .srp-chip:hover{border-color:var(--a);background:#fff}
 .srp-chip:disabled{opacity:.5;cursor:default}
 .srp-when input{border:1px solid rgba(60,30,10,.18);border-radius:999px;background:rgba(255,255,255,.8);color:#22130a;height:28px;padding:0 10px;font:12px var(--sans)}
@@ -332,7 +332,7 @@ const BRIEF_AND_WORK_CSS = `
 
 /* Controls. A thing to press looks raised and goes down when pressed; a thing to type in is a well; the one
    thing to do next is the only one in colour. */
-.srp-acts button,.srp-chip,.srp .srp-btn.quiet,.srp-links a{border:1px solid rgba(40,22,10,.22);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.12),0 6px 12px -8px rgba(40,22,10,.4);transition:transform .08s ease,box-shadow .08s ease,filter .15s ease}
+.srp-acts button,.srp .srp-chip,.srp .srp-btn.quiet,.srp-links a{border:1px solid rgba(40,22,10,.22);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.12),0 6px 12px -8px rgba(40,22,10,.4);transition:transform .08s ease,box-shadow .08s ease,filter .15s ease}
 .srp-acts button:hover,.srp-chip:hover,.srp .srp-btn.quiet:hover,.srp-links a:hover{background:linear-gradient(180deg,#fff,#f6f2ec);border-color:rgba(40,22,10,.34);transform:none;filter:none}
 .srp-acts button:active,.srp-chip:active,.srp .srp-btn.quiet:active,.srp-links a:active{transform:translateY(2px);box-shadow:inset 0 2px 4px rgba(40,22,10,.2)}
 .srp-acts .doneb,.srp .srp-btn,.srp .srp-door{border:1px solid #120a05;color:#fff6ec;background:linear-gradient(180deg,#4a3526,#22130a 55%,#170c06);box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 0 #0c0603,0 10px 18px -10px rgba(34,19,10,.8);transition:transform .08s ease,box-shadow .08s ease,filter .15s ease}
@@ -391,6 +391,7 @@ const WORKSPACE_CSS = `
 .srp.ws{display:flex;flex-direction:row}
 .srw-brief{flex:none;width:clamp(350px,31%,450px);min-height:0;display:flex;flex-direction:column;border-right:1px solid rgba(60,30,10,.1)}
 .srw-brief .srp-bar{flex:none;padding:16px 18px 0 20px}
+.srw-brief .srp-eyebrow{flex-wrap:wrap;row-gap:5px;overflow:visible}
 .srw-brief .srp-scroll{flex:1;padding:8px 20px 18px}
 .srp .srw-brief .srp-col{max-width:none;gap:16px}
 .srw-brief .srp-say{grid-template-columns:minmax(0,1fr);padding-top:4px}
@@ -403,37 +404,38 @@ const WORKSPACE_CSS = `
 .srw-foot{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:10px 16px 14px;border-top:1px solid rgba(60,30,10,.1)}
 .srw-mid{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:10px 12px 12px}
 .srw-tabs{flex:none;display:flex;align-items:flex-end;gap:6px;min-width:0}
-.srw-tablist{position:relative;flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.srw-tablist{position:relative;flex:1 1 128px;min-width:56px;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 .srw-tablist::-webkit-scrollbar{display:none}
-.srw-tabwrap{flex:none;position:relative;display:inline-flex;align-items:flex-end}
-.srw-tab{flex:none;max-width:168px;display:inline-flex;align-items:center;gap:7px;padding:9px 13px 10px;border:0;border-radius:13px 13px 0 0;background:transparent;color:#6a4a32;font:500 13.5px var(--sans);cursor:pointer;white-space:nowrap}
+.srw-tabwrap{flex:none;max-width:min(168px,100%);position:relative;display:inline-flex;align-items:flex-end}
+.srw-tabwrap:has(>[aria-selected=true]){max-width:min(240px,100%)}
+.srp .srw-tab{flex:0 1 auto;min-width:0;max-width:100%;display:inline-flex;align-items:center;gap:7px;padding:9px 13px 10px;border:0;border-radius:13px 13px 0 0;background:transparent;color:#6a4a32;font:500 13.5px var(--sans);cursor:pointer;white-space:nowrap}
 .srw-tab small{flex:none;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:999px;background:rgba(34,19,10,.1);color:#5b4230}
 .srw-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.srw-tab:hover{color:#22130a;background:rgba(255,255,255,.45)}
-.srw-tab[aria-selected=true]{max-width:240px;background:#fff;color:#22130a;box-shadow:0 -1px 0 rgba(255,255,255,.9),0 -8px 18px -14px rgba(120,60,10,.5)}
+.srp .srw-tab:hover{color:#22130a;background:rgba(255,255,255,.45)}
+.srp .srw-tab[aria-selected=true]{background:#fff;color:#22130a;box-shadow:0 -1px 0 rgba(255,255,255,.9),0 -8px 18px -14px rgba(120,60,10,.5)}
 .srw-tab[aria-selected=true] small{background:#22130a;color:#fff6ec}
 .srw-tabwrap.closes .srw-tab{padding-right:30px}
-.srw-tabx{position:absolute;right:7px;top:50%;width:18px;height:18px;margin-top:-10px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:#8a6a52;font:15px/1 var(--sans);cursor:pointer}
-.srw-tabx:hover,.srw-tabx:focus-visible{background:rgba(34,19,10,.12);color:#22130a;outline:0}
+.srp .srw-tabx{position:absolute;right:7px;top:50%;width:18px;height:18px;margin-top:-10px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:#8a6a52;font:15px/1 var(--sans);cursor:pointer}
+.srp .srw-tabx:hover,.srp .srw-tabx:focus-visible{background:rgba(34,19,10,.12);color:#22130a;outline:0}
 .srw-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--a)}
 .srw-dot.working{animation:srp-pulse 1.4s ease-in-out infinite}
 /* What OpenClaw is doing about the surface that is showing, as far as the chats say. It opens that chat. */
-.srw-live{flex:none;display:flex;align-items:center;gap:8px;min-width:0;margin-top:8px;padding:6px 12px;border-radius:11px;border:1px solid color-mix(in srgb,var(--a) 26%,transparent);background:rgba(255,255,255,.72);color:#4a2a14;font:12.5px var(--sans);text-align:left;cursor:pointer}
+.srp .srw-live{flex:none;display:flex;align-items:center;gap:8px;min-width:0;margin-top:8px;padding:6px 12px;border-radius:11px;border:1px solid color-mix(in srgb,var(--a) 26%,transparent);background:rgba(255,255,255,.72);color:#4a2a14;font:12.5px var(--sans);text-align:left;cursor:pointer}
 .srw-live:hover{background:#fff;border-color:var(--a)}
 .srw-live i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--a)}
 .srw-live.working i{animation:srp-pulse 1.4s ease-in-out infinite}
 .srw-live b{flex:none;font-weight:600;color:#22130a}
 .srw-live span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6a4a32}
 .srw-live em{flex:none;font-style:normal;font-weight:500;color:var(--a)}
-.srw-ico{flex:none;height:34px;min-width:34px;margin-bottom:5px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 9px;border-radius:11px;border:1px solid rgba(40,22,10,.18);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;font:500 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.1)}
+.srp .srw-ico{flex:none;height:34px;min-width:34px;margin-bottom:5px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 9px;border-radius:11px;border:1px solid rgba(40,22,10,.18);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;font:500 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.1)}
 .srw-ico:hover{border-color:rgba(40,22,10,.34)}
-.srw-ico[aria-pressed=true]{background:#22130a;border-color:#22130a;color:#fff6ec;box-shadow:none}
+.srp .srw-ico[aria-pressed=true]{background:#22130a;border-color:#22130a;color:#fff6ec;box-shadow:none}
 .srw-ico em{font:600 10.5px var(--mono);font-style:normal;padding:1px 6px;border-radius:999px;background:rgba(34,19,10,.1)}
 .srw-ico[aria-pressed=true] em{background:#fff6ec;color:#22130a}
 .srw-ico em.waiting{background:var(--a);color:#fff}
 .srw-ico .pane{width:15px;height:13px;border-radius:3px;border:1.5px solid currentColor;box-sizing:border-box;background:linear-gradient(90deg,currentColor 0 34%,transparent 34%)}
-.srw-add{flex:none;margin-bottom:5px;display:flex;align-items:center;gap:6px}
-.srw-add input{width:210px;max-width:40vw;height:32px;padding:0 12px;border-radius:999px;border:1px solid rgba(40,22,10,.2);background:#fff;font:12.5px var(--mono);color:#22130a;outline:0}
+.srw-add{flex:0 2 210px;min-width:80px;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.srw-add input{width:100%;min-width:0;height:32px;padding:0 12px;border-radius:999px;border:1px solid rgba(40,22,10,.2);background:#fff;font:12.5px var(--mono);color:#22130a;outline:0}
 .srw-add input:focus{border-color:var(--a)}
 .srw-add input.bad{border-color:#d2451a}
 .srw-surface{position:relative;flex:1;min-height:0;overflow:hidden;border-radius:14px;background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.95);box-shadow:inset 0 1px 0 #fff,0 18px 44px -30px rgba(120,60,10,.55)}
@@ -456,9 +458,10 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-brief .srp-scroll{padding:6px 16px 16px}
 .cols-1 .srw-foot{justify-content:flex-start}
 .cols-1 .srw-mid{padding:8px 8px 0}
-.cols-1 .srw-tab{padding:8px 10px 9px;max-width:150px}
+.cols-1 .srw-tab{padding:8px 10px 9px}
+.cols-1 .srw-tabwrap{max-width:min(150px,100%)}
 .cols-1 .srw-live em{display:none}
-.cols-1 .srw-tab[aria-selected=true]{max-width:190px}
+.cols-1 .srw-tabwrap:has(>[aria-selected=true]){max-width:min(190px,100%)}
 .cols-1 .srw-work{padding:14px 12px 24px}
 .cols-1 .srw-chats{flex:0 0 60%;width:auto;border-left:0;border-top:1px solid rgba(60,30,10,.14);background:#fffaf4;box-shadow:0 -14px 30px -22px rgba(60,30,10,.6)}
 .cols-1 .srk-mini{margin:0 -8px;padding:8px 10px 10px}
@@ -1291,15 +1294,39 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const settled = brief !== undefined && work !== undefined;
   const selectedId = picked !== null && surfaces.some((surface) => surface.id === picked) ? picked : settled ? defaultSurfaceId(surfaces, hasWork) : 'work';
   const selected = surfaces.find((surface) => surface.id === selectedId) ?? surfaces[0];
-  // With more tabs than fit, the one that is showing is brought into view.
+  // With more tabs than fit, the one that is showing is brought into view, and stays there as the room changes.
   const tablist = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     const list = tablist.current;
-    const tab = list?.querySelector<HTMLElement>('[aria-selected=true]')?.parentElement;
-    if (!list || !tab) return;
-    if (tab.offsetLeft < list.scrollLeft) list.scrollLeft = tab.offsetLeft;
-    else if (tab.offsetLeft + tab.offsetWidth > list.scrollLeft + list.clientWidth) list.scrollLeft = tab.offsetLeft + tab.offsetWidth - list.clientWidth;
+    if (!list) return;
+    const bring = () => {
+      const tab = list.querySelector<HTMLElement>('[aria-selected=true]')?.parentElement;
+      if (!tab) return;
+      // A tab wider than the room shows its start, not its end.
+      if (tab.offsetLeft < list.scrollLeft || tab.offsetWidth >= list.clientWidth) list.scrollLeft = tab.offsetLeft;
+      else if (tab.offsetLeft + tab.offsetWidth > list.scrollLeft + list.clientWidth) list.scrollLeft = tab.offsetLeft + tab.offsetWidth - list.clientWidth;
+    };
+    bring();
+    if (typeof ResizeObserver === 'undefined') return;
+    // The room changes with the window; the tab itself changes when its page's title arrives.
+    const watch = new ResizeObserver(bring);
+    watch.observe(list);
+    const shown = list.querySelector<HTMLElement>('[aria-selected=true]')?.parentElement;
+    if (shown) watch.observe(shown);
+    return () => watch.disconnect();
   }, [selectedId, surfaces.length]);
+  // With more tabs than fit, a mouse wheel over them moves them sideways (and not the page under them).
+  React.useEffect(() => {
+    const list = tablist.current;
+    if (!list) return;
+    const onWheel = (event: WheelEvent) => {
+      if (list.scrollWidth <= list.clientWidth + 1 || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      event.preventDefault();
+      list.scrollLeft += event.deltaY;
+    };
+    list.addEventListener('wheel', onWheel, { passive: false });
+    return () => list.removeEventListener('wheel', onWheel);
+  }, []);
   // A page is opened in OpenClaw's browser only once he chooses it; where the task opens by itself does not count.
   const [armed, setArmed] = React.useState<Record<string, true>>({});
   const [opened, setOpened] = React.useState<Record<string, OpenedTab>>({});

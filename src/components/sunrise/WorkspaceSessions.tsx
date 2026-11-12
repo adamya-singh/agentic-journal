@@ -11,12 +11,12 @@ import { openClawChatUrl } from '@/lib/openclaw-ui';
 import type { SessionRow, SessionsView } from '@/lib/session-index/types';
 
 export const SESSIONS_PANEL_CSS = `
-.srs{flex:none;display:grid;gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid rgba(60,30,10,.12)}
+.srs{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid rgba(60,30,10,.12)}
 .srs-head{display:flex;align-items:baseline;gap:8px}
 .srs-head h4{margin:0;font:500 9.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a)}
 .srs-head .n{font:500 10.5px var(--mono);padding:1px 7px;border-radius:999px;background:rgba(34,19,10,.08);color:#5b4230}
 .srs-note{margin:0;font-size:12.5px;color:#6a4a32}
-.srs-list{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.srs-list{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:8px}
 .srs-row{display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08)}
 .srs-app{grid-row:1/4;width:28px;height:28px;margin-top:1px;border-radius:8px;display:grid;place-items:center;font:600 9.5px var(--mono);letter-spacing:.03em;color:#fff6ec;background:#22130a}
 .srs-app.cc{background:#b4552a}
@@ -26,18 +26,18 @@ export const SESSIONS_PANEL_CSS = `
 .srs-meta .live{color:#1f7a4a}
 .srs-why{font-size:12.5px;color:#5b4230}
 .srs-acts{grid-column:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;margin-top:5px}
-.srs-go{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:500 12px var(--sans);text-decoration:none;cursor:pointer}
+.srp .srs-go{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:500 12px var(--sans);text-decoration:none;cursor:pointer}
 .srs-go:hover{border-color:var(--a)}
-.srs-not{border:0;background:none;padding:0;font:500 12px var(--sans);color:#8a6a52;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
-.srs-not:hover{color:#a3361a}
+.srp .srs-not{border:0;background:none;padding:0;font:500 12px var(--sans);color:#8a6a52;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.srp .srs-not:hover{color:#a3361a}
 .srs-foot{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
-.srs-link{border:1px dashed rgba(60,30,10,.3);background:transparent;border-radius:999px;padding:3px 11px;font:500 12px var(--sans);color:#4a2a14;cursor:pointer}
+.srp .srs-link{border:1px dashed rgba(60,30,10,.3);background:transparent;border-radius:999px;padding:3px 11px;font:500 12px var(--sans);color:#4a2a14;cursor:pointer}
 .srs-link:hover,.srs-link[aria-expanded=true]{border-color:var(--a);border-style:solid;background:#fff}
 .srs-status{font:10.5px/1.5 var(--mono);color:#8a6a52}
-.srs-pick{display:grid;gap:6px;padding:10px;border-radius:14px;border:1px solid color-mix(in srgb,var(--a) 35%,transparent);background:rgba(255,255,255,.75)}
+.srs-pick{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:10px;border-radius:14px;border:1px solid color-mix(in srgb,var(--a) 35%,transparent);background:rgba(255,255,255,.75)}
 .srs-pick input{width:100%;box-sizing:border-box;height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:13px var(--sans);outline:0}
 .srs-pick input:focus{border-color:var(--a)}
-.srs-pick ul{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.srs-pick ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
 .srs-pick li button{display:grid;grid-template-columns:22px minmax(0,1fr);gap:1px 8px;align-items:center;width:100%;padding:6px;border-radius:9px;border:0;background:transparent;color:#22130a;font:12.5px var(--sans);text-align:left;cursor:pointer}
 .srs-pick li button:hover,.srs-pick li button:focus-visible{background:color-mix(in srgb,var(--a) 10%,#fff);outline:0}
 .srs-pick li .srs-app{grid-row:1/3;width:22px;height:22px;border-radius:6px;font-size:8px;margin:0}
