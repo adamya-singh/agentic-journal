@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nextWorkRecord, resolveWork, WORK_BODY_MAX } from '@/lib/hook-work';
-import { openTaskRefs } from '../brief/build';
-import { readAgentRecord } from '../brief-agent/store';
+import { loadTaskBrief, openTaskRefs } from '../brief/build';
 import { mutateHookWorkRecords, readHookWorkRecord } from './store';
 
 function resolved(taskId: string, title: string) {
-  return resolveWork(readAgentRecord(taskId)?.layer?.hook?.work ?? null, readHookWorkRecord(taskId), title);
+  return resolveWork(loadTaskBrief(taskId)?.hook?.work ?? null, readHookWorkRecord(taskId), title);
 }
 
 /**

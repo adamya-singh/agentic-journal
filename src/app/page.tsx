@@ -8,7 +8,7 @@ import { AppHeader } from '@/components/AppHeader';
 import { MobileClock } from '@/components/MobileClock';
 import { SettingsPopover } from '@/components/SettingsPopover';
 import { MiscNotesSection } from '@/components/MiscNotesSection';
-import { HorizonHero } from '@/components/horizon/HorizonHero';
+import dynamic from 'next/dynamic';
 import { WeekView, WeekViewData } from '@/components/WeekView';
 import { TaskLists, TaskListsData, Task, ListType } from '@/components/TaskLists';
 import { CedarCaptionChat } from '@/cedar/components/chatComponents/CedarCaptionChat';
@@ -20,6 +20,11 @@ import { useIsMobile } from '@/lib/useIsMobile';
 import { useJobBoardState } from '@/lib/useJobBoardState';
 import { getCurrentDateISO, scheduleMidnightRollover } from '@/lib/current-date';
 import type { JobListingsData, JobListing } from '@/lib/types';
+
+// The home page's hero: Horizon Dawn, or Sunrise with ?hero=sunrise while it is being tried out. Each is loaded
+// only when shown.
+const HorizonHero = dynamic(() => import('@/components/horizon/HorizonHero').then((m) => m.HorizonHero), { ssr: false });
+const SunriseHero = dynamic(() => import('@/components/sunrise/SunriseHero').then((m) => m.SunriseHero), { ssr: false });
 
 type ChatMode = 'floating' | 'sidepanel' | 'caption';
 type JobListingInput = Omit<
@@ -98,6 +103,11 @@ export default function HomePage() {
   const effectiveChatMode: ChatMode = isMobile ? 'sidepanel' : chatMode;
 
   // Cedar state for the main text that can be changed by the agent
+  // Which hero to show is in the address, which only the browser knows: read after mount.
+  const [hero, setHero] = React.useState<'dawn' | 'sunrise' | null>(null);
+  React.useEffect(() => {
+    setHero(new URLSearchParams(window.location.search).get('hero') === 'sunrise' ? 'sunrise' : 'dawn');
+  }, []);
   const [mainText, setMainText] = React.useState('');
 
   // Cedar state for dynamically added text lines
@@ -1265,7 +1275,7 @@ export default function HomePage() {
       />
 
       {/* Priority horizon (holds the quick capture bar) */}
-      <HorizonHero />
+      {hero === 'sunrise' ? <SunriseHero /> : hero === 'dawn' ? <HorizonHero /> : <div style={{ minHeight: '60vh', background: '#05070d' }} />}
 
       {/* Week View */}
       <div className="pt-2 sm:pt-4 pb-4">
