@@ -332,6 +332,48 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .sr-pane.risen .sr-pane-in{opacity:1;transition:opacity .4s ease .3s}
 .sr-b{border:1px solid rgba(60,30,10,.2);background:#fff;border-radius:999px;padding:5px 11px;font:500 12.5px var(--sans);cursor:pointer;color:#24140a}
 .sr-b:hover{border-color:#e07a3a}
+/* The far side: press the sun and the sky rolls over about the horizon to where the action cards are. */
+.turn-out .sr-labels,.turn-out .sr-threads{transform-origin:50% var(--hy,90%);animation:sr-turn-out .3s ease-in forwards}
+.turn-in .sr-labels,.turn-in .sr-threads{transform-origin:50% var(--hy,90%);animation:sr-turn-in .44s cubic-bezier(.2,.8,.2,1) both}
+.turn-out .sr-flat{opacity:.55;transition:opacity .3s ease}
+.sr-flat{transition:opacity .3s ease}
+.sr-sunbtn{clip-path:inset(-40px -120px 50% -120px)}
+.sr-sunbtn .l{position:absolute;left:50%;bottom:calc(100% + 10px);transform:translateX(-50%);font:500 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:#fff3e2;white-space:nowrap;opacity:0;text-shadow:0 1px 6px rgba(0,0,0,.55);pointer-events:none;transition:opacity .2s ease}
+.sr-sunbtn:hover .l,.sr-sunbtn:focus-visible .l{opacity:1}
+.sr-sunbtn:focus-visible{outline:none;box-shadow:0 0 0 1.5px rgba(255,246,232,.6),0 0 36px 12px rgba(255,186,110,.3)}
+.farside .zl{color:#f6e6ee}
+.farside .chip{background:rgba(255,236,244,.7)}
+.thing.is-card.noticed .shape.sm{--line:rgba(134,230,216,.8)}
+.thing.is-card.handed .shape.sm .nm::after{content:" · OpenClaw on it";font-weight:500;color:#2bb8a3}
+/* The camera: a pinch zooms the world and a two-finger scroll moves it. The flat drawing moves with it. */
+.sr-world{position:absolute;inset:0;z-index:3;pointer-events:none;transform-origin:0 0}
+.sr-flat{transform-origin:0 0;overflow:visible}
+.sr-ground,.sr-sunbtn{pointer-events:auto}
+/* Zoomed, everything is drawn again at its new size (a kept layer would be stretched and blurry), and the words
+   step back so the sky can be looked around. */
+.zoomed .thing,.zoomed .sr-glow{will-change:auto}
+.sr-say{transition:opacity .25s ease}
+.zoomed .sr-say{opacity:0}
+.gliding .sr-world,.gliding .sr-flat{transition:transform .34s cubic-bezier(.22,.8,.24,1)}
+.sr-ctl{position:absolute;left:50%;top:12px;z-index:9;transform:translateX(-50%);display:flex;gap:6px;align-items:center}
+.sr-ctl button{border:1px solid rgba(255,255,255,.2);background:rgba(10,14,24,.5);color:rgba(243,239,231,.78);border-radius:999px;padding:4px 12px;font:500 11px var(--mono);cursor:pointer;white-space:nowrap;transition:border-color .15s ease,color .15s ease,background .15s ease}
+.sr-ctl button:hover,.sr-ctl button:focus-visible{border-color:#ffd2a8;color:#fff;outline:none}
+.sr-ctl button.on{background:#ffd2a8;border-color:#ffd2a8;color:#1b0d05}
+.sr-ctl .sr-view{background:rgba(10,14,24,.88);border-color:rgba(255,255,255,.35);color:#f3efe7}
+.sr-ctl [hidden]{display:none}
+.hz-on3d .sr-ctl,.working .sr-ctl,.narrow .sr-lock{display:none}
+/* Under the sun: what is behind today, in the ground's own light. Late tasks have a hot rim, undated ones a dashed
+   one, and what was cleared this week is dim and struck through. */
+.thing.under .shape{--fg:#ffe9d2;--sub:rgba(255,233,210,.66);--accent:#ffb37a;--line:rgba(255,190,140,.45);--fill:rgba(46,24,12,.8);--soft:rgba(255,255,255,.1);--hot:#ff8a45;--good:#8fe3b0;--good-soft:rgba(110,220,160,.14)}
+.thing.under.late .shape{--line:rgba(255,120,60,.9);--accent:#ff9a6a}
+.thing.under.nodate .shape.sm{border-style:dashed}
+.thing.under.cleared{cursor:default}
+.thing.under.cleared .shape{--fg:rgba(255,233,210,.62);--fill:rgba(30,22,16,.62);--line:rgba(255,255,255,.18);--accent:#8fe3b0}
+.thing.under.cleared .nm{text-decoration:line-through}
+/* The week's streak under the sun opens the dailies. */
+.sr-streak{pointer-events:auto;cursor:pointer;border:0;background:none;padding:2px 6px;border-radius:8px}
+.sr-streak:hover,.sr-streak:focus-visible{background:rgba(255,246,236,.35);outline:none}
+.sr-streak[hidden]{display:none}
 /* The ground's chips wrap on a narrow screen. */
 .narrow .sr-ground{flex-wrap:wrap;right:12px}
 .chip.more{background:rgba(255,246,236,.3)}
@@ -345,4 +387,6 @@ ${partsCss}
 ${rules}
 }
 @keyframes sr-breathe{0%,100%{opacity:0}50%{opacity:1}}
+@keyframes sr-turn-out{to{opacity:0;transform:perspective(1400px) rotateX(-64deg)}}
+@keyframes sr-turn-in{from{opacity:0;transform:perspective(1400px) rotateX(64deg)}to{opacity:1;transform:none}}
 `

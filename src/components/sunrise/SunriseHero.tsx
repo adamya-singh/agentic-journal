@@ -16,7 +16,7 @@ import { ActionCardView, CARD_CSS, type CardDecisionInput } from '@/components/h
 import { decideCard, undoCard } from '@/components/horizon/card-actions';
 import type { DawnSpace } from '@/components/horizon/dawn-space';
 import { SPACE_CSS } from '@/components/horizon/space-css';
-import type { ActionCard, FarSideView } from '@/lib/action-cards/types';
+import { CARD_WHENS, type ActionCard, type CardAnswer, type FarSideView } from '@/lib/action-cards/types';
 import { cardFormSpec, cardSalience } from '@/lib/sunrise/form-spec';
 import { getCurrentDateISO } from '@/lib/current-date';
 import { useRefresh } from '@/lib/RefreshContext';
@@ -61,7 +61,11 @@ const HERO_CSS = `
 .sr-tray .sr-card small{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#9a5a24}
 .sr-tray .sr-card span{color:#7a6656;font-size:12px}
 .sr-tray .sr-cards{max-height:320px;overflow:auto}
-.thing.is-card .shape.sm{border-style:dashed}
+.sr-tray .sr-answers li{line-height:1.35}
+.sr-tray .sr-answers b.y{color:#b0521c}
+.sr-tray .sr-answers b.n{color:#9a8676}
+.sr-tray .sr-answers q{display:block;color:#7a6656;font-size:12px}
+.sr-hero:has(.sr-sky.farside) .sr-enter3d{display:none}
 .src{position:absolute;inset:0;overflow:auto;background:linear-gradient(180deg,#161b30,#090c18)}
 .src .ac{position:static;width:100%;max-height:none;border:0;border-radius:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;background:none}
 /* Stepping inside: Dawn's 3D world takes the sky over, and Sunrise's own layers step back until you leave. */
@@ -76,6 +80,10 @@ const HERO_CSS = `
 .sr-enter3d:hover,.sr-enter3d:focus-visible{transform:translateY(-2px);border-color:#ffd2a8;outline:none}
 .sr-enter3d:disabled{opacity:.6;cursor:default}
 .sr-hero:has(.sr-sky.working) .sr-enter3d{display:none}
+/* Full page: the hero fills the window and the rest of the page waits under it. Locked or full, the page does not scroll. */
+.sr-hero.sr-fullpage{position:fixed;inset:0;z-index:60}
+.sr-hero.sr-fullpage .sr-sky{height:100%}
+html.sr-held{overflow:hidden}
 .sr-undo{position:absolute;left:50%;bottom:104px;z-index:31;transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;font:12.5px var(--sans);color:#f3e3cf;background:rgba(10,14,24,.85);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 6px 5px 13px;white-space:nowrap}
 .sr-undo button{font:500 11px var(--mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
 `;
@@ -105,6 +113,7 @@ export function SunriseHero() {
   const [letGoAsk, setLetGoAsk] = React.useState<{ id: string; listType: string; short: string; title: string } | null>(null);
   const [tick, setTick] = React.useState(0);
   const [cards, setCards] = React.useState<ActionCard[]>([]);
+  const [answers, setAnswers] = React.useState<CardAnswer[]>([]);
   // Dawn's 3D world, loaded (with three.js) the first time you step inside.
   const spaceRef = React.useRef<DawnSpace | null>(null);
   const [space, setSpace] = React.useState<'off' | 'loading' | 'on'>('off');
@@ -131,19 +140,26 @@ export function SunriseHero() {
     return () => window.clearInterval(timer);
   }, []);
 
-  // The action cards still to decide: things OpenClaw noticed and posts he saved. The heaviest rise beside the
-  // tasks; all of them wait in the "to decide" chip on the ground.
+  // The action cards: things OpenClaw noticed and posts he saved. They live on the far side of the sky (press
+  // the sun), on rings by when they fit and in one slice per bet, as on Dawn.
   const loadCards = React.useCallback(() => {
     fetch('/api/action-cards')
       .then((r) => r.json())
-      .then((json) => { if (json.success) setCards((json.data as FarSideView).cards.filter((card) => card.status === 'open')); })
+      .then((json) => {
+        if (!json.success) return;
+        const view = json.data as FarSideView;
+        setCards(view.cards);
+        setAnswers(view.answers);
+      })
       .catch(() => {});
   }, []);
   React.useEffect(() => { loadCards(); }, [loadCards, taskRefreshCounter, tick]);
   const cardThings = React.useMemo<CardThing[]>(() => cards
-    .map((card) => ({ id: `card:${card.id}`, salience: cardSalience(card), form: { spec: cardFormSpec(card), when: card.estimate } }))
-    .sort((a, b) => b.salience - a.salience)
-    .slice(0, 3), [cards]);
+    .map((card) => ({
+      id: `card:${card.id}`, salience: cardSalience(card), form: { spec: cardFormSpec(card), when: card.estimate },
+      ring: CARD_WHENS.indexOf(card.when), slice: card.betLabel, noticed: card.source !== 'x', handed: card.status === 'handed',
+    }))
+    .sort((a, b) => b.salience - a.salience), [cards]);
 
   const loadProposals = React.useCallback(() => {
     fetch('/api/tasks/done-proposals')
@@ -180,6 +196,7 @@ export function SunriseHero() {
   const stepInside = React.useCallback(async () => {
     const sky = skyRef.current, made = engineRef.current;
     if (!sky || !made || spaceRef.current) return;
+    made.resetView();   // the 3D world takes the sky over at life size
     setSpace('loading');
     try {
       const { DawnSpace: Space } = await import('@/components/horizon/dawn-space');
@@ -229,7 +246,7 @@ export function SunriseHero() {
       setEngine(null);
     };
   }, []);
-  React.useEffect(() => { if (engine && data) engine.update(data, cardThings, cards.length); }, [engine, data, cardThings, cards.length]);
+  React.useEffect(() => { if (engine && data) engine.update(data, cardThings, answers.length); }, [engine, data, cardThings, answers.length]);
 
   const offerUndo = React.useCallback((text: string, run: () => Promise<unknown>) => {
     setUndo({ text, run });
@@ -281,6 +298,8 @@ export function SunriseHero() {
     engineRef.current?.closeTask();
     loadCards();
     refreshTasks();
+    // A card that became a task rises on today's rings: the sky turns back to show it.
+    if (d.verdict === 'agree' && d.outcome === 'task') engineRef.current?.turn(false);
     const said = d.verdict === 'agree'
       ? d.outcome === 'task' ? `Agreed. ${card.short} is a task now.` : d.outcome === 'hand' ? 'Agreed. OpenClaw is on it.' : `Agreed. ${decided.outcome?.label ?? ''}`
       : d.snooze ? 'Dismissed for now; it comes back later.' : 'Dismissed. OpenClaw keeps your reason.';
@@ -323,6 +342,16 @@ export function SunriseHero() {
         </div>
       ))}
       {trayError && <p className="sr-err" role="alert">{trayError}</p>}
+    </>
+  ) : tray === 'answers' ? (
+    <>
+      <p className="sr-t">Your answers</p>
+      <p className="sr-s">OpenClaw reads your reasons before it writes new cards.</p>
+      <ul className="sr-list sr-answers">
+        {answers.slice(0, 8).map((a) => (
+          <li key={`${a.id}${a.at}`}><b className={a.verdict === 'agree' ? 'y' : 'n'}>{a.verdict === 'agree' ? '✓' : '✕'}</b> {a.short}<q>{a.reason}</q></li>
+        ))}
+      </ul>
     </>
   ) : tray === 'cards' ? (
     <>

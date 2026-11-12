@@ -20,9 +20,12 @@ import {salienceOf} from '@/lib/sunrise/salience'
 import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms'
 
 export type Box = {left: number, top: number, width: number, height: number}
-export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards'
-/** An action card that competes for attention beside the tasks: its form, and how much it matters now (0 to 1). */
-export type CardThing = {id: string, salience: number, form: FormThing}
+export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers'
+/**
+ * An action card on the far side: its form, how much it matters now (0 to 1), the ring it sits on (0 fits now,
+ * 1 this period, 2 after, 3 someday), the bet whose slice it is in, and how it is marked.
+ */
+export type CardThing = {id: string, salience: number, form: FormThing, ring: number, slice: string, noticed: boolean, handed: boolean}
 export type EngineHost = {
   /** A task or an action card was opened into the workspace (its id), or the workspace closed (null). */
   onOpen(taskId: string | null): void
@@ -55,23 +58,24 @@ export function loadPrograms(): Promise<Programs> {
 const SKY: [number, string][] = [[0, '#05070d'], [0.3, '#0b1730'], [0.58, '#1b3f6e'], [0.8, '#5b7aa6'], [0.92, '#c9a08a'], [1, '#e39a5f']]
 const BANDS = ['rgba(255,196,128,.17)', 'rgba(255,196,128,.07)', 'rgba(170,200,240,.05)', 'rgba(170,200,240,.02)']
 const SUN = ['#fff6d8', '#ffd27a', '#ff9a3c', '#ff7a2f']
-// Deterministic stars, as dawn-svg.ts's starField.
-function starField(width: number, height: number, count: number) {
+// Deterministic stars over a stretch of sky, thinning toward `fadeY` (as dawn-svg.ts's starField does toward the horizon).
+function starField(left: number, top: number, width: number, height: number, count: number, fadeY: number) {
   let seed = 7
   const next = () => (seed = (seed * 16807) % 2147483647) / 2147483647
   let svg = ''
   for (let index = 0; index < count; index++) {
-    const y = next() * height
-    const x = next() * width
-    const opacity = (1 - y / height) * (0.25 + next() * 0.7)
+    const y = top + next() * height
+    const x = left + next() * width
+    const opacity = Math.min(1, Math.max(0, (fadeY - y) / fadeY)) * (0.25 + next() * 0.7)
     svg += `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${next() < 0.08 ? 1.4 : 0.7}" fill="#fff" opacity="${opacity.toFixed(2)}"/>`
   }
   return svg
 }
 
-// A task on the rings (item), or an action card that rose from the sun (item is null, salience is its own).
+// A task on today's rings, or an action card on the far side's (its item then stands in for a task's: its ring,
+// its bet as the subject, and `salience` is its own).
 type Thing = {
-  id: string, item: HorizonItem | null, salience: number, form: FormThing, signature: string
+  id: string, item: HorizonItem, salience: number | null, outer: boolean, under: boolean, inert: boolean, form: FormThing, signature: string
   el: HTMLElement, face: HTMLElement, body: HTMLElement, day: HTMLElement, seat: HTMLElement
   level: number, hook: Box | null, shown: boolean, lifted: boolean, from: {x: number, y: number} | null
   lastBox: Box | null
@@ -84,14 +88,24 @@ const trimDots = (text: string) => text.replace(/[.…]+$/, '')
 // "Mon Oct 26" in a form's corner is "Oct 26".
 const shortDay = (day: string) => { const parts = day.split(' '); return parts.length === 3 ? `${parts[1]} ${parts[2]}` : day }
 const svgNS = 'http://www.w3.org/2000/svg'
-// In the shapes look a form is 70 tall before the screen's scale: these rows are scales 1 down to 0.77.
-const formRows: readonly (readonly [number, number])[] = [[0, 70], [0, 66], [0, 62], [0, 58], [0, 54]]
+// A form is 70 tall before the screen's scale: these rows are scales 1.26 down to 0.77. The rings take the biggest
+// at which everything fits, so a day with few tasks reads large and a crowded one still holds them all.
+const formRows: readonly (readonly [number, number])[] = [[0, 88], [0, 80], [0, 72], [0, 66], [0, 60], [0, 54]]
 // Forms drawn narrower than their shape's footprint, because the rings had no room for them at full width.
 const narrowBy = 0.7
 // Pulled back, the four rings hold what is past the next two weeks: to a month, a season, a year, and beyond.
 const farDays = [30, 90, 365] as const
 const farBounds = {climb: 156, altitude: 324}
 const ringZones = ['ignition', 'climb', 'altitude', 'orbit'] as const
+// A place within one of the four rings, as hours for the ring program: `through` is 0 at the ring's inner edge.
+function ringHours(ring: number, through: number) {
+  const {climb, altitude} = farBounds
+  return ring === 0 ? through * 48 : ring === 1 ? 48 + through * (climb - 48) : ring === 2 ? climb + through * (altitude - climb) : altitude + through * 1500
+}
+// How far out in its ring a card sits: the heavier it is, the nearer the sun.
+const cardOut = (card: CardThing) => 1 - Math.max(0, Math.min(1, card.salience * 2))
+// How far the things under the sun are pushed down past the ground's own strip (its names and chips), in px.
+const underPush = 64
 const monthDay = (date: Date) => date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
 
 export class SunriseEngine {
@@ -115,11 +129,20 @@ export class SunriseEngine {
   private readonly pane: HTMLElement
   private readonly glowEl: HTMLElement
   private readonly groundEl: HTMLElement
-  private readonly streakEl: HTMLElement
+  private readonly streakEl: HTMLButtonElement
   private readonly sunButton: HTMLButtonElement
   private readonly arcsEl: HTMLElement
   private readonly tray: HTMLElement
   private readonly toastEl: HTMLElement
+  private readonly world: HTMLElement
+  private readonly viewButton: HTMLButtonElement
+  private readonly lockButton: HTMLButtonElement
+  private readonly fullButton: HTMLButtonElement
+  private locked = false // scrolling stays in the sky: the page under it does not move
+  private full = false // the sky fills the whole window
+  // The camera: the world is drawn at `z` times its size, moved by x and y px. Home is 1, 0, 0.
+  private view = {z: 1, x: 0, y: 0}
+  private pinch: {z: number} | null = null
   private readonly zoneEls: HTMLElement[]
   private readonly subjectEls = new Map<string, HTMLButtonElement>()
   private smallHost: HTMLElement | null = null
@@ -128,10 +151,15 @@ export class SunriseEngine {
 
   private data: SunriseData | null = null
   private cards: CardThing[] = []
-  private cardCount = 0
+  private answers = 0 // answers given to cards so far: the far side's ground offers them
   private things: Thing[] = []
-  private source: HorizonItem[] = [] // the tasks this view is of: today's rings, or pulled back, the ones past them
-  private far = false // pulled back
+  private source: HorizonItem[] = [] // what the rings hold: today's tasks, or on the far side the cards
+  private outerR = 0 // how far out the outer rings reach, in px from the sun; 0 when nothing is out there
+  private underK = 0 // the scale of the rings under the sun, in px per ring unit
+  // Where each thing under the sun sits: its ring (0 nearest the horizon) and how far through it.
+  private readonly underPlace = new Map<string, {ring: number, through: number, look: string}>()
+  private farSide = false // turned to the far side, where the action cards are
+  private turning = false
   private subject: string | null = null // the subject you've gone into, if any
   private open: string | null = null // the task in the workspace
   private hot: Thing | null = null // the form under the pointer
@@ -177,7 +205,7 @@ export class SunriseEngine {
     this.labels = div('sr-labels')
     this.glowEl = div('sr-glow')
     this.labels.append(this.glowEl)
-    this.zoneEls = ringZones.map(() => {
+    this.zoneEls = [...ringZones, ...ringZones].map(() => {
       const zone = div('zl')
       this.labels.append(zone)
       return zone
@@ -199,29 +227,55 @@ export class SunriseEngine {
     this.sunButton = document.createElement('button')
     this.sunButton.type = 'button'
     this.sunButton.className = 'sr-sunbtn'
-    this.sunButton.setAttribute('aria-label', 'Your dailies')
     this.groundEl = div('sr-ground')
-    this.streakEl = div('sr-streak')
+    this.streakEl = document.createElement('button')
+    this.streakEl.type = 'button'
+    this.streakEl.className = 'sr-streak'
+    this.streakEl.setAttribute('aria-label', 'Your dailies')
     this.tray = div('sr-tray')
     this.tray.hidden = true
     this.toastEl = div('sr-toast')
     this.toastEl.setAttribute('role', 'status')
     root.classList.add('shapes')
-    root.append(this.flat, div('sr-day'), this.threads, this.labels, this.pane, this.say, cap, this.arcsEl, this.sunButton, this.groundEl, this.streakEl, this.tray, this.toastEl)
+    // The world is what the camera moves: the rings and everything on them. The flat drawing stays a child of
+    // the sky itself (the 3D world needs it there) and is moved with the same transform. The words, the capture
+    // box, the workspace and the trays stay put on the screen.
+    this.world = div('sr-world')
+    this.world.append(this.threads, this.labels, this.arcsEl, this.sunButton, this.groundEl, this.streakEl)
+    const control = (className: string) => { const button = document.createElement('button'); button.type = 'button'; button.className = className; return button }
+    this.viewButton = control('sr-view')
+    this.viewButton.hidden = true
+    this.lockButton = control('sr-lock')
+    this.fullButton = control('sr-full')
+    const controls = div('sr-ctl')
+    controls.append(this.viewButton, this.lockButton, this.fullButton)
+    root.append(this.flat, div('sr-day'), this.world, this.pane, this.say, cap, controls, this.tray, this.toastEl)
+    this.lockButton.addEventListener('click', event => { event.stopPropagation(); this.setLocked(!this.locked) }, {signal})
+    this.fullButton.addEventListener('click', event => { event.stopPropagation(); this.setFull(!this.full) }, {signal})
+    // A double click on the sky itself snaps the camera back to today.
+    root.addEventListener('dblclick', event => {
+      const target = event.target instanceof Element ? event.target : null
+      if (this.open !== null || this.root.classList.contains('hz-live') || target === null || !overSky(target)) return
+      if (target.closest('.thing, button, a, input, textarea, .sr-ground') !== null || this.isHome()) return
+      event.preventDefault()
+      this.resetView()
+    }, {signal})
+    this.paintControls()
     this.slots = {pane: paneIn, tray: this.tray, cap}
+    this.viewButton.addEventListener('click', event => { event.stopPropagation(); this.resetView() }, {signal})
 
     // Press a task to open it where it is.
     this.labels.addEventListener('click', event => {
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
-      if (thing !== undefined && thing.shown) this.openTask(thing.id)
+      if (thing !== undefined && thing.shown && !thing.inert) this.openTask(thing.id)
     }, {signal})
     // A form under the pointer opens a little and the others step back, for as long as the pointer stays.
     this.labels.addEventListener('pointerover', event => {
       if (this.narrow || this.open !== null || event.pointerType === 'touch') return
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing.form, .thing.hook') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
-      if (thing === undefined) return
+      if (thing === undefined || thing.inert) return
       window.clearTimeout(this.hotTimer)
       if (thing !== this.hot) this.hotTimer = window.setTimeout(() => this.setHot(thing), this.hot === null ? 70 : 20)
     }, {signal})
@@ -232,8 +286,10 @@ export class SunriseEngine {
       if (to === null) this.hotTimer = window.setTimeout(() => this.setHot(null), 110)
     }, {signal})
     this.groundEl.addEventListener('click', event => {
-      const pull = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-far]') : null
-      if (pull !== null) { event.stopPropagation(); this.setFar(pull.dataset['far'] === '1'); return }
+      const back = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-side]') : null
+      if (back !== null) { event.stopPropagation(); this.turn(false); return }
+      const further = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-far]') : null
+      if (further !== null) { event.stopPropagation(); this.showOuter(); return }
       const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tray]') : null
       if (chip === null) return
       event.stopPropagation()
@@ -246,15 +302,21 @@ export class SunriseEngine {
       const daily = arc === null ? undefined : this.data?.horizon.dailies[Number(arc.dataset['daily'])]
       if (daily !== undefined) this.toggleDaily(daily)
     }, {signal})
+    // Press the sun and the sky turns over to its far side, where the action cards are, as on Dawn. Press it
+    // again to come back. The dailies list is under the sun: press the week's streak.
     this.sunButton.addEventListener('click', event => {
       event.stopPropagation()
+      this.turn(!this.farSide)
+    }, {signal})
+    this.streakEl.addEventListener('click', event => {
+      event.stopPropagation()
       if (this.trayKind === 'dailies') this.closeTray()
-      else this.openTray('dailies', this.sunButton)
+      else this.openTray('dailies', this.streakEl)
     }, {signal})
     this.backButton.addEventListener('click', () => this.leaveSubject(), {signal})
     document.addEventListener('pointerdown', event => {
       if (this.trayKind === null || !(event.target instanceof Node)) return
-      if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton) this.closeTray()
+      if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton && !this.streakEl.contains(event.target)) this.closeTray()
     }, {signal})
     window.addEventListener('keydown', event => {
       // Inside the 3D world Escape is the world's (it asks the host first).
@@ -264,17 +326,47 @@ export class SunriseEngine {
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return
       if (this.trayKind !== null) this.closeTray()
       else if (this.open !== null) this.closeTask()
+      else if (!this.isHome()) this.resetView()
       else if (this.subject !== null) this.leaveSubject()
-      else if (this.far) this.setFar(false)
+      else if (this.farSide) this.turn(false)
+      else if (this.full) this.setFull(false)
     }, {signal})
     // Shift and scroll pulls back to the tasks past the next two weeks, and comes back.
+    // The sky is a space the camera moves through. Over it, a pinch zooms about the pointer and a two-finger
+    // scroll moves around. (A trackpad pinch arrives as a wheel event with Ctrl held; Safari sends its own
+    // gesture events, below.) A scroll that cannot move the camera any further, such as down from the ground,
+    // is left to the page, so the rest of the page stays reachable.
+    const overSky = (target: EventTarget | null) => target instanceof Node && !this.pane.contains(target) && !this.tray.contains(target) && !this.slots.cap.contains(target)
+    const pointIn = (event: {clientX: number, clientY: number}) => { const box = root.getBoundingClientRect(); return {x: event.clientX - box.left, y: event.clientY - box.top} }
     root.addEventListener('wheel', event => {
-      if (!event.shiftKey || this.open !== null || this.root.classList.contains('hz-live')) return
-      event.preventDefault()
-      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
-      if (delta > 8) this.setFar(true)
-      else if (delta < -8) this.setFar(false)
+      if (this.open !== null || this.root.classList.contains('hz-live') || !overSky(event.target)) return
+      const unit = event.deltaMode === 1 ? 16 : 1
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault()
+        const at = pointIn(event)
+        this.zoomAt(at.x, at.y, this.view.z * Math.exp(-event.deltaY * unit * 0.012))
+        return
+      }
+      const before = this.view
+      this.setView(before.z, before.x - event.deltaX * unit, before.y - event.deltaY * unit)
+      // Locked in, a scroll never reaches the page, even when the camera has nowhere further to go.
+      if (this.locked || this.full || this.view.x !== before.x || this.view.y !== before.y) event.preventDefault()
     }, {signal, passive: false})
+    // Safari's trackpad pinch.
+    type Gesture = Event & {scale: number, clientX: number, clientY: number}
+    root.addEventListener('gesturestart', event => {
+      if (this.open !== null || this.root.classList.contains('hz-live') || !overSky(event.target)) return
+      event.preventDefault()
+      this.pinch = {z: this.view.z}
+    }, {signal})
+    root.addEventListener('gesturechange', event => {
+      if (this.pinch === null) return
+      event.preventDefault()
+      const gesture = event as Gesture
+      const at = pointIn(gesture)
+      this.zoomAt(at.x, at.y, this.pinch.z * gesture.scale)
+    }, {signal})
+    root.addEventListener('gestureend', () => { this.pinch = null }, {signal})
 
     let frame = 0
     this.observer = new ResizeObserver(() => {
@@ -293,23 +385,35 @@ export class SunriseEngine {
 
   /**
    * New data from the journal: tasks keep their elements and move; new ones appear, finished ones sink into the sun.
-   * `cards` are the action cards that may rise beside the tasks, heaviest first; `cardCount` is how many wait in all.
+   * `cards` are the action cards still open, heaviest first, and `answers` how many have been answered: they are
+   * what the far side shows.
    */
-  update(data: SunriseData, cards: CardThing[] = [], cardCount = cards.length) {
+  update(data: SunriseData, cards: CardThing[] = [], answers = 0) {
     if (this.destroyed) return
     const before = this.data
     this.data = data
     this.cards = cards
-    this.cardCount = cardCount
+    this.answers = answers
     for (const daily of data.horizon.dailies) if (this.dailyDone.get(daily.id) === daily.done) this.dailyDone.delete(daily.id)
-    this.source = this.far ? this.farItems(data) : data.horizon.items
-    if (this.far && this.source.length === 0) { this.far = false; this.source = data.horizon.items }
+    this.source = this.farSide ? cards.map(card => this.cardItem(card)) : data.horizon.items
     const items = ringItems(this.source)
+    const cardOf = new Map(cards.map(card => [card.id, card]))
     const wanted = [
-      ...items.map(item => ({id: item.id, item: item as HorizonItem | null, salience: 0, form: this.formOf(item)})),
-      // As many as attention can still rank beside the tasks.
-      ...cards.slice(0, thingCount - items.length).map(card => ({id: card.id, item: null, salience: card.salience, form: card.form})),
-    ]
+      ...items.map(item => {
+        const card = this.farSide ? cardOf.get(item.id) : undefined
+        return {id: item.id, item, salience: card?.salience ?? null, outer: false, form: card?.form ?? this.formOf(item)}
+      }),
+      // What today's rings have no room for sits further out in the same sky, on rings by the month and season.
+      ...(this.farSide ? [] : this.outerItems(data)).map(item => ({id: item.id, item, salience: 0 as number | null, outer: true, form: this.formOf(item)})),
+    ].map(each => ({...each, under: false, inert: false}))
+    // Under the sun is what is behind today: what is overdue, what has no date, and what was cleared this week.
+    this.underPlace.clear()
+    if (!this.farSide) {
+      for (const below of this.underItems(data)) {
+        this.underPlace.set(below.item.id, {ring: below.ring, through: below.through, look: below.look})
+        wanted.push({id: below.item.id, item: below.item, salience: 0, outer: false, under: true, inert: below.inert, form: below.form})
+      }
+    }
     const keep = new Set(wanted.map(each => each.id))
     const wasUndated = new Set(before?.horizon.undated.map(undated => undated.id) ?? [])
     const chip = this.groundEl.querySelector('.nodate')
@@ -319,10 +423,10 @@ export class SunriseEngine {
       const signature = JSON.stringify(each.form)
       const thing = this.things.find(candidate => candidate.id === each.id)
       if (thing === undefined) {
-        const added = this.addThing(each.id, each.item, each.salience, each.form, signature)
+        const added = this.addThing(each.id, each.item, each.salience, each.outer, each.under, each.inert, each.form, signature)
         // A task that just got its When flies up from the ground to its ring.
         if (wasUndated.has(each.id) && chip !== null && this.ready) {
-          const rect = this.rectIn(chip)
+          const rect = this.toWorld(this.rectIn(chip))
           added.el.style.transition = 'none'
           this.setBox(added.el, {left: rect.left, top: rect.top, width: Math.max(60, rect.width), height: 28})
           void added.el.offsetWidth
@@ -332,7 +436,10 @@ export class SunriseEngine {
       }
       thing.item = each.item
       thing.salience = each.salience
-      thing.day.textContent = each.item?.day ?? ''
+      thing.outer = each.outer
+      thing.under = each.under
+      thing.inert = each.inert
+      thing.day.textContent = each.item.day
       if (thing.signature !== signature) {
         thing.form = each.form
         thing.signature = signature
@@ -341,7 +448,7 @@ export class SunriseEngine {
         thing.face.dataset['key'] = ''
       }
     }
-    // The order attention reads them in: the rings' own, soonest first, then the cards.
+    // The order attention reads them in is the rings' own: soonest first.
     const position = new Map(wanted.map((each, index) => [each.id, index]))
     this.things.sort((a, b) => position.get(a.id)! - position.get(b.id)!)
     if (this.subject !== null && !groupsOf(this.source).includes(this.subject)) this.subject = null
@@ -355,7 +462,7 @@ export class SunriseEngine {
     if (this.destroyed || this.data === null) return
     if (this.open !== null) this.open = null
     const thing = this.things.find(candidate => candidate.id === taskId)
-    const from = thing?.at ?? null
+    const from = thing?.at === null || thing?.at === undefined ? null : this.toScreen(thing.at)
     this.open = taskId
     if (!taskId.startsWith('card:')) this.startedHere.add(taskId)
     this.closeTray()
@@ -363,7 +470,7 @@ export class SunriseEngine {
     this.hot = null
     this.root.classList.remove('hovering')
     // It grows where its form is; a task with no form on the rings rises out of the sun.
-    this.paneFrom = from ?? this.sunCircle()
+    this.paneFrom = from ?? this.toScreen(this.sunCircle())
     this.pane.style.transition = 'none'
     this.placePane(this.paneFrom, false)
     void this.pane.offsetWidth
@@ -375,15 +482,43 @@ export class SunriseEngine {
     this.host.onOpen(taskId)
   }
 
-  /** Pulls back to the tasks past the next two weeks (the rings become a month, a season, a year, beyond), or comes back. */
-  setFar(far: boolean) {
-    if (this.far === far || this.data === null || this.destroyed) return
-    if (far && this.farItems(this.data).length === 0) return
-    this.far = far
-    this.subject = null
+  /** Moves the camera back until the outer rings, and the tasks further out on them, are in view. */
+  showOuter() {
+    const {width: W, height: H} = this.stage
+    if (this.outerR <= 0) return
+    const z = Math.max(0.4, Math.min(1, (W / 2 - 24) / this.outerR, (this.stage.horizonY - 24) / this.outerR))
+    this.setView(z, W / 2 * (1 - z), H * (1 - z), true)
+  }
+
+  /**
+   * Turns the sky over to its far side, where the action cards sit on the rings (by when they fit, one slice per
+   * bet), or back to today. The sky rolls about the horizon as it turns.
+   */
+  turn(farSide: boolean) {
+    if (this.farSide === farSide || this.turning || this.data === null || this.destroyed) return
     this.closeTray()
+    if (this.open !== null) this.closeTask()
     this.setHot(null)
-    this.update(this.data, this.cards, this.cardCount)
+    const swap = () => {
+      this.farSide = farSide
+      this.subject = null
+      this.resetView()
+      this.root.classList.toggle('farside', farSide)
+      this.root.classList.add('resizing')
+      this.update(this.data!, this.cards, this.answers)
+      this.timers.add(window.setTimeout(() => this.root.classList.remove('resizing'), 50))
+    }
+    if (!this.ready || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { swap(); return }
+    this.turning = true
+    this.root.style.setProperty('--hy', `${this.stage.horizonY}px`)
+    this.root.classList.add('turn-out')
+    this.timers.add(window.setTimeout(() => {
+      if (this.destroyed) return
+      swap()
+      this.root.classList.remove('turn-out')
+      this.root.classList.add('turn-in')
+      this.timers.add(window.setTimeout(() => { this.root.classList.remove('turn-in'); this.turning = false }, 460))
+    }, 300))
   }
 
   /** Closes the workspace: it shrinks back into the task's form. */
@@ -393,7 +528,7 @@ export class SunriseEngine {
     this.open = null
     this.workBox = null
     this.root.classList.remove('working')
-    this.placePane(thing?.at ?? this.paneFrom ?? this.sunCircle(), false)
+    this.placePane(thing?.at === null || thing?.at === undefined ? this.paneFrom ?? this.toScreen(this.sunCircle()) : this.toScreen(thing.at), false)
     this.host.onOpen(null)
     if (!this.destroyed) this.solve()
   }
@@ -407,6 +542,39 @@ export class SunriseEngine {
 
   /** The current layout in Dawn's units, for the 3D world (dawn-space.ts's setLayout). */
   layoutForSpace(): SpaceLayout { return this.spaceLayout }
+
+  /** Locks scrolling into the sky: the page under it stays put until it is unlocked. */
+  setLocked(locked: boolean) {
+    this.locked = locked
+    if (!locked && this.full) this.full = false
+    this.applyHold()
+  }
+  /** Makes the sky fill the whole window (which also locks it), or gives the page back. */
+  setFull(full: boolean) {
+    this.full = full
+    this.locked = full
+    this.applyHold()
+  }
+  private applyHold() {
+    const hero = this.root.parentElement
+    const page = document.documentElement
+    if (this.locked && !this.full) hero?.scrollIntoView({block: 'start'})
+    hero?.classList.toggle('sr-fullpage', this.full)
+    page.classList.toggle('sr-held', this.locked || this.full)
+    this.paintControls()
+    try { localStorage.setItem('sunrise-hold', this.full ? 'full' : this.locked ? 'locked' : '') } catch { /* no storage here: it just isn't remembered */ }
+  }
+  private paintControls() {
+    this.lockButton.textContent = this.locked ? 'Locked in · unlock' : 'Lock scrolling here'
+    this.lockButton.title = this.locked ? 'Let scrolling move the page again' : 'Keep scrolling inside the sky: the page will not move'
+    this.lockButton.classList.toggle('on', this.locked)
+    this.fullButton.textContent = this.full ? 'Exit full page' : 'Full page'
+    this.fullButton.title = this.full ? 'Give the rest of the page back' : 'Let the sky fill the whole window'
+    this.fullButton.classList.toggle('on', this.full)
+  }
+
+  /** Puts the camera back home: nothing zoomed, nothing moved. */
+  resetView() { this.setView(1, 0, 0, true) }
 
   /** A short message at the foot of the sky. */
   toast(text: string) {
@@ -425,28 +593,59 @@ export class SunriseEngine {
     for (const timer of this.timers) { window.clearTimeout(timer); window.clearInterval(timer) }
     window.clearTimeout(this.hotTimer)
     window.clearTimeout(this.settleTimer)
+    this.root.parentElement?.classList.remove('sr-fullpage')
+    document.documentElement.classList.remove('sr-held')
     this.root.replaceChildren()
-    this.root.classList.remove('shapes', 'ready', 'narrow', 'hovering', 'settling', 'working', 'resizing')
+    this.root.classList.remove('shapes', 'ready', 'narrow', 'hovering', 'settling', 'working', 'resizing', 'farside', 'turn-out', 'turn-in', 'zoomed', 'gliding')
   }
 
   // ---- Things.
-  // Pulled back: what today's rings leave out. Orbit's tasks, the ones the rings had no room for, and the rest.
-  private farItems(data: SunriseData): HorizonItem[] {
-    const horizon = data.horizon
-    const near = new Set(ringItems(horizon.items).filter(item => item.zone !== 'orbit').map(item => item.id))
-    return [...horizon.items.filter(item => !near.has(item.id)), ...horizon.further]
+  // What today's rings leave out: the tasks past Orbit's six, and any the rings had no room for.
+  private outerItems(data: SunriseData): HorizonItem[] {
+    return [...ringOverflow(data.horizon.items), ...data.horizon.further].sort((a, b) => a.hours - b.hours).slice(0, 16)
   }
-  // A task as the ring program reads it. Pulled back, its ring is by how far off it is, and its place in the
-  // ring by how far through that stretch.
-  private layoutItem(item: HorizonItem, elapsed: number): HorizonItem {
-    if (!this.far) return item
+  // What sits under the sun, nearest the horizon first: tasks that are overdue (by how long), then the ones
+  // with no date, then what was cleared this week. At most what one run of the ring program holds.
+  private underItems(data: SunriseData): {item: HorizonItem, ring: number, through: number, look: string, inert: boolean, form: FormThing}[] {
+    const horizon = data.horizon
+    const blank = {listType: 'have-to-do' as const, weight: 2, due: '', implied: false, hours: 0, zone: 'hold' as const, left: ''}
+    const late = horizon.holds.map(item => {
+      const over = Math.max(0, -item.hours)
+      return {item, ring: over <= 48 ? 0 : 1, through: over <= 48 ? over / 48 : Math.min(1, (over - 48) / (12 * 24)), look: 'under late', inert: false, form: {...this.formOf(item), when: item.left}}
+    })
+    const undated = horizon.undated.map((entry, index, all) => {
+      const item: HorizonItem = {...blank, id: entry.id, title: entry.title, short: entry.short, label: entry.label, group: entry.label || GROUP_OTHER, day: 'No date'}
+      return {item, ring: 2, through: all.length < 2 ? 0.5 : index / (all.length - 1), look: 'under nodate', inert: false, form: {...this.formOf(item), when: 'No date'}}
+    })
+    const cleared = horizon.cleared.slice(0, Math.max(0, 16 - late.length - undated.length)).map((entry, index, all) => {
+      const item: HorizonItem = {...blank, id: `done:${entry.id}`, title: entry.short, short: entry.short, label: '', group: GROUP_OTHER, day: entry.day}
+      const spec = {
+        id: item.id, listType: 'have-to-do' as const, shape: 'pill' as const, icon: 'check' as const, kind: 'Done this week', name: trimDots(entry.short), next: '',
+        what: `Cleared ${entry.day}.`, did: [], say: [trimDots(entry.short), ''] as [string, string], parts: [], ready: false, hasWork: false, filling: false,
+      }
+      return {item, ring: 3, through: all.length < 2 ? 0.5 : index / (all.length - 1), look: 'under cleared', inert: true, form: {spec, when: entry.day}}
+    })
+    return [...late, ...undated, ...cleared].slice(0, 16)
+  }
+  // A task further out as the ring program reads it: its ring is by how far off it is (a month, a season, a
+  // year, beyond), and its place in the ring by how far through that stretch.
+  private outerItem(item: HorizonItem, elapsed: number): HorizonItem {
     const days = Math.max(0, item.hours - elapsed) / 24
     const band = days <= farDays[0] ? 0 : days <= farDays[1] ? 1 : days <= farDays[2] ? 2 : 3
     const from = band === 0 ? 0 : farDays[band - 1]!
     const through = band === 3 ? Math.min(1, (days - from) / 365) : (days - from) / (farDays[band]! - from)
-    const {climb, altitude} = farBounds
-    const hours = band === 0 ? through * 48 : band === 1 ? 48 + through * (climb - 48) : band === 2 ? climb + through * (altitude - climb) : altitude + through * 1500
-    return {...item, zone: ringZones[band]!, hours}
+    return {...item, zone: ringZones[band]!, hours: ringHours(band, through)}
+  }
+  // A card as the ring program reads it: its ring is when it fits, its slice is its bet, and within its ring the
+  // heavier it is the nearer the sun.
+  private cardItem(card: CardThing): HorizonItem {
+    const ring = Math.max(0, Math.min(3, card.ring))
+    const hours = ringHours(ring, cardOut(card))
+    const {spec, when} = card.form
+    return {
+      id: card.id, listType: 'want-to-do', title: spec.what, short: spec.name, label: card.slice, group: card.slice,
+      weight: 1 + Math.round(Math.max(0, Math.min(1, card.salience * 2)) * 4), due: '', implied: false, hours, zone: ringZones[ring]!, day: when, left: '',
+    }
   }
   private formOf(item: HorizonItem): FormThing {
     const spec = this.data?.forms[item.id] ?? {
@@ -456,7 +655,7 @@ export class SunriseEngine {
     }
     return {spec, when: shortDay(item.day)}
   }
-  private addThing(id: string, item: HorizonItem | null, salience: number, form: FormThing, signature: string): Thing {
+  private addThing(id: string, item: HorizonItem, salience: number | null, outer: boolean, under: boolean, inert: boolean, form: FormThing, signature: string): Thing {
     const el = document.createElement('div')
     el.className = 'thing lv0 gone'
     el.dataset['id'] = id
@@ -466,12 +665,12 @@ export class SunriseEngine {
     body.className = 'body'
     const day = document.createElement('span')
     day.className = 'd'
-    day.textContent = item?.day ?? ''
+    day.textContent = item.day
     el.append(face, body, day)
     const seat = document.createElement('div')
     seat.className = 'seat'
     this.labels.append(seat, el)
-    const thing: Thing = {id, item, salience, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null, look: item?.zone ?? 'daily is-card'}
+    const thing: Thing = {id, item, salience, outer, under, inert, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null, look: item.zone}
     this.things.push(thing)
     return thing
   }
@@ -497,7 +696,7 @@ export class SunriseEngine {
     return Math.ceil(this.measureContext.measureText(text).width)
   }
   private pillLabel(thing: Thing) {
-    const short = trimDots(thing.item?.short ?? thing.form.spec.name)
+    const short = trimDots(thing.item.short)
     return short.length > 16 ? `${short.slice(0, 15).trimEnd()}…` : short
   }
   private pillWidth(thing: Thing) { return this.textWidth(this.pillLabel(thing), thing.level > 0 ? 600 : 500) + 20 }
@@ -548,6 +747,43 @@ export class SunriseEngine {
     }
     return {width, height}
   }
+  // ---- The camera.
+  private toScreen(box: Box): Box {
+    const {z, x, y} = this.view
+    return {left: box.left * z + x, top: box.top * z + y, width: box.width * z, height: box.height * z}
+  }
+  private toWorld(box: Box): Box {
+    const {z, x, y} = this.view
+    return {left: (box.left - x) / z, top: (box.top - y) / z, width: box.width / z, height: box.height / z}
+  }
+  private isHome() { return this.view.z === 1 && this.view.x === 0 && this.view.y === 0 }
+  private zoomAt(px: number, py: number, to: number) {
+    // Close to life size snaps to it, so home is easy to come back to.
+    let z = Math.max(0.4, Math.min(3, to))
+    if (Math.abs(z - 1) < 0.04) z = 1
+    const k = z / this.view.z
+    this.setView(z, px - (px - this.view.x) * k, py - (py - this.view.y) * k)
+  }
+  // The camera stays inside what is drawn: one and a half stages to each side, a stage and a half up, and a
+  // stage and a quarter down under the sun.
+  private setView(z: number, x: number, y: number, glide = false) {
+    const {width: W, height: H} = this.stage
+    const keep = (at: number, size: number, low: number, high: number) => Math.min(-low * z, Math.max(size - high * z, at))
+    const next = {z, x: keep(x, W, -1.5 * W, 2.5 * W), y: keep(y, H, -1.6 * H, 2.25 * H)}
+    // Within a couple of pixels of home is home.
+    this.view = z === 1 && Math.abs(next.x) < 3 && Math.abs(next.y) < 3 ? {z: 1, x: 0, y: 0} : next
+    const home = this.isHome()
+    const transform = home ? '' : `translate(${this.view.x.toFixed(1)}px,${this.view.y.toFixed(1)}px) scale(${this.view.z.toFixed(4)})`
+    this.root.classList.toggle('gliding', glide)
+    if (glide) this.timers.add(window.setTimeout(() => this.root.classList.remove('gliding'), 420))
+    this.world.style.transform = transform
+    this.flat.style.transform = transform
+    this.root.classList.toggle('zoomed', !home)
+    this.viewButton.hidden = home
+    if (!home) this.viewButton.textContent = this.view.z === 1 ? 'Back to today' : `${Math.round(this.view.z * 100)}% · Back to today`
+    if (this.trayKind !== null) this.closeTray()
+  }
+
   private rectIn(el: Element): Box {
     const rect = el.getBoundingClientRect()
     const base = this.root.getBoundingClientRect()
@@ -576,9 +812,9 @@ export class SunriseEngine {
   // ---- Solving: attention, then the rings, then the lead's place in the sky.
   private salience(thing: Thing, elapsed: number, todayOpen: Set<string>) {
     const data = this.data!
-    // A card's salience is its own. Inside a subject, and on a narrow screen, the cards wait on the ground.
-    if (thing.item === null) return this.subject !== null || this.narrow || this.far ? 0 : thing.salience
-    const value = salienceOf({
+    if (thing.outer || thing.under) return 0
+    // A card's salience is its own; a task's follows the clock and the lists.
+    const value = thing.salience ?? salienceOf({
       hours: thing.item.hours - elapsed, weight: thing.item.weight, today: todayOpen.has(thing.id),
       currentRank: data.current[thing.id] ?? null, ready: thing.form.spec.ready,
     })
@@ -618,13 +854,19 @@ export class SunriseEngine {
     if (shelf) corners.topLeft.height += this.fullBox(lead, 3, true).height + 30
 
     // 2. The rings. Gone into a subject, its slice opens to the whole fan and the others fold away.
-    const ringThings = things.filter(thing => thing.item !== null)
-    const items = ringThings.map(thing => this.layoutItem(thing.item!, elapsed))
-    ringThings.forEach((thing, index) => { thing.look = items[index]!.zone })
+    const ringThings = things.filter(thing => !thing.outer && !thing.under)
+    const outerThings = things.filter(thing => thing.outer)
+    const underThings = things.filter(thing => thing.under)
+    const items = ringThings.map(thing => thing.item)
+    const cardOf = new Map(this.farSide ? this.cards.map(card => [card.id, card]) : [])
+    ringThings.forEach((thing, index) => {
+      const card = cardOf.get(thing.id)
+      thing.look = `${items[index]!.zone}${card === undefined ? '' : ` is-card${card.noticed ? ' noticed' : ''}${card.handed ? ' handed' : ''}`}`
+    })
     const groups = groupsOf(this.source)
     const weights = this.subject === null ? undefined : new Map(groups.map(group => [group, group === this.subject ? 4 : 0]))
     const thingOf = (item: HorizonItem) => ringThings.find(thing => thing.id === item.id)
-    const bounds = this.far ? farBounds : {climb: horizon.bounds.climb - elapsed, altitude: horizon.bounds.altitude - elapsed}
+    const bounds = this.farSide ? farBounds : {climb: horizon.bounds.climb - elapsed, altitude: horizon.bounds.altitude - elapsed}
     this.narrowForms.clear()
     this.narrowSeat = false
     const ringInput = (size: readonly [number, number]) => {
@@ -641,11 +883,29 @@ export class SunriseEngine {
       })
       return {input, S}
     }
+    // The far side's rings are a preference, as on Dawn: many cards fit "now" at once, so a card that finds no
+    // room on its ring steps one ring out, the least important first, until everything has a place.
+    const spreadOut = (input: ReturnType<typeof ringInput>['input']) => {
+      let ring = dawn.run(input)
+      if (!this.farSide) return ring
+      for (let guard = 0; guard < 60 && (ring.overlapCount > 0 || ring.unplacedCount > 0); guard++) {
+        const stuck = items.map((item, index) => ({item, index}))
+          .filter(({index}) => { const slot = input.slots[index]!; return slot.visible && slot.zone < 3 && !ring.pills[index]!.free })
+          .sort((a, b) => (spent.ranks[things.findIndex(thing => thing.id === b.item.id)] ?? 99) - (spent.ranks[things.findIndex(thing => thing.id === a.item.id)] ?? 99))[0]
+        if (stuck === undefined) break
+        const slot = input.slots[stuck.index]!
+        const card = cardOf.get(stuck.item.id)
+        slot.zone += 1
+        slot.hours = Math.round(ringHours(slot.zone, card === undefined ? 0.5 : cardOut(card)) * 4) / 4
+        ring = dawn.run(input)
+      }
+      return ring
+    }
     // The biggest of five form sizes at which Dawn's rings hold them all with no overlap, remembered for this stage.
     let rowSize: readonly [number, number] = formRows[formRows.length - 1]!
     if (boxed) {
-      const sizeKey = `${W}x${this.stage.height}|${this.subject ?? ''}|${this.far}`
-      const fitsAt = (index: number) => { const fit = dawn.run(ringInput(formRows[index]!).input); return fit.overlapCount === 0 && fit.unplacedCount === 0 }
+      const sizeKey = `${W}x${this.stage.height}|${this.subject ?? ''}|${this.farSide}`
+      const fitsAt = (index: number) => { const fit = spreadOut(ringInput(formRows[index]!).input); return fit.overlapCount === 0 && fit.unplacedCount === 0 }
       let index = this.sizeFor.get(sizeKey)
       if (index === undefined) {
         index = 0
@@ -672,7 +932,9 @@ export class SunriseEngine {
         .filter(({item}) => { const level = thingOf(item)?.level; return boxed ? level !== undefined && level !== 3 : level === 0 })
         .sort((a, b) => rankOf(b.item) - rankOf(a.item))
       if (narrow) foldable.filter(({item}) => rankOf(item) >= 9).forEach(({index}) => { input.slots[index]!.visible = false })
-      let ring = dawn.run(input)
+      let ring = spreadOut(input)
+      // A form takes the light of the ring it ended up on.
+      if (this.farSide) ringThings.forEach((thing, index) => { thing.look = thing.look.replace(/^\w+/, ringZones[input.slots[index]!.zone] ?? 'orbit') })
       const widthOf = (px: number) => Math.ceil((px + 10) / S) - 10
       for (let guard = 0; guard < 40 && ring.overlapCount > 0; guard++) {
         const stuck = items.map((item, index) => ({thing: thingOf(item), index})).filter(({index}) => input.slots[index]!.visible && !ring.pills[index]!.free)
@@ -724,7 +986,7 @@ export class SunriseEngine {
       const growBounds = {left: 10, top: 10, right: W - 10, bottom: Y - 6}
       const placed: GrowBox[] = []
       const place = (thing: Thing, size: {width: number, height: number}, anchor: {x: number, y: number, width: number, height: number}) => {
-        const obstacles = [sunBox, ...cornerBoxes, ...placed, ...[...pillBoxes].filter(([other]) => other !== thing && other.level !== 3).map(([, box]) => growBox(box))].slice(0, 40)
+        const obstacles = [sunBox, ...cornerBoxes, ...placed, ...[...pillBoxes].filter(([other]) => other !== thing && other.level !== 3 && !other.outer && !other.under).map(([, box]) => growBox(box))].slice(0, 40)
         const sticky = thing.hook !== null && thing.hook.width === size.width && thing.hook.height === size.height
         const growInput: GrowInput = {
           bounds: growBounds, gap: narrow ? 8 : 14, box: {width: Math.round(size.width), height: Math.round(size.height)},
@@ -741,26 +1003,62 @@ export class SunriseEngine {
         const r = rings[4] + 6
         return {x: W / 2 + r * this.last.kx * Math.cos(angle), y: Y - r * this.last.ky * Math.sin(angle), width: 2, height: 2}
       }
-      // An action card comes from the sun: its anchor is just above it.
-      const cardThings = things.filter(thing => thing.item === null)
-      const cardAnchor = (thing: Thing) => ({x: W / 2 + (cardThings.indexOf(thing) - (cardThings.length - 1) / 2) * 60, y: Y - this.last.sunR - 24, width: 2, height: 2})
+      // The outer rings: the same ring program lays out what is further off, and each place is then pushed out
+      // along its own ray, past Orbit. Things only get further apart that way, so nothing it placed overlaps.
+      this.outerR = 0
+      if (boxed && outerThings.length > 0 && this.subject === null) {
+        const far = outerThings.map(thing => this.outerItem(thing.item, elapsed))
+        const stageOut = {viewportWidth: Math.floor(W / S), horizonY: Math.floor(Y / S), topLeft: {width: 0, height: 0}, topRight: {width: 0, height: 0}}
+        const out = dawn.run(toInput({items: far, groups: groupsOf(far), bounds: farBounds, dailies: false}, stageOut, item => {
+          const thing = outerThings.find(candidate => candidate.id === item.id)
+          return thing === undefined ? 80 : Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10
+        }))
+        const push = rings[4] * kxNow + 40 - rings[0] * out.kx * S
+        this.outerR = rings[4] * out.kx * S + push
+        outerThings.forEach((thing, index) => {
+          const pill = out.pills[index]!
+          thing.look = far[index]!.zone === 'ignition' ? 'altitude' : 'orbit'
+          if (!pill.visible || !pill.free) return
+          const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
+          const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
+          const {width, height} = this.formBox(thing, rowSize[1])
+          pillBoxes.set(thing, {left: cx + vx / r * push - width / 2, top: cy + vy / r * push - height / 2, width, height})
+        })
+      } else if (boxed && !this.farSide && this.subject === null) {
+        // Nothing is out there today; the rings still are, so the sky reads as going on.
+        this.outerR = rings[4] * kxNow + 40 + (rings[4] - rings[0]) * kxNow
+      }
+      // Under the sun: the same ring program lays out what is behind today, and each place is mirrored below the
+      // horizon and pushed down past the ground's own strip.
+      this.underK = kxNow
+      if (boxed && underThings.length > 0 && this.subject === null) {
+        const low = underThings.map(thing => {
+          const at = this.underPlace.get(thing.id) ?? {ring: 3, through: 0.5, look: 'under'}
+          thing.look = at.look
+          return {...thing.item, zone: ringZones[at.ring]!, hours: ringHours(at.ring, at.through)}
+        })
+        const stageLow = {viewportWidth: Math.floor(W / S), horizonY: Math.floor(Y / S), topLeft: {width: 0, height: 0}, topRight: {width: 0, height: 0}}
+        const under = dawn.run(toInput({items: low, groups: groupsOf(low), bounds: farBounds, dailies: false}, stageLow, item => {
+          const thing = underThings.find(candidate => candidate.id === item.id)
+          return thing === undefined ? 80 : Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10
+        }))
+        this.underK = under.kx * S
+        underThings.forEach((thing, index) => {
+          const pill = under.pills[index]!
+          if (!pill.visible || !pill.free) return
+          const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
+          const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
+          const {width, height} = this.formBox(thing, rowSize[1])
+          pillBoxes.set(thing, {left: cx + vx / r * underPush - width / 2, top: Y - (vy + vy / r * underPush) - height / 2, width, height})
+        })
+      }
       for (const thing of order) {
         const pill = pillBoxes.get(thing)
-        const isCard = thing.item === null
-        const anchor = pill !== undefined ? {x: pill.left + pill.width / 2, y: pill.top + pill.height / 2, width: pill.width, height: pill.height}
-          : isCard && thing.level >= 1 ? cardAnchor(thing) : null
+        const anchor = pill === undefined ? null : {x: pill.left + pill.width / 2, y: pill.top + pill.height / 2, width: pill.width, height: pill.height}
         thing.shown = anchor !== null
         thing.from = anchor === null ? null : {x: anchor.x, y: anchor.y}
-        if (anchor === null) { thing.hook = null; continue }
-        if (thing.level !== 3) {
-          // A task sits where the rings put it. A card that matters now gets a small form near the sun.
-          if (!isCard) { thing.hook = null; continue }
-          const size = this.formBox(thing, rowSize[1])
-          const result = place(thing, size, anchor)
-          const near = Math.hypot(result.left + size.width / 2 - anchor.x, result.top + size.height / 2 - anchor.y) < Math.max(280, W * 0.26)
-          if (result.free && near) { thing.hook = {left: result.left, top: result.top, ...size}; placed.push(growBox(thing.hook)) } else { thing.hook = null; thing.shown = false }
-          continue
-        }
+        // Everything but the lead sits where the rings put it.
+        if (anchor === null || thing.level !== 3) { thing.hook = null; continue }
         let size = this.fullBox(thing, 3, narrow)
         const hookAnchor = shelf ? {x: Math.round(W / 2), y: shelfTop + size.height + 8 + 1, width: 2, height: 2} : rayAnchor(anchor.x, anchor.y)
         // It looks for room above its own slice, then beside its seat, then in the open sky under the capture box,
@@ -786,11 +1084,11 @@ export class SunriseEngine {
         demoted = true
       }
       if (!demoted || final) {
-        // The same places in Dawn's units: the 3D world stands its tasks where the rings put them.
-        this.spaceLayout = {
-          spots: [...pillBoxes].flatMap(([thing, box]) => thing.item === null ? [] : [{
+        // The same places in Dawn's units: the 3D world stands today's tasks where the rings put them.
+        if (!this.farSide) this.spaceLayout = {
+          spots: [...pillBoxes].filter(([thing]) => !thing.outer && !thing.under).map(([thing, box]) => ({
             item: thing.item, x: 600 + (box.left + box.width / 2 - W / 2) / kxNow, y: 560 - (Y - (box.top + box.height / 2)) / kyNow,
-          }]),
+          })),
           sectors: groups.flatMap((group, index) => { const sector = ring.sectors[index]; return sector === undefined || !sector.shown ? [] : [{group, a0: sector.a0, a1: sector.a1, mid: sector.mid}] }),
         }
         this.commit = () => {
@@ -849,8 +1147,8 @@ export class SunriseEngine {
         continue
       }
       if (!thing.shown || box === null) {
-        // Folded, not finished: it stays where it was as a faint bubble. A card just waits on the ground.
-        if (thing.item !== null && thing.lastBox !== null && this.open === null && this.subject === null) {
+        // Folded, not finished: it stays where it was as a faint bubble.
+        if (thing.lastBox !== null && this.open === null && this.subject === null) {
           el.classList.add('ghost')
           this.setBox(el, thing.lastBox)
         } else {
@@ -912,25 +1210,36 @@ export class SunriseEngine {
     }
     this.threads.setAttribute('viewBox', `0 0 ${W} ${this.stage.height}`)
     this.threads.innerHTML = lines
-    // The rings' names on the ground, as Dawn's. Pulled back, they are stretches of the calendar.
+    // The rings' names on the ground, as Dawn's, then the outer rings': stretches of the calendar.
     const now = Date.now()
-    const names = this.far
-      ? [['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`], ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later']]
-      : [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']]
+    const names = [
+      ...this.farSide
+        ? [['Now', 'fits a bet'], ['This period', 'build days'], ['After finals', 'parked'], ['Someday', 'no date']]
+        : [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']],
+      ['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`],
+      ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later'],
+    ]
+    const outerK = this.outerR > 0 ? (this.outerR - rings[4] * kx - 40) / (rings[4] - rings[0]) : 0
     this.zoneEls.forEach((zone, index) => {
       const html = `<b>${names[index]![0]}</b><small>${names[index]![1]!.toUpperCase()}</small>`
       if (zone.dataset['html'] !== html) { zone.innerHTML = html; zone.dataset['html'] = html }
-      const mid = (rings[index]! + rings[index + 1]!) / 2 * kx
+      const outer = index >= 4
+      const mid = outer
+        ? rings[4] * kx + 40 + ((rings[index - 4]! + rings[index - 3]!) / 2 - rings[0]) * outerK
+        : (rings[index]! + rings[index + 1]!) / 2 * kx
       zone.style.transform = `translate(${(W / 2 - mid).toFixed(1)}px,${(Y + 30).toFixed(1)}px) translate(-50%,-62%) scale(${Math.min(1, kx).toFixed(3)})`
-      zone.style.opacity = kx < 0.6 ? '0' : '1'
+      zone.style.opacity = kx < 0.6 || (outer && this.outerR <= 0) ? '0' : '1'
     })
   }
   // A form under the pointer opens around its own centre, kept on the stage.
   private grown(thing: Thing, rest: Box): Box {
     const open = this.fullBox(thing, 2)
+    const left = rest.left + rest.width / 2 - open.width / 2, top = rest.top + rest.height / 2 - open.height / 2
+    // Out past the stage (the outer rings) it opens where it is.
+    if (thing.outer || thing.under) return {left, top, ...open}
     return {
-      left: Math.max(8, Math.min(this.stage.width - 8 - open.width, rest.left + rest.width / 2 - open.width / 2)),
-      top: Math.max(8, Math.min(this.stage.horizonY - 6 - open.height, rest.top + rest.height / 2 - open.height / 2)), ...open,
+      left: Math.max(8, Math.min(this.stage.width - 8 - open.width, left)),
+      top: Math.max(8, Math.min(this.stage.horizonY - 6 - open.height, top)), ...open,
     }
   }
   private setHot(thing: Thing | null) {
@@ -964,9 +1273,11 @@ export class SunriseEngine {
     if (this.subject !== null) {
       const mine = this.source.filter(item => item.group === this.subject)
       html = `${escapeText(this.subject)}. <em>${mine.length} thing${mine.length === 1 ? '' : 's'}${mine[0] === undefined ? '' : ` · next ${escapeText(trimDots(mine[0].short))}, ${escapeText(mine[0].day)}`}</em>`
-    } else if (this.far) {
-      const soonest = this.source.slice().sort((a, b) => a.hours - b.hours)[0]
-      html = `Further out. <em>${this.source.length} past the next two weeks${soonest === undefined ? '' : ` · next ${escapeText(trimDots(soonest.short))}, ${escapeText(soonest.day)}`}</em>`
+    } else if (this.farSide) {
+      const noticed = this.cards.filter(card => card.noticed).length
+      html = this.cards.length === 0
+        ? 'The far side. <em>Nothing here yet. Save a post to your Openclaw folder on X, or wait for OpenClaw to notice something worth doing.</em>'
+        : `The far side. <em>${this.cards.length} to decide: ${this.cards.length - noticed} you saved, ${noticed} OpenClaw noticed. Closer to the sun is sooner.</em>`
     } else if (lead !== undefined) {
       const [ask, why] = lead.form.spec.say
       html = `${escapeText(ask)} <em>${escapeText(why)}</em>`
@@ -985,27 +1296,44 @@ export class SunriseEngine {
   // ---- The flat drawing: sky, rings, sun and dailies, as Dawn's.
   private drawFlat() {
     const {width: W, height: H, horizonY: Y} = this.stage
-    const dailies = this.dailies()
+    // The far side has no dailies on its sun, and its sky is at dusk.
+    const dailies = this.farSide ? [] : this.dailies()
     const doneCount = dailies.filter(daily => daily.done).length
     const {kx, ky, ss} = this.last
-    const key = [W, H, Y, kx, ky, ss, dailies.length, dailies.map(daily => daily.done ? 1 : 0).join('')].join()
+    const key = [W, H, Y, kx, ky, ss, dailies.length, dailies.map(daily => daily.done ? 1 : 0).join(''), this.farSide, Math.round(this.outerR), this.underK.toFixed(3)].join()
     if (key === this.flatKey) return
     this.flatKey = key
     const X = W / 2
+    // What is drawn reaches as far as the camera can go (setView): the sky has no edge to find.
+    const left = -1.6 * W, wide = 4.2 * W, top = -1.7 * H, deep = 2.4 * H
     const point = (rx: number, ry: number, degrees: number) => [X + rx * Math.cos(degrees * Math.PI / 180), Y - ry * Math.sin(degrees * Math.PI / 180)] as const
     let s = '<defs>'
-      + `<linearGradient id="sr-skyfill" x1="0" y1="0" x2="0" y2="1">${SKY.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient>`
-      + '<linearGradient id="sr-gr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#d9b48d"/><stop offset="1" stop-color="#8a6446"/></linearGradient>'
+      // In the drawing's own units, so the sky keeps its colours over the stage and goes on dark above it, and
+      // the ground keeps its band and goes on below.
+      + `<linearGradient id="sr-skyfill" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${Y}">${SKY.map(([o, c]) => `<stop offset="${o}" stop-color="${c}"/>`).join('')}</linearGradient>`
+      // Under the horizon the ground keeps its sand for a strip, then goes down into the dark, as the sky does above.
+      + `<linearGradient id="sr-gr" gradientUnits="userSpaceOnUse" x1="0" y1="${Y}" x2="0" y2="${Y + 900}"><stop offset="0" stop-color="#d9b48d"/><stop offset=".08" stop-color="#8a6446"/><stop offset=".3" stop-color="#4a3020"/><stop offset=".7" stop-color="#1e140e"/><stop offset="1" stop-color="#0b0806"/></linearGradient>`
+      + `<clipPath id="sr-below"><rect x="${left}" y="${Y}" width="${wide}" height="${deep - Y}"/></clipPath>`
       + `<radialGradient id="sr-sun" cx=".5" cy=".5" r=".5">${SUN.map((c, i) => `<stop offset="${[0, 0.55, 0.85, 1][i]}" stop-color="${c}"/>`).join('')}</radialGradient>`
       + '<radialGradient id="sr-haze" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffc26b" stop-opacity=".5"/><stop offset=".5" stop-color="#ffc26b" stop-opacity=".15"/><stop offset="1" stop-color="#ffc26b" stop-opacity="0"/></radialGradient>'
       + '<filter id="sr-dglow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="2.4"/></filter>'
       + '<filter id="sr-bloom" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="12"/></filter>'
-      + `<clipPath id="sr-above"><rect width="${W}" height="${Y}"/></clipPath></defs>`
-    s += `<rect width="${W}" height="${Y}" fill="url(#sr-skyfill)"/>${starField(W, Y * 0.6, 130)}`
+      + `<linearGradient id="sr-dusk" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${Y}"><stop offset="0" stop-color="rgb(46,24,70)" stop-opacity=".55"/><stop offset=".62" stop-color="rgb(107,42,88)" stop-opacity=".5"/><stop offset=".92" stop-color="rgb(194,79,98)" stop-opacity=".5"/><stop offset="1" stop-color="rgb(242,137,90)" stop-opacity=".45"/></linearGradient>`
+      + `<clipPath id="sr-above"><rect x="${left}" y="${top}" width="${wide}" height="${Y - top}"/></clipPath></defs>`
+    s += `<rect x="${left}" y="${top}" width="${wide}" height="${Y - top}" fill="url(#sr-skyfill)"/>${starField(left, top, wide, Y * 0.6 - top, 900, Y * 0.6)}`
+    if (this.farSide) s += `<rect x="${left}" y="${top}" width="${wide}" height="${Y - top}" fill="url(#sr-dusk)"/>`
     s += '<g clip-path="url(#sr-above)">'
     for (let index = 3; index >= 0; index--) {
       const r = rings[index + 1]!
       s += `<ellipse cx="${X}" cy="${Y}" rx="${(r * kx).toFixed(1)}" ry="${(r * ky).toFixed(1)}" fill="${BANDS[index]}" stroke="rgba(255,255,255,.14)"${index >= 3 ? ' stroke-dasharray="2 6"' : ''}/>`
+    }
+    // The outer rings: a month, a season, a year, beyond. Fainter the further out.
+    if (this.outerR > 0) {
+      const outerK = (this.outerR - rings[4] * kx - 40) / (rings[4] - rings[0])
+      for (let index = 1; index <= 4; index++) {
+        const r = rings[4] * kx + 40 + (rings[index]! - rings[0]) * outerK
+        s += `<circle cx="${X}" cy="${Y}" r="${r.toFixed(1)}" fill="none" stroke="rgba(255,255,255,${(0.26 - index * 0.04).toFixed(2)})" stroke-width="1.6" stroke-dasharray="3 9"/>`
+      }
     }
     s += `<ellipse cx="${X}" cy="${Y}" rx="${(rings[2] * kx).toFixed(1)}" ry="${(rings[2] * ky).toFixed(1)}" fill="url(#sr-haze)"/>`
     const count = dailies.length
@@ -1022,9 +1350,18 @@ export class SunriseEngine {
       if (daily.done) s += `<path d="${path}" fill="none" stroke="#ffb37a" stroke-width="7" stroke-linecap="round" opacity=".8" filter="url(#sr-dglow)"/>`
       s += `<path d="${path}" fill="none" stroke="${daily.done ? '#fff6ec' : 'rgba(255,236,214,.38)'}" stroke-width="${(4.5 * Math.min(1, ss + 0.2)).toFixed(1)}" stroke-linecap="round"/>`
     })
-    s += `<text x="${X}" y="${Y - (count > 0 ? 29 : 20) * ss}" text-anchor="middle" class="you" font-size="${ss > 0.8 ? 10 : 8}">YOU</text>`
+    s += `<text x="${X}" y="${Y - (count > 0 ? 29 : 20) * ss}" text-anchor="middle" class="you" font-size="${ss > 0.8 ? 10 : 8}">${this.farSide ? 'TODAY' : 'YOU'}</text>`
     if (count > 0 && ss > 0.8) s += `<text x="${X}" y="${Y - 12 * ss}" text-anchor="middle" class="dcount">${doneCount === count ? 'ALL DONE' : `${doneCount} OF ${count} DAILY`}</text>`
-    s += `<rect y="${Y}" width="${W}" height="${H - Y}" fill="url(#sr-gr)"/><rect y="${Y - 1}" width="${W}" height="1.5" fill="rgba(255,243,220,.7)"/>`
+    // Under the sun: the ground going down, the rings carried on below the horizon, and the sun's glow in it.
+    const under = this.underK > 0 ? this.underK : kx
+    let below = `<rect x="${left}" y="${Y}" width="${wide}" height="${deep - Y}" fill="url(#sr-gr)"/>`
+    if (this.farSide) below += `<rect x="${left}" y="${Y}" width="${wide}" height="${deep - Y}" fill="rgb(60,26,46)" opacity=".5"/>`
+    below += `<g clip-path="url(#sr-below)"><circle cx="${X}" cy="${Y}" r="${(rings[1] * under).toFixed(1)}" fill="url(#sr-haze)" opacity=".55"/>`
+    for (let index = 1; index <= 4; index++) {
+      below += `<circle cx="${X}" cy="${Y}" r="${(rings[index]! * under + underPush).toFixed(1)}" fill="none" stroke="rgba(255,214,170,${(0.3 - index * 0.045).toFixed(2)})" stroke-width="1.2" stroke-dasharray="2 7"/>`
+    }
+    below += '</g>'
+    s += `${below}<rect x="${left}" y="${Y - 1}" width="${wide}" height="1.5" fill="rgba(255,243,220,.7)"/>`
     this.flat.setAttribute('viewBox', `0 0 ${W} ${H}`)
     this.flat.setAttribute('width', String(W))
     this.flat.setAttribute('height', String(H))
@@ -1046,7 +1383,7 @@ export class SunriseEngine {
     // A card to decide is one column; a task has its work and its brief side by side.
     const width = Math.min(card ? 500 : 960, W - 32)
     const height = Math.min(card ? 680 : 760, H - 28)
-    const centre = from ?? this.sunCircle()
+    const centre = from ?? this.toScreen(this.sunCircle())
     const left = Math.max(16, Math.min(W - 16 - width, centre.left + centre.width / 2 - width / 2))
     const top = Math.max(14, Math.min(H - 14 - height, centre.top + centre.height / 2 - height / 2))
     return {left: Math.round(left), top: Math.round(top), width, height}
@@ -1068,27 +1405,27 @@ export class SunriseEngine {
     const horizon = data.horizon
     const dailies = this.dailies()
     let html = ''
-    const [onlyHold] = horizon.holds
-    if (horizon.holds.length === 1 && onlyHold !== undefined) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
-    else if (horizon.holds.length > 1) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
-    if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> with no date</button>`
-    if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
-    if (this.cardCount > 0) html += `<button type="button" class="chip cards" data-tray="cards"><b>${this.cardCount}</b> to decide</button>`
-    // What today's rings have no room for is counted, never dropped: pulling back shows it.
-    if (this.far) {
-      html += '<button type="button" class="chip more" data-far="0">‹ Nearer</button>'
-      const left = ringOverflow(this.source).length
-      if (left > 0) html += `<span class="chip more" title="More than the rings hold, even pulled back"><b>+${left}</b> more</span>`
+    if (this.farSide) {
+      // The far side's ground: the way back, the answers given so far, and the cards the rings have no room for.
+      html += '<button type="button" class="chip more" data-side="today">‹ Today</button>'
+      if (this.answers > 0) html += `<button type="button" class="chip" data-tray="answers">Your answers <b>${this.answers}</b></button>`
+      const left = ringOverflow(this.source).length + this.things.filter(thing => !thing.shown).length
+      if (left > 0) html += `<button type="button" class="chip cards" data-tray="cards" title="Every card, including the ones the rings have no room for"><b>+${left}</b> more cards</button>`
     } else {
+      const [onlyHold] = horizon.holds
+      if (horizon.holds.length === 1 && onlyHold !== undefined) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
+      else if (horizon.holds.length > 1) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
+      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> with no date</button>`
+      if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
+      // What today's rings have no room for is counted, never dropped: it is further out, and the camera goes there.
       const beyond = horizon.further.length + ringOverflow(horizon.items).length
-      if (beyond > 0) html += `<button type="button" class="chip more" data-far="1" title="Later tasks today's rings have no room for. Shift and scroll does the same."><b>+${beyond}</b> further ›</button>`
-      else if (this.farItems(data).length > 0) html += '<button type="button" class="chip more" data-far="1" title="Pull back to the months ahead. Shift and scroll does the same.">Further ›</button>'
+      if (beyond > 0) html += `<button type="button" class="chip more" data-far="1" title="Later tasks sit on the rings further out. Pinch out, or press this, to see them."><b>+${beyond}</b> further ›</button>`
     }
     if (this.groundEl.dataset['html'] !== html) { this.groundEl.innerHTML = html; this.groundEl.dataset['html'] = html }
     this.groundEl.style.left = this.narrow ? '12px' : `${Math.round(W / 2 + this.last.sunR + 30)}px`
     this.groundEl.style.top = `${Y + (this.narrow ? 10 : 12)}px`
     // The streak: dailies checked off on each of the last seven days, today last.
-    this.streakEl.hidden = dailies.length === 0
+    this.streakEl.hidden = dailies.length === 0 || this.farSide
     if (dailies.length > 0) {
       const week = [...horizon.dailyWeek]
       if (week.length > 0) week[week.length - 1] = dailies.filter(daily => daily.done).length
@@ -1097,10 +1434,13 @@ export class SunriseEngine {
       this.streakEl.style.top = `${Y + (this.narrow ? 12 : 30)}px`
     }
     const r = this.last.sunR
-    this.sunButton.hidden = dailies.length === 0 || this.open !== null
+    this.sunButton.hidden = this.open !== null
+    const sunLabel = this.farSide ? 'Today' : `Far side · ${this.cards.length}`
+    this.sunButton.setAttribute('aria-label', this.farSide ? 'Turn back to today' : `Turn to the far side: ${this.cards.length} to decide`)
+    if (this.sunButton.dataset['label'] !== sunLabel) { this.sunButton.dataset['label'] = sunLabel; this.sunButton.innerHTML = `<span class="l">${sunLabel}</span>` }
     this.sunButton.style.transform = `translate(${(W / 2 - r).toFixed(1)}px,${(Y - r).toFixed(1)}px)`
     this.sunButton.style.width = this.sunButton.style.height = `${(2 * r).toFixed(0)}px`
-    this.arcsEl.hidden = dailies.length === 0 || this.open !== null
+    this.arcsEl.hidden = dailies.length === 0 || this.open !== null || this.farSide
     const arcsKey = dailies.map(daily => daily.id).join()
     if (this.arcsEl.dataset['key'] !== arcsKey) {
       this.arcsEl.dataset['key'] = arcsKey
@@ -1183,15 +1523,22 @@ export class SunriseEngine {
     this.solve()
     if (this.open !== null) {
       const opened = this.things.find(thing => thing.id === this.open)
-      this.workBox = this.workRect(opened?.at ?? null, this.open.startsWith('card:'))
+      this.workBox = this.workRect(opened?.at === null || opened?.at === undefined ? null : this.toScreen(opened.at), this.open.startsWith('card:'))
       this.placePane(this.workBox, true)
     }
+    this.setView(this.view.z, this.view.x, this.view.y)
     if (this.trayKind !== null) this.closeTray()
     this.timers.add(window.setTimeout(() => this.root.classList.remove('resizing'), 50))
   }
   private start() {
     if (this.destroyed) return
     this.ready = true
+    // The sky stays locked in, or full page, if that is how it was left.
+    try {
+      const held = localStorage.getItem('sunrise-hold')
+      if (held === 'full') this.setFull(true)
+      else if (held === 'locked') { this.locked = true; document.documentElement.classList.add('sr-held'); this.paintControls() }
+    } catch { /* no storage here */ }
     // Sizes measured before the fonts were in are not kept.
     this.formSizes.clear()
     this.fullHeights.clear()
