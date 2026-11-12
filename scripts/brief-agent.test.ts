@@ -8,8 +8,10 @@ import {
   needsFill,
   taskFingerprint,
   validateAgentReply,
+  BRIEF_PROMPT_VERSION,
   type AgentRecord,
 } from '../src/lib/brief-agent';
+import { nextWorkRecord, resolveWork, workHash } from '../src/lib/hook-work';
 
 const now = new Date(2026, 9, 8, 12, 0);   // Thu Oct 8 2026
 const t = (id: string, text: string, extra: Partial<Task> = {}): BriefTaskRef => ({ task: { id, text, ...extra }, listType: 'have-to-do' });
@@ -125,9 +127,13 @@ test('a task is filled when new, changed, stale, stuck or due a retry', () => {
   assert.notEqual(fp, taskFingerprint({ ...tasks[0].task, notesMarkdown: 'new notes' }));
   const base: AgentRecord = {
     taskId: 'ff', fingerprint: fp, status: 'done', queuedAt: now.toISOString(), startedAt: null,
-    finishedAt: now.toISOString(), error: null, failures: 0, layer: null, doneActions: [],
+    finishedAt: now.toISOString(), error: null, failures: 0, layer: null, doneActions: [], promptVersion: BRIEF_PROMPT_VERSION,
   };
   const later = (ms: number) => new Date(now.getTime() + ms);
+  // A brief written by an older prompt (before hooks) is filled again, once: a failed refill follows the retry rules.
+  assert.equal(needsFill({ ...base, promptVersion: undefined }, fp, later(60_000)), true);
+  assert.equal(needsFill({ ...base, promptVersion: 1 }, fp, later(60_000)), true);
+  assert.equal(needsFill({ ...base, promptVersion: 1, status: 'failed', failures: 3 }, fp, later(2 * 3600_000)), false);
   assert.equal(needsFill(undefined, fp, now), true);
   assert.equal(needsFill(base, fp, later(60_000)), false);
   assert.equal(needsFill(base, 'other', later(60_000)), true);
@@ -149,4 +155,92 @@ test('the prompt carries the task, the rules brief and the ids it may use', () =
   assert.match(prompt, /Task: \[Data Context\] Fair Face/);
   assert.match(prompt, /pres \| \[Data Context\] In Person Presentation \| due 2026-10-12/);
   assert.match(prompt, /"kind":"merge"/);
+});
+
+const hook = {
+  shape: 'list', icon: 'school', kind: 'reflection', name: 'Write the Fair Face reflection', next: 'Finish the opening paragraph',
+  what: 'A 500-word reflection on facial recognition bias for Data Context, due Friday on Canvas.',
+  did: ['Read the assignment on Canvas', 'Read both linked articles', 'Outlined the reflection'],
+  say: ['Start the Fair Face reflection.', 'It is outlined and the opening sentence is written.'],
+  parts: [{ kind: 'rows', check: true, items: [{ text: 'Read the two articles', done: true }, { text: 'Finish the opening paragraph' }, { text: 'Write the evidence section' }] }],
+  work: { format: 'outline', title: 'Fair Face reflection', body: '# Fair Face\n\nFacial recognition fails unevenly, and' },
+};
+
+test('a hook rides in the layer and onto the brief; a bad hook is dropped and the brief still lands', () => {
+  const good = validateAgentReply({ ...reply, hook }, { ...ctx, icon: 'school' });
+  assert.ok(good.ok);
+  if (!good.ok) return;
+  assert.deepEqual(good.layer.hook, hook);
+  assert.deepEqual(good.problems, []);
+
+  const brief = buildTaskBrief({ taskId: 'ff', tasks, completed: [], journal: [], now })!;
+  assert.equal(brief.hook, null);
+  const record: AgentRecord = {
+    taskId: 'ff', fingerprint: 'x', status: 'done', queuedAt: now.toISOString(), startedAt: null,
+    finishedAt: now.toISOString(), error: null, failures: 0, layer: good.layer, doneActions: [], promptVersion: BRIEF_PROMPT_VERSION,
+  };
+  const mergeCtx = { tasks: new Map(tasks.map((r) => [r.task.id, r])), now };
+  assert.deepEqual(mergeAgentLayer(brief, record, mergeCtx).hook, hook);
+
+  // No hook, a hook that is not an object, a hook with no name: the rest of the reply is still used.
+  for (const bad of [undefined, 'start here', { ...hook, name: '' }]) {
+    const result = validateAgentReply({ ...reply, hook: bad }, ctx);
+    assert.ok(result.ok);
+    if (!result.ok) return;
+    assert.equal(result.layer.hook, null);
+    assert.equal(result.layer.steps.length, 2);
+  }
+  // A layer stored before hooks has no hook field at all.
+  const { hook: _dropped, ...old } = good.layer;
+  void _dropped;
+  assert.equal(mergeAgentLayer(brief, { ...record, layer: old }, mergeCtx).hook, null);
+});
+
+test('the prompt asks for the hook, keeps OpenClaw read only outside the journal, and carries what came before', () => {
+  const brief = buildTaskBrief({ taskId: 'ff', tasks, completed: [], journal: [], now })!;
+  const first = buildBriefAgentPrompt({ brief, task: tasks[0].task, otherTasks: [], now });
+  assert.match(first, /READ ONLY/);
+  assert.match(first, /no drafts or documents created/);
+  assert.match(first, /exists ONLY inside this reply/);
+  assert.match(first, /"hook":\{/);
+  assert.doesNotMatch(first, /The hook from your last look/);
+  const again = buildBriefAgentPrompt({
+    brief, task: tasks[0].task, otherTasks: [], now, previousHook: good(), userWork: 'Facial recognition fails unevenly, and that matters because',
+  });
+  assert.match(again, /The hook from your last look/);
+  assert.match(again, /Write the Fair Face reflection/);
+  assert.match(again, /He has already written on top of your started work/);
+  assert.match(again, /that matters because/);
+});
+function good() {
+  const result = validateAgentReply({ ...reply, hook }, ctx);
+  if (!result.ok || !result.layer.hook) throw new Error('the hook should validate');
+  return result.layer.hook;
+}
+
+test('his text for the started work wins, and OpenClaw’s newer version is offered beside it', () => {
+  const work = { format: 'draft' as const, title: 'Reply', body: 'Thursday works.' };
+  assert.equal(resolveWork(null, undefined, 'Task'), null);
+  // Untouched: OpenClaw's text, and the hash to send back with the first save.
+  assert.deepEqual(resolveWork(work, undefined, 'Task'), {
+    title: 'Reply', format: 'draft', body: 'Thursday works.', href: null, edited: false, baseHash: workHash('Thursday works.'), newer: null, startedAt: null,
+  });
+  // Opening the task marks it started without making the text his.
+  const opened = nextWorkRecord(undefined, { taskId: 'ff' }, now);
+  assert.deepEqual([opened.body, opened.startedAt], [null, now.toISOString()]);
+  assert.equal(resolveWork(work, opened, 'Task')?.edited, false);
+  // He edits it: his text shows, and a later save keeps when he started.
+  const later = new Date(now.getTime() + 60_000);
+  const mine = nextWorkRecord(opened, { taskId: 'ff', body: 'Thursday at 1 works for me.', baseHash: workHash(work.body) }, later);
+  assert.deepEqual([mine.startedAt, mine.updatedAt], [now.toISOString(), later.toISOString()]);
+  const shown = resolveWork(work, mine, 'Task')!;
+  assert.deepEqual([shown.body, shown.edited, shown.newer], ['Thursday at 1 works for me.', true, null]);
+  // OpenClaw refills with a different draft: his text still shows, the new draft is offered.
+  const refilled = resolveWork({ ...work, body: 'Thursday at 1 PM is great.' }, mine, 'Task')!;
+  assert.deepEqual([refilled.body, refilled.newer], ['Thursday at 1 works for me.', 'Thursday at 1 PM is great.']);
+  // Taking OpenClaw's version drops his text and keeps the started mark.
+  const reset = nextWorkRecord(mine, { taskId: 'ff', reset: true }, later);
+  assert.deepEqual([reset.body, reset.startedAt], [null, now.toISOString()]);
+  // The task has no hook any more but he wrote something: it is still shown.
+  assert.equal(resolveWork(null, mine, 'Task')?.body, 'Thursday at 1 works for me.');
 });

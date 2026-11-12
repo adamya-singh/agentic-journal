@@ -17,6 +17,8 @@ import type {
   BriefTaskRef,
   TaskBrief,
 } from '@/lib/task-brief';
+import type { IconName } from '@/lib/shapes/catalog';
+import { hookPrompt, parseHook, type TaskHook } from '@/lib/shapes/hook';
 
 export type AgentSource = Extract<BriefSource, 'canvas' | 'email' | 'web' | 'journal' | 'notes' | 'jobs' | 'agent'>;
 
@@ -31,6 +33,7 @@ export interface AgentLayer {
   flags: { level: 'warn' | 'info' | 'gap'; text: string; src: AgentSource; action?: BriefActionSpec & { id: string } }[];
   related: { taskId: string; rel: string; src: AgentSource }[];
   sections: { title: string; markdown: string; src: AgentSource }[];
+  hook?: TaskHook | null;      // the task already started, and where to jump in (shapes/hook.ts); absent in fills from before hooks
 }
 
 export interface AgentRecord {
@@ -44,7 +47,11 @@ export interface AgentRecord {
   failures: number;            // consecutive; reset by a success or a changed task
   layer: AgentLayer | null;    // the last good layer, kept while a refresh runs
   doneActions: string[];
+  promptVersion?: number;      // BRIEF_PROMPT_VERSION of the prompt that produced `layer`; absent means 1
 }
+
+/** Raised when the prompt asks OpenClaw for something new, so finished briefs are filled again. 2: the hook. */
+export const BRIEF_PROMPT_VERSION = 2;
 
 export const REFILL_AFTER_MS = 3 * 864e5;        // Canvas pages and inboxes change; look again after 3 days
 export const RETRY_FAILED_AFTER_MS = 60 * 60_000;
@@ -68,6 +75,7 @@ export function needsFill(record: AgentRecord | undefined, fingerprint: string, 
   if (record.status === 'failed') {
     return record.failures < MAX_FAILURES && now.getTime() - Date.parse(record.finishedAt ?? record.queuedAt) > RETRY_FAILED_AFTER_MS;
   }
+  if ((record.promptVersion ?? 1) < BRIEF_PROMPT_VERSION) return true;
   return now.getTime() - Date.parse(record.finishedAt ?? record.queuedAt) > REFILL_AFTER_MS;
 }
 
@@ -117,8 +125,8 @@ function hourIndex(h: string): number {
  */
 export function validateAgentReply(
   raw: unknown,
-  ctx: { taskId: string; openTaskIds: Set<string>; today: string }
-): { ok: true; layer: AgentLayer } | { ok: false; error: string } {
+  ctx: { taskId: string; openTaskIds: Set<string>; today: string; icon?: IconName }
+): { ok: true; layer: AgentLayer; problems: string[] } | { ok: false; error: string } {
   // Item by item, so one bad flag or link doesn't sink the rest.
   const obj = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
   if (!obj) return { ok: false, error: 'reply was not a JSON object' };
@@ -155,9 +163,13 @@ export function validateAgentReply(
       }
     : null;
 
+  // The hook is read on its own, so a hook that can't be used leaves the rest of the brief standing.
+  const { hook, problems } = parseHook(obj.hook, ctx.icon);
+
   let n = 0;
   return {
     ok: true,
+    problems,
     layer: {
       summary: r.summary,
       stakes: r.stakes ?? null,
@@ -174,6 +186,7 @@ export function validateAgentReply(
       }),
       related: r.related.filter((x) => known(x.taskId)),
       sections: r.sections,
+      hook,
     },
   };
 }
@@ -243,6 +256,7 @@ export function mergeAgentLayer(
       ...layer.related.filter((r) => !relIds.has(r.taskId)).map((r) => relFor(r.taskId, r.rel, r.src)).filter((r): r is NonNullable<typeof r> => !!r),
     ],
     sections: [...brief.sections, ...layer.sections.filter((s) => !sectionKeys.has(norm(s.title))).map((s) => ({ ...s, oc: true as const }))],
+    hook: layer.hook ?? null,
     agent,
   };
 }
@@ -254,6 +268,8 @@ export function buildBriefAgentPrompt(input: {
   task: Task;
   otherTasks: { id: string; text: string; due: string | null }[];
   now: Date;
+  previousHook?: TaskHook | null;   // the hook from the last fill, so a refill keeps its name and shape unless something changed
+  userWork?: string | null;         // what Adamya has written on top of the started work
 }): string {
   const { brief, task } = input;
   const ruleBrief = {
@@ -263,7 +279,7 @@ export function buildBriefAgentPrompt(input: {
   };
   return `Agentic Journal is asking you to fill in the brief for one of Adamya's tasks so he can start it without hunting for anything.
 
-READ ONLY. Look at anything that helps: Canvas (in your browser; open a new tab and close it when you are done, and leave other tabs alone), his Rutgers email (read only), his Agentic Journal tasks, notes and journal, and the web. Do not change anything anywhere: no task, journal, Canvas, email or file changes, no messages to anyone. Suggest changes as actions instead (below); Adamya confirms each one himself.
+READ ONLY. Look at anything that helps: Canvas (in your browser; open a new tab and close it when you are done, and leave other tabs alone), his Rutgers email (read only), his Agentic Journal tasks, notes and journal, and the web. Do not change anything anywhere: no task, journal, Canvas, email or file changes, no messages to anyone, no drafts or documents created. Suggest changes as actions instead (below); Adamya confirms each one himself. The one thing you produce is your reply: the Journal stores it with the task.
 
 Now: ${input.now.toString()}
 Task id: ${task.id}
@@ -287,6 +303,14 @@ Actions: attach one to a flag only when it fixes what the flag says. Kinds:
 - {"kind":"save-notes","label":"Save instructions to notes","markdown":"..."}
 - {"kind":"merge","label":"Merge into this task","taskIds":["<other open task id>"]}
 
+${hookPrompt()}
+${input.previousHook ? `
+The hook from your last look (keep its name, kind and shape unless the task changed; move the work forward):
+${JSON.stringify(input.previousHook)}
+` : ''}${input.userWork?.trim() ? `
+He has already written on top of your started work. Do not redo what he wrote; start from it and make next the step after it:
+${input.userWork.trim().slice(0, 4000)}
+` : ''}
 Reply with ONLY one JSON object, no prose, no code fence:
 {"summary":"<one line: what you read>","stakes":null|"<what it is and why it matters>","where":null|"<room / time window>",
  "next":null|{"label":"<the one thing to press or do first>","detail":"<why, one line>","href":"<url, optional>","taskId":"<open task id, optional>","src":"..."},
@@ -295,6 +319,7 @@ Reply with ONLY one JSON object, no prose, no code fence:
  "links":[{"label":"...","href":"https://...","kind":"start|canvas|slides|email|posting|link","src":"..."}],
  "flags":[{"level":"warn|info|gap","text":"...","src":"...","action":null|{...}}],
  "related":[{"taskId":"<open task id>","rel":"<2-3 words>","src":"..."}],
- "sections":[{"title":"...","markdown":"...","src":"..."}]}
-Leave a list empty rather than padding it. If you could not find anything new, say so in summary and return empty lists.`;
+ "sections":[{"title":"...","markdown":"...","src":"..."}],
+ "hook":{...as described above...}}
+Leave a list empty rather than padding it. If you could not find anything new, say so in summary and return empty lists, but still return the hook.`;
 }

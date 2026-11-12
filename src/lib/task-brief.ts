@@ -2,6 +2,7 @@
 // Built on request from the task, its notes, the other tasks in its course or group, its journal history and,
 // for online assessments, the job posting it came from. Pure, so the API route and tests share it.
 import type { JobListing, Task } from '@/lib/types';
+import type { TaskHook } from '@/lib/shapes/hook';
 import {
   dayLabel,
   fmtLeft,
@@ -72,6 +73,7 @@ export interface TaskBrief {
   notesMarkdown: string | null;
   images: string[];              // markdown images in the notes (pasted into Quick Capture)
   generatedAt: string;
+  hook: TaskHook | null;           // OpenClaw has started the task and left it where to jump in (brief-agent.ts)
   agent: BriefAgentStatus | null;  // OpenClaw's background fill for this task, when there is one
 }
 
@@ -585,6 +587,7 @@ export function buildTaskBrief(input: BriefInputs): TaskBrief | null {
     notesMarkdown: notes || null,
     images: parsed.images,
     generatedAt: now.toISOString(),
+    hook: null,
     agent: null,
   };
 }
