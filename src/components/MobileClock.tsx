@@ -115,7 +115,8 @@ export function MobileClock() {
             aria-label="Eastern Time clock"
             className="fixed inset-0 z-[100] flex min-h-[100dvh] flex-col overflow-hidden bg-[#08090b] text-white sm:hidden"
           >
-            <div className="flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))]">
+            {/* Above the clock face: the face is shifted up and would otherwise lie over this row and take its taps. */}
+            <div className="relative z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))]">
               <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.18em] text-white/50">
                 <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_12px_rgba(129,140,248,0.8)]" />
                 Eastern Time · {clock.zone}
@@ -131,7 +132,7 @@ export function MobileClock() {
               </button>
             </div>
 
-            <div className="flex flex-1 -translate-y-[15dvh] flex-col items-center justify-center px-4 pb-[max(4rem,env(safe-area-inset-bottom))]">
+            <div className="pointer-events-none flex flex-1 -translate-y-[15dvh] flex-col items-center justify-center px-4 pb-[max(4rem,env(safe-area-inset-bottom))]">
               <div className="flex items-baseline justify-center font-mono font-medium leading-none tracking-[-0.075em] tabular-nums">
                 <span className="text-[clamp(5.25rem,27vw,10rem)]">
                   {clock.hours}:{clock.minutes}
