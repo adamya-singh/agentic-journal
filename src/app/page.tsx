@@ -21,8 +21,7 @@ import { useJobBoardState } from '@/lib/useJobBoardState';
 import { getCurrentDateISO, scheduleMidnightRollover } from '@/lib/current-date';
 import type { JobListingsData, JobListing } from '@/lib/types';
 
-// The home page's hero: Horizon Dawn, or Sunrise with ?hero=sunrise while it is being tried out. Each is loaded
-// only when shown.
+// The home page's hero: Sunrise, or the Horizon Dawn it replaced with ?hero=dawn. Each is loaded only when shown.
 const HorizonHero = dynamic(() => import('@/components/horizon/HorizonHero').then((m) => m.HorizonHero), { ssr: false });
 const SunriseHero = dynamic(() => import('@/components/sunrise/SunriseHero').then((m) => m.SunriseHero), { ssr: false });
 
@@ -106,7 +105,7 @@ export default function HomePage() {
   // Which hero to show is in the address, which only the browser knows: read after mount.
   const [hero, setHero] = React.useState<'dawn' | 'sunrise' | null>(null);
   React.useEffect(() => {
-    setHero(new URLSearchParams(window.location.search).get('hero') === 'sunrise' ? 'sunrise' : 'dawn');
+    setHero(new URLSearchParams(window.location.search).get('hero') === 'dawn' ? 'dawn' : 'sunrise');
   }, []);
   const [mainText, setMainText] = React.useState('');
 
@@ -1274,7 +1273,7 @@ export default function HomePage() {
         settings={<SettingsPopover currentMode={chatMode} onModeChange={handleChatModeChange} />}
       />
 
-      {/* Priority horizon (holds the quick capture bar) */}
+      {/* Priority horizon: Sunrise (holds the quick capture bar) */}
       {hero === 'sunrise' ? <SunriseHero /> : hero === 'dawn' ? <HorizonHero /> : <div style={{ minHeight: '60vh', background: '#05070d' }} />}
 
       {/* Week View */}

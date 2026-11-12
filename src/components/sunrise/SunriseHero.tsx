@@ -245,7 +245,7 @@ export function SunriseHero() {
   }, [undo, refreshTasks]);
 
   const onDone = React.useCallback((short: string) => (receipt: DoneReceipt, label: string) => {
-    offerUndo(`Done: ${short} · ${label}.`, () => post('/api/tasks/done-at/undo', receipt));
+    offerUndo(`Done: ${short.replace(/[.…]+$/, '')} · ${label}.`, () => post('/api/tasks/done-at/undo', receipt));
     engineRef.current?.closeTray();
     refreshTasks();
   }, [offerUndo, refreshTasks]);
@@ -259,7 +259,7 @@ export function SunriseHero() {
     setLetGoAsk(null);
     engineRef.current?.closeTray();
     engineRef.current?.closeTask();
-    offerUndo(`Let go of ${short}.`, () => post('/api/tasks/let-go/restore', { taskId }));
+    offerUndo(`Let go of ${short.replace(/[.…]+$/, '')}.`, () => post('/api/tasks/let-go/restore', { taskId }));
     refreshTasks();
   }, [letGoAsk, offerUndo, refreshTasks]);
 
