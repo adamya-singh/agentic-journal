@@ -36,6 +36,9 @@ interface BrowserState {
   connections: Map<string, Promise<Connection>>;
   fileChoosers: Map<string, FileChooserRequest>;
   manualUntil: number;
+  /** Tabs laid out for the space he views them in (setBrowserViewport), to be put back when he is done. */
+  fitted?: Set<string>;
+  fitWatch?: ReturnType<typeof setInterval>;
 }
 
 // One server process, but each route bundle may load this module separately.
@@ -116,6 +119,29 @@ export async function openBrowserTab(urls: string[]): Promise<string> {
   }
   await fetch(`${CDP_URL}/json/activate/${id}`).catch(() => undefined);
   return id;
+}
+
+export interface BrowserTab { id: string; url: string; title: string }
+
+/** The pages open in OpenClaw's browser right now. */
+export async function listBrowserTabs(): Promise<BrowserTab[]> {
+  return (await pages()).map(({ id, url, title }) => ({ id, url, title }));
+}
+
+/**
+ * A tab on exactly this page: the one already open there (`samePage` decides, so OpenClaw's own tab on it is the
+ * one he sees), else a new one. Unlike openBrowserTab it never borrows a tab that is merely on the same site.
+ */
+export async function openBrowserUrl(url: string, samePage: (a: string, b: string) => boolean): Promise<BrowserTab> {
+  const open = await pages();
+  let tab: BrowserTab | undefined = open.find((target) => samePage(target.url, url));
+  if (!tab) {
+    const response = await fetch(`${CDP_URL}/json/new?${encodeURI(url)}`, { method: 'PUT' });
+    if (!response.ok) throw new OpenClawBrowserError('Could not open a tab in OpenClaw’s browser');
+    tab = (await response.json()) as CdpTarget;
+  }
+  await fetch(`${CDP_URL}/json/activate/${tab.id}`).catch(() => undefined);
+  return { id: tab.id, url: tab.url || url, title: tab.title };
 }
 
 function hostOf(url: string): string {
@@ -224,6 +250,37 @@ export async function answerFileChooser(targetId: string, files: string[]): Prom
   });
 }
 
+/**
+ * Lays the page out for a window this size, so it fits the space he is viewing it in, or (null) gives the tab its
+ * own window size back. Chrome keeps the size until it is told otherwise, so every tab sized here is remembered
+ * and put back when he is done: when the session is ended (resetBrowserViewports), or by itself once he has not
+ * looked at the browser for a while and the manual session has lapsed.
+ */
+export async function setBrowserViewport(targetId: string, size: { width: number; height: number } | null): Promise<void> {
+  const fitted = (state.fitted ??= new Set());
+  if (size === null) {
+    fitted.delete(targetId);
+    await call(targetId, 'Emulation.clearDeviceMetricsOverride');
+    return;
+  }
+  await call(targetId, 'Emulation.setDeviceMetricsOverride', {
+    width: Math.round(size.width), height: Math.round(size.height), deviceScaleFactor: 0, mobile: false,
+  });
+  fitted.add(targetId);
+  if (!state.fitWatch) {
+    state.fitWatch = setInterval(() => { if (!isManualBrowserSessionActive()) void resetBrowserViewports(); }, 30_000);
+    state.fitWatch.unref?.();
+  }
+}
+
+/** Gives every tab sized by setBrowserViewport its own window size back. Call before ending the manual session. */
+export async function resetBrowserViewports(): Promise<void> {
+  const fitted = [...(state.fitted ?? [])];
+  state.fitted?.clear();
+  if (state.fitWatch) { clearInterval(state.fitWatch); state.fitWatch = undefined; }
+  await Promise.allSettled(fitted.map((targetId) => call(targetId, 'Emulation.clearDeviceMetricsOverride')));
+}
+
 export type BrowserInput =
   | { type: 'click'; x: number; y: number }
   | { type: 'scroll'; x: number; y: number; deltaY: number }
@@ -231,6 +288,7 @@ export type BrowserInput =
   | { type: 'key'; key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }
   | { type: 'navigate'; url: string }
   | { type: 'back' }
+  | { type: 'forward' }
   | { type: 'reload' };
 
 const SPECIAL_KEYS: Record<string, { code: string; keyCode: number; text?: string }> = {
@@ -294,6 +352,12 @@ export async function sendBrowserInput(targetId: string, input: BrowserInput): P
       const history = await call<{ currentIndex: number; entries: Array<{ id: number }> }>(targetId, 'Page.getNavigationHistory');
       const previous = history.entries[history.currentIndex - 1];
       if (previous) await call(targetId, 'Page.navigateToHistoryEntry', { entryId: previous.id });
+      return;
+    }
+    case 'forward': {
+      const history = await call<{ currentIndex: number; entries: Array<{ id: number }> }>(targetId, 'Page.getNavigationHistory');
+      const following = history.entries[history.currentIndex + 1];
+      if (following) await call(targetId, 'Page.navigateToHistoryEntry', { entryId: following.id });
       return;
     }
     case 'reload':

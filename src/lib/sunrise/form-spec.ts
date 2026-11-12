@@ -6,6 +6,20 @@ import type {TaskBrief, BriefKind} from '@/lib/task-brief'
 import {GROUP_OTHER} from '@/lib/horizon'
 import {type IconName, type Part, type ShapeId, isEmptyPart} from '@/lib/shapes/catalog'
 import {iconForKind} from '@/lib/shapes/hook'
+import type {ChatsGlance} from '@/lib/task-chat'
+
+/**
+ * The brief a form opens to under the pointer: enough to know the task at a glance, and nothing he has to read.
+ * When it is and how long is left, the one thing to watch for, and up to three facts. Its name and next step are
+ * the form's own. Only what the Journal really has: a missing piece is left out.
+ */
+export type FormGlance = {
+  when: string // "Thu Oct 22 · 1 – 1:15 PM"; '' with no date
+  left: string // "in 27h", "2d over"; '' with no date
+  zone: 'hold' | 'ignition' | 'later'
+  flag: {text: string, warn: boolean} | null // the top thing to know, a warning first
+  facts: {key: string, value: string}[]
+}
 
 export type FormSpec = {
   id: string
@@ -22,6 +36,8 @@ export type FormSpec = {
   ready: boolean // OpenClaw has started it: there is a hook
   hasWork: boolean // the hook carries started work to open
   filling: boolean // OpenClaw is working on it right now, or it is queued
+  glance?: FormGlance // tasks only; an action card opens to its own parts
+  chats?: ChatsGlance // his chats with OpenClaw about it, when it has any (the route adds this from the chat store)
 }
 
 const kindWords: Record<BriefKind, string> = {
@@ -45,10 +61,35 @@ export function kindLine(group: string, kind: string): string {
   return group === GROUP_OTHER || group === '' ? capital(kind) : `${group} · ${kind}`
 }
 
+// Journal ids mean nothing to him: a sentence that quotes one reads without it.
+const withoutIds = (text: string) => text
+  .replace(/\s*\(?\b(?:id|task id)\s*[:=]?\s*['"]?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['"]?\)?/gi, '')
+  .replace(/\s*['"]?\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b['"]?/gi, '')
+  .replace(/\(\s*(?:and|,|\s)*\s*\)/g, '').replace(/\s+([.,;:])/g, '$1').replace(/\s{2,}/g, ' ').trim()
+
+/** What the hover brief says beyond the form's name and next step. */
+export function glanceFor(brief: TaskBrief): FormGlance {
+  const {when} = brief
+  const dated = when.zone !== 'undated'
+  const flag = brief.flags.find(candidate => candidate.level === 'warn') ?? brief.flags[0] ?? null
+  // The facts the rules and OpenClaw wrote down; with none, the pairs OpenClaw drew on the form.
+  const pairs = brief.hook?.parts.find(part => part.kind === 'pairs')
+  const facts = brief.facts.length > 0
+    ? brief.facts.map(fact => ({key: fact.k, value: fact.v}))
+    : pairs?.kind === 'pairs' ? pairs.items.map(pair => ({key: pair.key, value: pair.value})) : []
+  return {
+    when: dated ? clip([when.day, when.where].filter(Boolean).join(' · '), 64) : '',
+    left: !dated || when.left === null ? '' : when.left.endsWith('over') ? when.left : `in ${when.left}`,
+    zone: when.zone === 'hold' ? 'hold' : when.zone === 'ignition' ? 'ignition' : 'later',
+    flag: flag === null ? null : {text: clip(withoutIds(flag.text), 150), warn: flag.level === 'warn'},
+    facts: facts.slice(0, 3).map(fact => ({key: clip(fact.key, 22), value: clip(fact.value, 70)})),
+  }
+}
+
 export function formSpecFor(brief: TaskBrief): FormSpec {
   const hook = brief.hook
   const filling = brief.agent?.status === 'queued' || brief.agent?.status === 'running'
-  const base = {id: brief.id, listType: brief.listType, filling}
+  const base = {id: brief.id, listType: brief.listType, filling, glance: glanceFor(brief)}
   if (hook !== null) {
     return {
       ...base, shape: hook.shape, icon: hook.icon, kind: kindLine(brief.group, hook.kind), name: hook.name, next: hook.next,

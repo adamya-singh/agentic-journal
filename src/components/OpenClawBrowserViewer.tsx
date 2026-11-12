@@ -7,30 +7,11 @@ import {
   AlertTriangle, ArrowLeft, CheckCircle2, ChevronDown, ChevronUp, FileUp, Keyboard, Loader2, RotateCw, Send, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 
-type BrowserInput =
-  | { type: 'click'; x: number; y: number }
-  | { type: 'scroll'; x: number; y: number; deltaY: number }
-  | { type: 'text'; text: string }
-  | { type: 'key'; key: string; ctrl?: boolean; shift?: boolean; alt?: boolean; meta?: boolean }
-  | { type: 'navigate'; url: string }
-  | { type: 'back' }
-  | { type: 'reload' };
+import { keyToInput, pagePoint as pointOnPage, useBrowserStream } from '@/components/openclaw-browser/stream';
 
-interface Frame {
-  src: string;
-  url: string;
-  title: string;
-  width: number;
-  height: number;
-  /** The page opened a file picker and is waiting for a file. */
-  fileChooser?: string;
-}
-
+const ENDPOINT = '/api/jobs/applications/browser';
 const FRAME_INTERVAL_MS = 700;
-const FORWARDED_KEYS = new Set([
-  'Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown',
-  'Home', 'End', 'PageUp', 'PageDown',
-]);
+const STEADY = { kind: 'steady', everyMs: FRAME_INTERVAL_MS } as const;
 
 /**
  * OpenClaw's own Chrome, live, inside the Journal: solve the CAPTCHA, sign in,
@@ -52,8 +33,8 @@ export function OpenClawBrowserViewer({
   onClose: () => void;
 }) {
   const [targetId, setTargetId] = React.useState<string | null>(null);
-  const [frame, setFrame] = React.useState<Frame | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  // The picture and the way input gets back are shared with a task's workspace (openclaw-browser/stream.ts).
+  const { frame, setFrame, error, setError, send, kick } = useBrowserStream({ endpoint: ENDPOINT, targetId, pace: STEADY });
   const [workerBusyWith, setWorkerBusyWith] = React.useState<string | null>(null);
   const [address, setAddress] = React.useState('');
   const [editingAddress, setEditingAddress] = React.useState(false);
@@ -65,7 +46,6 @@ export function OpenClawBrowserViewer({
   React.useEffect(() => {
     if (window.matchMedia('(max-width: 640px)').matches) setZoomed(true);
   }, []);
-  const kickRef = React.useRef<() => void>(() => undefined);
   const screenRef = React.useRef<HTMLDivElement>(null);
   const wheelRef = React.useRef({ deltaY: 0, x: 0, y: 0, timer: 0 as ReturnType<typeof setTimeout> | 0 });
 
@@ -94,105 +74,19 @@ export function OpenClawBrowserViewer({
         body: JSON.stringify({ action: 'end' }), keepalive: true,
       }).catch(() => undefined);
     };
-  }, [listingId]);
-
-  // Poll frames while open; an input wakes the loop early.
-  React.useEffect(() => {
-    if (!targetId) return;
-    let stopped = false;
-    let wake: () => void = () => undefined;
-    kickRef.current = () => wake();
-    const loop = async () => {
-      while (!stopped) {
-        if (document.visibilityState === 'visible') {
-          try {
-            const response = await fetch(`/api/jobs/applications/browser?targetId=${encodeURIComponent(targetId)}`, { cache: 'no-store' });
-            if (!response.ok) {
-              const data = await response.json().catch(() => ({}));
-              throw new Error(data.error || 'Lost the browser picture');
-            }
-            const blob = await response.blob();
-            const next: Frame = {
-              src: URL.createObjectURL(blob),
-              url: decodeURIComponent(response.headers.get('X-Page-Url') ?? ''),
-              title: decodeURIComponent(response.headers.get('X-Page-Title') ?? ''),
-              width: Number(response.headers.get('X-Viewport-Width')) || 1,
-              height: Number(response.headers.get('X-Viewport-Height')) || 1,
-              ...(response.headers.get('X-File-Chooser') ? { fileChooser: response.headers.get('X-File-Chooser')! } : {}),
-            };
-            if (stopped) {
-              URL.revokeObjectURL(next.src);
-              return;
-            }
-            setFrame((previous) => {
-              if (previous) URL.revokeObjectURL(previous.src);
-              return next;
-            });
-            setError(null);
-          } catch (frameError) {
-            setError(frameError instanceof Error ? frameError.message : 'Lost the browser picture');
-          }
-        }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, FRAME_INTERVAL_MS);
-          wake = () => { clearTimeout(timer); resolve(); };
-        });
-      }
-    };
-    void loop();
-    return () => { stopped = true; wake(); };
-  }, [targetId]);
+  }, [listingId, setError]);
 
   React.useEffect(() => {
     if (frame && !editingAddress) setAddress(frame.url);
   }, [frame, editingAddress]);
 
-  const frameSrcRef = React.useRef<string | null>(null);
-  frameSrcRef.current = frame?.src ?? null;
-  React.useEffect(() => () => {
-    if (frameSrcRef.current) URL.revokeObjectURL(frameSrcRef.current);
-  }, []);
-
-  const send = React.useCallback(async (input: BrowserInput) => {
-    if (!targetId) return;
-    try {
-      const response = await fetch('/api/jobs/applications/browser', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'input', targetId, input }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'That did not reach the browser');
-    } catch (inputError) {
-      setError(inputError instanceof Error ? inputError.message : 'That did not reach the browser');
-    }
-    // Pages take a moment to react.
-    setTimeout(() => kickRef.current(), 150);
-  }, [targetId]);
-
-  const pagePoint = (clientX: number, clientY: number) => {
-    const image = screenRef.current?.querySelector('img');
-    if (!image || !frame) return null;
-    const rect = image.getBoundingClientRect();
-    return {
-      x: Math.round(((clientX - rect.left) / rect.width) * frame.width),
-      y: Math.round(((clientY - rect.top) / rect.height) * frame.height),
-    };
-  };
+  const pagePoint = (clientX: number, clientY: number) => pointOnPage(screenRef.current?.querySelector('img'), frame, clientX, clientY);
 
   const onKeyDown = (event: React.KeyboardEvent) => {
-    const command = event.ctrlKey || event.metaKey;
-    // Paste arrives as a paste event with the text.
-    if (command && event.key.toLowerCase() === 'v') return;
-    if (command && /^[a-z]$/i.test(event.key)) {
-      event.preventDefault();
-      void send({ type: 'key', key: event.key.toLowerCase(), ctrl: true, shift: event.shiftKey });
-    } else if (FORWARDED_KEYS.has(event.key)) {
-      event.preventDefault();
-      void send({ type: 'key', key: event.key, shift: event.shiftKey });
-    } else if (event.key.length === 1 && !command && !event.altKey) {
-      event.preventDefault();
-      void send({ type: 'text', text: event.key });
-    }
+    const input = keyToInput(event);
+    if (!input) return;
+    event.preventDefault();
+    void send(input);
   };
 
   const onWheel = (event: React.WheelEvent) => {
@@ -229,7 +123,7 @@ export function OpenClawBrowserViewer({
       setError(fileError instanceof Error ? fileError.message : 'The file did not reach the page');
     } finally {
       setUploading(false);
-      kickRef.current();
+      kick();
     }
   };
 

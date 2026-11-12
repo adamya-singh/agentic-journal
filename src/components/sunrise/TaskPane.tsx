@@ -1,14 +1,17 @@
 'use client';
 
-// What a task opens to in Sunrise: a page OpenClaw composed for this task, not a form with the task poured in.
-// - OpenClaw speaks first: what to do now and why it is easy, what it already did, and the way to where it gets
-//   finished.
-// - Then the work it started, each block drawn as the thing it is (a letter on paper, a slide lit on a stage, a
-//   page with a margin, a list to tick, a book's cover). The kind of work decides the page's width and what leads;
-//   the task's icon decides its colour. The line to pick up from is lit and takes the caret.
-// - The facts of the task run in one strip, its stages as a path, and what OpenClaw wants him to know is said
-//   plainly. Everything else the Journal knows is folded away under the work.
-// - OpenClaw stays within reach in one line floating under the page.
+// What a task opens to in Sunrise: its workspace, most of the screen, in three parts.
+// - Left, the brief: OpenClaw speaks first (what to do now and why it is easy, what it already did), then the facts
+//   of the task in one strip, what OpenClaw wants him to know, and everything else the Journal knows, folded. Done
+//   and Let go sit at its foot. It folds away.
+// - Middle, the surfaces, one tab each. "Work" is what OpenClaw started, each block drawn as the thing it is (a
+//   letter on paper, a slide lit on a stage, a page with a margin, a list to tick), saving itself as he works; with
+//   nothing started it offers to have OpenClaw start it, or to start it himself. Every real link the task has is a
+//   web tab, shown live in OpenClaw's own browser (BrowserSurface); he can paste an address for another.
+// - Right, his chats with OpenClaw about the task (WorkspaceChats). Folded away, their composer stays in one line
+//   under the surface.
+// On a phone it is one column: the tabs across the top, the brief behind a toggle, the chats as a sheet under the
+// surface. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
 // The engine grows the pane out of the task's form; this fills it.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -20,10 +23,13 @@ import type { IconName, Part } from '@/lib/shapes/catalog';
 import { isActive, type WorkBlock } from '@/lib/shapes/work';
 import { iconOf, renderPart } from '@/lib/shapes/render';
 import type { SunriseData } from '@/lib/sunrise/data';
-import { BriefChat } from '@/components/horizon/BriefChat';
 import { confirmText, runBriefAction } from '@/components/horizon/brief-actions';
+import type { ChatSurfaceRef } from '@/lib/task-chat';
+import { defaultSurfaceId, deriveSurfaces, pageKey, safeWebUrl, surfaceId, type Surface } from '@/lib/task-surfaces';
+import { BROWSER_SURFACE_CSS, BrowserSurface, type OpenedTab } from './BrowserSurface';
+import { CHATS_CSS, ChatsPanel, MiniChat, useTaskChats } from './WorkspaceChats';
 
-export const PANE_CSS = `
+const BRIEF_AND_WORK_CSS = `
 /* Daylight, tinted by what the task is: a low sun in its colour, sky above it, and the work on top. */
 .srp{--a:#c2551b;--glow:#ffc98a;--sky:#cfe4ff;--a-soft:color-mix(in srgb,var(--a) 14%,transparent);
   position:absolute;inset:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);overflow:hidden;color:#22130a;font:14px/1.5 var(--sans);isolation:isolate;
@@ -323,29 +329,6 @@ export const PANE_CSS = `
 .srp-hist span{font:11px var(--mono);color:#8a6a52;margin-right:8px}
 .srp-note{margin:0;color:#7a5a42;font-size:13px}
 
-/* OpenClaw, always within reach: one line to ask from, floating under the page; the conversation opens beside it. */
-.srp-ask{position:absolute;z-index:3;left:50%;bottom:18px;transform:translateX(-50%);width:min(560px,calc(100% - 44px));display:flex;align-items:center;gap:10px;padding:12px 14px 12px 18px;border-radius:999px;cursor:text;text-align:left;font:14.5px var(--sans);color:#6a4a32;box-shadow:inset 0 1px 0 #fff,0 24px 50px -22px rgba(60,30,10,.6),0 2px 8px -3px rgba(60,30,10,.25);transition:transform .2s ease,box-shadow .2s ease}
-.srp-ask:hover{transform:translateX(-50%) translateY(-2px)}
-.srp-ask i{flex:none;width:11px;height:11px;border-radius:50%;background:radial-gradient(circle at 34% 30%,#fff,var(--a));box-shadow:0 0 0 4px var(--a-soft);animation:srp-breathe 4.4s ease-in-out infinite}
-.srp-ask b{margin-left:auto;flex:none;width:30px;height:30px;border-radius:50%;background:#22130a;color:#fff6ec;display:grid;place-items:center;font:600 14px/1 var(--sans)}
-.srp-chat{position:absolute;z-index:4;right:14px;top:60px;bottom:14px;width:min(400px,calc(100% - 28px));display:flex;flex-direction:column;overflow:hidden;animation:srp-in .3s ease both;--hz-ink:#22130a;--hz-dim:#7a5a42;--hz-em:var(--a)}
-.srp-chat .hzc{color:#22130a}
-.srp-chat .hzc-head{border-bottom-color:rgba(180,110,50,.16)}
-.srp-chat .hzc-head b{color:var(--a)}
-.srp-chat .hzc-head b i{background:var(--a)}
-.srp-chat .hzc-acts button{color:#7a5a42;border-color:rgba(60,30,10,.2)}
-.srp-chat .hzc-acts button:hover{color:#22130a;border-color:var(--a)}
-.srp-chat .hzc-m.you{background:#22130a;border-color:#22130a;color:#fff6ec}
-.srp-chat .hzc-m.openclaw{background:rgba(255,255,255,.85);border-color:rgba(60,30,10,.1);color:#22130a}
-.srp-chat .hzc-dots{background:rgba(255,255,255,.85);border-color:rgba(60,30,10,.1)}
-.srp-chat .hzc-dots i{background:var(--a)}
-.srp-chat .hzc-err{color:#a3361a}
-.srp-chat .hzc-sugg button{color:#4a2a14;background:rgba(255,255,255,.7);border-color:color-mix(in srgb,var(--a) 30%,transparent)}
-.srp-chat .hzc-sugg button:hover{border-color:var(--a)}
-.srp-chat .hzc-in{background:rgba(255,255,255,.85);border-color:rgba(60,30,10,.18)}
-.srp-chat .hzc-in:focus-within{border-color:var(--a)}
-.srp-chat .hzc-send{background:#22130a;color:#fff6ec}
-.srp-chat .hzc-foot a:hover{color:var(--a)}
 /* Controls. A thing to press looks raised and goes down when pressed; a thing to type in is a well; the one
    thing to do next is the only one in colour. */
 .srp-acts button,.srp-chip,.srp .srp-btn.quiet,.srp-links a{border:1px solid rgba(40,22,10,.22);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.12),0 6px 12px -8px rgba(40,22,10,.4);transition:transform .08s ease,box-shadow .08s ease,filter .15s ease}
@@ -400,6 +383,75 @@ export const PANE_CSS = `
 .narrow .srp-timer .steps{grid-column:1;justify-content:center}
 .narrow .srp-path li{font-size:11.5px}
 `;
+
+
+const WORKSPACE_CSS = `
+/* The workspace: the brief, the surfaces, the chats, side by side. */
+.srp.ws{display:flex;flex-direction:row}
+.srw-brief{flex:none;width:clamp(350px,31%,450px);min-height:0;display:flex;flex-direction:column;border-right:1px solid rgba(60,30,10,.1)}
+.srw-brief .srp-bar{flex:none;padding:16px 18px 0 20px}
+.srw-brief .srp-scroll{flex:1;padding:8px 20px 18px}
+.srp .srw-brief .srp-col{max-width:none;gap:16px}
+.srw-brief .srp-say{grid-template-columns:minmax(0,1fr);padding-top:4px}
+.srw-brief .srp-orb{display:none}
+.srw-brief .srp-say h2{font-size:27px;line-height:1.08}
+.srw-brief .srp-say .why{font-size:14.5px}
+.srw-brief .srp-ribbon b{font-size:17px}
+.srw-brief .srp-ribbon div{flex-basis:120px;padding:0 12px}
+.srw-brief .srp-more .in{grid-template-columns:minmax(0,1fr)}
+.srw-foot{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:10px 16px 14px;border-top:1px solid rgba(60,30,10,.1)}
+.srw-mid{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:10px 12px 12px}
+.srw-tabs{flex:none;display:flex;align-items:flex-end;gap:6px;min-width:0}
+.srw-tablist{position:relative;flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+.srw-tablist::-webkit-scrollbar{display:none}
+.srw-tab{flex:none;max-width:168px;display:inline-flex;align-items:center;gap:7px;padding:9px 13px 10px;border:0;border-radius:13px 13px 0 0;background:transparent;color:#6a4a32;font:500 13.5px var(--sans);cursor:pointer;white-space:nowrap}
+.srw-tab small{flex:none;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:999px;background:rgba(34,19,10,.1);color:#5b4230}
+.srw-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.srw-tab:hover{color:#22130a;background:rgba(255,255,255,.45)}
+.srw-tab[aria-selected=true]{max-width:240px;background:#fff;color:#22130a;box-shadow:0 -1px 0 rgba(255,255,255,.9),0 -8px 18px -14px rgba(120,60,10,.5)}
+.srw-tab[aria-selected=true] small{background:#22130a;color:#fff6ec}
+.srw-ico{flex:none;height:34px;min-width:34px;margin-bottom:5px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 9px;border-radius:11px;border:1px solid rgba(40,22,10,.18);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;font:500 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.1)}
+.srw-ico:hover{border-color:rgba(40,22,10,.34)}
+.srw-ico[aria-pressed=true]{background:#22130a;border-color:#22130a;color:#fff6ec;box-shadow:none}
+.srw-ico em{font:600 10.5px var(--mono);font-style:normal;padding:1px 6px;border-radius:999px;background:rgba(34,19,10,.1)}
+.srw-ico[aria-pressed=true] em{background:#fff6ec;color:#22130a}
+.srw-ico em.waiting{background:var(--a);color:#fff}
+.srw-ico .pane{width:15px;height:13px;border-radius:3px;border:1.5px solid currentColor;box-sizing:border-box;background:linear-gradient(90deg,currentColor 0 34%,transparent 34%)}
+.srw-add{flex:none;margin-bottom:5px;display:flex;align-items:center;gap:6px}
+.srw-add input{width:210px;max-width:40vw;height:32px;padding:0 12px;border-radius:999px;border:1px solid rgba(40,22,10,.2);background:#fff;font:12.5px var(--mono);color:#22130a;outline:0}
+.srw-add input:focus{border-color:var(--a)}
+.srw-add input.bad{border-color:#d2451a}
+.srw-surface{position:relative;flex:1;min-height:0;overflow:hidden;border-radius:14px;background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.95);box-shadow:inset 0 1px 0 #fff,0 18px 44px -30px rgba(120,60,10,.55)}
+.srw-work{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain;padding:20px 22px 30px}
+.srw-work .srp-col{gap:18px}
+.srw-paste{display:grid;gap:8px;padding-top:14px;border-top:1px solid rgba(60,30,10,.12);max-width:56ch}
+.srw-paste label{font:500 9.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a)}
+.srw-paste form{display:flex;gap:8px}
+.srw-paste input{flex:1;min-width:0;height:36px;padding:0 14px;border-radius:999px;border:1px solid rgba(40,22,10,.2);background:#fff;font:13px var(--mono);color:#22130a;outline:0}
+.srw-paste input:focus{border-color:var(--a)}
+.srw-paste p{margin:0;font-size:12.5px;color:#7a5a42}
+.srw-chats{flex:none;width:clamp(320px,27%,390px);min-height:0;border-left:1px solid rgba(60,30,10,.1);background:rgba(255,255,255,.42)}
+/* Two parts fit, not three: the brief or the chats beside the surface, one at a time. */
+.srp.cols-2 .srw-brief{width:clamp(320px,40%,400px)}
+.srp.cols-2 .srw-chats{width:clamp(300px,38%,360px)}
+/* A phone: one column. The brief opens over it; the chats are a sheet under the surface. */
+.srp.cols-1{flex-direction:column}
+.cols-1 .srw-brief{position:absolute;inset:0;z-index:6;width:auto;border-right:0;background:linear-gradient(180deg,#fbfcff 0%,#fffaf5 55%,#fff4e8 100%)}
+.cols-1 .srw-brief .srp-bar{padding:12px 12px 0 16px}
+.cols-1 .srw-brief .srp-scroll{padding:6px 16px 16px}
+.cols-1 .srw-foot{justify-content:flex-start}
+.cols-1 .srw-mid{padding:8px 8px 0}
+.cols-1 .srw-tab{padding:8px 10px 9px;max-width:150px}
+.cols-1 .srw-tab[aria-selected=true]{max-width:190px}
+.cols-1 .srw-work{padding:14px 12px 24px}
+.cols-1 .srw-chats{flex:0 0 60%;width:auto;border-left:0;border-top:1px solid rgba(60,30,10,.14);background:#fffaf4;box-shadow:0 -14px 30px -22px rgba(60,30,10,.6)}
+.cols-1 .srk-mini{margin:0 -8px;padding:8px 10px 10px}
+.srk-mini .srk-box .srk-box{flex:1;min-width:0}
+.srw-mid>.srk-mini{margin:8px -12px -12px;border-radius:0}
+.cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
+`;
+
+export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + BROWSER_SURFACE_CSS + CHATS_CSS;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -1083,6 +1135,14 @@ const SCENES: Record<WorkBlock['kind'], string> = {
 
 // ───────────── the pane ─────────────
 
+// The word on a work tab: what sort of thing the work is.
+const WORK_TAGS: Record<WorkBlock['kind'], string> = {
+  doc: 'doc', checklist: 'list', letter: 'mail', problem: 'work', fields: 'form', choices: 'pick', slides: 'slides', timer: 'timer', reading: 'read', part: 'work',
+};
+// How wide the opened pane is for a sky this wide (engine.ts workRect), and how many of the three parts fit.
+const paneWidthFor = (sky: number) => (sky < 700 ? sky - 16 : Math.min(1480, sky - 32));
+const colsFor = (sky: number): 1 | 2 | 3 => (sky < 700 ? 1 : paneWidthFor(sky) >= 1180 ? 3 : 2);
+
 export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo }: {
   taskId: string;
   data: SunriseData;
@@ -1094,11 +1154,42 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
 }) {
   const [brief, setBrief] = React.useState<TaskBrief | null | undefined>(undefined);   // undefined while loading
   const [work, setWork] = React.useState<ResolvedWork | null | undefined>(undefined);
-  const [chat, setChat] = React.useState(false);
   const [allDid, setAllDid] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const eyebrow = React.useRef<HTMLSpanElement>(null);
+  const root = React.useRef<HTMLDivElement>(null);
+  const surfaceBox = React.useRef<HTMLDivElement>(null);
+
+  // How much room there is: three parts side by side, two, or one column on a phone. It follows the sky's width,
+  // not the pane's own, which is still growing out of the task's form when this first draws.
+  const [cols, setCols] = React.useState<1 | 2 | 3>(() => (typeof window === 'undefined' ? 3 : colsFor(window.innerWidth)));
+  const [briefOpen, setBriefOpen] = React.useState(() => cols >= 2);
+  const [chatsOpen, setChatsOpen] = React.useState(() => cols === 3);
+  const [surfaceWidth, setSurfaceWidth] = React.useState(0);
+  React.useLayoutEffect(() => {
+    const sky = root.current?.closest<HTMLElement>('.sr-sky');
+    if (!sky) return;
+    const first = colsFor(sky.clientWidth);
+    setCols(first);
+    setBriefOpen(first >= 2);
+    setChatsOpen(first === 3);
+    if (typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => setCols(colsFor(sky.clientWidth)));
+    watch.observe(sky);
+    return () => watch.disconnect();
+  }, []);
+  React.useEffect(() => {
+    const el = surfaceBox.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const watch = new ResizeObserver(() => setSurfaceWidth(el.clientWidth));
+    watch.observe(el);
+    return () => watch.disconnect();
+  }, []);
+  // With room for two, the brief and the chats take turns beside the surface.
+  const showBrief = (on: boolean) => { setBriefOpen(on); if (on && cols === 2) setChatsOpen(false); };
+  const showChats = (on: boolean) => { setChatsOpen(on); if (on && cols === 2) setBriefOpen(false); };
+  React.useEffect(() => { if (cols === 2 && briefOpen && chatsOpen) setChatsOpen(false); }, [cols, briefOpen, chatsOpen]);
 
   const loadBrief = React.useCallback(() => {
     fetch(`/api/tasks/brief?id=${encodeURIComponent(taskId)}`)
@@ -1155,7 +1246,87 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const svg = iconOf(icon);
     host.prepend(svg);
     return () => svg.remove();
-  }, [icon]);
+  }, [icon, briefOpen]);
+
+  // ---- The surfaces: the work, and one page per real link. Which is showing, and which pages he has opened.
+  const [pasted, setPasted] = React.useState<string[]>([]);
+  const n = brief?.next;
+  const surfaces = React.useMemo<Surface[]>(() => deriveSurfaces({
+    links: brief?.links ?? [],
+    next: n ? { label: n.label, ...(n.href ? { href: n.href } : {}) } : null,
+    work: work ? { title: work.title, href: work.href, blocks: work.blocks.length } : null,
+    pasted,
+  }), [brief?.links, n, work, pasted]);
+  const hasWork = !!work && work.blocks.length > 0;
+  // He has not chosen a tab until he presses one: until then the task shows where it would open by itself.
+  const [picked, setPicked] = React.useState<string | null>(null);
+  const settled = brief !== undefined && work !== undefined;
+  const selectedId = picked !== null && surfaces.some((surface) => surface.id === picked) ? picked : settled ? defaultSurfaceId(surfaces, hasWork) : 'work';
+  const selected = surfaces.find((surface) => surface.id === selectedId) ?? surfaces[0];
+  // With more tabs than fit, the one that is showing is brought into view.
+  const tablist = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    const list = tablist.current;
+    const tab = list?.querySelector<HTMLElement>('[aria-selected=true]');
+    if (!list || !tab) return;
+    if (tab.offsetLeft < list.scrollLeft) list.scrollLeft = tab.offsetLeft;
+    else if (tab.offsetLeft + tab.offsetWidth > list.scrollLeft + list.clientWidth) list.scrollLeft = tab.offsetLeft + tab.offsetWidth - list.clientWidth;
+  }, [selectedId, surfaces.length]);
+  // A page is opened in OpenClaw's browser only once he chooses it; where the task opens by itself does not count.
+  const [armed, setArmed] = React.useState<Record<string, true>>({});
+  const [opened, setOpened] = React.useState<Record<string, OpenedTab>>({});
+  const [pages, setPages] = React.useState<Record<string, { url: string; title: string }>>({});
+  const choose = React.useCallback((id: string) => {
+    setPicked(id);
+    if (id !== 'work') setArmed((was) => (was[id] ? was : { ...was, [id]: true }));
+  }, []);
+  /** Shows a page as a tab, adding one when the task has no tab for it. Null when it is not a web address. */
+  const showPage = React.useCallback((href: string): string | null => {
+    const url = safeWebUrl(href);
+    if (url === null) return null;
+    const key = pageKey(url);
+    const live = Object.entries(pages).find(([, page]) => pageKey(page.url) === key)?.[0];
+    const id = surfaces.find((surface) => surface.kind === 'web' && pageKey(surface.url) === key)?.id ?? live ?? surfaceId(url);
+    if (!surfaces.some((surface) => surface.id === id)) setPasted((was) => [...was, url]);
+    choose(id);
+    return id;
+  }, [surfaces, pages, choose]);
+  // When the workspace closes, the application worker gets OpenClaw's browser back straight away.
+  const usedBrowser = React.useRef(false);
+  usedBrowser.current = Object.keys(opened).length > 0;
+  React.useEffect(() => () => {
+    if (usedBrowser.current) void fetch('/api/openclaw/browser', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'end' }), keepalive: true }).catch(() => {});
+  }, []);
+  // A link in the brief shows its page here; with a modifier key it opens the ordinary way.
+  const linkClick = (href: string) => (event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0 || isInternal(href)) return;
+    if (showPage(href) === null) return;
+    event.preventDefault();
+    if (cols === 1) setBriefOpen(false);
+  };
+
+  // ---- The chats. What he is on goes with every message.
+  const about = React.useMemo<ChatSurfaceRef | null>(() => {
+    if (!selected) return null;
+    if (selected.kind === 'work') return hasWork ? { kind: 'work', label: selected.label } : null;
+    const page = pages[selected.id];
+    return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
+  }, [selected, pages, hasWork]);
+  const chats = useTaskChats(taskId, chatsOpen);
+  const showSurface = React.useCallback((ref: ChatSurfaceRef) => {
+    if (ref.kind === 'work') choose('work');
+    else if (ref.url) showPage(ref.url);
+  }, [choose, showPage]);
+  const [adding, setAdding] = React.useState(false);
+  const [addText, setAddText] = React.useState('');
+  const [addBad, setAddBad] = React.useState(false);
+  const addPage = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (showPage(addText) === null) { setAddBad(true); return; }
+    setAdding(false);
+    setAddText('');
+    setAddBad(false);
+  };
 
   const done = async () => {
     setBusy(true);
@@ -1188,13 +1359,16 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       { kind: 'doc', id: 'notes', label: 'Your notes', body: '' },
     ];
     const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks }).catch(() => null);
-    if (json?.success) setWork((json.data as ResolvedWork | null) ?? { title: short, href: null, blocks, edited: true, baseHash: null, newer: null, startedAt: null });
+    if (json?.success) {
+      setWork((json.data as ResolvedWork | null) ?? { title: short, href: null, blocks, edited: true, baseHash: null, newer: null, startedAt: null });
+      setPicked('work');
+    }
   };
   const actionDone = (actionId: string) => {
     void post('/api/tasks/brief-agent', { action: 'action-done', taskId, actionId }).then(() => { onChanged(); loadBrief(); });
   };
   // On a wide sheet the caret goes straight to the place to pick up from; on a phone that would raise the keyboard.
-  const focusJump = typeof window !== 'undefined' && window.innerWidth >= 700;
+  const focusJump = cols > 1;
 
   const lead = work ? work.blocks.find(isActive) ?? work.blocks[0] : undefined;
   // The form's rows are its small picture of a list; opened, the list itself is there to tick.
@@ -1209,106 +1383,168 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const says = form?.ready ? form.say : null;
   const headline = says?.[0] || form?.name || title;
   const why = says ? says[1] : form?.what ?? '';
-  const n = brief?.next;
   const links = (brief?.links ?? []).filter((l) => l.href !== n?.href);
+  const webCount = surfaces.length - 1;
 
   return (
-    <div className={`srp scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
-      <header className="srp-bar">
-        <span className="srp-eyebrow" ref={eyebrow}>
-          <span>{form?.kind}</span>
-          {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
-          {when?.where && <span className="srp-where">{when.where}</span>}
-          {says && <span className="srp-name" title={form?.name ?? title}>{form?.name ?? title}</span>}
-        </span>
-        <div className="srp-acts">
-          <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
-            title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
-          <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
-          <button type="button" className="x" onClick={onClose} aria-label="Close">✕</button>
-        </div>
-      </header>
-      <div className="srp-scroll">
-        <div className="srp-col">
-          <section className="srp-say">
-            <i className={`srp-orb${filling ? ' busy' : ''}`} aria-hidden="true" />
-            <div>
-              <span className="srp-who" role="status">
-                OpenClaw
-                {a?.status === 'running' && <em>is reading Canvas, email and your journal for this…</em>}
-                {a?.status === 'queued' && <em>will look at this shortly</em>}
-                {a?.status === 'done' && <em>looked {ago(a.finishedAt)}</em>}
-                {a?.status === 'failed' && <em>couldn’t look at this{a.error ? `: ${a.error}` : ''}</em>}
-                {a && !filling && <button type="button" onClick={() => void refresh()}>{a.status === 'failed' ? 'Retry' : 'Look again'}</button>}
-              </span>
-              <h2>{headline}</h2>
-              {why && <p className="why">{why}</p>}
-              {form && form.did.length > 0 && (
-                <ul className="srp-trail" aria-label="OpenClaw already">
-                  {(allDid ? form.did : form.did.slice(0, 2)).map((d, i) => <li key={d} style={{ animationDelay: `${0.3 + i * 0.12}s` }}>{d}</li>)}
-                  {!allDid && form.did.length > 2 && <li className="more" role="button" tabIndex={0} onClick={() => setAllDid(true)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setAllDid(true); }}>and {form.did.length - 2} more</li>}
-                </ul>
-              )}
-              {(n?.href || n?.taskId || links.length > 0) && (
-                <div className="srp-doors">
-                  {n?.href ? <a className="srp-door" href={n.href} {...outLink(n.href)}>{n.label}<span>↗</span></a>
-                    : n?.taskId ? <button type="button" className="srp-door" onClick={() => onGoto(n.taskId as string)}>{n.label}<span>→</span></button> : null}
-                  <span className="srp-links">
-                    {links.map((l) => (
-                      <a key={l.href} href={l.href} title={l.label} {...outLink(l.href)}><small>{l.kind === 'app' ? 'journal' : l.kind}</small><span>{l.label}</span></a>
-                    ))}
+    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
+      {briefOpen && (
+        <aside className="srw-brief" aria-label="The brief">
+          <header className="srp-bar">
+            <span className="srp-eyebrow" ref={eyebrow}>
+              <span>{form?.kind}</span>
+              {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
+              {when?.where && <span className="srp-where">{when.where}</span>}
+            </span>
+            {cols === 1 && <div className="srp-acts"><button type="button" className="x" onClick={() => setBriefOpen(false)} aria-label="Back to the work">✕</button></div>}
+          </header>
+          <div className="srp-scroll">
+            <div className="srp-col">
+              <section className="srp-say">
+                <div>
+                  <span className="srp-who" role="status">
+                    OpenClaw
+                    {a?.status === 'running' && <em>is reading Canvas, email and your journal for this…</em>}
+                    {a?.status === 'queued' && <em>will look at this shortly</em>}
+                    {a?.status === 'done' && <em>looked {ago(a.finishedAt)}</em>}
+                    {a?.status === 'failed' && <em>couldn’t look at this{a.error ? `: ${a.error}` : ''}</em>}
+                    {a && !filling && <button type="button" onClick={() => void refresh()}>{a.status === 'failed' ? 'Retry' : 'Look again'}</button>}
                   </span>
+                  <h2>{headline}</h2>
+                  {says && form && form.name !== headline && <p className="srp-note">{form.name}</p>}
+                  {why && <p className="why">{why}</p>}
+                  {form && form.did.length > 0 && (
+                    <ul className="srp-trail" aria-label="OpenClaw already">
+                      {(allDid ? form.did : form.did.slice(0, 2)).map((d, i) => <li key={d} style={{ animationDelay: `${0.3 + i * 0.12}s` }}>{d}</li>)}
+                      {!allDid && form.did.length > 2 && <li className="more" role="button" tabIndex={0} onClick={() => setAllDid(true)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setAllDid(true); }}>and {form.did.length - 2} more</li>}
+                    </ul>
+                  )}
+                  {(n?.href || n?.taskId || links.length > 0) && (
+                    <div className="srp-doors">
+                      {n?.href ? <a className="srp-door" href={n.href} {...outLink(n.href)} onClick={linkClick(n.href)}>{n.label}<span>{isInternal(n.href) ? '→' : '↗'}</span></a>
+                        : n?.taskId ? <button type="button" className="srp-door" onClick={() => onGoto(n.taskId as string)}>{n.label}<span>→</span></button> : null}
+                      <span className="srp-links">
+                        {links.map((l) => (
+                          <a key={l.href} href={l.href} title={l.label} {...outLink(l.href)} onClick={linkClick(l.href)}><small>{l.kind === 'app' ? 'journal' : l.kind}</small><span>{l.label}</span></a>
+                        ))}
+                      </span>
+                    </div>
+                  )}
+                  {undated && (
+                    <div className="srp-when">
+                      No date yet. When?
+                      <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(0))}>Today</button>
+                      <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(1))}>Tomorrow</button>
+                      <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(7))}>Next week</button>
+                      <input type="date" aria-label="A date for this task" min={dayFrom(0)} onChange={(e) => void setWhen(e.target.value)} />
+                    </div>
+                  )}
                 </div>
-              )}
-              {undated && (
-                <div className="srp-when">
-                  No date yet. When?
-                  <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(0))}>Today</button>
-                  <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(1))}>Tomorrow</button>
-                  <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(7))}>Next week</button>
-                  <input type="date" aria-label="A date for this task" min={dayFrom(0)} onChange={(e) => void setWhen(e.target.value)} />
-                </div>
-              )}
-              {error && <p className="srp-err" role="alert">{error}</p>}
+              </section>
+              {shown.length > 0 && <Facts parts={shown} />}
+              {brief && <Asides brief={brief} warnings onActionDone={actionDone} />}
+              {brief ? <More brief={brief} what={says ? form?.what ?? '' : ''} onGoto={onGoto} onActionDone={actionDone} />
+                : <p className="srp-note">{brief === undefined ? 'Gathering what the Journal knows…' : 'Could not load what the Journal knows about this task.'}</p>}
             </div>
-          </section>
-          {shown.length > 0 && <Facts parts={shown} />}
-          {brief && <Asides brief={brief} warnings onActionDone={actionDone} />}
-          {work ? (
-            <WorkCard key={`${work.baseHash}|${work.edited}`} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict} narrow={!focusJump} quiet={verdict} onWork={setWork} />
+          </div>
+          <footer className="srw-foot srp-acts">
+            {error && <p className="srp-err" role="alert" style={{ margin: '0 auto 0 0' }}>{error}</p>}
+            <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
+              title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
+            <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
+          </footer>
+        </aside>
+      )}
+      <div className="srw-mid">
+        <div className="srw-tabs">
+          <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief"><i className="pane" aria-hidden="true" /></button>
+          <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
+            {surfaces.map((surface) => (
+              <button key={surface.id} type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.label} onClick={() => choose(surface.id)}>
+                <small>{surface.kind === 'web' ? 'web' : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
+                <span>{surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work'}</span>
+              </button>
+            ))}
+          </div>
+          {adding ? (
+            <form className="srw-add" onSubmit={addPage}>
+              <input autoFocus value={addText} className={addBad ? 'bad' : undefined} placeholder="Paste a web address" aria-label="A web address to open in OpenClaw’s browser" aria-invalid={addBad}
+                onChange={(e) => { setAddText(e.target.value); setAddBad(false); }}
+                onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') { setAdding(false); setAddBad(false); } }}
+                onBlur={() => { if (!addText.trim()) setAdding(false); }} />
+            </form>
           ) : (
-            <section className="srp-work srp-empty" aria-label="The work">
-              {work === undefined ? <p>Opening…</p> : filling ? (
-                <span className="srp-working"><i aria-hidden="true" />OpenClaw is reading what it can reach and starting the first piece. It will appear here.</span>
-              ) : (
-                <p>Nothing is started here yet. OpenClaw works through your tasks one at a time, soonest first. You can send it to this one now, or start it yourself{brief && brief.steps.length > 0 ? ` from its ${brief.steps.length} step${brief.steps.length === 1 ? '' : 's'}` : ''}.</p>
-              )}
-              {work === null && (
-                <div className="acts">
-                  {!filling && <button type="button" className="srp-btn" onClick={() => void refresh()}>Have OpenClaw start it now</button>}
-                  <button type="button" className="srp-btn quiet" onClick={() => void startOwn()}>Start it yourself here</button>
-                </div>
-              )}
-            </section>
+            <button type="button" className="srw-ico" onClick={() => setAdding(true)} aria-label="Open another page in OpenClaw’s browser" title="Open a page in OpenClaw’s browser">+</button>
           )}
-          {verdict && (
-            <div className="srp-verdict">
-              <button type="button" className="srp-cta" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Mark it done'}</button>
-              <span>It leaves your list and counts as cleared. You can undo it right after.</span>
+          <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="Chats with OpenClaw about this task">
+            Chats{chats.threads.length > 0 && <em className={chats.waiting > 0 ? 'waiting' : undefined}>{chats.threads.length}</em>}
+          </button>
+          <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <div ref={surfaceBox} className="srw-surface" role="tabpanel" aria-label={selected?.label}>
+          {selected?.kind === 'web' ? (
+            <BrowserSurface
+              key={selected.id}
+              surface={selected}
+              armed={armed[selected.id] === true}
+              covered={cols === 1 && briefOpen}
+              opened={opened[selected.id] ?? null}
+              narrow={cols === 1}
+              onArm={() => choose(selected.id)}
+              onOpened={(tab) => setOpened((was) => {
+                const rest = Object.fromEntries(Object.entries(was).filter(([id]) => id !== selected.id));
+                return tab ? { ...rest, [selected.id]: tab } : rest;
+              })}
+              onPage={(page) => setPages((was) => (was[selected.id]?.url === page.url && was[selected.id]?.title === page.title ? was : { ...was, [selected.id]: page }))}
+            />
+          ) : (
+            <div className="srw-work">
+              <div className="srp-col">
+                {work ? (
+                  <WorkCard key={`${work.baseHash}|${work.edited}`} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict} narrow={surfaceWidth < 820} quiet={verdict} onWork={setWork} />
+                ) : (
+                  <section className="srp-work srp-empty" aria-label="The work">
+                    {work === undefined ? <p>Opening…</p> : filling ? (
+                      <span className="srp-working"><i aria-hidden="true" />OpenClaw is reading what it can reach and starting the first piece. It will appear here.</span>
+                    ) : (
+                      <p>Nothing is started here yet. OpenClaw works through your tasks one at a time, soonest first. You can send it to this one now, or start it yourself{brief && brief.steps.length > 0 ? ` from its ${brief.steps.length} step${brief.steps.length === 1 ? '' : 's'}` : ''}.</p>
+                    )}
+                    {work === null && (
+                      <div className="acts">
+                        {!filling && <button type="button" className="srp-btn" onClick={() => void refresh()}>Have OpenClaw start it now</button>}
+                        <button type="button" className="srp-btn quiet" onClick={() => void startOwn()}>Start it yourself here</button>
+                      </div>
+                    )}
+                    {work === null && webCount === 0 && (
+                      <div className="srw-paste">
+                        <label htmlFor="srw-paste">Or open a page</label>
+                        <form onSubmit={addPage}>
+                          <input id="srw-paste" value={addText} placeholder="Paste a web address" aria-invalid={addBad}
+                            onChange={(e) => { setAddText(e.target.value); setAddBad(false); }} onKeyDown={(e) => e.stopPropagation()} />
+                          <button type="submit" className="srp-btn quiet" disabled={!addText.trim()}>Open in OpenClaw’s browser</button>
+                        </form>
+                        <p>{addBad ? 'That is not a web address.' : 'This task has no links yet. A page you paste opens in OpenClaw’s own browser, as a tab here.'}</p>
+                      </div>
+                    )}
+                  </section>
+                )}
+                {verdict && (
+                  <div className="srp-verdict">
+                    <button type="button" className="srp-cta" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Mark it done'}</button>
+                    <span>It leaves your list and counts as cleared. You can undo it right after.</span>
+                  </div>
+                )}
+                {!briefOpen && error && <p className="srp-err" role="alert">{error}</p>}
+              </div>
             </div>
           )}
-          {brief ? <More brief={brief} what={says ? form?.what ?? '' : ''} onGoto={onGoto} onActionDone={actionDone} />
-            : <p className="srp-note">{brief === undefined ? 'Gathering what the Journal knows…' : 'Could not load what the Journal knows about this task.'}</p>}
         </div>
+        {!chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
       </div>
-      {chat ? (
-        <div className="srp-chat srp-glass">
-          <BriefChat key={taskId} taskId={taskId} title={short} onClose={() => setChat(false)} />
-        </div>
-      ) : (
-        <button type="button" className="srp-ask srp-glass" onClick={() => setChat(true)}>
-          <i aria-hidden="true" />Ask OpenClaw, or tell it what to do next…<b aria-hidden="true">↑</b>
-        </button>
+      {chatsOpen && (
+        <aside className="srw-chats">
+          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} onShowSurface={showSurface} onClose={() => setChatsOpen(false)} />
+        </aside>
       )}
     </div>
   );

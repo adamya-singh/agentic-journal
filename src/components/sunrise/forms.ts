@@ -6,6 +6,7 @@
 import {type Level, type Part, type PartOf, type ShapeId, type Thing, shapes, visibleParts} from '@/lib/shapes/catalog'
 import {iconOf, renderPart} from '@/lib/shapes/render'
 import type {FormSpec} from '@/lib/sunrise/form-spec'
+import {glanceForm} from './glance'
 
 /** A form and the date it carries ("Thu", "Oct 26"). */
 export type FormThing = {spec: FormSpec, when: string}
@@ -171,6 +172,8 @@ export function smallForm(form: FormThing, width?: number, compact = false): HTM
  */
 export function fullForm(form: FormThing, level: Level, compact = false): HTMLElement {
   const {spec} = form
+  // Under the pointer a task opens to its brief at a glance (glance.ts); the lead and the cards keep their parts.
+  if (level === 2 && !compact && spec.glance !== undefined) return glanceForm(form)
   const thing = asThing(form)
   const root = el('div', `shape full s-${spec.shape}`)
   root.append(brow(form), group('hd', el('b', 'nm', spec.name)))

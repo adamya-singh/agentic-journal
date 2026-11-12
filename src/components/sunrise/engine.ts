@@ -18,6 +18,7 @@ import {groupsOf, ringItems, ringOverflow, toInput} from '@/lib/sunrise/intent'
 import {createDawnLayout} from '@/lib/sunrise/layout'
 import {salienceOf} from '@/lib/sunrise/salience'
 import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms'
+import {glanceWidth} from './glance'
 
 export type Box = {left: number, top: number, width: number, height: number}
 export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers'
@@ -724,7 +725,7 @@ export class SunriseEngine {
   }
   // An opened form is as tall as its parts make it: measured once in a hidden copy, at the width it opens to.
   private fullBox(thing: Thing, level: 2 | 3, compact = false) {
-    const width = this.narrow ? Math.min(340, this.stage.width - 32) : level === 3 ? 336 : 280
+    const width = this.narrow ? Math.min(340, this.stage.width - 32) : level === 3 ? 336 : thing.form.spec.glance === undefined ? 280 : glanceWidth
     const key = `${thing.id}|${level}|${compact}|${width}`
     let height = this.fullHeights.get(key)
     if (height === undefined) {
@@ -1244,6 +1245,8 @@ export class SunriseEngine {
   // A form under the pointer opens around its own centre, kept on the stage.
   private grown(thing: Thing, rest: Box): Box {
     const open = this.fullBox(thing, 2)
+    // A task's glance stays a glance: never taller than about half the sky.
+    if (thing.form.spec.glance !== undefined) open.height = Math.min(open.height, Math.max(220, Math.round(this.stage.horizonY * 0.52)))
     const left = rest.left + rest.width / 2 - open.width / 2, top = rest.top + rest.height / 2 - open.height / 2
     // Out past the stage (the outer rings) it opens where it is.
     if (thing.outer || thing.under) return {left, top, ...open}
@@ -1390,9 +1393,9 @@ export class SunriseEngine {
   private workRect(from: Box | null, card = false): Box {
     const {width: W, height: H} = this.stage
     if (this.narrow) return {left: 8, top: 8, width: W - 16, height: H - 16}
-    // A card to decide is one column; a task has its work and its brief side by side.
-    const width = Math.min(card ? 500 : 960, W - 32)
-    const height = Math.min(card ? 680 : 760, H - 28)
+    // A card to decide is one column; a task opens to most of the screen: its brief, its work or a page, its chats.
+    const width = Math.min(card ? 500 : 1480, W - 32)
+    const height = card ? Math.min(680, H - 28) : H - 28
     const centre = from ?? this.toScreen(this.sunCircle())
     const left = Math.max(16, Math.min(W - 16 - width, centre.left + centre.width / 2 - width / 2))
     const top = Math.max(14, Math.min(H - 14 - height, centre.top + centre.height / 2 - height / 2))

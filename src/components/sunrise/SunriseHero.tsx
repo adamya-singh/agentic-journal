@@ -26,6 +26,7 @@ import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
 import type { CardThing, SunriseEngine, TrayKind } from './engine';
 import { SUNRISE_CSS } from './sunrise-css';
+import { GLANCE_CSS } from './glance-css';
 import { PANE_CSS, TaskPane } from './TaskPane';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
@@ -390,7 +391,7 @@ export function SunriseHero() {
 
   return (
     <section className={`sr-hero ${serif.variable}`} aria-label="Sunrise: your tasks by how soon they are due">
-      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + SPACE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + GLANCE_CSS + SPACE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
       <div
         ref={skyRef}
         className="sr-sky"

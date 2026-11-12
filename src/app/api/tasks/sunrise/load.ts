@@ -7,6 +7,8 @@ import { loadTaskBriefs } from '../brief/build';
 import { readCurrentTaskIds } from '../current/current-store-utils';
 import { computeTodayTasksByList } from '../today/staged-sync-utils';
 import { readHookWorkRecords } from '../hook-work/store';
+import { readAllChatThreads } from '../brief-chat/store';
+import { chatsGlance } from '@/lib/task-chat';
 
 export type { SunriseData };
 
@@ -15,8 +17,11 @@ export function loadSunrise(now = new Date()): SunriseData {
   const horizon = loadHorizon();
   const ids = [...new Set([...horizon.holds, ...horizon.items, ...horizon.further, ...horizon.undated].map((item) => item.id))];
   const forms: Record<string, FormSpec> = {};
+  // A task's form also says how many chats it has, and whether OpenClaw is waiting on him in one.
+  const chats = readAllChatThreads();
   for (const [taskId, brief] of loadTaskBriefs(ids, now)) {
-    forms[taskId] = formSpecFor(brief);
+    const glance = chatsGlance(chats[taskId]);
+    forms[taskId] = { ...formSpecFor(brief), ...(glance.count > 0 ? { chats: glance } : {}) };
   }
 
   const todayByList = computeTodayTasksByList(localDateIso(now));
