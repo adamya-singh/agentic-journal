@@ -72,6 +72,7 @@ type Thing = {
   level: number, hook: Box | null, shown: boolean, lifted: boolean, from: {x: number, y: number} | null
   lastBox: Box | null
   at: Box | null, rest: Box | null // where it's drawn now, and where it rests when nothing hovers it
+  look: string // the ring whose light its form takes
 }
 
 const escapeText = (text: string) => text.replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'})[c]!)
@@ -83,6 +84,11 @@ const svgNS = 'http://www.w3.org/2000/svg'
 const formRows: readonly (readonly [number, number])[] = [[0, 70], [0, 66], [0, 62], [0, 58], [0, 54]]
 // Forms drawn narrower than their shape's footprint, because the rings had no room for them at full width.
 const narrowBy = 0.7
+// Pulled back, the four rings hold what is past the next two weeks: to a month, a season, a year, and beyond.
+const farDays = [30, 90, 365] as const
+const farBounds = {climb: 156, altitude: 324}
+const ringZones = ['ignition', 'climb', 'altitude', 'orbit'] as const
+const monthDay = (date: Date) => date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
 
 export class SunriseEngine {
   /** Where React draws: the workspace, the open tray, and the capture box in the top right corner. */
@@ -115,8 +121,11 @@ export class SunriseEngine {
   private readonly measureContext = document.createElement('canvas').getContext('2d')
 
   private data: SunriseData | null = null
+  private cards: CardThing[] = []
   private cardCount = 0
   private things: Thing[] = []
+  private source: HorizonItem[] = [] // the tasks this view is of: today's rings, or pulled back, the ones past them
+  private far = false // pulled back
   private subject: string | null = null // the subject you've gone into, if any
   private open: string | null = null // the task in the workspace
   private hot: Thing | null = null // the form under the pointer
@@ -162,9 +171,8 @@ export class SunriseEngine {
     this.labels = div('sr-labels')
     this.glowEl = div('sr-glow')
     this.labels.append(this.glowEl)
-    this.zoneEls = [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']].map(([name, when]) => {
+    this.zoneEls = ringZones.map(() => {
       const zone = div('zl')
-      zone.innerHTML = `<b>${name}</b><small>${when!.toUpperCase()}</small>`
       this.labels.append(zone)
       return zone
     })
@@ -218,6 +226,8 @@ export class SunriseEngine {
       if (to === null) this.hotTimer = window.setTimeout(() => this.setHot(null), 110)
     }, {signal})
     this.groundEl.addEventListener('click', event => {
+      const pull = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-far]') : null
+      if (pull !== null) { event.stopPropagation(); this.setFar(pull.dataset['far'] === '1'); return }
       const chip = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-tray]') : null
       if (chip === null) return
       event.stopPropagation()
@@ -248,7 +258,16 @@ export class SunriseEngine {
       if (this.trayKind !== null) this.closeTray()
       else if (this.open !== null) this.closeTask()
       else if (this.subject !== null) this.leaveSubject()
+      else if (this.far) this.setFar(false)
     }, {signal})
+    // Shift and scroll pulls back to the tasks past the next two weeks, and comes back.
+    root.addEventListener('wheel', event => {
+      if (!event.shiftKey || this.open !== null) return
+      event.preventDefault()
+      const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
+      if (delta > 8) this.setFar(true)
+      else if (delta < -8) this.setFar(false)
+    }, {signal, passive: false})
 
     let frame = 0
     this.observer = new ResizeObserver(() => {
@@ -273,9 +292,12 @@ export class SunriseEngine {
     if (this.destroyed) return
     const before = this.data
     this.data = data
+    this.cards = cards
     this.cardCount = cardCount
     for (const daily of data.horizon.dailies) if (this.dailyDone.get(daily.id) === daily.done) this.dailyDone.delete(daily.id)
-    const items = ringItems(data.horizon.items)
+    this.source = this.far ? this.farItems(data) : data.horizon.items
+    if (this.far && this.source.length === 0) { this.far = false; this.source = data.horizon.items }
+    const items = ringItems(this.source)
     const wanted = [
       ...items.map(item => ({id: item.id, item: item as HorizonItem | null, salience: 0, form: this.formOf(item)})),
       // As many as attention can still rank beside the tasks.
@@ -315,7 +337,7 @@ export class SunriseEngine {
     // The order attention reads them in: the rings' own, soonest first, then the cards.
     const position = new Map(wanted.map((each, index) => [each.id, index]))
     this.things.sort((a, b) => position.get(a.id)! - position.get(b.id)!)
-    if (this.subject !== null && !groupsOf(data.horizon.items).includes(this.subject)) this.subject = null
+    if (this.subject !== null && !groupsOf(this.source).includes(this.subject)) this.subject = null
     if (this.open !== null && this.workBox === null) this.open = null
     this.flatKey = ''
     if (this.ready) this.solve()
@@ -344,6 +366,17 @@ export class SunriseEngine {
     this.solve()
     requestAnimationFrame(() => { if (this.workBox !== null) this.placePane(this.workBox, true) })
     this.host.onOpen(taskId)
+  }
+
+  /** Pulls back to the tasks past the next two weeks (the rings become a month, a season, a year, beyond), or comes back. */
+  setFar(far: boolean) {
+    if (this.far === far || this.data === null || this.destroyed) return
+    if (far && this.farItems(this.data).length === 0) return
+    this.far = far
+    this.subject = null
+    this.closeTray()
+    this.setHot(null)
+    this.update(this.data, this.cards, this.cardCount)
   }
 
   /** Closes the workspace: it shrinks back into the task's form. */
@@ -387,6 +420,24 @@ export class SunriseEngine {
   }
 
   // ---- Things.
+  // Pulled back: what today's rings leave out. Orbit's tasks, the ones the rings had no room for, and the rest.
+  private farItems(data: SunriseData): HorizonItem[] {
+    const horizon = data.horizon
+    const near = new Set(ringItems(horizon.items).filter(item => item.zone !== 'orbit').map(item => item.id))
+    return [...horizon.items.filter(item => !near.has(item.id)), ...horizon.further]
+  }
+  // A task as the ring program reads it. Pulled back, its ring is by how far off it is, and its place in the
+  // ring by how far through that stretch.
+  private layoutItem(item: HorizonItem, elapsed: number): HorizonItem {
+    if (!this.far) return item
+    const days = Math.max(0, item.hours - elapsed) / 24
+    const band = days <= farDays[0] ? 0 : days <= farDays[1] ? 1 : days <= farDays[2] ? 2 : 3
+    const from = band === 0 ? 0 : farDays[band - 1]!
+    const through = band === 3 ? Math.min(1, (days - from) / 365) : (days - from) / (farDays[band]! - from)
+    const {climb, altitude} = farBounds
+    const hours = band === 0 ? through * 48 : band === 1 ? 48 + through * (climb - 48) : band === 2 ? climb + through * (altitude - climb) : altitude + through * 1500
+    return {...item, zone: ringZones[band]!, hours}
+  }
   private formOf(item: HorizonItem): FormThing {
     const spec = this.data?.forms[item.id] ?? {
       id: item.id, listType: item.listType, shape: 'pill' as const, icon: 'doc' as const, kind: item.group === GROUP_OTHER ? 'Task' : item.group,
@@ -410,7 +461,7 @@ export class SunriseEngine {
     const seat = document.createElement('div')
     seat.className = 'seat'
     this.labels.append(seat, el)
-    const thing: Thing = {id, item, salience, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null}
+    const thing: Thing = {id, item, salience, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null, look: item?.zone ?? 'daily is-card'}
     this.things.push(thing)
     return thing
   }
@@ -516,7 +567,7 @@ export class SunriseEngine {
   private salience(thing: Thing, elapsed: number, todayOpen: Set<string>) {
     const data = this.data!
     // A card's salience is its own. Inside a subject, and on a narrow screen, the cards wait on the ground.
-    if (thing.item === null) return this.subject !== null || this.narrow ? 0 : thing.salience
+    if (thing.item === null) return this.subject !== null || this.narrow || this.far ? 0 : thing.salience
     const value = salienceOf({
       hours: thing.item.hours - elapsed, weight: thing.item.weight, today: todayOpen.has(thing.id),
       currentRank: data.current[thing.id] ?? null, ready: thing.form.spec.ready,
@@ -558,11 +609,12 @@ export class SunriseEngine {
 
     // 2. The rings. Gone into a subject, its slice opens to the whole fan and the others fold away.
     const ringThings = things.filter(thing => thing.item !== null)
-    const items = ringThings.map(thing => thing.item!)
-    const groups = groupsOf(horizon.items)
+    const items = ringThings.map(thing => this.layoutItem(thing.item!, elapsed))
+    ringThings.forEach((thing, index) => { thing.look = items[index]!.zone })
+    const groups = groupsOf(this.source)
     const weights = this.subject === null ? undefined : new Map(groups.map(group => [group, group === this.subject ? 4 : 0]))
-    const thingOf = (item: HorizonItem) => ringThings.find(thing => thing.item === item)
-    const bounds = {climb: horizon.bounds.climb - elapsed, altitude: horizon.bounds.altitude - elapsed}
+    const thingOf = (item: HorizonItem) => ringThings.find(thing => thing.id === item.id)
+    const bounds = this.far ? farBounds : {climb: horizon.bounds.climb - elapsed, altitude: horizon.bounds.altitude - elapsed}
     this.narrowForms.clear()
     this.narrowSeat = false
     const ringInput = (size: readonly [number, number]) => {
@@ -582,7 +634,7 @@ export class SunriseEngine {
     // The biggest of five form sizes at which Dawn's rings hold them all with no overlap, remembered for this stage.
     let rowSize: readonly [number, number] = formRows[formRows.length - 1]!
     if (boxed) {
-      const sizeKey = `${W}x${this.stage.height}|${this.subject ?? ''}`
+      const sizeKey = `${W}x${this.stage.height}|${this.subject ?? ''}|${this.far}`
       const fitsAt = (index: number) => { const fit = dawn.run(ringInput(formRows[index]!).input); return fit.overlapCount === 0 && fit.unplacedCount === 0 }
       let index = this.sizeFor.get(sizeKey)
       if (index === undefined) {
@@ -767,7 +819,7 @@ export class SunriseEngine {
       thing.at = null
       thing.rest = null
       const isStarted = started[thing.id] !== undefined || this.startedHere.has(thing.id)
-      el.className = `thing lv${level} ${thing.item?.zone ?? 'daily is-card'}${isHook ? ' hook' : ''}${isBox ? ' form' : ''}${isBox && thing.id === this.leadId ? ' lead' : ''}${isHot ? ' hot' : ''}${isStarted ? ' started' : ''}`
+      el.className = `thing lv${level} ${thing.look}${isHook ? ' hook' : ''}${isBox ? ' form' : ''}${isBox && thing.id === this.leadId ? ' lead' : ''}${isHot ? ' hot' : ''}${isStarted ? ' started' : ''}`
       if (pill !== undefined && !isHook) thing.lastBox = pill
       if (this.open === thing.id && box !== null && thing.shown) {
         // It grew into the workspace right where it was: its form waits underneath.
@@ -842,8 +894,14 @@ export class SunriseEngine {
     }
     this.threads.setAttribute('viewBox', `0 0 ${W} ${this.stage.height}`)
     this.threads.innerHTML = lines
-    // The zones' names on the ground, as Dawn's.
+    // The rings' names on the ground, as Dawn's. Pulled back, they are stretches of the calendar.
+    const now = Date.now()
+    const names = this.far
+      ? [['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`], ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later']]
+      : [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']]
     this.zoneEls.forEach((zone, index) => {
+      const html = `<b>${names[index]![0]}</b><small>${names[index]![1]!.toUpperCase()}</small>`
+      if (zone.dataset['html'] !== html) { zone.innerHTML = html; zone.dataset['html'] = html }
       const mid = (rings[index]! + rings[index + 1]!) / 2 * kx
       zone.style.transform = `translate(${(W / 2 - mid).toFixed(1)}px,${(Y + 30).toFixed(1)}px) translate(-50%,-62%) scale(${Math.min(1, kx).toFixed(3)})`
       zone.style.opacity = kx < 0.6 ? '0' : '1'
@@ -886,8 +944,11 @@ export class SunriseEngine {
     this.backButton.hidden = this.subject === null
     let html: string
     if (this.subject !== null) {
-      const mine = horizon.items.filter(item => item.group === this.subject)
+      const mine = this.source.filter(item => item.group === this.subject)
       html = `${escapeText(this.subject)}. <em>${mine.length} thing${mine.length === 1 ? '' : 's'}${mine[0] === undefined ? '' : ` · next ${escapeText(trimDots(mine[0].short))}, ${escapeText(mine[0].day)}`}</em>`
+    } else if (this.far) {
+      const soonest = this.source.slice().sort((a, b) => a.hours - b.hours)[0]
+      html = `Further out. <em>${this.source.length} past the next two weeks${soonest === undefined ? '' : ` · next ${escapeText(trimDots(soonest.short))}, ${escapeText(soonest.day)}`}</em>`
     } else if (lead !== undefined) {
       const [ask, why] = lead.form.spec.say
       html = `${escapeText(ask)} <em>${escapeText(why)}</em>`
@@ -995,9 +1056,16 @@ export class SunriseEngine {
     if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> with no date</button>`
     if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
     if (this.cardCount > 0) html += `<button type="button" class="chip cards" data-tray="cards"><b>${this.cardCount}</b> to decide</button>`
-    // What the rings have no room for is counted, never dropped.
-    const beyond = horizon.further.length + ringOverflow(horizon.items).length
-    if (beyond > 0) html += `<span class="chip more" title="Later tasks the rings have no room for"><b>+${beyond}</b> further out</span>`
+    // What today's rings have no room for is counted, never dropped: pulling back shows it.
+    if (this.far) {
+      html += '<button type="button" class="chip more" data-far="0">‹ Nearer</button>'
+      const left = ringOverflow(this.source).length
+      if (left > 0) html += `<span class="chip more" title="More than the rings hold, even pulled back"><b>+${left}</b> more</span>`
+    } else {
+      const beyond = horizon.further.length + ringOverflow(horizon.items).length
+      if (beyond > 0) html += `<button type="button" class="chip more" data-far="1" title="Later tasks today's rings have no room for. Shift and scroll does the same."><b>+${beyond}</b> further ›</button>`
+      else if (this.farItems(data).length > 0) html += '<button type="button" class="chip more" data-far="1" title="Pull back to the months ahead. Shift and scroll does the same.">Further ›</button>'
+    }
     if (this.groundEl.dataset['html'] !== html) { this.groundEl.innerHTML = html; this.groundEl.dataset['html'] = html }
     this.groundEl.style.left = this.narrow ? '12px' : `${Math.round(W / 2 + this.last.sunR + 30)}px`
     this.groundEl.style.top = `${Y + (this.narrow ? 10 : 12)}px`
@@ -1056,7 +1124,7 @@ export class SunriseEngine {
     return {x, y: Y - r * ky * Math.sin(angle) - 10}
   }
   private renderSubjects(sectors: {shown: boolean, mid: number}[], kx: number, ky: number) {
-    const items = this.data!.horizon.items
+    const items = this.source
     const groups = groupsOf(items)
     for (const [group, el] of this.subjectEls) if (!groups.includes(group)) el.classList.add('off')
     groups.forEach((group, index) => {
