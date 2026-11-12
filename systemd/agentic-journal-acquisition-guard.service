@@ -1,0 +1,21 @@
+[Unit]
+Description=Agentic Journal media storage admission and playback cleanup
+After=network-online.target journal-media-stack.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=openclaw
+Group=openclaw
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+ExecStart=/usr/bin/env node scripts/acquisition-guard.ts
+ExecStopPost=/usr/bin/env node scripts/acquisition-guard.ts --stop
+Restart=always
+RestartSec=2
+Nice=10
+MemoryMax=384M
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

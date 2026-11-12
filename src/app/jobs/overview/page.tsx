@@ -1,7 +1,6 @@
 'use client';
 
 import React from 'react';
-import { BarChart3 } from 'lucide-react';
 import { AppHeader } from '@/components/AppHeader';
 import { JobsNavigation } from '@/components/JobsNavigation';
 import { ActivityChart } from '@/components/overview/ActivityChart';
@@ -16,7 +15,9 @@ import { OverviewFilterBar } from '@/components/overview/OverviewFilterBar';
 import { RejectionReasonsCard } from '@/components/overview/RejectionReasonsCard';
 import { ResponseTimes } from '@/components/overview/ResponseTimes';
 import { StatusTiles } from '@/components/overview/StatusTiles';
-import { Band, Card, CardHeader } from '@/components/overview/primitives';
+import { missionSerif } from '@/components/mission/fonts';
+import { MISSION_JOBS_CSS } from '@/components/mission/jobs-css';
+import { OVERVIEW_CSS } from '@/components/mission/overview-css';
 import { observedPatterns, summarize, type OverviewRow } from '@/lib/job-overview';
 import {
   activeChips,
@@ -97,17 +98,18 @@ export default function JobsOverview() {
   );
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100">
+    <div className={`min-h-screen bg-white text-gray-900 dark:bg-gray-900 dark:text-gray-100 ${missionSerif.variable}`}>
       <AppHeader title="Jobs" subtitle="Employer responses, timing, and evidence" />
-      <main className="mx-auto max-w-7xl px-3 py-4 sm:px-4 sm:py-6">
+      <main className="mx-auto max-w-[1480px] px-3 py-4 sm:px-4 sm:py-6">
         <JobsNavigation />
-        <Card>
-          <CardHeader
-            icon={<BarChart3 className="h-5 w-5" aria-hidden="true" />}
-            title="Outcomes"
-            subtitle="What employers did with the applications OpenClaw sent"
-            className="border-b-0"
-          />
+        <div className="mi ov dark">
+          <style>{MISSION_JOBS_CSS + OVERVIEW_CSS}</style>
+          <div className="mi-top">
+            <h1 className="mi-title" style={{ margin: 0 }}>
+              Outcomes <i>overview</i>
+            </h1>
+            <span className="sub">What employers did with the applications OpenClaw sent</span>
+          </div>
           <OverviewFilterBar
             filters={f.filters}
             onChange={f.set}
@@ -120,83 +122,85 @@ export default function JobsOverview() {
             onRefresh={() => void reload()}
             now={now}
           />
-          {error && (
-            <Band tone="red" className="px-4 py-3 text-sm text-red-700 dark:text-red-300 sm:px-5" role="alert">
-              {error}
-            </Band>
-          )}
-          {loading && (
-            <p role="status" className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
-              Loading application data…
-            </p>
-          )}
-          {data && (
-            <>
-              <AttentionStrip items={attention} onOpen={open} onAnalyze={analyze} />
-              <StatusTiles
-                counts={counts}
-                distribution={distribution}
-                selected={f.filters.outcome}
-                onSelect={(outcome) => f.set({ outcome })}
-                closedBeforeSubmit={view.closedBeforeSubmit}
-                coverage={{ unknownTiming: stats.unknownTiming, reconstructed: stats.reconstructed }}
-              />
-              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 border-t border-slate-200 px-4 py-4 dark:border-slate-700 sm:px-5 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <div className="mi-body">
+            {error && (
+              <p className="err" role="alert">
+                {error}
+              </p>
+            )}
+            {loading && (
+              <p role="status" className="empty">
+                Loading application data…
+              </p>
+            )}
+            {data && (
+              <>
+                <section className="glass hero ov-hero" aria-label="Readout">
+                  <StatusTiles
+                    counts={counts}
+                    distribution={distribution}
+                    selected={f.filters.outcome}
+                    onSelect={(outcome) => f.set({ outcome })}
+                    closedBeforeSubmit={view.closedBeforeSubmit}
+                    coverage={{ unknownTiming: stats.unknownTiming, reconstructed: stats.reconstructed }}
+                  />
+                  <AttentionStrip items={attention} rowsById={rowsById} onOpen={open} onAnalyze={analyze} />
+                </section>
                 <ActivityChart
                   series={series}
                   selectedDay={f.filters.day}
                   onSelectDay={(day) => f.set({ day: f.filters.day === day ? '' : day })}
                 />
-                <ResponseTimes rows={timingRows(stats.times)} />
-              </div>
-              <div className="grid grid-cols-[minmax(0,1fr)] gap-4 px-4 pb-4 sm:px-5 lg:grid-cols-2">
-                <AssessmentsCard rows={view.focus} onOpen={open} />
-                <RejectionReasonsCard rows={view.focus} onOpen={open} />
-                <ComparisonsCard
-                  cards={cards}
-                  windowDays={f.windowDays}
-                  onWindowChange={f.setWindowDays}
-                  eligible={stats.eligible}
-                  emptyState={comparisonEmptyState(stats)}
-                  onCite={cite}
-                />
-                <AiReportCard
-                  analysis={data.analysis}
-                  rowsById={rowsById}
-                  onOpen={open}
-                  onCite={cite}
-                  onAnalyze={analyze}
-                  now={now}
-                />
-              </div>
-              <div id="applications" className="scroll-mt-24">
-                <ApplicationsTable
-                  rows={sorted}
-                  status={f.filters.status}
-                  onStatus={(status) => f.set({ status })}
-                  sort={f.sort}
-                  onSort={f.setSort}
-                  limit={limit}
-                  onMore={() => setLimit((l) => l + PAGE_SIZE)}
-                  onOpen={open}
-                  now={now}
-                  duplicates={{
-                    candidates: data.duplicateCandidates,
-                    groups,
-                    rowsById,
-                    merge: f.filters.merge,
-                    onMerge: (merge) => f.set({ merge }),
-                    onGroup: group,
-                    onUngroup: ungroup,
-                  }}
-                />
-              </div>
-              <div className="border-t border-slate-200 dark:border-slate-700">
+                <div className="ov-grid3">
+                  <ResponseTimes rows={timingRows(stats.times)} />
+                  <AssessmentsCard rows={view.focus} onOpen={open} />
+                  <RejectionReasonsCard rows={view.focus} onOpen={open} />
+                </div>
+                <div className="ov-grid2">
+                  <ComparisonsCard
+                    cards={cards}
+                    windowDays={f.windowDays}
+                    onWindowChange={f.setWindowDays}
+                    eligible={stats.eligible}
+                    emptyState={comparisonEmptyState(stats)}
+                    onCite={cite}
+                  />
+                  <AiReportCard
+                    analysis={data.analysis}
+                    rowsById={rowsById}
+                    onOpen={open}
+                    onCite={cite}
+                    onAnalyze={analyze}
+                    now={now}
+                  />
+                </div>
+                <div id="applications" className="scroll-mt-24">
+                  <ApplicationsTable
+                    rows={sorted}
+                    status={f.filters.status}
+                    onStatus={(status) => f.set({ status })}
+                    sort={f.sort}
+                    onSort={f.setSort}
+                    limit={limit}
+                    onMore={() => setLimit((l) => l + PAGE_SIZE)}
+                    onOpen={open}
+                    now={now}
+                    duplicates={{
+                      candidates: data.duplicateCandidates,
+                      groups,
+                      rowsById,
+                      merge: f.filters.merge,
+                      onMerge: (merge) => f.set({ merge }),
+                      onGroup: group,
+                      onUngroup: ungroup,
+                    }}
+                  />
+                </div>
                 <HowToRead />
-              </div>
-            </>
-          )}
-        </Card>
+              </>
+            )}
+          </div>
+        </div>
       </main>
       {active && (
         <ApplicationDetailModal

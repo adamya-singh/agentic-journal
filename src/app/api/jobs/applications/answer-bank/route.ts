@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   mutateJobApplicationsStore,
   readJobApplicationsStore,
+  releaseApplicationsAnsweredByBank,
+  setAnswerScope,
 } from '../../application-store-utils';
+import { wakeJobApplicationWorkerIfEnabled } from '../../application-worker-utils';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +26,7 @@ export async function POST(request: NextRequest) {
       action?: unknown;
       id?: unknown;
       answer?: unknown;
+      scope?: unknown;
     };
     const id = typeof body.id === 'string' ? body.id : '';
     if (!id) {
@@ -81,8 +85,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, entry: updated });
     }
 
+    if (body.action === 'scope') {
+      const scope = body.scope;
+      if (scope !== 'general' && scope !== 'context') {
+        return NextResponse.json({ success: false, error: 'scope must be general or context' }, { status: 400 });
+      }
+      const result = await mutateJobApplicationsStore((store) => {
+        const entry = setAnswerScope(store, id, scope);
+        if (!entry) return null;
+        // An answer that now applies everywhere can settle questions other applications wait on.
+        const released = scope === 'general' ? releaseApplicationsAnsweredByBank(store, new Date().toISOString()) : [];
+        return { entry: { ...entry }, released };
+      });
+      if (!result) {
+        return NextResponse.json({ success: false, error: 'Entry not found' }, { status: 404 });
+      }
+      if (result.released.length > 0) await wakeJobApplicationWorkerIfEnabled();
+      return NextResponse.json({ success: true, ...result });
+    }
+
     return NextResponse.json(
-      { success: false, error: 'action must be update or delete' },
+      { success: false, error: 'action must be update, scope or delete' },
       { status: 400 },
     );
   } catch (error) {

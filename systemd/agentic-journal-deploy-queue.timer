@@ -1,0 +1,9 @@
+[Unit]
+Description=Look every 5 minutes for a queued Agentic Journal deploy that can run now
+
+[Timer]
+OnBootSec=10min
+OnUnitInactiveSec=5min
+
+[Install]
+WantedBy=timers.target

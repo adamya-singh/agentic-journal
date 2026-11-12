@@ -1,4 +1,4 @@
-import type { CompassKind, FeedItem, FeedItemState } from './feed-types.ts';
+import { trackOf, votedTrack, type FeedItem, type FeedItemState, type Lens } from './feed-types.ts';
 
 // The feed's recommender, deliberately simple: every vote moves a smoothed
 // weight for the item's tags, its creator and its source. An item's score is the
@@ -21,14 +21,19 @@ const blank = (): Tally => ({ up: 0, down: 0, skip: 0, w: 0 });
 // Skipping is weak evidence against; two smoothing votes keep one vote from swinging a weight to ±1.
 const weightOf = (t: Tally) => (t.up - t.down - 0.25 * t.skip) / (t.up + t.down + 0.25 * t.skip + 2);
 
-export const tagsOf = (item: FeedItem, compass: CompassKind) =>
-  item.alignment[compass]?.tags ?? item.alignment.long?.tags ?? item.alignment.short?.tags ?? [];
+export const tagsOf = (item: FeedItem, compass: Lens) =>
+  item.alignment[compass]?.tags ??
+  (compass === 'taste' ? undefined : (item.alignment.long?.tags ?? item.alignment.short?.tags)) ??
+  item.alignment.taste?.tags ??
+  [];
 
 const VOTED: FeedItemState[] = ['up', 'down', 'skipped'];
-export function weights(items: Iterable<FeedItem>, compass: CompassKind = 'long'): Weights {
+// Only votes cast in this lens's track count: Unwind never teaches Pretrain, and back.
+export function weights(items: Iterable<FeedItem>, compass: Lens = 'long'): Weights {
   const w: Weights = { tags: new Map(), creators: new Map(), sources: new Map(), votes: 0 };
+  const track = trackOf(compass);
   for (const item of items) {
-    if (!VOTED.includes(item.state)) continue;
+    if (!VOTED.includes(item.state) || votedTrack(item) !== track) continue;
     if (item.state !== 'skipped') w.votes++;
     const field = item.state === 'up' ? 'up' : item.state === 'down' ? 'down' : 'skip';
     const bump = (t: Tally) => {
@@ -49,7 +54,7 @@ export function weights(items: Iterable<FeedItem>, compass: CompassKind = 'long'
 }
 
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-export function score(item: FeedItem, compass: CompassKind, w: Weights, now = Date.now()) {
+export function score(item: FeedItem, compass: Lens, w: Weights, now = Date.now()) {
   const a = item.alignment[compass];
   if (!a) return -Infinity;
   const creator = w.creators.get(item.creator.key);
@@ -79,7 +84,7 @@ function hash(s: string) {
 // never three in a row from one source, as long as something else is left.
 export function order(
   items: FeedItem[],
-  compass: CompassKind,
+  compass: Lens,
   w: Weights,
   now = Date.now(),
 ): FeedItem[] {
@@ -104,7 +109,7 @@ export function order(
 }
 
 // One short line on why your votes moved this item, or undefined when they didn't.
-export function explain(item: FeedItem, compass: CompassKind, w: Weights): string | undefined {
+export function explain(item: FeedItem, compass: Lens, w: Weights): string | undefined {
   const parts: string[] = [];
   const best = tagsOf(item, compass)
     .map((tag) => ({ tag, t: w.tags.get(tag) }))

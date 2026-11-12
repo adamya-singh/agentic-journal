@@ -16,8 +16,12 @@ import {
 import { explain, learned, order, weights, type Learned } from './feed-rank.ts';
 import {
   DEFAULT_VOCABULARY,
+  LENSES,
+  trackOf,
+  votedTrack,
+  vocabularyOf,
   type Alignment,
-  type CompassKind,
+  type Lens,
   type FeedCreator,
   type FeedItem,
   type FeedItemState,
@@ -60,20 +64,20 @@ export const withFeed = <T>(fn: (f: FeedState) => T) =>
 // ---- the queue ----
 export type FeedFilter = 'queue' | 'voted' | 'skipped';
 const QUEUED: FeedItemState[] = ['new', 'seen'];
-export const eligible = (item: FeedItem, compass: CompassKind) => !!item.alignment[compass];
+export const eligible = (item: FeedItem, compass: Lens) => !!item.alignment[compass];
 const inFilter = (item: FeedItem, filter: FeedFilter) =>
   filter === 'queue'
     ? QUEUED.includes(item.state)
     : filter === 'voted'
       ? item.state === 'up' || item.state === 'down'
       : item.state === 'skipped';
-export const queueDepth = (f: FeedState, compass: CompassKind) =>
+export const queueDepth = (f: FeedState, compass: Lens) =>
   Object.values(f.items).filter((i) => eligible(i, compass) && QUEUED.includes(i.state)).length;
 
 const REFILL_BELOW = 60,
   REFILL_BATCH = 40;
 // Keeps the queue from running dry: promotes the best-scoring candidates.
-export function refill(f: FeedState, compass: CompassKind, now = Date.now()) {
+export function refill(f: FeedState, compass: Lens, now = Date.now()) {
   if (queueDepth(f, compass) >= REFILL_BELOW) return 0;
   const all = Object.values(f.items);
   const candidates = all.filter((i) => i.state === 'candidate' && eligible(i, compass));
@@ -101,8 +105,8 @@ export interface FeedCard {
   x?: XFacts;
   imdb?: ImdbFacts;
 }
-function card(item: FeedItem, compass: CompassKind, w: ReturnType<typeof weights>): FeedCard | undefined {
-  const a = item.alignment[compass] ?? item.alignment.long ?? item.alignment.short;
+function card(item: FeedItem, compass: Lens, w: ReturnType<typeof weights>): FeedCard | undefined {
+  const a = item.alignment[compass] ?? item.alignment.long ?? item.alignment.short ?? item.alignment.taste;
   const base: FeedCard = {
     id: item.id,
     source: item.source,
@@ -129,7 +133,7 @@ function card(item: FeedItem, compass: CompassKind, w: ReturnType<typeof weights
 }
 
 export interface PageQuery {
-  compass: CompassKind;
+  compass: Lens;
   filter: FeedFilter;
   source?: FeedSource;
   exclude?: string[];
@@ -151,7 +155,8 @@ export function page(q: PageQuery, f = readFeed(), now = Date.now()): FeedPage {
   let list = all.filter(
     (i) =>
       inFilter(i, q.filter) &&
-      (q.filter !== 'queue' || eligible(i, q.compass)) &&
+      // The queue is per lens; voted and skipped lists are per track.
+      (q.filter === 'queue' ? eligible(i, q.compass) : votedTrack(i) === trackOf(q.compass)) &&
       (!q.source || i.source === q.source) &&
       !skip.has(i.id),
   );
@@ -176,24 +181,21 @@ export function page(q: PageQuery, f = readFeed(), now = Date.now()): FeedPage {
 
 export interface FeedSummary {
   learned: Learned;
-  counts: Record<FeedItemState, number> & { queue: Record<CompassKind, number> };
-  judged: Record<CompassKind, number>;
+  counts: Record<FeedItemState, number> & { queue: Record<Lens, number> };
+  judged: Record<Lens, number>;
   curator: { lastRun?: FeedState['curator']['runs'][number]; addedToday: number };
   vocabulary: string[];
 }
-export function summarize(f = readFeed(), compass: CompassKind = 'long', now = Date.now()): FeedSummary {
+export function summarize(f = readFeed(), compass: Lens = 'long', now = Date.now()): FeedSummary {
   const all = Object.values(f.items);
   const counts = { candidate: 0, new: 0, seen: 0, up: 0, down: 0, skipped: 0 } as FeedSummary['counts'];
   for (const i of all) counts[i.state]++;
-  counts.queue = { long: queueDepth(f, 'long'), short: queueDepth(f, 'short') };
+  counts.queue = Object.fromEntries(LENSES.map((l) => [l, queueDepth(f, l)])) as Record<Lens, number>;
   const since = now - 24 * 3600_000;
   return {
     learned: learned(weights(all, compass)),
     counts,
-    judged: {
-      long: all.filter((i) => i.alignment.long).length,
-      short: all.filter((i) => i.alignment.short).length,
-    },
+    judged: Object.fromEntries(LENSES.map((l) => [l, all.filter((i) => i.alignment[l]).length])) as Record<Lens, number>,
     curator: {
       lastRun: f.curator.runs.at(-1),
       addedToday: all.filter((i) => i.addedBy === 'openclaw' && Date.parse(i.addedAt) > since).length,
@@ -203,7 +205,7 @@ export function summarize(f = readFeed(), compass: CompassKind = 'long', now = D
 }
 
 // ---- your actions ----
-export async function vote(id: string, value: Vote | null, compass: CompassKind = 'long') {
+export async function vote(id: string, value: Vote | null, compass: Lens = 'long') {
   return withFeed((f) => {
     const item = f.items[id];
     if (!item) throw new Error('That item is no longer in your feed. Refresh the page.');
@@ -211,6 +213,7 @@ export async function vote(id: string, value: Vote | null, compass: CompassKind 
     if (value) {
       item.state = value;
       item.votedAt = now;
+      item.votedIn = trackOf(compass);
     } else {
       // Undo: back into the queue as seen.
       item.state = 'seen';
@@ -221,18 +224,19 @@ export async function vote(id: string, value: Vote | null, compass: CompassKind 
     return summarize(f, compass);
   });
 }
-export async function skip(id: string, undo = false, compass: CompassKind = 'long') {
+export async function skip(id: string, undo = false, compass: Lens = 'long') {
   return withFeed((f) => {
     const item = f.items[id];
     if (!item) throw new Error('That item is no longer in your feed. Refresh the page.');
     item.state = undo ? 'seen' : 'skipped';
     item.seenAt = new Date().toISOString();
+    if (!undo) item.votedIn = trackOf(compass);
     refill(f, compass);
     return summarize(f, compass);
   });
 }
 // Shown without a vote. A second sighting without a vote skips it for good.
-export async function markSeen(ids: string[], compass: CompassKind = 'long') {
+export async function markSeen(ids: string[], compass: Lens = 'long') {
   return withFeed((f) => {
     const now = new Date().toISOString();
     let changed = 0;
@@ -244,6 +248,7 @@ export async function markSeen(ids: string[], compass: CompassKind = 'long') {
       item.seenCount++;
       item.seenAt = now;
       item.state = item.seenCount >= 2 ? 'skipped' : 'seen';
+      if (item.state === 'skipped') item.votedIn = trackOf(compass);
       changed++;
     }
     const promoted = refill(f, compass);
@@ -272,7 +277,7 @@ export interface NewItem {
   durationSec?: number;
   channelId?: string;
   state?: 'new' | 'candidate';
-  alignment: Partial<Record<CompassKind, Omit<Alignment, 'judgedAt'> & { judgedAt?: string }>>;
+  alignment: Partial<Record<Lens, Omit<Alignment, 'judgedAt'> & { judgedAt?: string }>>;
 }
 export interface AddResult {
   added: string[];
@@ -285,7 +290,7 @@ export interface AddResult {
 // Adds or re-judges items. A known item keeps its state and votes; new judgments are merged in.
 export function addTo(f: FeedState, items: NewItem[], by: string, now = new Date()): AddResult {
   const res: AddResult = { added: [], updated: [], duplicates: [], rejected: [], unknown: [], unknownTags: [] };
-  const vocab = new Set(f.vocabulary);
+  const vocab = { pretrain: new Set(f.vocabulary), unwind: new Set(vocabularyOf(f, 'taste')) };
   const at = now.toISOString();
   for (const n of items) {
     const id = n.id || (n.url ? idFromUrl(n.url) : undefined);
@@ -295,7 +300,8 @@ export function addTo(f: FeedState, items: NewItem[], by: string, now = new Date
     }
     const alignment = Object.fromEntries(
       Object.entries(n.alignment).map(([k, a]) => {
-        for (const t of a.tags) if (!vocab.has(t) && !res.unknownTags.includes(t)) res.unknownTags.push(t);
+        for (const t of a.tags)
+          if (!vocab[trackOf(k as Lens)].has(t) && !res.unknownTags.includes(t)) res.unknownTags.push(t);
         return [
           k,
           {
@@ -304,13 +310,15 @@ export function addTo(f: FeedState, items: NewItem[], by: string, now = new Date
             why: a.why.trim().slice(0, 300),
             judgedBy: a.judgedBy,
             judgedAt: a.judgedAt || at,
+            ...(a.fun !== undefined ? { fun: Math.max(0, Math.min(1, a.fun)) } : {}),
+            ...(a.fit !== undefined ? { fit: Math.max(0, Math.min(1, a.fit)) } : {}),
           },
         ];
       }),
     ) as FeedItem['alignment'];
     const old = f.items[id];
     if (old) {
-      const fresh = Object.keys(alignment).filter((k) => !old.alignment[k as CompassKind]);
+      const fresh = Object.keys(alignment).filter((k) => !old.alignment[k as Lens]);
       if (!fresh.length) {
         res.duplicates.push(id);
         continue;
@@ -319,7 +327,7 @@ export function addTo(f: FeedState, items: NewItem[], by: string, now = new Date
       res.updated.push(id);
       continue;
     }
-    const compasses = Object.keys(alignment) as CompassKind[];
+    const compasses = Object.keys(alignment) as Lens[];
     if (by !== 'you' && compasses.length && compasses.every((k) => f.rejected[id]?.some((r) => r.compass === k))) {
       res.rejected.push(id);
       continue;
@@ -361,16 +369,16 @@ export function addTo(f: FeedState, items: NewItem[], by: string, now = new Date
 export async function addItems(items: NewItem[], by: string) {
   return withFeed((f) => addTo(f, items, by));
 }
-export function rejectIn(f: FeedState, ids: string[], compass: CompassKind, now = new Date()) {
+export function rejectIn(f: FeedState, ids: string[], compass: Lens, now = new Date()) {
   for (const id of ids) {
     const list = (f.rejected[id] ||= []);
     if (!list.some((r) => r.compass === compass)) list.push({ at: now.toISOString(), compass });
   }
 }
-export async function reject(ids: string[], compass: CompassKind) {
+export async function reject(ids: string[], compass: Lens) {
   return withFeed((f) => rejectIn(f, ids, compass));
 }
-export async function promote(sel: { ids?: string[]; tag?: string; creator?: string; limit?: number }, compass: CompassKind = 'long') {
+export async function promote(sel: { ids?: string[]; tag?: string; creator?: string; limit?: number }, compass: Lens = 'long') {
   return withFeed((f) => {
     const all = Object.values(f.items);
     let pool = all.filter((i) => i.state === 'candidate');

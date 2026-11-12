@@ -28,6 +28,7 @@ import {
 } from '../../email-update-utils';
 import { ensureAssessmentTask, syncAssessmentTask, foldSharedAssessmentTasks } from '../../assessment-task-utils';
 import { ensureInterviewTask } from '../../interview-task-utils';
+import { wakeAssessmentPreviewsIfDue } from '../../assessment-preview-utils';
 import {
   syncJobEmailUpdatesCron,
   wakeJobApplicationWorkerIfEnabled,
@@ -435,6 +436,8 @@ export async function POST(request: NextRequest) {
     // A stage change queued a Simplify card move; let the worker pick it up now.
     if (stageChanged) followUps.push(() => wakeJobApplicationWorkerIfEnabled());
     if (input.action === 'set-enabled') followUps.push(() => syncJobEmailUpdatesCron());
+    // A new OA link (from an invitation, a reminder or late enrichment): OpenClaw previews it.
+    else followUps.push(() => wakeAssessmentPreviewsIfDue({ force: true }));
     for (const followUp of followUps) {
       const run = () =>
         followUp().catch((error) => {

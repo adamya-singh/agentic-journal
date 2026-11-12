@@ -1,5 +1,5 @@
 import { runWorker } from '../src/lib/bookmarks/sync.ts';
-runWorker().catch(() => {
-  console.error('Bookmark worker stopped. Check storage permissions and restart the service.');
+runWorker().catch((e) => {
+  console.error(`Bookmark worker stopped: ${(e as Error).message}`);
   process.exitCode = 1;
 });

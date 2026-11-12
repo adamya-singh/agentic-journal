@@ -7,25 +7,18 @@ import { JOB_EMPLOYER_STAGE_LABELS } from '@/lib/job-email-updates';
 import { STAGE_ORDER, type ActivityBucket } from '@/lib/job-overview-view';
 import { Card, CardHeader, EmptyLine, InfoTip } from './primitives';
 
-// One fixed hue per stage, matching EmployerStageBadge; validated for CVD
-// separation in both themes (dataviz palette check: 500 steps on white, 600 steps on the dark surface).
-const STAGE_FILL: Record<JobEmployerStage, string> = {
-  received: 'fill-emerald-500 dark:fill-emerald-600',
-  assessment: 'fill-amber-500 dark:fill-amber-600',
-  interview: 'fill-violet-500',
-  offer: 'fill-teal-500 dark:fill-teal-600',
-  rejected: 'fill-red-500',
-};
-const STAGE_DOT: Record<JobEmployerStage, string> = {
-  received: 'bg-emerald-500 dark:bg-emerald-600',
-  assessment: 'bg-amber-500 dark:bg-amber-600',
-  interview: 'bg-violet-500',
-  offer: 'bg-teal-500 dark:bg-teal-600',
-  rejected: 'bg-red-500',
+// One hue per stage, the Mission palette's: the same colors the Interviews
+// casebook and the Board use for these stages.
+const STAGE_COLOR: Record<JobEmployerStage, string> = {
+  received: 'var(--c-tech)',
+  assessment: 'var(--now)',
+  interview: 'var(--c-screen)',
+  offer: 'var(--c-offer)',
+  rejected: 'var(--c-reject)',
 };
 const MAX_DOTS = 4;
 const PAD = { top: 12, right: 8, bottom: 22, left: 28 };
-const HEIGHT = 190;
+const HEIGHT = 240;
 
 const monthDay = (day: string) =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', {
@@ -122,9 +115,15 @@ export function ActivityChart({
                 preserveAspectRatio="none"
                 role="img"
                 aria-label={`Submissions per ${unit}, ${monthDay(buckets[0].day)} to ${monthDay(buckets[n - 1].end ?? buckets[n - 1].day)}`}
-                className="block select-none"
+                className="ov-chart block select-none"
                 onMouseLeave={() => setHover(null)}
               >
+                <defs>
+                  <linearGradient id="ov-bar-grad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stopColor="#7fe3ff" />
+                    <stop offset="1" stopColor="#7fe3ff" stopOpacity="0.3" />
+                  </linearGradient>
+                </defs>
                 {ticks.map((t) => (
                   <g key={t}>
                     <line
@@ -132,14 +131,15 @@ export function ActivityChart({
                       x2={width - PAD.right}
                       y1={y(t)}
                       y2={y(t)}
-                      className="stroke-slate-200 dark:stroke-slate-700"
+                      stroke="rgba(120,190,255,.12)"
                       strokeWidth={1}
                     />
                     <text
                       x={PAD.left - 6}
                       y={y(t) + 3}
                       textAnchor="end"
-                      className="fill-slate-400 text-[10px] tabular-nums dark:fill-slate-500"
+                      fill="var(--dim)"
+                      className="text-[10px] tabular-nums"
                     >
                       {t}
                     </text>
@@ -165,7 +165,7 @@ export function ActivityChart({
                       {path && (
                         <path
                           d={path}
-                          className={`fill-indigo-500 ${hover === i ? 'brightness-110' : ''}`}
+                          className={`ov-bar ${hover === i ? 'brightness-125' : ''}`}
                         />
                       )}
                       {dots.map((d, j) => (
@@ -175,7 +175,9 @@ export function ActivityChart({
                           cy={dotBase - j * 10}
                           r={4}
                           strokeWidth={2}
-                          className={`${STAGE_FILL[d.stage]} stroke-white dark:stroke-slate-900`}
+                          fill={STAGE_COLOR[d.stage]}
+                          stroke="#02050b"
+                          style={{ filter: `drop-shadow(0 0 4px ${STAGE_COLOR[d.stage]})` }}
                         />
                       ))}
                       {extra > 0 && (
@@ -183,7 +185,8 @@ export function ActivityChart({
                           x={x + barWidth / 2}
                           y={dotBase - dots.length * 10 + 2}
                           textAnchor="middle"
-                          className="fill-slate-500 text-[9px] dark:fill-slate-400"
+                          fill="var(--ink2)"
+                          className="text-[9px]"
                         >
                           +{extra}
                         </text>
@@ -193,7 +196,8 @@ export function ActivityChart({
                           x={x + barWidth / 2}
                           y={HEIGHT - 6}
                           textAnchor="middle"
-                          className="fill-slate-400 text-[10px] dark:fill-slate-500"
+                          fill="var(--dim)"
+                          className="text-[10px]"
                         >
                           {monthDay(b.day)}
                         </text>
@@ -208,7 +212,7 @@ export function ActivityChart({
                         tabIndex={0}
                         aria-pressed={selected}
                         aria-label={`${label(b)}: ${count} submission${count === 1 ? '' : 's'}, ${b.responses.length} employer email${b.responses.length === 1 ? '' : 's'}`}
-                        className={`cursor-pointer focus:outline-none ${selected ? 'stroke-indigo-500' : 'focus-visible:stroke-indigo-400'}`}
+                        className={`cursor-pointer focus:outline-none ${selected ? 'stroke-[#7fe3ff]' : 'focus-visible:stroke-[#7fe3ff]'}`}
                         strokeWidth={selected ? 1.5 : 1}
                         rx={3}
                         onMouseEnter={() => setHover(i)}
@@ -230,20 +234,20 @@ export function ActivityChart({
             {tip && hover !== null && (
               <div
                 role="status"
-                className="pointer-events-none absolute z-10 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-900"
+                className="ov-tip pointer-events-none absolute z-10"
                 style={{
                   top: 0,
                   left: Math.min(Math.max(0, PAD.left + hover * slot + slot / 2 - 70), Math.max(0, width - 150)),
                 }}
               >
-                <p className="font-semibold text-slate-800 dark:text-slate-100">{label(tip)}</p>
-                <p className="tabular-nums text-slate-700 dark:text-slate-200">
-                  <strong>{tip.submissions.length}</strong> submitted
+                <p><b>{label(tip)}</b></p>
+                <p>
+                  <b>{tip.submissions.length}</b> submitted
                 </p>
                 {STAGE_ORDER.filter((s) => tip.responses.some((r) => r.stage === s)).map((s) => (
-                  <p key={s} className="flex items-center gap-1.5 tabular-nums text-slate-700 dark:text-slate-200">
-                    <span className={`h-2 w-2 rounded-full ${STAGE_DOT[s]}`} aria-hidden="true" />
-                    <strong>{tip.responses.filter((r) => r.stage === s).length}</strong>{' '}
+                  <p key={s} className="flex items-center gap-1.5">
+                    <span className="h-2 w-2 rounded-full" style={{ background: STAGE_COLOR[s] }} aria-hidden="true" />
+                    <b>{tip.responses.filter((r) => r.stage === s).length}</b>{' '}
                     {JOB_EMPLOYER_STAGE_LABELS[s].toLowerCase()}
                   </p>
                 ))}
@@ -252,16 +256,18 @@ export function ActivityChart({
           </div>
         )}
         {n > 0 && (
-          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="h-2.5 w-2.5 rounded-sm bg-indigo-500" aria-hidden="true" /> Submissions
-            </span>
+          <div className="leg mt-3">
+            <span style={{ ['--k' as string]: 'var(--em)' }}>Submissions</span>
             {stagesPresent.map((s) => (
-              <span key={s} className="inline-flex items-center gap-1.5">
-                <span className={`h-2.5 w-2.5 rounded-full ${STAGE_DOT[s]}`} aria-hidden="true" />
+              <span key={s} style={{ ['--k' as string]: STAGE_COLOR[s] }}>
                 {JOB_EMPLOYER_STAGE_LABELS[s]}
               </span>
             ))}
+            {selectedIndex >= 0 && (
+              <button type="button" className="ov-link" onClick={() => onSelectDay(selectedDay)}>
+                Clear {label(buckets[selectedIndex])}
+              </button>
+            )}
           </div>
         )}
       </div>

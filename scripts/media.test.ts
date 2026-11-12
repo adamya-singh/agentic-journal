@@ -18,6 +18,7 @@ import { processNext, recoverInterrupted } from '../src/lib/media/worker.ts';
 import { IMDbError, titleUrl, collectionTotal, type IMDbSession } from '../src/lib/media/imdb.ts';
 import { POST } from '../src/app/api/media/[[...path]]/route.ts';
 import type { MediaTitle } from '../src/lib/media/types.ts';
+import { lockOwner, ownerGone } from '../src/lib/lock-owner.ts';
 let dir: string, previous: string | undefined;
 const title = (id = 'tt123'): MediaTitle => ({
   id,
@@ -167,6 +168,17 @@ test('concurrent feedback and queue mutations do not lose writes', async () => {
     const s = readState();
     assert.equal(s.version, 1);
   });
+});
+test('a lock left by a killed holder is reclaimed even after its pid is reused', { skip: !fs.existsSync('/proc/self/stat') }, async () => {
+  const [pid, boot, started] = lockOwner().split(' ');
+  assert.equal(ownerGone(lockOwner()), false);
+  assert.equal(ownerGone(`${pid} ${boot} ${Number(started) + 1}`), true);
+  assert.equal(ownerGone(`${pid} another-boot ${started}`), true);
+  // The live pid here belongs to this test, not to the killed holder named in the file.
+  const file = path.join(dir, 'media', 'library-worker.lock');
+  fs.writeFileSync(file, `${pid} ${boot} ${Number(started) + 1}`);
+  assert.equal(await withLock(() => fs.readFileSync(file, 'utf8'), 'library-worker'), lockOwner());
+  assert.equal(fs.existsSync(file), false);
 });
 test('optional metadata failures do not discard successful account imports or new recommendations', async () => {
   await enqueue('sync');

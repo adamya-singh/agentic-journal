@@ -217,6 +217,9 @@ export interface JobApplicationAnswerBankMatch {
   tier: 'exact' | 'kind';
   /** false when a select-kind match's stored answer isn't among the new question's options. */
   usable: boolean;
+  /** context: given for another job, a hint only (never filled in on its own). */
+  scope: JobApplicationAnswerScope;
+  context?: JobApplicationAnswerContext;
 }
 
 export interface JobApplicationStatusHistoryEntry {
@@ -258,6 +261,27 @@ export interface JobApplicationSubmissionEvidence {
 export type JobEmployerStage = 'received' | 'assessment' | 'interview' | 'offer' | 'rejected';
 
 export type JobSimplifyTrackerStatus = 'Applied' | 'Screen' | 'Interviewing' | 'Offer' | 'Rejected';
+
+/**
+ * OpenClaw opening the OA link before Adamya does, without pressing start, and
+ * saving what the landing page shows. One per OA link; a new link means a new preview.
+ */
+export interface AssessmentPreview {
+  /** The OA link this preview is for. */
+  url: string;
+  /** requested: OpenClaw was woken for it; saved: the page was captured; blocked: a sign-in or similar wall was all it could see; failed: the run broke. */
+  status: 'requested' | 'saved' | 'blocked' | 'failed';
+  attempts: number;
+  requestedAt?: string;
+  /** When OpenClaw saved, gave up on, or failed the preview. */
+  at?: string;
+  /** Short bullets shown on the OA task: format, time limit, rules. */
+  summary?: string[];
+  /** The full capture: an 'oa' note in the Interviews casebook. */
+  processId?: string;
+  noteId?: string;
+  error?: string;
+}
 
 export interface JobEmployerUpdate {
   enrichedAt?: string;
@@ -399,7 +423,7 @@ export interface JobApplicationRecord {
   employerStage?: JobEmployerStage;
   employerUpdates?: JobEmployerUpdate[];
   /** The journal task created when the employer sent an online assessment. */
-  assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string };
+  assessmentTask?: { taskId: string; createdAt: string; emailDueDate?: string; preview?: AssessmentPreview };
   /** The journal task created when the employer invited Adamya to book an interview. */
   interviewTask?: { taskId: string; createdAt: string; gmailMessageId?: string };
   /** Live worker progress report; only meaningful while a lease is active. */
@@ -429,6 +453,20 @@ export interface JobApplicationReviewItem {
   /** Set on the draft OpenClaw wrote in response to a redo request. */
   redoneFrom?: Omit<JobApplicationRedoRequest, 'requestedAt'>;
   resolvedAt?: string;
+  /** View-time enrichment (never persisted): the scope Confirm saves this answer with. */
+  answerScope?: JobApplicationAnswerScope;
+}
+
+/**
+ * general: Adamya's answer on every application (work authorization, contact
+ * details). context: the answer he gave for one job ("How did you hear about
+ * us?", "Why Notion?"), kept with that job and only ever a hint elsewhere.
+ */
+export type JobApplicationAnswerScope = 'general' | 'context';
+
+export interface JobApplicationAnswerContext {
+  company: string;
+  role?: string;
 }
 
 export interface JobApplicationAnswerBankEntry {
@@ -440,6 +478,11 @@ export interface JobApplicationAnswerBankEntry {
   answer: JobApplicationAnswer;
   confirmedAt: string;
   sourceListingId: string;
+  scope: JobApplicationAnswerScope;
+  /** Set when Adamya chose the scope himself rather than the Journal's default. */
+  scopeSetBy?: 'adamya';
+  /** The job the answer was given for. */
+  context?: JobApplicationAnswerContext;
 }
 
 export interface JobApplicationsStoreData {

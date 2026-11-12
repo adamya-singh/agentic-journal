@@ -71,6 +71,7 @@ export async function connectIMDb(expectedId?: string): Promise<IMDbSession> {
     // Do not surface raw process/browser errors, which can include authentication URLs.
     throw new IMDbError(
       'Could not access IMDb. Check the local OpenClaw browser, login, and any CAPTCHA, then retry.',
+      { cause: e },
     );
   }
 }
@@ -266,20 +267,37 @@ export class BrowserIMDb implements IMDbSession {
     if (job.action === 'watchlist' && !state.watchlist)
       await this.page.getByTestId('tm-box-wl-button').click();
     if (job.action === 'rating' && state.yourRating !== job.rating) {
-      // The hero renders a desktop and a mobile rating bar; only one is visible at a time.
-      await this.page
-        .getByTestId('hero-rating-bar__user-rating')
-        .filter({ visible: true })
-        .first()
-        .getByRole('button')
-        .click();
-      const dialog = this.page
+      // Any open rating dialog: the one the bar opens, or IMDb's own "How would you rate…?"
+      // prompt for watched titles, which can appear on its own and cover the bar.
+      const rateDialogs = this.page
         .getByRole('dialog')
-        .filter({ has: this.page.getByRole('button', { name: /^Rate \d+($| out of 10)/ }) });
-      await dialog
-        .getByRole('button', { name: new RegExp(`^Rate ${job.rating}($| out of 10)`) })
-        .click();
-      await dialog.getByRole('button', { name: 'Rate', exact: true }).click();
+        .filter({ has: this.page.getByRole('button', { name: /^Rate \d+($| out of 10)/ }) })
+        .filter({ visible: true });
+      if (!(await rateDialogs.count())) {
+        // The hero renders a desktop and a mobile rating bar; only one is visible at a time.
+        await this.page
+          .getByTestId('hero-rating-bar__user-rating')
+          .filter({ visible: true })
+          .first()
+          .getByRole('button')
+          .click({ timeout: 8000 })
+          .catch(async (e) => {
+            if (!(await rateDialogs.count())) throw e;
+          });
+        await rateDialogs.first().waitFor();
+      }
+      const dialog = (await rateDialogs.filter({ hasText: 'Rate this' }).count())
+        ? rateDialogs.filter({ hasText: 'Rate this' }).first()
+        : rateDialogs.first();
+      // A touch layer (.ipc-starbar__touch) sits over the stars and swallows mouse clicks,
+      // so pick the star and submit with the keyboard, the way a keyboard user would.
+      await dialog.getByRole('button', { name: new RegExp(`^Rate ${job.rating}($| out of 10)`) }).first().focus();
+      await this.page.keyboard.press('Enter');
+      // The dialog shows the picked score ("8Rate this…" or "8/10"); never submit anything else.
+      const shows = new RegExp(`^\\s*${job.rating}(?!\\d)|(^|\\D)${job.rating}\\s*/\\s*10`);
+      await expectText(dialog, shows);
+      await dialog.getByRole('button', { name: 'Rate', exact: true }).first().focus();
+      await this.page.keyboard.press('Enter');
       await dialog.waitFor({ state: 'hidden' });
     }
     await this.page.waitForTimeout(1000);
@@ -296,6 +314,17 @@ export class BrowserIMDb implements IMDbSession {
         'IMDb did not confirm the change after reload. Check the title before retrying.',
       );
     return state;
+  }
+}
+
+// Waits until an element's text matches, without Playwright's expect (not bundled in playwright-core).
+async function expectText(el: import('playwright-core').Locator, re: RegExp, timeoutMs = 5000) {
+  const until = Date.now() + timeoutMs;
+  for (;;) {
+    const text = ((await el.textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim();
+    if (re.test(text)) return;
+    if (Date.now() > until) throw new IMDbError('IMDb did not show the chosen rating. Nothing was saved.');
+    await new Promise((r) => setTimeout(r, 200));
   }
 }
 

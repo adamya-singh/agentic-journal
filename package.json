@@ -12,7 +12,11 @@
     "journal:prod": "bash scripts/journal-mode.sh prod",
     "journal:status": "bash scripts/journal-mode.sh status",
     "journal:logs": "bash scripts/journal-mode.sh logs",
-    "deploy:production": "bash scripts/deploy-production.sh",
+    "deploy:production": "node scripts/deploy-queue.ts queue",
+    "deploy:now": "bash scripts/deploy-production.sh",
+    "deploy:queue": "node scripts/deploy-queue.ts queue",
+    "deploy:status": "node scripts/deploy-queue.ts status",
+    "deploy:cancel": "node scripts/deploy-queue.ts cancel",
     "migrate:journal-entry-mode": "node scripts/migrate-journal-entry-mode.mjs --write",
     "omi:transcribe": "dotenv -e .env -- node scripts/omi-transcribe-day.mjs",
     "omi:worker": "dotenv -e .env -- node scripts/omi-transcribe-worker.mjs",
@@ -34,7 +38,10 @@
     "bookmarks:transcripts": "node --env-file-if-exists=.env scripts/bookmarks-transcribe.ts",
     "media": "node --env-file-if-exists=.env scripts/media.ts",
     "media:worker": "node --env-file-if-exists=.env scripts/media-worker.ts",
-    "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts"
+    "library:worker": "node --env-file-if-exists=.env scripts/library-worker.ts",
+    "feed:seed": "node --env-file-if-exists=.env scripts/feed-seed.ts",
+    "media:stack": "node --env-file-if-exists=.env scripts/media-stack.ts",
+    "media:acquisition": "node --env-file-if-exists=.env scripts/acquisition-worker.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2.0.56",
@@ -62,6 +69,7 @@
     "diff": "^8.0.2",
     "framer-motion": "^12.23.11",
     "lucide": "^1.72.0",
+    "hls.js": "1.6.16",
     "lucide-react": "^0.532.0",
     "motion": "^12.23.12",
     "motion-plus-react": "^1.5.1",

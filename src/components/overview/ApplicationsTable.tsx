@@ -3,6 +3,7 @@
 import React from 'react';
 import { ChevronDown, Copy } from 'lucide-react';
 import { EmployerStageBadge } from '@/components/EmployerStageBadge';
+import { CompanyLogo } from '@/components/mission/CompanyLogo';
 import { elapsed, type Overview, type OverviewRow } from '@/lib/job-overview';
 import {
   AUTOMATION_LABELS,
@@ -31,9 +32,6 @@ const RECORD_STATUS: Record<OverviewRow['status'], string> = {
   submitted: 'Submitted',
   closed: 'Closed',
 };
-const TH =
-  'px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 sm:px-5';
-const TD = 'px-4 py-3 align-top text-sm text-slate-700 dark:text-slate-200 sm:px-5';
 
 function StageCell({ row, now }: { row: OverviewRow; now: number }) {
   if (!row.submitted) return <Pill>{RECORD_STATUS[row.status]}</Pill>;
@@ -110,10 +108,10 @@ export function ApplicationsTable({
     duplicates.groups.some((g) => g.listingIds.some((id) => ids.includes(id)));
   const openCandidates = duplicates.candidates.filter((ids) => !grouped(ids));
   return (
-    <section aria-label="Applications">
-      <div className="flex flex-col gap-3 border-b border-t border-slate-200 px-4 py-3 dark:border-slate-700 sm:flex-row sm:items-center sm:justify-between sm:px-5">
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
-          Applications <span className="font-normal text-slate-500 dark:text-slate-400">· {rows.length}</span>
+    <section aria-label="Applications" className="glass ov-apps">
+      <div className="ov-apps-h">
+        <h2>
+          Applications<small>{rows.length} in this view</small>
         </h2>
         <div className="flex flex-wrap items-center gap-2">
           <SegmentedControl label="Record status" size="sm" options={STATUS_OPTIONS} value={status} onChange={onStatus} />
@@ -132,7 +130,7 @@ export function ApplicationsTable({
         </div>
       </div>
       {(openCandidates.length > 0 || duplicates.groups.length > 0) && (
-        <Band tone="sky" className="px-4 py-3 sm:px-5">
+        <Band tone="sky" className="mx-4 mb-3 px-4 py-3 sm:mx-5 sm:px-5">
           <div className="flex flex-wrap items-center gap-2">
             <Copy className="h-4 w-4 text-sky-700 dark:text-sky-300" aria-hidden="true" />
             <h3 className="text-sm font-semibold text-sky-900 dark:text-sky-200">
@@ -164,7 +162,7 @@ export function ApplicationsTable({
             {openCandidates.map((ids) => (
               <li
                 key={ids.join('+')}
-                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm dark:border-sky-900 dark:bg-slate-900"
+                className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-sky-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950/60"
               >
                 <span className="font-medium text-slate-800 dark:text-slate-100">
                   {name(ids[0])?.company ?? 'Unknown company'}
@@ -208,52 +206,43 @@ export function ApplicationsTable({
         </Band>
       )}
       {rows.length === 0 ? (
-        <p className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400 sm:px-5">
-          No applications match these filters.
-        </p>
+        <p className="ov-empty px-4 pb-8 pt-4 text-center sm:px-5">No applications match these filters.</p>
       ) : (
         <>
-          <div className="hidden overflow-x-auto sm:block">
-            <table className="min-w-full">
-              <thead className="bg-slate-50 dark:bg-slate-800/70">
+          <div className="ov-scroll hidden sm:block">
+            <table className="ov-table">
+              <thead>
                 <tr>
                   {['Application', 'Submitted', 'Resume', 'Stage', 'Last activity', 'Assessment timing', 'Milestones'].map(
                     (h) => (
-                      <th key={h} scope="col" className={TH}>
+                      <th key={h} scope="col">
                         {h}
                       </th>
                     ),
                   )}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+              <tbody>
                 {visible.map((row) => {
                   const last = lastActivityAt(row);
                   return (
-                    <tr
-                      key={row.id}
-                      onClick={() => onOpen(row.id)}
-                      className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                    >
-                      <td className={`${TD} max-w-xs`}>
+                    <tr key={row.id} onClick={() => onOpen(row.id)}>
+                      <td>
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             onOpen(row.id);
                           }}
-                          className="block text-left"
+                          className="ov-who"
                         >
-                          <span className="block break-words font-semibold text-slate-900 dark:text-slate-100">
-                            {row.company}
-                          </span>
-                          <span className="mt-0.5 block break-words text-xs leading-5 text-slate-500 dark:text-slate-400">
-                            {row.role}
-                          </span>
+                          <CompanyLogo company={row.company} link={row.url} />
+                          <b>{row.company}</b>
+                          <span>{row.role}</span>
                         </button>
                       </td>
-                      <td className={`${TD} whitespace-nowrap tabular-nums`}>{submittedLabel(row)}</td>
-                      <td className={TD}>
+                      <td className="mono whitespace-nowrap text-xs tabular-nums">{submittedLabel(row)}</td>
+                      <td>
                         {row.resume}
                         {row.submitted && row.reconstructed && (
                           <span className="block text-xs text-slate-400 dark:text-slate-500">
@@ -261,10 +250,10 @@ export function ApplicationsTable({
                           </span>
                         )}
                       </td>
-                      <td className={TD}>
+                      <td>
                         <StageCell row={row} now={now} />
                       </td>
-                      <td className={`${TD} whitespace-nowrap text-xs text-slate-500 dark:text-slate-400`}>
+                      <td className="mono whitespace-nowrap text-xs text-slate-400">
                         {last ? (
                           <time dateTime={last} title={formatEastern(last)}>
                             {relativeTime(last, now)}
@@ -273,7 +262,7 @@ export function ApplicationsTable({
                           '—'
                         )}
                       </td>
-                      <td className={`${TD} whitespace-nowrap text-xs`}>
+                      <td className="whitespace-nowrap text-xs">
                         {row.first.assessment ? (
                           <span title={AUTOMATION_LABELS[row.automation]}>
                             {elapsed(row.assessmentMs)}
@@ -285,7 +274,7 @@ export function ApplicationsTable({
                           <span className="text-slate-300 dark:text-slate-600">—</span>
                         )}
                       </td>
-                      <td className={TD}>
+                      <td>
                         <span className="flex flex-wrap gap-1">
                           {row.milestones.length === 0 ? (
                             <span className="text-slate-300 dark:text-slate-600">—</span>
@@ -304,23 +293,16 @@ export function ApplicationsTable({
               </tbody>
             </table>
           </div>
-          <ul className="divide-y divide-slate-200 dark:divide-slate-700 sm:hidden">
+          <ul className="ov-mlist sm:hidden">
             {visible.map((row) => {
               const last = lastActivityAt(row);
               return (
                 <li key={row.id}>
-                  <button
-                    type="button"
-                    onClick={() => onOpen(row.id)}
-                    className="block w-full space-y-2 px-4 py-3 text-left"
-                  >
-                    <span className="block">
-                      <span className="block break-words text-base font-semibold text-slate-900 dark:text-slate-100">
-                        {row.company}
-                      </span>
-                      <span className="mt-0.5 block break-words text-sm text-slate-700 dark:text-slate-200">
-                        {row.role}
-                      </span>
+                  <button type="button" onClick={() => onOpen(row.id)}>
+                    <span className="ov-who" style={{ minWidth: 0 }}>
+                      <CompanyLogo company={row.company} link={row.url} />
+                      <b>{row.company}</b>
+                      <span>{row.role}</span>
                     </span>
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-600 dark:text-slate-300">
                       <StageCell row={row} now={now} />
@@ -346,7 +328,7 @@ export function ApplicationsTable({
             <button
               type="button"
               onClick={onMore}
-              className="flex w-full items-center justify-center gap-1 border-t border-slate-200 px-4 py-3 text-xs font-medium text-indigo-600 hover:bg-slate-50 dark:border-slate-700 dark:text-indigo-300 dark:hover:bg-slate-800/40"
+              className="ov-more"
             >
               <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
               Show {Math.min(50, rows.length - visible.length)} more of {rows.length - visible.length} remaining

@@ -12,7 +12,8 @@ import {
 } from './feed-store.ts';
 import { learned, weights } from './feed-rank.ts';
 import { bookmarkByPost, judgeInput, poolIds, youtubePool } from './feed-pools.ts';
-import { DEFAULT_VOCABULARY, type CompassKind, type FeedSource } from './feed-types.ts';
+import { describeTag, trackOf, vocabularyOf, votedTrack, type CompassKind, type FeedItem, type FeedSource, type Lens } from './feed-types.ts';
+import { readUnwind, tasteTarget } from './unwind-store.ts';
 
 // `npm run media -- feed-*`: how OpenClaw (and you) curate the feed from a shell.
 // Output is JSON on stdout like the other media commands.
@@ -45,7 +46,7 @@ export function digest(compass: CompassKind = 'long') {
         source: short.source,
       },
     },
-    vocabulary: f.vocabulary.map((t) => ({ tag: t, meaning: DEFAULT_VOCABULARY[t] })),
+    vocabulary: f.vocabulary.map((t) => ({ tag: t, meaning: describeTag(t) })),
     // Run `feed-judge --compass short --scope items` when true (new period, or judging unfinished).
     shortNeedsJudging:
       short.available &&
@@ -60,24 +61,64 @@ export function digest(compass: CompassKind = 'long') {
       creators: l.sinking.filter((c) => c.net <= -2),
       tags: l.tags.filter((t) => t.w <= -0.3).map((t) => t.tag),
     },
-    recentVotes: all
-      .filter((i) => i.state === 'up' || i.state === 'down')
-      .sort((a, b) => (b.votedAt || '').localeCompare(a.votedAt || ''))
-      .slice(0, 30)
-      .map((i) => ({
-        id: i.id,
-        vote: i.state,
-        title: i.title,
-        creator: i.creator.name,
-        tags: (i.alignment[compass] ?? i.alignment.long)?.tags,
-        why: (i.alignment[compass] ?? i.alignment.long)?.why,
-      })),
+    recentVotes: recentVotes(all, compass),
+    lastRuns: f.curator.runs.slice(-5),
+  };
+}
+function recentVotes(all: FeedItem[], lens: Lens) {
+  return all
+    .filter((i) => (i.state === 'up' || i.state === 'down') && votedTrack(i) === trackOf(lens))
+    .sort((a, b) => (b.votedAt || '').localeCompare(a.votedAt || ''))
+    .slice(0, 30)
+    .map((i) => ({
+      id: i.id,
+      vote: i.state,
+      title: i.title,
+      creator: i.creator.name,
+      tags: (i.alignment[lens] ?? i.alignment.long)?.tags,
+      why: (i.alignment[lens] ?? i.alignment.long)?.why,
+    }));
+}
+
+// Unwind's digest: your taste card, the clip queue, shows in progress and what nothing can play yet.
+export function tasteDigest() {
+  const f = readFeed();
+  const all = Object.values(f.items);
+  const l = learned(weights(all, 'taste'));
+  const y = youtubePool();
+  const s = summarize(f, 'taste');
+  const u = readUnwind();
+  const shows = Object.values(u.shows);
+  return {
+    taste: { ...u.taste, text: tasteTarget(u).text },
+    tasteNeedsJudging: f.tasteJudged?.version !== u.taste.version || s.judged.taste < 100,
+    tasteJudged: f.tasteJudged,
+    vocabulary: vocabularyOf(f, 'taste').map((t) => ({ tag: t, meaning: describeTag(t) })),
+    queue: s.counts.queue.taste,
+    judged: s.judged.taste,
+    learned: l,
+    upChannels: l.rising
+      .filter((c) => !c.key.startsWith('x:') && c.key !== 'imdb')
+      .map((c) => ({ ...c, channelId: y.channels[c.key]?.channelId, handle: y.channels[c.key]?.handle })),
+    avoid: {
+      creators: l.sinking.filter((c) => c.net <= -2),
+      tags: l.tags.filter((t) => t.w <= -0.3).map((t) => t.tag),
+    },
+    recentVotes: recentVotes(all, 'taste'),
+    shows: {
+      deck: shows.filter((x) => x.state === 'deck').length,
+      watching: shows.filter((x) => x.state === 'watching').map((x) => ({ id: x.id, title: x.title, watched: x.watched.length })),
+      finished: shows.filter((x) => x.state === 'finished').map((x) => x.title),
+      dropped: shows.filter((x) => x.state === 'dropped').map((x) => x.title),
+    },
+    calibrated: u.calibrated,
+    officialChannels: Object.values(u.officialChannels),
     lastRuns: f.curator.runs.slice(-5),
   };
 }
 
 // Pool items not in the feed and not yet rejected under this compass, liked creators first.
-export function candidates(source: FeedSource, limit = 50, compass: CompassKind = 'long') {
+export function candidates(source: FeedSource, limit = 50, compass: Lens = 'long') {
   const f = readFeed();
   const w = weights(Object.values(f.items), compass);
   const y = youtubePool();
@@ -110,6 +151,8 @@ const AlignmentIn = z.object({
   tags: z.array(z.string().min(1).max(40)).max(4),
   why: z.string().min(3).max(300),
   judgedBy: z.string().max(60).default('openclaw'),
+  fun: z.number().min(0).max(1).optional(),
+  fit: z.number().min(0).max(1).optional(),
 });
 const ItemIn = z
   .object({
@@ -122,8 +165,8 @@ const ItemIn = z
     channelId: z.string().optional(),
     state: z.enum(['new', 'candidate']).optional(),
     alignment: z
-      .object({ long: AlignmentIn.optional(), short: AlignmentIn.optional() })
-      .refine((a) => a.long || a.short, 'Give an alignment for at least one compass.'),
+      .object({ long: AlignmentIn.optional(), short: AlignmentIn.optional(), taste: AlignmentIn.optional() })
+      .refine((a) => a.long || a.short || a.taste, 'Give an alignment for at least one compass or taste.'),
   })
   .refine((i) => i.id || i.url, 'Each item needs an id or a url.');
 const FileIn = z.union([z.array(ItemIn), z.object({ items: z.array(ItemIn) })]);
@@ -152,13 +195,16 @@ export function parseArgs(args: string[]): Args {
 }
 const str = (a: Args, k: string) => (typeof a[k] === 'string' ? (a[k] as string) : undefined);
 const list = (a: Args, k: string) => str(a, k)?.split(',').map((s) => s.trim()).filter(Boolean) || [];
-const compassOf = (a: Args) => z.enum(['long', 'short']).catch('long').parse(str(a, 'compass'));
+const compassOf = (a: Args): Lens =>
+  str(a, 'track') === 'unwind' ? 'taste' : z.enum(['long', 'short', 'taste']).catch('long').parse(str(a, 'compass'));
 
 export async function feedCommand(command: string, rest: string[]): Promise<unknown> {
   const a = parseArgs(rest);
   switch (command) {
-    case 'feed-digest':
-      return digest(compassOf(a));
+    case 'feed-digest': {
+      const lens = compassOf(a);
+      return lens === 'taste' ? tasteDigest() : digest(lens);
+    }
     case 'feed-stats':
       return summarize(readFeed(), compassOf(a));
     case 'feed-candidates':
@@ -205,4 +251,4 @@ export async function feedCommand(command: string, rest: string[]): Promise<unkn
   return undefined;
 }
 export const FEED_USAGE =
-  'feed-digest [--compass long|short] | feed-stats | feed-candidates --source youtube|x|imdb [--limit N] | feed-add --file items.json [--by openclaw] | feed-promote --ids a,b|--tag T|--creator K [--limit N] | feed-judge --compass long|short [--scope items|candidates] [--source S] [--limit N] | feed-vocab --add a,b --remove c | feed-run --added N --promoted N --note "..."';
+  'feed-digest [--compass long|short|taste] [--track unwind] | feed-stats | feed-candidates --source youtube|x|imdb [--limit N] | feed-add --file items.json [--by openclaw] | feed-promote --ids a,b|--tag T|--creator K [--limit N] | feed-judge --compass long|short|taste [--scope items|candidates] [--source S] [--limit N] | feed-vocab --add a,b --remove c | feed-run --added N --promoted N --note "..."';

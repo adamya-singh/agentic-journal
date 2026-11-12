@@ -46,11 +46,11 @@ export function AiReportCard({
         icon={<Sparkles className="h-4 w-4" aria-hidden="true" />}
         title={
           <span className="inline-flex items-center gap-1">
-            Hypotheses and experiments
+            What the data suggests
             <InfoTip label="About the AI report">
               Generated daily at 9 AM Eastern when the evidence changes, from calculated statistics,
               employer-stated reasons, milestones, and an allowlist of job-related answers. It may
-              only suggest hypotheses and experiments; numbers and causes are never generated. It
+              only suggest hypotheses and experiments to test; numbers and causes are never generated. It
               reads every record, regardless of the filters above.
             </InfoTip>
           </span>
@@ -70,23 +70,18 @@ export function AiReportCard({
               ) : (
                 <Pill tone="emerald">Current</Pill>
               ))}
-            <Button variant="secondary" disabled={busy} onClick={() => void run()}>
+            <Button variant="secondary" disabled={busy} onClick={() => void run()} className="text-xs">
               {busy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
               {busy ? 'Analyzing…' : 'Analyze now'}
             </Button>
           </>
         }
       />
-      <div className="space-y-3 px-4 py-4 sm:px-5">
+      <div className="grid gap-7 px-4 pb-5 pt-2 sm:px-5">
         {(error || analysis.error) && (
-          <p role="alert" className="text-sm text-red-700 dark:text-red-300">
+          <p role="alert" className="err">
             {error ?? analysis.error?.message}
-            {!error && analysis.error?.at && (
-              <span className="text-xs text-red-600/70 dark:text-red-300/70">
-                {' '}
-                · {formatEastern(analysis.error.at)}
-              </span>
-            )}
+            {!error && analysis.error?.at && <span className="text-xs opacity-70"> · {formatEastern(analysis.error.at)}</span>}
           </p>
         )}
         {!report && <EmptyLine>Run the analysis once to get tentative hypotheses and suggested experiments.</EmptyLine>}
@@ -95,40 +90,37 @@ export function AiReportCard({
             .map((id) => ({ id, row: rowsById.get(id) }))
             .filter((c) => c.row);
           return (
-            <article
-              key={index}
-              className="rounded-lg border border-slate-200 p-3 dark:border-slate-700"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <Pill tone={insight.kind === 'experiment' ? 'violet' : 'indigo'}>
-                  {insight.kind === 'experiment' ? 'Experiment' : 'Hypothesis'}
-                </Pill>
+            <article key={index}>
+              <Pill tone={insight.kind === 'experiment' ? 'emerald' : 'violet'}>
+                {insight.kind === 'experiment' ? 'Experiment' : 'Hypothesis'}
+              </Pill>
+              <div className="ov-lesson">
+                {insight.text}
+                <small>{insight.limitations}</small>
+                {cited.length > 0 && (
+                  <small style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 12px' }}>
+                    <span>Cites</span>
+                    {cited.map(({ id, row }) => (
+                      <LinkButton key={id} className="text-xs" onClick={() => onOpen(id)}>
+                        {row!.company}
+                      </LinkButton>
+                    ))}
+                    {cited.length > 1 && (
+                      <LinkButton
+                        className="text-xs"
+                        onClick={() =>
+                          onCite(
+                            `Cited by ${insight.kind}`,
+                            cited.map((c) => c.id),
+                          )
+                        }
+                      >
+                        Show all cited
+                      </LinkButton>
+                    )}
+                  </small>
+                )}
               </div>
-              <p className="mt-2 text-sm text-slate-800 dark:text-slate-100">{insight.text}</p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{insight.limitations}</p>
-              {cited.length > 0 && (
-                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                  <span className="text-slate-400 dark:text-slate-500">Cites</span>
-                  {cited.map(({ id, row }) => (
-                    <LinkButton key={id} className="text-xs" onClick={() => onOpen(id)}>
-                      {row!.company}
-                    </LinkButton>
-                  ))}
-                  {cited.length > 1 && (
-                    <LinkButton
-                      className="text-xs text-slate-500 dark:text-slate-400"
-                      onClick={() =>
-                        onCite(
-                          `Cited by ${insight.kind}`,
-                          cited.map((c) => c.id),
-                        )
-                      }
-                    >
-                      Show all cited
-                    </LinkButton>
-                  )}
-                </div>
-              )}
             </article>
           );
         })}

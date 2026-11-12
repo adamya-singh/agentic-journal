@@ -6,6 +6,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { openClawChatUrl } from '@/lib/openclaw-ui';
 import { MAX_CHAT_MESSAGE, type TaskChatMessage } from '@/lib/task-chat';
 
 /** Width of the folded-out chat window. */
@@ -58,18 +59,6 @@ interface ChatView { sessionKey: string; messages: TaskChatMessage[]; pending: b
 
 const POLL_MS = 2500;
 const SUGGESTIONS = ['What should I do first?', 'How long will this take?', 'What am I missing?'];
-
-/** The Control UI: same Tailscale host on :18443 when served over https, the local gateway otherwise. */
-function controlUiBase(): string {
-  const configured = process.env.NEXT_PUBLIC_OPENCLAW_UI_URL;
-  if (configured) return configured.replace(/\/+$/, '');
-  const { protocol, hostname } = window.location;
-  return protocol === 'https:' ? `https://${hostname}:18443` : `http://${hostname}:18789`;
-}
-
-export function openClawChatUrl(sessionKey: string): string {
-  return `${controlUiBase()}/chat?session=${encodeURIComponent(sessionKey)}`;
-}
 
 async function call(url: string, init?: RequestInit): Promise<ChatView | null> {
   const res = await fetch(url, init);

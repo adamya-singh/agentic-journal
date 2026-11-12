@@ -63,6 +63,18 @@ function latest<K extends keyof JobEmployerUpdate>(emails: JobEmployerUpdate[], 
   return emails.findLast((email) => email[key] !== undefined && email[key] !== '')?.[key];
 }
 
+/** What the emails say about the current assessment: the link, platform, type, deadline and invitation. */
+export function currentAssessment(application: JobApplicationRecord) {
+  const emails = assessmentEmails(application);
+  return {
+    url: latest(emails, 'assessmentUrl'),
+    provider: latest(emails, 'provider'),
+    assessmentType: latest(emails, 'assessmentType'),
+    deadline: latest(emails, 'deadline'),
+    invitation: emails[0] as JobEmployerUpdate | undefined,
+  };
+}
+
 export function buildAssessmentNotes(listing: AssessmentListing, application: JobApplicationRecord): string {
   const emails = assessmentEmails(application);
   const assessmentType = latest(emails, 'assessmentType');
@@ -85,6 +97,19 @@ export function buildAssessmentNotes(listing: AssessmentListing, application: Jo
     ...(application.submittedAt ? [`- **Applied:** ${displayTime(new Date(application.submittedAt))}`] : []),
     ...(invitation ? [`- **Invited:** ${displayTime(new Date(invitation.receivedAt))}`] : []),
   ];
+
+  const preview = application.assessmentTask?.preview;
+  const previewLines = preview && preview.url === assessmentUrl && (preview.status === 'saved' || preview.status === 'blocked')
+    ? [
+      '',
+      `**${preview.status === 'saved' ? 'What the OA page shows' : 'OpenClaw could not see the assessment'}** (OpenClaw opened the link without starting it${preview.at ? `, ${displayTime(new Date(preview.at))}` : ''})`,
+      '',
+      ...(preview.summary ?? []).map((line) => `- ${line}`),
+      ...(preview.processId
+        ? [`- **Everything it saw:** ${link('open in Interviews', `/jobs/interviews?process=${encodeURIComponent(preview.processId)}${preview.noteId ? `&note=${encodeURIComponent(preview.noteId)}` : ''}`)}`]
+        : []),
+    ]
+    : [];
 
   const emailLines = emails.flatMap((email) => {
     const gmail = gmailLink(email);
@@ -109,6 +134,7 @@ export function buildAssessmentNotes(listing: AssessmentListing, application: Jo
     `Online assessment from **${listing.company}** for **${listing.positionTitle}**.`,
     '',
     ...facts,
+    ...previewLines,
     ...(emailLines.length > 0 ? ['', '**Emails**', '', ...emailLines] : []),
     '',
     ASSESSMENT_NOTES_MARKER,

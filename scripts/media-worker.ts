@@ -1,5 +1,5 @@
 import { runWorker } from '../src/lib/media/worker.ts';
-runWorker().catch(() => {
-  console.error('Media worker stopped. Check storage permissions and restart the service.');
+runWorker().catch((e) => {
+  console.error(`Media worker stopped: ${(e as Error).message}`);
   process.exitCode = 1;
 });

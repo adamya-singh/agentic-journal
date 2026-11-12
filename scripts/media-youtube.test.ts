@@ -28,11 +28,13 @@ import {
   decide,
   decideBucket,
   decideChannel,
+  channelRules,
   initialYouTube,
   listVideos,
   mergeBatch,
   readYouTube,
   restore,
+  setChannelRules,
   summary,
   unkeep,
   writeYouTube,
@@ -154,6 +156,51 @@ test('rewatches move the day forward; channel rules decide new videos; kept vide
   assert.equal(s.kept, 3);
   assert.equal(s.pending, 0);
   assert.equal(s.channels[0].rule, 'keep');
+});
+
+test('channel rules can be set later for channels decided without Remember, and undone', async () => {
+  const chanB = { channelName: 'Chan B', channelHandle: '@ChanB', channelId: undefined };
+  const chanC = { channelName: 'Chan C', channelHandle: '@ChanC', channelId: undefined };
+  const later = () => new Promise((r) => setTimeout(r, 5));
+  await mergeBatch([1, 2, 3].map((n) => video(n)));
+  await mergeBatch([4, 5, 6].map((n) => video(n, chanB)));
+  await mergeBatch([9, 10, 11].map((n) => video(n, chanC)));
+  await later();
+  await decideChannel('@chana', 'kept', false);
+  await decideChannel('@chanb', 'skipped', false);
+  // Chan C was picked one video at a time; its other two were already waiting.
+  await decide(['vid00000009'], 'kept');
+  await later();
+  await mergeBatch([video(7)]);
+  assert.deepEqual(
+    channelRules().map((c) => [c.key, c.rule, c.kept, c.skipped, c.pending, c.arrived]),
+    [
+      ['@chana', undefined, 3, 0, 1, 1],
+      ['@chanb', undefined, 0, 3, 0, 0],
+      ['@chanc', undefined, 1, 0, 2, 0],
+    ],
+  );
+
+  // A new rule catches up on the video that arrived after Keep all, not on Chan C's older ones.
+  const set = await setChannelRules({ '@chana': 'keep', '@chanb': 'skip', '@chanc': 'keep' });
+  assert.deepEqual(set.previousRules, { '@chana': null, '@chanb': null, '@chanc': null });
+  assert.deepEqual(set.previous, { vid00000007: 'pending' });
+  assert.equal(readYouTube().videos.vid00000007.decidedBy, 'rule');
+  assert.equal(readYouTube().videos.vid00000010.status, 'pending');
+  // Setting the same rule again changes nothing, so there is nothing to undo.
+  assert.deepEqual(await setChannelRules({ '@chana': 'keep' }), {
+    previous: {},
+    previousRules: {},
+  });
+  await mergeBatch([video(8, chanB)]);
+  assert.equal(readYouTube().videos.vid00000008.status, 'skipped');
+  assert.equal(readYouTube().videos.vid00000008.decidedBy, 'rule');
+
+  await restore(set.previous, set.previousRules);
+  assert.equal(readYouTube().channels['@chana'].rule, undefined);
+  assert.equal(readState().titles['yt:vid00000007'], undefined);
+  await assert.rejects(setChannelRules({ '@nobody': 'keep' }), /Channel not found/);
+  assert.equal(readYouTube().channels['@chanb'].rule, undefined);
 });
 
 test('skipped videos never come back as pending, and undo restores the earlier state', async () => {
@@ -377,6 +424,10 @@ test('routes: yt ids rank, bad ids and foreign origins are refused, summaries pa
     (await (await GET(new NextRequest(`http://localhost:3000/api/media/${url}`))).json()).data;
   assert.equal((await get('youtube')).kept, 2);
   assert.equal((await get('youtube/videos?channel=%40chana')).total, 2);
+  assert.equal((await post('youtube/rules', { rules: { '@chana': 'keep' } })).status, 200);
+  assert.equal((await post('youtube/rules', { rules: { '@chana': 'always' } })).status, 400);
+  assert.equal((await post('youtube/rules', { rules: {} })).status, 400);
+  assert.equal((await get('youtube/rules')).channels[0].rule, 'keep');
   assert.ok(Array.isArray((await get('')).library));
   assert.ok(YouTubeError);
 });

@@ -1,0 +1,149 @@
+name: journal-media
+x-arr: &arr
+  restart: unless-stopped
+  entrypoint: [/bin/sh, -ec, 'test "$$(cat /data/.journal-storage)" = "$$JOURNAL_STORAGE_ID"; exec /init']
+  environment: &arr-env
+    PUID: '1000'
+    PGID: '1000'
+    TZ: America/New_York
+    JOURNAL_STORAGE_ID: ${JOURNAL_STORAGE_ID:?Storage marker required}
+  networks: [media]
+  mem_limit: 512m
+  cpus: 1
+  volumes:
+    - type: bind
+      source: ${MEDIA_DATA_ROOT:?Run media-stack init}
+      target: /data
+      bind: {create_host_path: false}
+services:
+  gluetun:
+    image: ${GLUETUN_IMAGE:?Pinned images.lock required}
+    profiles: [vpn]
+    cap_add: [NET_ADMIN]
+    devices: [/dev/net/tun:/dev/net/tun]
+    restart: unless-stopped
+    environment:
+      VPN_SERVICE_PROVIDER: protonvpn
+      VPN_TYPE: wireguard
+      PORT_FORWARD_ONLY: 'on'
+      VPN_PORT_FORWARDING: 'on'
+      HTTPPROXY: 'on'
+      HTTPPROXY_LOG: 'off'
+      FIREWALL_INPUT_PORTS: '8080,8888'
+      VPN_PORT_FORWARDING_UP_COMMAND: /bin/sh -c 'wget -qO- --post-data="json={\"listen_port\":{{PORT}},\"current_network_interface\":\"{{VPN_INTERFACE}}\",\"random_port\":false,\"upnp\":false}" http://127.0.0.1:8080/api/v2/app/setPreferences'
+      VPN_PORT_FORWARDING_DOWN_COMMAND: /bin/sh -c 'wget -qO- --post-data="json={\"listen_port\":0,\"current_network_interface\":\"lo\"}" http://127.0.0.1:8080/api/v2/app/setPreferences'
+    ports: ['127.0.0.1:8080:8080']
+    networks: [media]
+    volumes:
+      - type: bind
+        source: ${MEDIA_STACK_HOME}/proton/wg0.conf
+        target: /gluetun/wireguard/wg0.conf
+        read_only: true
+        bind: {create_host_path: false}
+    mem_limit: 256m
+    cpus: 1
+  qbittorrent:
+    image: ${QBITTORRENT_IMAGE:?Pinned images.lock required}
+    networks: [media]
+    ports: ['127.0.0.1:8080:8080']
+    restart: unless-stopped
+    entrypoint: [/bin/sh, -ec, 'test "$$(cat /data/.journal-storage)" = "$$JOURNAL_STORAGE_ID"; exec /init']
+    environment:
+      <<: *arr-env
+      WEBUI_PORT: '8080'
+    volumes:
+      - type: bind
+        source: ${MEDIA_DATA_ROOT}
+        target: /data
+        bind: {create_host_path: false}
+      - ${MEDIA_STACK_HOME}/services/qbittorrent:/config
+      - type: bind
+        source: ${MEDIA_STACK_HOME}/services/qbittorrent/resolv.conf
+        target: /etc/resolv.conf
+        read_only: true
+        bind: {create_host_path: false}
+    mem_limit: 768m
+    cpus: 1
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:8080/api/v2/app/version >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  sonarr:
+    <<: *arr
+    image: ${SONARR_IMAGE:?Pinned images.lock required}
+    ports: ['127.0.0.1:8989:8989']
+    volumes:
+      - type: bind
+        source: ${MEDIA_DATA_ROOT}
+        target: /data
+        bind: {create_host_path: false}
+      - ${MEDIA_STACK_HOME}/services/sonarr:/config
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:8989/ping >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  radarr:
+    <<: *arr
+    image: ${RADARR_IMAGE:?Pinned images.lock required}
+    ports: ['127.0.0.1:7878:7878']
+    volumes:
+      - type: bind
+        source: ${MEDIA_DATA_ROOT}
+        target: /data
+        bind: {create_host_path: false}
+      - ${MEDIA_STACK_HOME}/services/radarr:/config
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:7878/ping >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  prowlarr:
+    <<: *arr
+    image: ${PROWLARR_IMAGE:?Pinned images.lock required}
+    entrypoint: [/init]
+    ports: ['127.0.0.1:9696:9696']
+    volumes: ['${MEDIA_STACK_HOME}/services/prowlarr:/config']
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:9696/ping >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  jellyfin:
+    image: ${JELLYFIN_IMAGE:?Pinned images.lock required}
+    restart: unless-stopped
+    user: '1000:1000'
+    entrypoint: [/bin/sh, -ec, 'test "$$(cat /data/.journal-storage)" = "$$JOURNAL_STORAGE_ID"; exec /jellyfin/jellyfin']
+    environment:
+      JOURNAL_STORAGE_ID: ${JOURNAL_STORAGE_ID}
+    networks: [media]
+    ports: ['127.0.0.1:8096:8096']
+    volumes:
+      - ${MEDIA_STACK_HOME}/services/jellyfin:/config
+      - ${MEDIA_STACK_HOME}/cache/jellyfin:/cache
+      - type: bind
+        source: ${MEDIA_STACK_HOME}/cache/transcodes
+        target: /cache/transcodes
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${MEDIA_DATA_ROOT}/library
+        target: /data/library
+        read_only: true
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${MEDIA_DATA_ROOT}/.journal-storage
+        target: /data/.journal-storage
+        read_only: true
+        bind: {create_host_path: false}
+    mem_limit: 1536m
+    cpus: 2
+    healthcheck:
+      test: [CMD-SHELL, 'curl -fsS http://127.0.0.1:8096/health >/dev/null']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  media:
+    ipam:
+      config: [{subnet: 172.29.83.0/24}]

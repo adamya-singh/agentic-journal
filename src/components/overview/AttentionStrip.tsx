@@ -2,9 +2,10 @@
 
 import React from 'react';
 import { AlertCircle, CalendarClock, Loader2, Mail, Sparkles } from 'lucide-react';
-import type { Milestone } from '@/lib/job-overview';
+import { CompanyLogo } from '@/components/mission/CompanyLogo';
+import type { Milestone, OverviewRow } from '@/lib/job-overview';
 import type { AttentionItem } from '@/lib/job-overview-view';
-import { Band, Button } from './primitives';
+import { Button } from './primitives';
 
 const ICON: Record<AttentionItem['kind'], React.ReactNode> = {
   'assessment-open': <AlertCircle className="h-4 w-4" aria-hidden="true" />,
@@ -17,13 +18,18 @@ const ICON: Record<AttentionItem['kind'], React.ReactNode> = {
   'analysis-overdue': <Sparkles className="h-4 w-4" aria-hidden="true" />,
 };
 
-/** Employer-side items that need a human. Renders nothing when there are none. */
+/**
+ * Employer-side items that need a human, as the amber box in the Readout hero.
+ * Renders nothing when there are none.
+ */
 export function AttentionStrip({
   items,
+  rowsById,
   onOpen,
   onAnalyze,
 }: {
   items: AttentionItem[];
+  rowsById: Map<string, OverviewRow>;
   onOpen: (id: string, kind?: Milestone['kind']) => void;
   onAnalyze: () => Promise<void>;
 }) {
@@ -66,7 +72,7 @@ export function AttentionStrip({
         return (
           <a
             href="/jobs#email-updates"
-            className="inline-flex min-h-8 shrink-0 items-center gap-1 rounded border border-amber-300 px-2 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-200 dark:hover:bg-amber-900/40"
+            className="ov-btn ov-btn-amber"
           >
             Confirm on Board
           </a>
@@ -84,55 +90,41 @@ export function AttentionStrip({
     }
   };
   return (
-    <Band tone="amber" aria-label="Needs your attention">
-      <div className="flex items-center gap-2 px-4 pb-1 pt-3 sm:px-5">
-        <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-        <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-          Needs you ({items.length})
-        </h3>
-        <span className="text-xs text-amber-700/70 dark:text-amber-400/70">
-          — employer-side follow-ups the agents cannot do for you
-        </span>
+    <section className="cap ov-cap" aria-label="Needs your attention">
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="pulse" aria-hidden="true" />
+        <h3 className="lab" style={{ color: 'var(--now)', margin: 0 }}>Needs you · {items.length}</h3>
+        <span className="sub">follow-ups the agents can’t do for you</span>
       </div>
       {error && (
-        <p role="alert" className="px-4 pb-1 text-sm text-red-700 dark:text-red-300 sm:px-5">
+        <p role="alert" className="err">
           {error}
         </p>
       )}
-      <ul className="divide-y divide-amber-100 dark:divide-amber-900/30">
-        {items.map((item, index) => (
-          <li
-            key={`${item.kind}-${item.id ?? index}`}
-            className="flex items-center gap-3 px-4 py-2 hover:bg-amber-100/60 dark:hover:bg-amber-900/20 sm:px-5"
-          >
-            <span className="shrink-0 text-amber-600 dark:text-amber-400">{ICON[item.kind]}</span>
+      {items.map((item, index) => {
+        const row = item.id ? rowsById.get(item.id) : undefined;
+        const body = (
+          <>
+            <span className="w">{item.title}</span>
+            <span className="d">{item.detail}</span>
+          </>
+        );
+        return (
+          <div key={`${item.kind}-${item.id ?? index}`} className="ov-act">
+            <span style={{ gridRow: 'span 3', alignSelf: 'start', color: 'var(--now)' }}>
+              {row ? <CompanyLogo company={row.company} link={row.url} size="sm" /> : ICON[item.kind]}
+            </span>
             {item.id ? (
-              <button
-                type="button"
-                onClick={() => onOpen(item.id!)}
-                className="min-w-0 flex-1 text-left"
-              >
-                <span className="block break-words text-sm font-medium text-slate-800 dark:text-slate-100 sm:truncate">
-                  {item.title}
-                </span>
-                <span className="block text-xs text-slate-600 dark:text-slate-300">
-                  {item.detail}
-                </span>
+              <button type="button" onClick={() => onOpen(item.id!)} style={{ display: 'grid', gap: 2, textAlign: 'left', minWidth: 0 }}>
+                {body}
               </button>
             ) : (
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium text-slate-800 dark:text-slate-100">
-                  {item.title}
-                </span>
-                <span className="block text-xs text-slate-600 dark:text-slate-300">
-                  {item.detail}
-                </span>
-              </span>
+              <span style={{ display: 'grid', gap: 2, minWidth: 0 }}>{body}</span>
             )}
-            {action(item)}
-          </li>
-        ))}
-      </ul>
-    </Band>
+            <span className="a">{action(item)}</span>
+          </div>
+        );
+      })}
+    </section>
   );
 }

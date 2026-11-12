@@ -21,6 +21,14 @@ const DEFAULT_SEGMENT_MINUTES = 10;
 const DEFAULT_STALENESS_SECONDS = 120;
 const DEFAULT_OPERATION_POLL_SECONDS = 15;
 const DEFAULT_OPERATION_TIMEOUT_SECONDS = 300;
+// Synchronous Recognize takes at most 60 seconds of audio per request.
+const SYNC_RECOGNIZE_MAX_PIECE_SECONDS = 55;
+// Clips up to this long skip batch recognition, which has hung for minutes
+// and returned truncated transcripts on the worker's short rolling clips.
+const DEFAULT_SYNC_MAX_SECONDS = 300;
+// The client library lets a Recognize call wait 5000 seconds; a 55-second
+// piece normally answers in under 10.
+const DEFAULT_SYNC_REQUEST_TIMEOUT_SECONDS = 60;
 const DEFAULT_MODEL = 'chirp_3';
 const DEFAULT_LANGUAGE_CODE = 'en-US';
 const DEFAULT_LOCATION = 'us';
@@ -179,7 +187,10 @@ async function runTranscribeDay(args, options = {}) {
       `\nTranscribing ${segment.id} (${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)})`,
     );
     const existingSegmentStatus = status.segments[segment.id];
+    // Short clips and retries skip GCS and the long-running batch operation.
+    const useSyncRecognize = shouldUseSyncRecognize(existingSegmentStatus, segment, config);
     const shouldResumeOperation =
+      !useSyncRecognize &&
       existingSegmentStatus?.status === 'running' &&
       existingSegmentStatus.hash === segment.hash &&
       typeof existingSegmentStatus.operationName === 'string' &&
@@ -189,8 +200,9 @@ async function runTranscribeDay(args, options = {}) {
     const localSegmentPath = path.join(WORK_ROOT, date, `${segment.id}.wav`);
     const listPath = path.join(WORK_ROOT, date, `${segment.id}.ffconcat`);
     const gcsObjectName = `omi-audio-segments/${date}/${segment.id}-${segment.hash.slice(0, 12)}.wav`;
-    const gcsUri =
-      shouldResumeOperation && existingSegmentStatus.gcsUri
+    const gcsUri = useSyncRecognize
+      ? null
+      : shouldResumeOperation && existingSegmentStatus.gcsUri
         ? existingSegmentStatus.gcsUri
         : `gs://${config.bucketName}/${gcsObjectName}`;
     let operationName = shouldResumeOperation ? existingSegmentStatus.operationName : null;
@@ -209,6 +221,7 @@ async function runTranscribeDay(args, options = {}) {
       failedAt: null,
       error: null,
       retryAfter: null,
+      recognizeMethod: useSyncRecognize ? 'sync' : 'batch',
       ...(shouldResumeOperation
         ? { operationName, gcsUri }
         : { operationName: null, gcsUri, uploadedAt: null }),
@@ -216,7 +229,20 @@ async function runTranscribeDay(args, options = {}) {
     writeStatus(date, status);
 
     try {
-      if (operationName) {
+      let responseJson;
+      let fileResult;
+      if (useSyncRecognize) {
+        console.log(`Using synchronous recognition for ${segment.id}`);
+        await concatenateSegment(segment, localSegmentPath, listPath);
+        const pieces = await recognizeSegmentInPieces({
+          speechClient,
+          config,
+          segment,
+          localSegmentPath,
+        });
+        responseJson = { method: 'sync', pieces };
+        fileResult = { transcript: { results: pieces.flatMap((piece) => piece.results || []) } };
+      } else if (operationName) {
         console.log(`Resuming existing operation ${operationName}`);
       } else {
         await concatenateSegment(segment, localSegmentPath, listPath);
@@ -244,13 +270,15 @@ async function runTranscribeDay(args, options = {}) {
         writeStatus(date, status);
       }
 
-      const response = await waitForBatchRecognizeOperation(
-        speechClient,
-        operationName,
-        config.operationTimeoutSeconds,
-      );
-      const responseJson = toJsonSafe(response);
-      const fileResult = getFileResult(responseJson, gcsUri);
+      if (!useSyncRecognize) {
+        const response = await waitForBatchRecognizeOperation(
+          speechClient,
+          operationName,
+          config.operationTimeoutSeconds,
+        );
+        responseJson = toJsonSafe(response);
+        fileResult = getFileResult(responseJson, gcsUri);
+      }
       if (fileResult?.error) {
         throw new Error(
           `Speech API returned an error for ${segment.id}: ${JSON.stringify(fileResult.error)}`,
@@ -283,8 +311,8 @@ async function runTranscribeDay(args, options = {}) {
         response: responseJson,
       });
 
-      await maybeDeleteGcsObject(bucket, gcsObjectName, config.deleteGcsAfterSuccess);
-      if (config.deleteGcsAfterSuccess) {
+      if (!useSyncRecognize && config.deleteGcsAfterSuccess) {
+        await maybeDeleteGcsObject(bucket, gcsObjectName, true);
         status.segments[segment.id].gcsDeletedAt = new Date().toISOString();
       }
 
@@ -301,7 +329,7 @@ async function runTranscribeDay(args, options = {}) {
     } catch (error) {
       const retryCount = Number(status.segments[segment.id]?.retryCount || 0) + 1;
       const retryDelaySeconds = Math.min(900, 30 * 2 ** Math.min(retryCount - 1, 5));
-      if (config.deleteGcsAfterSuccess) {
+      if (!useSyncRecognize && config.deleteGcsAfterSuccess) {
         await maybeDeleteGcsObject(bucket, gcsObjectName, true).catch((deleteError) => {
           console.warn(`Could not delete staged GCS object after failure: ${deleteError.message}`);
         });
@@ -455,6 +483,14 @@ function resolveConfig(args, timezone) {
     operationTimeoutSeconds: parsePositiveInteger(
       process.env.OMI_STT_OPERATION_TIMEOUT_SECONDS,
       DEFAULT_OPERATION_TIMEOUT_SECONDS,
+    ),
+    syncRequestTimeoutSeconds: parsePositiveInteger(
+      process.env.OMI_STT_SYNC_REQUEST_TIMEOUT_SECONDS,
+      DEFAULT_SYNC_REQUEST_TIMEOUT_SECONDS,
+    ),
+    syncMaxSeconds: parseNonNegativeInteger(
+      process.env.OMI_STT_SYNC_MAX_SECONDS,
+      DEFAULT_SYNC_MAX_SECONDS,
     ),
     timezone,
     finalize: args.finalize,
@@ -712,19 +748,86 @@ async function maybeCreateBucket({ storage, bucketName, location }) {
 
 function buildBatchRecognizeRequest({ config, segment, gcsUri }) {
   return {
-    recognizer: `projects/${config.projectId}/locations/${config.location}/recognizers/_`,
-    config: {
-      autoDecodingConfig: {},
-      model: config.model,
-      languageCodes: [config.languageCode],
-      features: {
-        enableAutomaticPunctuation: true,
-        maxAlternatives: 1,
-      },
-    },
+    recognizer: recognizerName(config),
+    config: buildRecognitionConfig(config),
     files: [{ uri: gcsUri }],
     recognitionOutputConfig: {
       inlineResponseConfig: {},
+    },
+  };
+}
+
+function shouldUseSyncRecognize(existingSegmentStatus, segment, config) {
+  if (Number(existingSegmentStatus?.retryCount || 0) > 0) {
+    return true;
+  }
+  return Number(segment?.durationSeconds || 0) <= Number(config?.syncMaxSeconds || 0);
+}
+
+function planRecognizePieces(audioSeconds, maxPieceSeconds = SYNC_RECOGNIZE_MAX_PIECE_SECONDS) {
+  const pieceCount = Math.max(1, Math.ceil(audioSeconds / maxPieceSeconds));
+  const pieceSeconds = audioSeconds / pieceCount;
+  return Array.from({ length: pieceCount }, (_value, index) => ({
+    offsetSeconds: index * pieceSeconds,
+    durationSeconds: pieceSeconds,
+  }));
+}
+
+async function recognizeSegmentInPieces({ speechClient, config, segment, localSegmentPath }) {
+  // Size the pieces from the concatenated file, which is 16-bit mono PCM.
+  const { size } = await fsp.stat(localSegmentPath);
+  const audioSeconds = Math.max(0, size - 44) / (segment.sampleRate * 2);
+  const responses = [];
+  for (const [index, piece] of planRecognizePieces(audioSeconds).entries()) {
+    const piecePath = localSegmentPath.replace(/\.wav$/, `.part${index}.wav`);
+    try {
+      await runCommand('ffmpeg', [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-ss',
+        piece.offsetSeconds.toFixed(3),
+        '-t',
+        piece.durationSeconds.toFixed(3),
+        '-i',
+        localSegmentPath,
+        '-c',
+        'copy',
+        piecePath,
+      ]);
+      const [response] = await speechClient.recognize(
+        buildRecognizeRequest({ config, content: await fsp.readFile(piecePath) }),
+        { timeout: secondsToMillis(config.syncRequestTimeoutSeconds) },
+      );
+      responses.push(toJsonSafe(response));
+    } finally {
+      await removeIfExists(piecePath);
+    }
+  }
+  return responses;
+}
+
+function buildRecognizeRequest({ config, content }) {
+  return {
+    recognizer: recognizerName(config),
+    config: buildRecognitionConfig(config),
+    content,
+  };
+}
+
+function recognizerName(config) {
+  return `projects/${config.projectId}/locations/${config.location}/recognizers/_`;
+}
+
+function buildRecognitionConfig(config) {
+  return {
+    autoDecodingConfig: {},
+    model: config.model,
+    languageCodes: [config.languageCode],
+    features: {
+      enableAutomaticPunctuation: true,
+      maxAlternatives: 1,
     },
   };
 }
@@ -939,6 +1042,14 @@ function parsePositiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function parseNonNegativeInteger(value, fallback) {
+  if (value === undefined || value === '') {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
 function firstNonEmpty(...values) {
   return (
     values.find((value) => typeof value === 'string' && value.trim().length > 0)?.trim() || null
@@ -1049,7 +1160,12 @@ export {
   AUDIO_ROOT,
   DEFAULT_TIMEZONE,
   DATE_REGEX,
+  buildRecognizeRequest,
+  extractTranscript,
   formatLocalDate,
+  planRecognizePieces,
+  shouldUseSyncRecognize,
+  writeStatus,
   getValidTimezone,
   readManifest,
   readManifestMaybe,

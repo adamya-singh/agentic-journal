@@ -18,6 +18,7 @@ import {
   withoutTitle,
   type RankOp,
 } from './ranking.ts';
+import { lockOwner, ownerGone } from '../lock-owner.ts';
 
 // Segments, not a 'src/backend/data' literal, so Next's file tracer doesn't pull the whole data
 // dir into the build (see backend-data.ts; this file also runs as a plain Node worker).
@@ -55,7 +56,7 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
   let owned = false;
   for (let n = 0; n < 200 && !owned; n++) {
     try {
-      fs.writeFileSync(file, String(process.pid), { flag: 'wx', mode: 0o600 });
+      fs.writeFileSync(file, lockOwner(), { flag: 'wx', mode: 0o600 });
       owned = true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
@@ -65,14 +66,7 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
       try {
         fs.mkdirSync(recovery);
         recovering = true;
-        const pid = Number(fs.readFileSync(file, 'utf8'));
-        if (pid > 0) {
-          try {
-            process.kill(pid, 0);
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'ESRCH') fs.unlinkSync(file);
-          }
-        }
+        if (ownerGone(fs.readFileSync(file, 'utf8'))) fs.unlinkSync(file);
       } catch (err) {
         if (!['EEXIST', 'ENOENT'].includes((err as NodeJS.ErrnoException).code || '')) throw err;
       } finally {
@@ -103,7 +97,7 @@ export function view(): MediaView {
     ...rest,
     ranking: rankingOf(s),
     library: titles
-      .filter((t) => t.collections.length)
+      .filter((t) => t.collections.length || t.addedAt)
       .sort((a, b) => (b.yourRating || 0) - (a.yourRating || 0) || a.title.localeCompare(b.title)),
     picks: s.recommendations
       .map((id) => s.titles[id])
@@ -117,6 +111,20 @@ export async function feedback(id: string, value: 'interested' | 'dismissed' | n
     if (!s.titles[id]) throw new Error('Title not found. Refresh the page.');
     if (value === null) delete s.feedback[id];
     else s.feedback[id] = value;
+    writeState(s);
+  });
+}
+// Favorite, keep on disk and watching live only in the Journal.
+export async function setFlags(
+  id: string,
+  flags: Partial<Pick<MediaTitle, 'favorite' | 'download' | 'watching'>>,
+) {
+  return withLock(() => {
+    const s = readState();
+    const t = s.titles[id];
+    if (!t) throw new Error('Title not found. Refresh the page.');
+    for (const [k, v] of Object.entries(flags) as [keyof typeof flags, boolean | undefined][])
+      if (v !== undefined) t[k] = v || undefined;
     writeState(s);
   });
 }
@@ -145,7 +153,9 @@ export function addJob(s: MediaState, action: MediaAction, titleId?: string, rat
   if (pending.some((j) => titleId && j.titleId === titleId && j.action === action))
     throw new Error('This title already has a pending change. Wait for it to finish.');
   const id = randomUUID();
-  s.jobs = pending.concat(s.jobs.filter((j) => !isPending(j)).slice(-100));
+  // Keep the last 100 finished jobs and every pending one, in the order they were made.
+  const recent = new Set(s.jobs.filter((j) => !isPending(j)).slice(-100));
+  s.jobs = s.jobs.filter((j) => isPending(j) || recent.has(j));
   s.jobs.push({
     id,
     action,
