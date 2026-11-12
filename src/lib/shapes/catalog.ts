@@ -142,6 +142,18 @@ const maximumText = 400
 const maximumItems = 12
 const asText = (value: unknown) => typeof value === 'string' ? value.slice(0, maximumText) : typeof value === 'number' ? String(value) : null
 const asNumber = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null
+// One text of a list. A model often sends a stage as an object ({label, date}); that reads as "Label · date"
+// rather than being dropped, so real stages are not lost to their wrapping.
+const asLabel = (value: unknown) => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return asText(value)
+  const record = value as Record<string, unknown>
+  const name = asText(record['label'] ?? record['name'] ?? record['title'] ?? record['text'] ?? record['step'])
+  if (name === null || name.trim() === '') return null
+  const when = asText(record['date'] ?? record['when'] ?? record['due'])
+  return (when === null || when.trim() === '' ? name : `${name} · ${when}`).slice(0, maximumText)
+}
+/** A part that is a list with nothing in it: there is nothing to draw. */
+export const isEmptyPart = (part: Part) => 'items' in part && part.items.length === 0
 const asList = <T>(value: unknown, item: (value: unknown) => T | null): T[] | null => {
   if (!Array.isArray(value)) return null
   return value.slice(0, maximumItems).map(item).filter(entry => entry !== null)
@@ -167,7 +179,7 @@ function readProp(value: unknown, prop: Prop): unknown {
       return number === null ? null : clamp(number, 0, 1)
     }
     case 'flag': return typeof value === 'boolean' ? value : null
-    case 'texts': return asList(value, asText)
+    case 'texts': return asList(value, asLabel)
     case 'numbers': return asList(value, asNumber)
     case 'rows': return asList(value, item => typeof item === 'string' ? {text: item} : asObject<Row>(item, rowProps))
     case 'marks': return asList(value, item => asObject<Mark>(item, {at: 'unit', to: 'unit?', label: 'text'}))

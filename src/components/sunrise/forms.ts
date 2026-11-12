@@ -22,9 +22,24 @@ const asThing = ({spec, when}: FormThing): Thing => ({
   id: spec.id, title: spec.name, shape: spec.shape, salience: 0, tone: 'calm', icon: spec.icon, parts: spec.parts, ...when === '' ? {} : {when},
 })
 
+// The outline a small form is drawn in. A shape is the outline of its picture: an orb's circle holds a number, a
+// tile a picture, a band a path, a list its rows, a note its words. With no such part to hold, the task is a
+// bubble that says what it is, its name and its next step, rather than an outline around nothing.
+function drawnShape({spec}: FormThing, compact: boolean): ShapeId {
+  if (compact) return 'pill'
+  const has = (...kinds: Part['kind'][]) => spec.parts.some(part => kinds.includes(part.kind))
+  switch (spec.shape) {
+    case 'note': return has('quote', 'prose', 'line') ? 'note' : 'pill'
+    case 'list': return has('rows') ? 'list' : 'pill'
+    case 'orb': case 'stat': case 'band': case 'tile':
+      return spec.parts.some(part => shapes[spec.shape].hearts.includes(part.kind)) ? spec.shape : 'pill'
+    default: return spec.shape
+  }
+}
+
 /** A small form measured in `host` (hidden, in the page): how wide what it says is, within its shape's limits. */
 export function formSize(form: FormThing, host: HTMLElement, compact = false): readonly [number, number] {
-  const shape = compact ? 'pill' : form.spec.shape
+  const shape = drawnShape(form, compact)
   const [narrowest, widest] = widths[shape]
   const node = smallForm(form, undefined, compact)
   node.style.width = 'max-content'
@@ -91,7 +106,7 @@ function stepOf(spec: FormSpec) {
 export function smallForm(form: FormThing, width?: number, compact = false): HTMLElement {
   const {spec} = form
   const thing = asThing(form)
-  const shape = compact ? 'pill' : spec.shape
+  const shape = drawnShape(form, compact)
   const root = el('div', `shape sm s-${shape}`)
   if (width !== undefined) root.style.width = `${width}px`
   root.style.height = `${heights[shape]}px`

@@ -137,6 +137,19 @@ export const PANE_CSS = `
 .srp-line{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;column-gap:9px;padding:2px 8px;margin:0 -8px;border-radius:9px;transition:background .2s ease,box-shadow .2s ease}
 .srp-line textarea{grid-column:2;display:block;width:100%;resize:none;overflow:hidden;border:0;outline:0;padding:0;margin:0;background:transparent;color:#22130a;font:15.5px/1.6 var(--sans)}
 .srp-line textarea::placeholder{color:rgba(34,19,10,.3)}
+.srp-line textarea,.srp-line .shown{grid-row:1}
+.srp-line .shown{grid-column:2;pointer-events:none;white-space:pre-wrap;overflow-wrap:anywhere;color:#22130a;font:15.5px/1.6 var(--sans)}
+.srp-line.p .shown{grid-column:1/-1}
+.srp-line .shown b{font-weight:650}
+.srp-line .shown mark{background:rgba(255,214,84,.55);color:inherit;border-radius:4px;padding:0 2px}
+.srp-line .shown code{font:13.5px var(--mono);background:rgba(120,70,30,.09);border-radius:5px;padding:1px 4px}
+.srp-line.rich:not(:focus-within) textarea{color:transparent}
+.srp-line.rich:focus-within .shown{display:none}
+.srp-line.done .shown{color:#9a8676;text-decoration:line-through}
+.srp-letter .srp-line .shown{font:400 16.5px/1.55 var(--serif)}
+.srp-problem .srp-line .shown{font:15px/1.65 var(--mono)}
+.srp-line.rule:not(:focus-within){background:linear-gradient(rgba(120,70,30,.22),rgba(120,70,30,.22)) center/calc(100% - 16px) 1px no-repeat}
+.srp-line.rule:not(:focus-within) textarea{color:transparent}
 .srp-line .mk{grid-column:1;min-width:18px;padding-top:1px;font:15.5px/1.6 var(--sans);color:#a6541d;text-align:right;user-select:none}
 .srp-line.p .mk{display:none}
 .srp-line.p textarea{grid-column:1/-1}
@@ -325,6 +338,21 @@ function renumber(lines: Line[]): Line[] {
   });
 }
 const isAside = (text: string) => /^_\(.*\)_$/.test(text.trim());
+// The marks inside a line (**bold**, ==highlight==, *italic*, `code`), drawn as what they mean while the line is
+// not being typed in. Null when the line has none, so it stays a plain field.
+const INLINE = /(\*\*[^*\n]+?\*\*|==[^=\n]+?==|`[^`\n]+?`|(?<![\w*])\*[^*\s][^*\n]*?\*(?![\w*]))/g;
+function inlineMarks(text: string): React.ReactNode[] | null {
+  const pieces = text.split(INLINE);
+  if (pieces.length < 2) return null;
+  return pieces.map((piece, i) => {
+    if (i % 2 === 0) return piece;
+    if (piece.startsWith('**')) return <b key={i}>{piece.slice(2, -2)}</b>;
+    if (piece.startsWith('==')) return <mark key={i}>{piece.slice(2, -2)}</mark>;
+    if (piece.startsWith('`')) return <code key={i}>{piece.slice(1, -1)}</code>;
+    return <i key={i}>{piece.slice(1, -1)}</i>;
+  });
+}
+const isRule = (line: Line) => line.mark === '' && /^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line.text);
 /** The line to pick up from: the first box not ticked, else the first line left open, else the last one written. */
 function jumpIndex(lines: Line[]): number {
   const open = lines.findIndex((l) => lineKind(l.mark) === 'check');
@@ -421,8 +449,9 @@ function Doc({ value, onChange, focusJump, lit }: { value: string; onChange: (te
     <div className="srp-doc">
       {lines.map((line, index) => {
         const kind = lineKind(line.mark);
+        const rich = kind === 'p' || kind === 'bullet' || kind === 'num' || kind === 'check' || kind === 'done' ? inlineMarks(line.text) : null;
         return (
-          <div key={index} className={`srp-line ${kind}${index === here ? ' here' : ''}${isAside(line.text) ? ' dim' : ''}${kind === 'p' && line.text === '' && lines.length > 1 ? ' blank' : ''}`}>
+          <div key={index} className={`srp-line ${kind}${index === here ? ' here' : ''}${isAside(line.text) ? ' dim' : ''}${kind === 'p' && line.text === '' && lines.length > 1 ? ' blank' : ''}${rich !== null ? ' rich' : ''}${isRule(line) ? ' rule' : ''}`}>
             {kind === 'check' || kind === 'done' ? (
               <button type="button" className="tick" aria-label={kind === 'done' ? 'Untick' : 'Tick'} aria-pressed={kind === 'done'} onClick={() => tick(index)}>✓</button>
             ) : (
@@ -438,6 +467,7 @@ function Doc({ value, onChange, focusJump, lit }: { value: string; onChange: (te
               onChange={(e) => edit(index, e.target.value)}
               onKeyDown={(e) => onKey(index, e)}
             />
+            {rich !== null && <div className="shown" aria-hidden="true">{rich}</div>}
           </div>
         );
       })}

@@ -8,7 +8,7 @@
 // - `work` is the started work itself: the drafted reply, the outline, the problem set up. It lives only here, in
 //   the journal. OpenClaw creates nothing anywhere else.
 // Plain data and no DOM, so the brief's validation, the prompt and the tests all read it.
-import {type IconName, type Part, type PartKind, type ShapeId, iconNames, parsePart, partKinds, partLine, shapes} from './catalog.ts'
+import {type IconName, type Part, type PartKind, type ShapeId, iconNames, isEmptyPart, parsePart, partKinds, partLine, shapes} from './catalog.ts'
 import {type WorkBlock, parseBlocks, workPrompt} from './work.ts'
 
 /** The started work: blocks composed for this task (work.ts), and where it gets finished. */
@@ -88,6 +88,7 @@ export function parseHook(raw: unknown, fallbackIcon: IconName = 'doc'): {hook: 
     if (read.part === null) problems.push(read.problem)
     else if (!hookPartKinds.includes(read.part.kind)) problems.push(`${read.part.kind} dropped, a hook does not carry it`)
     else if (isBareNumber(read.part)) problems.push(`${read.part.kind} dropped, it does not say what it counts`)
+    else if (isEmptyPart(read.part)) problems.push(`${read.part.kind} dropped, it has nothing in it`)
     else if (parts.length >= hookLimits.parts) problems.push(`${read.part.kind} dropped, a hook carries at most ${hookLimits.parts} parts`)
     else {
       // The page decides what shows at which level.

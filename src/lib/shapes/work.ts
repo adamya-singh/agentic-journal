@@ -138,11 +138,16 @@ export function parseBlocks(raw: unknown): {blocks: WorkBlock[], problems: strin
     const block = seen.has(read.block.id) ? {...read.block, id: `${read.block.id}-${index}`} : read.block
     size += JSON.stringify(block).length
     if (size > workLimits.total) { problems.push(`${block.kind} block dropped, the work is over ${workLimits.total} characters`); break }
+    if (hasSlot(block)) problems.push(`${block.kind} block has a fill-in slot like "[Insert …]": write the real thing or leave the line open`)
     seen.add(block.id)
     blocks.push(block)
   }
   return {blocks, problems}
 }
+
+// A bracketed blank for him to fill in ("[Insert quote]", "[Author]", "Session [X]"): template text, not work.
+const SLOT = /\[(?:insert|your|author|year|x|n|specific|topic|name|date|title|tbd)\b[^\]\n]{0,80}\](?!\()/i
+export const hasSlot = (block: WorkBlock) => SLOT.test(JSON.stringify(block).replace(/[-*]\s+\[[ xX]\]/g, ''))
 
 /** A block he is meant to act in: where "jump in" points. Pictures, readings and timers are context. */
 export const isActive = (block: WorkBlock) => block.kind !== 'part' && block.kind !== 'reading' && block.kind !== 'timer'
@@ -164,6 +169,7 @@ export function workPrompt(): string {
     '- timer (label, seconds, steps?): a rehearsal, a workout or a timed sprint, with its steps.',
     '- reading (title, by?, href?, excerpt?): the thing to read, with where to open it. Follow it with a doc for his notes.',
     '- part (part): one read-only picture from the parts above, e.g. the steps to the deadline or a few facts.',
+    'No fill-in slots. Never write a bracketed blank such as [Insert quote], [Author], [Year], [topic] or "Session [X]", and never a line that only describes what should go there. Where you read the real thing (the reading\'s title and author, the session, the example), write it. Where only he can supply the words, end the line with a colon and leave it open.',
     'Every word in a block must be true to what you read. Never invent a problem, a quote, a field, a slide or an option, and never fill a block with placeholder text. If you could not read the real thing (the problem set, the form, the thread), do not send that block: say what you could not reach in a flag instead.',
   ].join('\n')
 }

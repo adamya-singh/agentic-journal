@@ -4,7 +4,7 @@
 import type {ActionCard} from '@/lib/action-cards/types'
 import type {TaskBrief, BriefKind} from '@/lib/task-brief'
 import {GROUP_OTHER} from '@/lib/horizon'
-import type {IconName, Part, ShapeId} from '@/lib/shapes/catalog'
+import {type IconName, type Part, type ShapeId, isEmptyPart} from '@/lib/shapes/catalog'
 import {iconForKind} from '@/lib/shapes/hook'
 
 export type FormSpec = {
@@ -52,7 +52,7 @@ export function formSpecFor(brief: TaskBrief): FormSpec {
   if (hook !== null) {
     return {
       ...base, shape: hook.shape, icon: hook.icon, kind: kindLine(brief.group, hook.kind), name: hook.name, next: hook.next,
-      what: hook.what, did: hook.did, say: hook.say, parts: hook.parts, ready: true, hasWork: hook.work !== null,
+      what: hook.what, did: hook.did, say: hook.say, parts: hook.parts.filter(part => !isEmptyPart(part)), ready: true, hasWork: hook.work !== null,
     }
   }
   // No hook yet: only what the journal really has. An exam's stages are the tasks to clear before it; steps are

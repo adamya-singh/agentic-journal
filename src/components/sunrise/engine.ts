@@ -1022,7 +1022,13 @@ export class SunriseEngine {
           const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
           const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
           const {width, height} = this.formBox(thing, rowSize[1])
-          pillBoxes.set(thing, {left: cx + vx / r * push - width / 2, top: cy + vy / r * push - height / 2, width, height})
+          // A place that lands on the words or the capture box goes further out along its ray until it is clear
+          // of them: off camera at first, and there when he moves out to it.
+          const boxAt = (reach: number) => ({left: cx + vx / r * reach - width / 2, top: cy + vy / r * reach - height / 2, width, height})
+          const onCorner = (box: Box) => cornerBoxes.some(corner => box.left < corner.right + 14 && box.left + box.width > corner.left - 14 && box.top < corner.bottom + 14 && box.top + box.height > corner.top - 14)
+          let reach = push
+          while (reach < push + 900 && onCorner(boxAt(reach))) reach += 16
+          pillBoxes.set(thing, boxAt(reach))
         })
       } else if (boxed && !this.farSide && this.subject === null) {
         // Nothing is out there today; the rings still are, so the sky reads as going on.

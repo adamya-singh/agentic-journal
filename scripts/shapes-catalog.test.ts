@@ -85,6 +85,10 @@ test('nothing OpenClaw sends breaks a hook: it is cut to what the page can draw,
   const bare = parseHook({...hook, parts: [{kind: 'ring', value: 0.6}, {kind: 'value', value: '3'}, {kind: 'ring', value: 0.4, label: '2/5 problems', of: 5}, {kind: 'value', value: '7', unit: 'days left'}]})
   assert.deepStrictEqual(bare.hook?.parts, [{kind: 'ring', value: 0.4, label: '2/5 problems', of: 5}, {kind: 'value', value: '7', unit: 'days left'}])
   assert.deepStrictEqual(bare.problems.length, 2)
+  // Stages sent as objects are read as "Label · date"; a list with nothing in it is dropped, not drawn empty.
+  const staged = parseHook({...hook, parts: [{kind: 'steps', items: [{label: 'Sheet', date: 'Nov 9'}, {name: 'Slides', when: 'Sat'}, 'Present · Mon'], at: 1}, {kind: 'steps', items: [], at: 0}, {kind: 'pairs', items: []}]})
+  assert.deepStrictEqual(staged.hook?.parts, [{kind: 'steps', items: ['Sheet · Nov 9', 'Slides · Sat', 'Present · Mon'], at: 1}])
+  assert.strictEqual(staged.problems.filter(problem => problem.includes('nothing in it')).length, 2)
   assert.deepStrictEqual(parseHook({...hook, name: ''}).hook, null)
   assert.deepStrictEqual(parseHook({...hook, what: undefined}).hook, null)
   assert.deepStrictEqual(parseHook(null), {hook: null, problems: []})

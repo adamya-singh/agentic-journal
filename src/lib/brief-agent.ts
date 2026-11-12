@@ -51,8 +51,8 @@ export interface AgentRecord {
   promptVersion?: number;      // BRIEF_PROMPT_VERSION of the prompt that produced `layer`; absent means 1
 }
 
-/** Raised when the prompt asks OpenClaw for something new, so finished briefs are filled again. 2: the hook. */
-export const BRIEF_PROMPT_VERSION = 2;
+/** Raised when the prompt asks OpenClaw for something new, so finished briefs are filled again. 2: the hook. 3: no fill-in slots. */
+export const BRIEF_PROMPT_VERSION = 3;
 
 export const REFILL_AFTER_MS = 3 * 864e5;        // Canvas pages and inboxes change; look again after 3 days
 export const RETRY_FAILED_AFTER_MS = 60 * 60_000;
