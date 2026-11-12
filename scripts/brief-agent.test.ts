@@ -136,6 +136,7 @@ test('a task is filled when new, changed, stale, stuck or due a retry', () => {
   assert.equal(needsFill({ ...base, promptVersion: undefined }, fp, later(60_000)), true);
   assert.equal(needsFill({ ...base, promptVersion: 1 }, fp, later(60_000)), true);
   assert.equal(needsFill({ ...base, promptVersion: 1, status: 'failed', failures: 3 }, fp, later(2 * 3600_000)), false);
+  assert.equal(needsFill({ ...base, promptVersion: 1, status: 'failed', failures: 3 }, fp, later(25 * 3600_000)), true);
   assert.equal(needsFill(undefined, fp, now), true);
   assert.equal(needsFill(base, fp, later(60_000)), false);
   assert.equal(needsFill(base, 'other', later(60_000)), true);

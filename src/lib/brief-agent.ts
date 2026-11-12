@@ -57,6 +57,7 @@ export const BRIEF_PROMPT_VERSION = 3;
 export const REFILL_AFTER_MS = 3 * 864e5;        // Canvas pages and inboxes change; look again after 3 days
 export const RETRY_FAILED_AFTER_MS = 60 * 60_000;
 export const MAX_FAILURES = 3;
+export const REST_AFTER_FAILURES_MS = 864e5;       // after MAX_FAILURES in a row, look again a day later
 export const RUNNING_TIMEOUT_MS = 15 * 60_000;
 
 /** Changes when the task itself changes, so an edited task gets a fresh look. */
@@ -74,7 +75,10 @@ export function needsFill(record: AgentRecord | undefined, fingerprint: string, 
   if (record.status === 'queued') return false;
   if (record.status === 'running') return now.getTime() - Date.parse(record.startedAt ?? record.queuedAt) > RUNNING_TIMEOUT_MS;
   if (record.status === 'failed') {
-    return record.failures < MAX_FAILURES && now.getTime() - Date.parse(record.finishedAt ?? record.queuedAt) > RETRY_FAILED_AFTER_MS;
+    // After MAX_FAILURES in a row it rests for a day and is then tried again: OpenClaw being unreachable for an
+    // afternoon should not leave a task unfilled for good.
+    const since = now.getTime() - Date.parse(record.finishedAt ?? record.queuedAt);
+    return since > (record.failures < MAX_FAILURES ? RETRY_FAILED_AFTER_MS : REST_AFTER_FAILURES_MS);
   }
   if ((record.promptVersion ?? 1) < BRIEF_PROMPT_VERSION) return true;
   return now.getTime() - Date.parse(record.finishedAt ?? record.queuedAt) > REFILL_AFTER_MS;
