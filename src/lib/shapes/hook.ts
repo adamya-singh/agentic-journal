@@ -9,10 +9,10 @@
 //   the journal. OpenClaw creates nothing anywhere else.
 // Plain data and no DOM, so the brief's validation, the prompt and the tests all read it.
 import {type IconName, type Part, type PartKind, type ShapeId, iconNames, parsePart, partKinds, partLine, shapes} from './catalog.ts'
+import {type WorkBlock, parseBlocks, workPrompt} from './work.ts'
 
-export const workFormats = ['draft', 'outline', 'checklist', 'text'] as const
-export type WorkFormat = typeof workFormats[number]
-export type HookWork = {format: WorkFormat, title: string, body: string, href?: string}
+/** The started work: blocks composed for this task (work.ts), and where it gets finished. */
+export type HookWork = {title: string, href?: string, blocks: WorkBlock[]}
 export type TaskHook = {
   shape: ShapeId
   icon: IconName
@@ -40,7 +40,12 @@ const kindIcons: Record<string, IconName> = {
 }
 export const iconForKind = (kind: string): IconName => kindIcons[kind] ?? 'doc'
 
-export const hookLimits = {kind: 24, name: 60, next: 60, what: 240, did: 4, didText: 80, ask: 60, why: 120, parts: 6, title: 80, body: 4000} as const
+// A number with nothing saying what it counts means nothing to him.
+const isBareNumber = (part: Part) =>
+  (part.kind === 'value' && part.unit === undefined && part.label === undefined)
+  || ((part.kind === 'ring' || part.kind === 'meter') && (part.label === undefined || part.label.trim() === ''))
+
+export const hookLimits = {kind: 24, name: 60, next: 60, what: 240, did: 4, didText: 80, ask: 60, why: 120, parts: 6, title: 80} as const
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const oneOf = <T extends string>(value: unknown, allowed: readonly T[]): T | null => allowed.find(entry => entry === value) ?? null
@@ -82,6 +87,7 @@ export function parseHook(raw: unknown, fallbackIcon: IconName = 'doc'): {hook: 
     const read = parsePart(rawPart)
     if (read.part === null) problems.push(read.problem)
     else if (!hookPartKinds.includes(read.part.kind)) problems.push(`${read.part.kind} dropped, a hook does not carry it`)
+    else if (isBareNumber(read.part)) problems.push(`${read.part.kind} dropped, it does not say what it counts`)
     else if (parts.length >= hookLimits.parts) problems.push(`${read.part.kind} dropped, a hook carries at most ${hookLimits.parts} parts`)
     else {
       // The page decides what shows at which level.
@@ -91,22 +97,21 @@ export function parseHook(raw: unknown, fallbackIcon: IconName = 'doc'): {hook: 
     }
   }
 
+  // The work is its blocks. A reply that sends plain text as work.body gets it as one document.
   let work: HookWork | null = null
   const rawWork = raw['work']
-  if (isRecord(rawWork) && typeof rawWork['body'] === 'string' && rawWork['body'].trim() !== '') {
-    let body = rawWork['body'].replace(/\r\n/g, '\n').trim()
-    if (body.length > hookLimits.body) {
-      problems.push(`the work was cut at ${hookLimits.body} characters`)
-      body = body.slice(0, hookLimits.body)
-    }
-    work = {
-      format: oneOf(rawWork['format'], workFormats) ?? 'text',
-      title: clip(rawWork['title'], hookLimits.title) ?? name,
-      body,
-      ...isHttp(rawWork['href']) ? {href: rawWork['href'].trim()} : {},
+  if (isRecord(rawWork)) {
+    const sent = Array.isArray(rawWork['blocks']) ? rawWork['blocks']
+      : typeof rawWork['body'] === 'string' && rawWork['body'].trim() !== '' ? [{kind: 'doc', id: 'doc', body: rawWork['body']}] : []
+    const read = parseBlocks(sent)
+    problems.push(...read.problems)
+    if (read.blocks.length > 0) {
+      work = {title: clip(rawWork['title'], hookLimits.title) ?? name, ...isHttp(rawWork['href']) ? {href: rawWork['href'].trim()} : {}, blocks: read.blocks}
+    } else {
+      problems.push('the work dropped, it has no blocks')
     }
   } else if (rawWork !== null && rawWork !== undefined) {
-    problems.push('the work dropped, it has no body')
+    problems.push('the work dropped, it is not an object')
   }
 
   return {
@@ -123,10 +128,10 @@ export function parseHook(raw: unknown, fallbackIcon: IconName = 'doc'): {hook: 
 
 /** The hook as the text OpenClaw reads in its brief prompt. Built from the catalog's tables, so it can't drift. */
 export function hookPrompt(): string {
-  const {name, next, what, did, didText, ask, why, parts, kind, title, body} = hookLimits
+  const {name, next, what, did, didText, ask, why, parts, kind} = hookLimits
   return [
     'The hook. Do the first real piece of the task yourself, then leave it at the exact place where he takes over, so that opening the task drops him into work that is already moving. Examples: the reply drafted and ready to review; an essay outlined with its opening sentence written; the first homework problem copied out with its first step set up; a form\'s answers filled from what you can read, with the ones only he can answer listed.',
-    'The started work exists ONLY inside this reply, in hook.work.body. Do not create it anywhere else: no email drafts, no documents, no files, no form submissions. In did, list only reading and preparing you actually did.',
+    'The started work exists ONLY inside this reply, in hook.work. Do not create it anywhere else: no email drafts, no documents, no files, no form submissions. In did, list only reading and preparing you actually did.',
     'If you cannot start it for real, still return a hook with the next step and work: null. Never invent facts, quotes, numbers or people for it.',
     '',
     '"hook": {',
@@ -139,7 +144,7 @@ export function hookPrompt(): string {
     `  "did": up to ${did} things you did to get it ready, each at most ${didText} characters, past tense ("Read the brief on Canvas"),`,
     `  "say": [the ask in a few words, at most ${ask} characters ("Start Homework 3."), why it is easy now, at most ${why} characters ("Problem 1 is set up with its data.")],`,
     `  "parts": up to ${parts} parts that picture the work (below). Put the one that makes it recognisable first.`,
-    `  "work": null | {"format": "${workFormats.join('|')}", "title": at most ${title} characters, "body": the started work as markdown, at most ${body} characters (a checklist is "- [ ]" lines), "href": optional link to where it gets finished or submitted}`,
+    `  ${workPrompt().split('\n').join('\n  ')}`,
     '}',
     '',
     'Shapes:',
@@ -148,6 +153,11 @@ export function hookPrompt(): string {
     'Parts (each is {"kind": "...", ...its properties}; "?" marks an optional property; fractions are 0 to 1):',
     ...hookPartKinds.map(partLine),
     '- rows items are {text, detail?, done?, hot?}; pairs items are {key, value}; timeline marks are {at, to?, label}; segments items are {label, value}; dots items are {label, value}.',
-    'Give at most one part of each kind. Every part must be true to what you read.',
+    'Give at most one part of each kind.',
+    'Every part must come from something real about THIS task that you read: the assignment page, the email, his notes, his other tasks, the calendar. Rules:',
+    '- steps (stages) are the actual pieces of this task or the actual tasks that lead to it, in order, with their real dates ("Sheet · Nov 9", "Slides · Sat", "Present · Mon"). Never generic stages like Outline, Draft, Review.',
+    '- a value, ring or meter is a real count he would recognise: problems in the assignment, fields in the form, days until it is due, points it is worth. Say what it counts in its unit or label. Never a fraction or number you chose to make the picture look full.',
+    '- rows are real items: the problems, the slides, the questions, the things to bring. A quote is his own words or the source\'s, word for word.',
+    '- if you have nothing real for a picture, send no parts. An honest plain form is right; an invented one is wrong.',
   ].join('\n')
 }

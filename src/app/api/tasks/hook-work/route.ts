@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { nextWorkRecord, resolveWork, WORK_BODY_MAX } from '@/lib/hook-work';
+import { parseBlocks } from '@/lib/shapes/work';
 import { loadTaskBrief, openTaskRefs } from '../brief/build';
 import { mutateHookWorkRecords, readHookWorkRecord } from './store';
 
@@ -28,19 +29,19 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/tasks/hook-work
  * Body: { taskId, action: 'open' }                      he opened the task: it is marked started
- *       { taskId, action: 'save', body, baseHash? }     his text for the work
+ *       { taskId, action: 'save', blocks, baseHash? }   his version of the work's blocks
  *       { taskId, action: 'reset' }                     drop his text and take OpenClaw's version
  * Everything stays in the journal: nothing is sent or created anywhere else.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { taskId, action, body, baseHash } = await request.json();
+    const { taskId, action, blocks, baseHash } = await request.json();
     if (!taskId || typeof taskId !== 'string') return NextResponse.json({ success: false, error: 'taskId is required' }, { status: 400 });
     if (action !== 'open' && action !== 'save' && action !== 'reset') {
       return NextResponse.json({ success: false, error: 'action must be "open", "save" or "reset"' }, { status: 400 });
     }
-    if (action === 'save' && (typeof body !== 'string' || body.length > WORK_BODY_MAX)) {
-      return NextResponse.json({ success: false, error: `body must be text of at most ${WORK_BODY_MAX} characters` }, { status: 400 });
+    if (action === 'save' && (!Array.isArray(blocks) || JSON.stringify(blocks).length > WORK_BODY_MAX)) {
+      return NextResponse.json({ success: false, error: `blocks must be a list of at most ${WORK_BODY_MAX} characters` }, { status: 400 });
     }
     const ref = openTaskRefs().find((r) => r.task.id === taskId);
     if (!ref) return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
@@ -48,7 +49,7 @@ export async function POST(request: NextRequest) {
     mutateHookWorkRecords((records) => {
       records[taskId] = nextWorkRecord(
         records[taskId],
-        { taskId, ...(action === 'save' ? { body, baseHash: typeof baseHash === 'string' ? baseHash : null } : {}), reset: action === 'reset' },
+        { taskId, ...(action === 'save' ? { blocks: parseBlocks(blocks).blocks, baseHash: typeof baseHash === 'string' ? baseHash : null } : {}), reset: action === 'reset' },
         new Date()
       );
     });

@@ -55,11 +55,21 @@ export function formSpecFor(brief: TaskBrief): FormSpec {
       what: hook.what, did: hook.did, say: hook.say, parts: hook.parts, ready: true, hasWork: hook.work !== null,
     }
   }
-  // No hook yet: what the rules know. The steps become rows, the facts pairs.
+  // No hook yet: only what the journal really has. An exam's stages are the tasks to clear before it; steps are
+  // the task's own steps; a number is the days it has left. Nothing is made up to fill a gap.
   const name = clip(plainTitle(brief.title), 60)
   const open = brief.steps.filter(step => !step.done)
   const next = clip(brief.next?.label ?? open[0]?.text ?? '', 60)
   const parts: Part[] = []
+  const daysLeft = brief.when.due === null ? null : Math.ceil((Date.parse(brief.when.due) - Date.parse(brief.generatedAt)) / 864e5)
+  const counted = (brief.kind === 'exam' || brief.kind === 'assessment') && daysLeft !== null && daysLeft >= 0
+  if (counted) parts.push({kind: 'value', value: String(daysLeft), unit: daysLeft === 1 ? 'day left' : 'days left'})
+  // The runway to an exam: what is still to clear before it, then the exam itself.
+  const runway = brief.runway ? brief.related.filter(related => related.state !== 'done' && related.rel !== 'after') : []
+  if (runway.length >= 2) {
+    const shown = runway.slice(-4)
+    parts.push({kind: 'steps', items: shown.map(related => clip(`${related.short.replace(/[.…]+$/, '')} · ${related.day}`, 40)), at: 0})
+  }
   if (brief.steps.length >= 2) {
     parts.push({kind: 'rows', check: true, items: brief.steps.slice(0, 5).map(step => ({text: clip(step.text, 80), ...step.done ? {done: true} : {}}))})
   }
@@ -68,8 +78,10 @@ export function formSpecFor(brief: TaskBrief): FormSpec {
   const when = brief.when.due === null ? '' : brief.when.left?.endsWith('over') ? `It was due ${brief.when.day}.` : `It is due ${brief.when.day}.`
   const what = clip(brief.stakes ?? [capital(plainTitle(brief.title)).replace(/[.!?]*$/, '.'), when].filter(Boolean).join(' '), 240)
   return {
-    ...base, shape: brief.steps.length >= 2 ? 'list' : 'pill', icon: iconForKind(brief.kind),
-    kind: kindLine(brief.group, kindWords[brief.kind]), name, next, what, did: [],
+    ...base, shape: counted ? 'orb' : runway.length >= 2 ? 'band' : brief.steps.length >= 2 ? 'list' : 'pill', icon: iconForKind(brief.kind),
+    kind: kindLine(brief.group, kindWords[brief.kind]), name, next, what,
+    // What OpenClaw has really done so far: what it read when it filled the brief.
+    did: brief.agent?.status === 'done' && brief.agent.summary ? [clip(brief.agent.summary, 80)] : [],
     say: [name.replace(/[.!?…]*$/, '.'), next !== '' ? next.replace(/[.!?…]*$/, '.') : when],
     parts, ready: false, hasWork: false,
   }

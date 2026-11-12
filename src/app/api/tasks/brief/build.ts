@@ -4,7 +4,6 @@ import type { Task } from '@/lib/types';
 import { journalDataDir } from '@/lib/backend-data';
 import { buildTaskBrief, type BriefTaskRef, type JournalTaskEntry, type TaskBrief } from '@/lib/task-brief';
 import { mergeAgentLayer } from '@/lib/brief-agent';
-import { demoHook } from '@/lib/sunrise/demo-hooks';
 import { readCompletedTaskIndex, readGeneralTasks } from '../today/today-store-utils';
 import { readJobListings } from '../../jobs/job-store-utils';
 import { readJobApplicationsStore } from '../../jobs/application-store-utils';
@@ -102,17 +101,12 @@ export function loadRuleBrief(taskId: string, now = new Date(), tasks = openTask
   return loadRuleBriefs([taskId], now, tasks).get(taskId) ?? null;
 }
 
-// SUNRISE_DEMO_HOOKS=1 (never in production) stands a hook in for every task OpenClaw has not started, made from
-// the task's own brief, so Sunrise can be looked at where OpenClaw is not installed (lib/sunrise/demo-hooks.ts).
-const demoHooks = () => process.env.SUNRISE_DEMO_HOOKS === '1' && process.env.NODE_ENV !== 'production';
-const withDemoHook = (brief: TaskBrief): TaskBrief => (demoHooks() && !brief.hook ? { ...brief, hook: demoHook(brief) } : brief);
-
 /** The brief as the Horizon shows it: the rules' brief with OpenClaw's layer merged in. */
 export function loadTaskBrief(taskId: string, now = new Date()): TaskBrief | null {
   const tasks = openTaskRefs();
   const brief = loadRuleBrief(taskId, now, tasks);
   if (!brief) return null;
-  return withDemoHook(mergeAgentLayer(brief, readAgentRecord(taskId), { tasks: new Map(tasks.map((r) => [r.task.id, r])), now }));
+  return mergeAgentLayer(brief, readAgentRecord(taskId), { tasks: new Map(tasks.map((r) => [r.task.id, r])), now });
 }
 
 /** Several briefs as the Horizon shows them, by task id: one read of everything, however many tasks. */
@@ -121,6 +115,6 @@ export function loadTaskBriefs(taskIds: string[], now = new Date()): Map<string,
   const records = readAgentRecords();
   const ctx = { tasks: new Map(tasks.map((r) => [r.task.id, r])), now };
   const out = new Map<string, TaskBrief>();
-  for (const [taskId, brief] of loadRuleBriefs(taskIds, now, tasks)) out.set(taskId, withDemoHook(mergeAgentLayer(brief, records[taskId], ctx)));
+  for (const [taskId, brief] of loadRuleBriefs(taskIds, now, tasks)) out.set(taskId, mergeAgentLayer(brief, records[taskId], ctx));
   return out;
 }

@@ -12,6 +12,7 @@ import {
   type AgentRecord,
 } from '../src/lib/brief-agent';
 import { nextWorkRecord, resolveWork, workHash } from '../src/lib/hook-work';
+import type { WorkBlock } from '../src/lib/shapes/work';
 
 const now = new Date(2026, 9, 8, 12, 0);   // Thu Oct 8 2026
 const t = (id: string, text: string, extra: Partial<Task> = {}): BriefTaskRef => ({ task: { id, text, ...extra }, listType: 'have-to-do' });
@@ -163,7 +164,7 @@ const hook = {
   did: ['Read the assignment on Canvas', 'Read both linked articles', 'Outlined the reflection'],
   say: ['Start the Fair Face reflection.', 'It is outlined and the opening sentence is written.'],
   parts: [{ kind: 'rows', check: true, items: [{ text: 'Read the two articles', done: true }, { text: 'Finish the opening paragraph' }, { text: 'Write the evidence section' }] }],
-  work: { format: 'outline', title: 'Fair Face reflection', body: '# Fair Face\n\nFacial recognition fails unevenly, and' },
+  work: { title: 'Fair Face reflection', blocks: [{ kind: 'doc', id: 'draft', body: '# Fair Face\n\nFacial recognition fails unevenly, and' }] },
 };
 
 test('a hook rides in the layer and onto the brief; a bad hook is dropped and the brief still lands', () => {
@@ -205,11 +206,12 @@ test('the prompt asks for the hook, keeps OpenClaw read only outside the journal
   assert.match(first, /"hook":\{/);
   assert.doesNotMatch(first, /The hook from your last look/);
   const again = buildBriefAgentPrompt({
-    brief, task: tasks[0].task, otherTasks: [], now, previousHook: good(), userWork: 'Facial recognition fails unevenly, and that matters because',
+    brief, task: tasks[0].task, otherTasks: [], now, previousHook: good(),
+    userWork: JSON.stringify([{ kind: 'doc', id: 'draft', body: 'Facial recognition fails unevenly, and that matters because' }]),
   });
   assert.match(again, /The hook from your last look/);
   assert.match(again, /Write the Fair Face reflection/);
-  assert.match(again, /He has already written on top of your started work/);
+  assert.match(again, /He has already worked in what you started/);
   assert.match(again, /that matters because/);
 });
 function good() {
@@ -218,29 +220,31 @@ function good() {
   return result.layer.hook;
 }
 
-test('his text for the started work wins, and OpenClaw’s newer version is offered beside it', () => {
-  const work = { format: 'draft' as const, title: 'Reply', body: 'Thursday works.' };
+test('his version of the started work wins, and OpenClaw’s newer one is offered beside it', () => {
+  const letter = (body: string): WorkBlock[] => [{ kind: 'letter', id: 'reply', to: 'Michelle', subject: 'Re: intro call', body }];
+  const work = { title: 'Reply', blocks: letter('Thursday works.') };
   assert.equal(resolveWork(null, undefined, 'Task'), null);
-  // Untouched: OpenClaw's text, and the hash to send back with the first save.
+  // Untouched: OpenClaw's blocks, and the hash to send back with the first save.
   assert.deepEqual(resolveWork(work, undefined, 'Task'), {
-    title: 'Reply', format: 'draft', body: 'Thursday works.', href: null, edited: false, baseHash: workHash('Thursday works.'), newer: null, startedAt: null,
+    title: 'Reply', href: null, blocks: work.blocks, edited: false, baseHash: workHash(work.blocks), newer: null, startedAt: null,
   });
-  // Opening the task marks it started without making the text his.
+  // Opening the task marks it started without making the work his.
   const opened = nextWorkRecord(undefined, { taskId: 'ff' }, now);
   assert.deepEqual([opened.body, opened.startedAt], [null, now.toISOString()]);
   assert.equal(resolveWork(work, opened, 'Task')?.edited, false);
-  // He edits it: his text shows, and a later save keeps when he started.
+  // He edits it: his version shows, and a later save keeps when he started.
   const later = new Date(now.getTime() + 60_000);
-  const mine = nextWorkRecord(opened, { taskId: 'ff', body: 'Thursday at 1 works for me.', baseHash: workHash(work.body) }, later);
+  const mine = nextWorkRecord(opened, { taskId: 'ff', blocks: letter('Thursday at 1 works for me.'), baseHash: workHash(work.blocks) }, later);
   assert.deepEqual([mine.startedAt, mine.updatedAt], [now.toISOString(), later.toISOString()]);
   const shown = resolveWork(work, mine, 'Task')!;
-  assert.deepEqual([shown.body, shown.edited, shown.newer], ['Thursday at 1 works for me.', true, null]);
-  // OpenClaw refills with a different draft: his text still shows, the new draft is offered.
-  const refilled = resolveWork({ ...work, body: 'Thursday at 1 PM is great.' }, mine, 'Task')!;
-  assert.deepEqual([refilled.body, refilled.newer], ['Thursday at 1 works for me.', 'Thursday at 1 PM is great.']);
-  // Taking OpenClaw's version drops his text and keeps the started mark.
+  assert.deepEqual([shown.blocks, shown.edited, shown.newer], [letter('Thursday at 1 works for me.'), true, null]);
+  // OpenClaw refills with a different draft: his still shows, the new one is offered.
+  const refilled = resolveWork({ ...work, blocks: letter('Thursday at 1 PM is great.') }, mine, 'Task')!;
+  assert.deepEqual([refilled.blocks, refilled.newer], [letter('Thursday at 1 works for me.'), letter('Thursday at 1 PM is great.')]);
+  // Taking OpenClaw's version drops his and keeps the started mark.
   const reset = nextWorkRecord(mine, { taskId: 'ff', reset: true }, later);
   assert.deepEqual([reset.body, reset.startedAt], [null, now.toISOString()]);
-  // The task has no hook any more but he wrote something: it is still shown.
-  assert.equal(resolveWork(null, mine, 'Task')?.body, 'Thursday at 1 works for me.');
+  // The task has no hook any more but he wrote something: it is still shown. A record that cannot be read is not.
+  assert.deepEqual(resolveWork(null, mine, 'Task')?.blocks, letter('Thursday at 1 works for me.'));
+  assert.equal(resolveWork(null, { ...mine, body: '{not json' }, 'Task'), null);
 });

@@ -269,7 +269,7 @@ export function buildBriefAgentPrompt(input: {
   otherTasks: { id: string; text: string; due: string | null }[];
   now: Date;
   previousHook?: TaskHook | null;   // the hook from the last fill, so a refill keeps its name and shape unless something changed
-  userWork?: string | null;         // what Adamya has written on top of the started work
+  userWork?: string | null;         // the work's blocks as Adamya has left them, as JSON
 }): string {
   const { brief, task } = input;
   const ruleBrief = {
@@ -308,8 +308,8 @@ ${input.previousHook ? `
 The hook from your last look (keep its name, kind and shape unless the task changed; move the work forward):
 ${JSON.stringify(input.previousHook)}
 ` : ''}${input.userWork?.trim() ? `
-He has already written on top of your started work. Do not redo what he wrote; start from it and make next the step after it:
-${input.userWork.trim().slice(0, 4000)}
+He has already worked in what you started. These are the blocks as he left them. Keep what he wrote; start from it and make next the step after it:
+${input.userWork.trim().slice(0, 6000)}
 ` : ''}
 Reply with ONLY one JSON object, no prose, no code fence:
 {"summary":"<one line: what you read>","stakes":null|"<what it is and why it matters>","where":null|"<room / time window>",

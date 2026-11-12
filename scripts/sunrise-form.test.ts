@@ -5,7 +5,6 @@ import type {Task} from '../src/lib/types.ts'
 import {buildTaskBrief, type BriefTaskRef} from '../src/lib/task-brief.ts'
 import {parseHook} from '../src/lib/shapes/hook.ts'
 import {thresholds} from '../src/lib/sunrise/attention-reference.ts'
-import {demoHook} from '../src/lib/sunrise/demo-hooks.ts'
 import type {ActionCard} from '../src/lib/action-cards/types.ts'
 import {cardFormSpec, cardSalience, formSpecFor, kindLine} from '../src/lib/sunrise/form-spec.ts'
 import {salienceOf, salienceUnits} from '../src/lib/sunrise/salience.ts'
@@ -29,13 +28,16 @@ test('with no hook yet, a form still says what the task belongs to, its name and
   assert.ok(!lease.kind.includes('·'))
   assert.ok(!lease.what.includes('due'))
   // The rules' steps become rows, and the first open one is the next step when the rules name none.
+  // An exam's number is the days it really has left, and its rows are the task's own steps.
   const midterm = formSpecFor(briefOf('mid'))
-  assert.deepStrictEqual(midterm.kind, 'Regression · exam')
-  const brief = briefOf('mid')
-  if (brief.steps.length >= 2) {
-    assert.deepStrictEqual(midterm.shape, 'list')
-    assert.deepStrictEqual(midterm.parts[0]?.kind, 'rows')
-  }
+  assert.deepStrictEqual([midterm.kind, midterm.shape], ['Regression · exam', 'orb'])
+  assert.deepStrictEqual(midterm.parts[0], {kind: 'value', value: '5', unit: 'days left'})
+  const rows = midterm.parts.find(part => part.kind === 'rows')
+  assert.deepStrictEqual(rows?.kind === 'rows' && rows.items.map(row => [row.text, row.done ?? false]), briefOf('mid').steps.slice(0, 5).map(step => [step.text, step.done]))
+  // Nothing is said about OpenClaw until it has really looked; then what it read is what it did.
+  assert.deepStrictEqual(midterm.did, [])
+  const looked = formSpecFor({...briefOf('ff'), agent: {status: 'done', finishedAt: now.toISOString(), summary: 'Read the Fair Face assignment on Canvas.', error: null}})
+  assert.deepStrictEqual(looked.did, ['Read the Fair Face assignment on Canvas.'])
   assert.deepStrictEqual(kindLine('Other', 'task'), 'Task')
   assert.deepStrictEqual(kindLine('Jobs', 'email'), 'Jobs · email')
 })
@@ -54,15 +56,6 @@ test('with a hook, the form is the hook, under the task’s subject', () => {
   // A task OpenClaw is working on says so.
   const filling = formSpecFor({...briefOf('ff'), agent: {status: 'running', finishedAt: null, summary: null, error: null}})
   assert.deepStrictEqual([filling.filling, filling.parts.at(-1)], [true, {kind: 'line', text: 'OpenClaw is getting this ready.'}])
-})
-
-test('a demo hook is a hook the parser accepts unchanged, for every kind of task', () => {
-  for (const id of ['ff', 'mid', 'lease']) {
-    const hook = demoHook(briefOf(id))
-    const read = parseHook(JSON.parse(JSON.stringify(hook)))
-    assert.deepStrictEqual(read.problems, [], id)
-    assert.deepStrictEqual(read.hook, JSON.parse(JSON.stringify(hook)), id)
-  }
 })
 
 test('salience follows the clock, the weight and the lists, and lands on the attention program’s levels', () => {
