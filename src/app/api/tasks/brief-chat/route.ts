@@ -12,6 +12,7 @@ import {
   markChatSeen,
   newChatThread,
   parseSurfaceRef,
+  recordChatReply,
   settleStalePending,
   CHAT_TURN_TIMEOUT_MS,
   MAX_CHAT_MESSAGE,
@@ -19,6 +20,13 @@ import {
 } from '@/lib/task-chat';
 import { loadTaskBrief } from '../brief/build';
 import { mutateChatThreads, readChatThreads } from './store';
+import { chatSyncFailed, syncChatThread, syncChatThreadsSoon } from './sync';
+
+// How often an open thread is brought up to date with its OpenClaw session, and how long Dawn's chat waits for that.
+const OPEN_THREAD_SYNC_MS = 4000;
+const DAWN_SYNC_WAIT_MS = 2500;
+/** A thread as the page gets it; `outside` says its session's history could not be read just now. */
+const viewOf = (thread: TaskChatThread) => ({ ...chatView(thread), ...(chatSyncFailed(thread.sessionKey) ? { outside: 'unreachable' as const } : {}) });
 
 const BodySchema = z.discriminatedUnion('action', [
   z.object({
@@ -50,12 +58,21 @@ export async function GET(request: NextRequest) {
     });
   }
   if (!params.has('list')) {
-    const latest = latestChat(threads);
-    return NextResponse.json({ success: true, data: latest ? chatView(latest) : null });
+    // Dawn's chat reads once when it opens: give the session's history a moment to arrive, then answer either way.
+    let latest = latestChat(threads);
+    if (latest && latest.messages.length > 0) {
+      const synced = syncChatThread(latest, OPEN_THREAD_SYNC_MS);
+      const changed = await Promise.race([synced, new Promise<boolean>((resolve) => setTimeout(() => resolve(false), DAWN_SYNC_WAIT_MS))]);
+      if (changed) latest = latestChat(readChatThreads(taskId));
+    }
+    return NextResponse.json({ success: true, data: latest ? viewOf(latest) : null });
   }
   const wanted = params.get('thread');
   const thread = wanted ? threads.find((t) => t.id === wanted) : undefined;
-  return NextResponse.json({ success: true, data: { threads: listChats(threads).map(chatSummary), thread: thread ? chatView(thread) : null } });
+  // What was said in these sessions outside the Journal is fetched behind this answer; the next read has it.
+  if (thread) void syncChatThread(thread, OPEN_THREAD_SYNC_MS);
+  syncChatThreadsSoon(threads);
+  return NextResponse.json({ success: true, data: { threads: listChats(threads).map((t) => chatSummary(t)), thread: thread ? viewOf(thread) : null } });
 }
 
 /**
@@ -158,6 +175,8 @@ async function answer(taskId: string, threadId: string, sessionKey: string, mess
     t.pendingSince = null;
     t.error = error;
     t.updatedAt = at;
-    if (reply) t.messages.push({ role: 'openclaw', text: reply, at });
+    if (reply) recordChatReply(t, reply, at);
   });
+  // The turn has settled: pick up anything said in the session meanwhile, from the Journal or not.
+  void syncChatThread({ taskId, id: threadId, sessionKey }, 0);
 }

@@ -41,6 +41,16 @@ export function mutateChatThreads<T>(fn: (threads: Threads) => T): T {
   return result;
 }
 
+/** Like mutateChatThreads, for a change that may turn out to be none: the file is written only when `fn` says so. */
+export function updateChatThreads(fn: (threads: Threads) => boolean): boolean {
+  const data = read();
+  if (!fn(data.threads)) return false;
+  if (data.migrated) keepCopy('v1');
+  if (data.unreadable) keepCopy(`unreadable-${Date.now()}`);
+  writeJsonFileAtomic(briefChatFilePath(), { _comment: COMMENT, schemaVersion: CHAT_SCHEMA_VERSION, threads: data.threads });
+  return true;
+}
+
 /** Every task's threads, for reading only. */
 export function readAllChatThreads(): Threads {
   return read().threads;

@@ -18,6 +18,7 @@ export interface TaskChatMessage {
   text: string;
   at: string;                    // ISO
   about?: ChatSurfaceRef;        // his messages only: the surface he sent it from
+  from?: 'app';                  // said in this OpenClaw session outside the Journal (OpenClaw's own app), and read back from it
 }
 
 export interface TaskChatThread {
@@ -32,6 +33,7 @@ export interface TaskChatThread {
   updatedAt: string;
   seenAt: string | null;         // when he last had this chat open
   touchedAt: string;             // when he last did something in it (started it, wrote in it); a reply does not count
+  outsideRunAt?: string | null;  // when OpenClaw's own history last said a run is in flight that the Journal did not start
   about: ChatSurfaceRef | null;  // the surface it was started from
 }
 
@@ -55,8 +57,9 @@ export interface ChatThreadSummary {
 
 export interface ChatThreadView extends Omit<ChatThreadSummary, 'last' | 'lastRole' | 'count' | 'ask' | 'askAbout'> {
   messages: TaskChatMessage[];
-  pending: boolean;
+  pending: boolean;              // a Journal turn is out: he cannot send another yet
   error: string | null;
+  outside?: 'unreachable';       // what was said in the session outside the Journal could not be read just now
 }
 
 /** What a task's form says about its chats: how many there are and whether one waits on him. */
@@ -109,8 +112,16 @@ export function newChatThread(taskId: string, now: Date, about: ChatSurfaceRef |
   };
 }
 
-export function chatState(thread: TaskChatThread): ChatState {
-  if (thread.pendingSince) return 'working';
+/** How long "a run is in flight" from OpenClaw's history is believed without being heard again. */
+export const OUTSIDE_RUN_TTL_MS = 90_000;
+
+/** A run the Journal did not start is in flight in the thread's session, as far as its history last said. */
+export function outsideRunning(thread: Pick<TaskChatThread, 'outsideRunAt'>, now = Date.now()): boolean {
+  return !!thread.outsideRunAt && now - Date.parse(thread.outsideRunAt) < OUTSIDE_RUN_TTL_MS;
+}
+
+export function chatState(thread: TaskChatThread, now = Date.now()): ChatState {
+  if (thread.pendingSince || outsideRunning(thread, now)) return 'working';
   const last = thread.messages[thread.messages.length - 1];
   if (last?.role === 'openclaw' && (!thread.seenAt || Date.parse(thread.seenAt) < Date.parse(last.at))) return 'waiting';
   return 'idle';
@@ -192,10 +203,10 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
   const messages: TaskChatMessage[] = [];
   for (const m of r.messages as unknown[]) {
     if (!m || typeof m !== 'object') continue;
-    const { role, text, at, about } = m as Record<string, unknown>;
+    const { role, text, at, about, from } = m as Record<string, unknown>;
     if ((role !== 'you' && role !== 'openclaw') || typeof text !== 'string') continue;
     const said = parseSurfaceRef(about);
-    messages.push({ role, text, at: iso(at) ?? new Date(0).toISOString(), ...(said ? { about: said } : {}) });
+    messages.push({ role, text, at: iso(at) ?? new Date(0).toISOString(), ...(said ? { about: said } : {}), ...(from === 'app' ? { from: 'app' as const } : {}) });
   }
   // A version-1 thread has no dates of its own: its session key ends in the moment it began.
   const keyMs = Number(/-(\d{12,14})$/.exec(r.sessionKey)?.[1]);
@@ -218,6 +229,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     seenAt: 'seenAt' in r ? iso(r.seenAt) : updatedAt,
     // Before this was recorded: the last thing he wrote, or the moment he opened it.
     touchedAt: iso(r.touchedAt) ?? asked?.at ?? born,
+    ...(iso(r.outsideRunAt) ? { outsideRunAt: iso(r.outsideRunAt) } : {}),
     about: parseSurfaceRef(r.about),
   };
 }
@@ -296,4 +308,156 @@ export function buildChatTurnMessage(input: { brief: TaskBrief | null; text: str
     'Adamya’s message:',
     input.text,
   ].join('\n');
+}
+
+
+// ---- What was said in the same OpenClaw session outside the Journal.
+// A thread is one OpenClaw session, and he can write in that session from OpenClaw's own app too. The Journal
+// keeps its own copy of what it sent and what came back; the rest is read from the session's history
+// (`openclaw gateway call chat.history`) and merged in, marked as having come from outside.
+
+/** One line of the session's history that is chat: something he said, or something OpenClaw answered in words. */
+export interface OutsideMessage { role: 'you' | 'openclaw'; text: string; ms: number }
+export interface ChatHistory { messages: OutsideMessage[]; running: boolean }
+
+const MATCH_WINDOW_MS = 10 * 60_000;
+const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+/** The words of one history message: a plain string, or its text blocks joined. Tool calls and results are not words. */
+function historyText(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((block) => (block && typeof block === 'object' && (block as { type?: unknown }).type === 'text' && typeof (block as { text?: unknown }).text === 'string' ? (block as { text: string }).text : ''))
+    .filter((text) => text.trim() !== '')
+    .join('\n')
+    .trim();
+}
+
+/**
+ * The chat in what `chat.history` printed: his messages and OpenClaw's answers in words, oldest first. An assistant
+ * message that only calls tools, a tool's result and OpenClaw's own bookkeeping ("custom") are left out. `running`
+ * is true when the history says a run is in flight. Null when the output is not a history at all.
+ */
+export function readChatHistory(raw: unknown): ChatHistory | null {
+  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { messages?: unknown }).messages)) return null;
+  const r = raw as Record<string, unknown>;
+  const messages: OutsideMessage[] = [];
+  for (const m of r.messages as unknown[]) {
+    if (!m || typeof m !== 'object') continue;
+    const { role, content, timestamp } = m as Record<string, unknown>;
+    if (role !== 'user' && role !== 'assistant') continue;
+    const ms = typeof timestamp === 'number' ? timestamp : typeof timestamp === 'string' ? Date.parse(timestamp) : NaN;
+    const text = historyText(content);
+    if (!Number.isFinite(ms) || text === '') continue;
+    messages.push({ role: role === 'user' ? 'you' : 'openclaw', text, ms });
+  }
+  messages.sort((a, b) => a.ms - b.ms);
+  // A run is in flight when inputs are queued for the session or it names runs that are active. An idle session
+  // still carries `pendingInputs: { items: [], total: 0, queuedCount: 0 }`, which means nothing.
+  const listed = (value: unknown) => Array.isArray(value) && value.length > 0;
+  const above = (value: unknown) => typeof value === 'number' && value > 0;
+  const queue = r.pendingInputs && typeof r.pendingInputs === 'object' && !Array.isArray(r.pendingInputs) ? r.pendingInputs as Record<string, unknown> : {};
+  const info = r.sessionInfo && typeof r.sessionInfo === 'object' ? r.sessionInfo as Record<string, unknown> : {};
+  const running = listed(queue.items) || above(queue.total) || above(queue.queuedCount) || listed(r.activeRunIds) || listed(info.activeRunIds);
+  return { messages, running };
+}
+
+/**
+ * What he typed, out of what the Journal sent for it: the first turn of a thread carries the brief in front of his
+ * message, and a turn sent from a web tab says which page first (buildChatTurnMessage).
+ */
+export function typedTextOf(sent: string): string {
+  const mark = '\nAdamya’s message:\n';
+  const at = sent.lastIndexOf(mark);
+  if (at >= 0 && sent.startsWith('Adamya is asking about one of the tasks in the Agentic Journal')) return sent.slice(at + mark.length);
+  const page = /^\[Adamya has this page open in your browser[\s\S]*?use your browser tool on it\.\]\n\n/.exec(sent);
+  return page ? sent.slice(page[0].length) : sent;
+}
+
+/**
+ * Merges the session's history into the thread. What the Journal already holds stays as it is (his words as he
+ * typed them, the surface he was on); each of those is paired with its line in the history so it is not added
+ * again, and only what the Journal does not have is added, marked `from: 'app'`. The whole thread is then in the
+ * order things were said. Doing it again with the same history changes nothing. Returns whether anything changed.
+ *
+ * Pairing: a message read from the history earlier is found by its moment; one of his by the text he typed (the
+ * history holds it wrapped, see typedTextOf), nearest in time; a reply by its text, or else as the answer of its
+ * own turn (the history may hold it in pieces, with tool calls between). While a Journal turn is still out, the
+ * answers after its question are left to that turn to record.
+ */
+export function mergeChatHistory(thread: TaskChatThread, history: ChatHistory, now: Date): boolean {
+  const lines = history.messages;
+  const used = lines.map(() => false);
+  const held = thread.messages;
+  const keys: number[] = [];
+  let lastAsked = -Infinity;       // where his latest question sits in the history's time
+  held.forEach((m, index) => {
+    const at = Date.parse(m.at);
+    const want = squash(m.text);
+    let hit = -1;
+    if (m.from === 'app') {
+      hit = lines.findIndex((line, i) => !used[i] && line.role === m.role && line.ms === at);
+    } else if (m.role === 'you') {
+      let best = Infinity;
+      lines.forEach((line, i) => {
+        if (used[i] || line.role !== 'you') return;
+        const gap = Math.abs(line.ms - at);
+        if (gap > MATCH_WINDOW_MS) return;
+        const exact = squash(typedTextOf(line.text)) === want;
+        if (!exact && !squash(line.text).includes(want)) return;
+        const score = gap + (exact ? 0 : MATCH_WINDOW_MS);
+        if (score < best) { best = score; hit = i; }
+      });
+    } else {
+      // His reply is the answer of its turn: everything OpenClaw said in words between his question and the
+      // moment the Journal got the answer back (and a little after, for clocks that disagree).
+      const from = Number.isFinite(lastAsked) ? lastAsked : at - MATCH_WINDOW_MS;
+      const turn = lines.map((line, i) => i).filter((i) => !used[i] && lines[i].role === 'openclaw' && lines[i].ms >= from && lines[i].ms <= at + 60_000);
+      const same = lines.findIndex((line, i) => !used[i] && line.role === 'openclaw' && squash(line.text) === want && Math.abs(line.ms - at) <= MATCH_WINDOW_MS);
+      if (same >= 0) {
+        hit = same;
+        for (const i of turn) if (lines[i].ms <= lines[same].ms && want.includes(squash(lines[i].text))) used[i] = true;
+      } else if (turn.length > 0) {
+        hit = turn[turn.length - 1];
+        for (const i of turn) used[i] = true;
+      }
+    }
+    if (hit >= 0) used[hit] = true;
+    const key = Math.max(hit >= 0 ? lines[hit].ms : at, index > 0 ? keys[index - 1] : -Infinity);
+    keys.push(key);
+    if (m.role === 'you') lastAsked = key;
+  });
+  // A Journal turn that is still out records its own answer when it comes back.
+  const owned = thread.pendingSince ? lastAsked - 1000 : Infinity;
+  const added: { message: TaskChatMessage; key: number }[] = [];
+  lines.forEach((line, i) => {
+    if (used[i] || (line.role === 'openclaw' && line.ms >= owned)) return;
+    added.push({ message: { role: line.role, text: line.role === 'you' ? typedTextOf(line.text) : line.text, at: new Date(line.ms).toISOString(), from: 'app' }, key: line.ms });
+  });
+  const running = history.running && !thread.pendingSince;
+  const marked = !!thread.outsideRunAt;
+  if (running) thread.outsideRunAt = now.toISOString();
+  else if (marked) thread.outsideRunAt = null;
+  if (added.length === 0) return running || marked;
+  const all = [...held.map((message, i) => ({ message, key: keys[i], order: i })), ...added.map((a, i) => ({ ...a, order: held.length + i }))];
+  all.sort((a, b) => a.key - b.key || a.order - b.order);
+  thread.messages = all.map((entry) => entry.message);
+  const last = thread.messages[thread.messages.length - 1];
+  if (last.at > thread.updatedAt) thread.updatedAt = last.at;
+  const first = thread.messages.find((m) => m.role === 'you');
+  if (thread.title === 'New chat' && first) thread.title = chatTitle(first.text);
+  return true;
+}
+
+/**
+ * Records the answer a Journal turn got back. When the same answer was already read from the session's history
+ * (the turn was slow to return, or failed on the way back), that line becomes the Journal's own and is not added
+ * a second time.
+ */
+export function recordChatReply(thread: TaskChatThread, reply: string, at: string): void {
+  const asked = thread.messages.findLastIndex((m) => m.role === 'you' && m.from !== 'app');
+  const have = thread.messages.find((m, i) => i > asked && m.role === 'openclaw' && m.from === 'app' && squash(m.text) === squash(reply));
+  if (have) delete have.from;
+  else thread.messages.push({ role: 'openclaw', text: reply, at });
 }

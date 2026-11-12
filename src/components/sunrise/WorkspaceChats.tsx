@@ -44,6 +44,8 @@ button.srk-about:hover{border-color:var(--a)}
 .srk-log{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:12px 14px}
 .srk-who{font:500 9.5px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:#8a6a52}
 .srk-who.you{align-self:flex-end}
+.srk-who em{font-style:normal;letter-spacing:.02em;text-transform:none;color:#a08268}
+.srk-note{margin:0;font-size:12px;color:#8a6a52}
 .srk-m{max-width:92%;padding:8px 12px;border-radius:14px;overflow-wrap:anywhere}
 .srk-m.you{align-self:flex-end;white-space:pre-wrap;background:#22130a;color:#fff6ec;border-bottom-right-radius:5px}
 .srk-m.openclaw{align-self:flex-start;background:rgba(255,255,255,.9);border:1px solid rgba(60,30,10,.1);border-bottom-left-radius:5px}
@@ -95,6 +97,8 @@ button.srk-about:hover{border-color:var(--a)}
 
 const POLL_BUSY_MS = 2500;
 const POLL_QUIET_MS = 20_000;
+// With a chat open, what is said in its session from OpenClaw's own app shows up within a few seconds.
+const POLL_OPEN_MS = 5000;
 export const CHAT_SUGGESTIONS = ['What should I do first?', 'How long will this take?', 'What am I missing?'];
 const STATE_WORDS: Record<ChatState, string> = { working: 'Working', waiting: 'Waiting on you', idle: 'Idle' };
 
@@ -168,9 +172,10 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
   React.useEffect(() => { void load(); }, [load, current]);
   const busy = threads.some((t) => t.state === 'working') || !!thread?.pending;
   React.useEffect(() => {
-    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, busy ? POLL_BUSY_MS : POLL_QUIET_MS);
+    const open = watching && current !== null && current !== 'new';
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') void load(); }, busy ? POLL_BUSY_MS : open ? POLL_OPEN_MS : POLL_QUIET_MS);
     return () => window.clearInterval(timer);
-  }, [busy, load]);
+  }, [busy, load, watching, current]);
 
   // He is looking at what OpenClaw said: it no longer waits on him.
   const unseen = watching && thread !== null && thread.id === current && thread.state === 'waiting' ? thread.id : null;
@@ -284,7 +289,7 @@ const mdLink = { a: ({ href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorEl
 const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface }: { message: TaskChatMessage; onShowSurface: (about: ChatSurfaceRef) => void }) {
   return (
     <>
-      <span className={`srk-who ${m.role}`}>{m.role === 'you' ? 'You' : 'OpenClaw'}</span>
+      <span className={`srk-who ${m.role}`}>{m.role === 'you' ? 'You' : 'OpenClaw'}{m.from === 'app' && <em title="Said in this OpenClaw session outside the Journal"> · in the OpenClaw app</em>}</span>
       <div className={`srk-m ${m.role}`}>
         {m.role === 'openclaw' ? <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdLink}>{m.text}</ReactMarkdown> : m.text}
       </div>
@@ -293,7 +298,7 @@ const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface 
   );
 }, (was, now) => was.onShowSurface === now.onShowSurface && was.message.role === now.message.role && was.message.text === now.message.text
   && was.message.at === now.message.at && was.message.about?.kind === now.message.about?.kind && was.message.about?.label === now.message.about?.label
-  && was.message.about?.url === now.message.about?.url);
+  && was.message.about?.url === now.message.about?.url && was.message.from === now.message.from);
 
 /** The chats panel: the list, or the one chat that is open. */
 export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, below }: {
@@ -303,7 +308,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
   const logRef = React.useRef<HTMLDivElement>(null);
   const { thread } = chats;
   const count = thread?.messages.length ?? 0;
-  const pending = !!thread?.pending;
+  const pending = !!thread?.pending || thread?.state === 'working';
   const shown = chats.current;
   React.useEffect(() => {
     const log = logRef.current;
@@ -374,8 +379,9 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
           </div>
         )}
         {thread?.messages.map((m, i) => <ChatMessage key={i} message={m} onShowSurface={onShowSurface} />)}
-        {pending && <div className="srk-dots" role="status" aria-label="OpenClaw is answering"><i /><i /><i /></div>}
+        {(pending || thread?.state === 'working') && <div className="srk-dots" role="status" aria-label="OpenClaw is answering"><i /><i /><i /></div>}
         {thread?.error && <p className="srk-err" role="alert">{thread.error}</p>}
+        {thread?.outside === 'unreachable' && <p className="srk-note" role="status">Couldn’t reach OpenClaw for what was said in this chat outside the Journal.</p>}
       </div>
       <ChatComposer chats={chats} about={about} autoFocus={autoFocus} onShowSurface={onShowSurface} />
     </div>
