@@ -281,3 +281,27 @@ test('a server with no session index says nothing is indexed, and reading does n
     assert.equal(fs.existsSync(path.join(dir, 'session-index', 'index.db')), false);
   });
 });
+
+test('an index.db replaced under a running server is read afresh', async () => {
+  await withDataDir(async (dir) => {
+    const { ingest } = await import('../src/lib/session-index/ingest');
+    const { closeIndex } = await import('../src/lib/session-index/store');
+    const { indexStatus } = await import('../src/lib/session-index/view');
+    closeIndex();
+    const inbox = path.join(dir, 'session-index', 'inbox', 'laptop');
+    fs.mkdirSync(inbox, { recursive: true });
+    const digest = (id: string) => ({ v: 1, app: 'codex', id, host: 'laptop', path: `/x/${id}.jsonl`, key: null, title: id, cwd: '/x', project: 'x', branch: 'main',
+      started: '2026-10-19T10:00:00Z', ended: '2026-10-19T11:00:00Z', turns: 1, files: [], refs: [], msgs: [['user', 'hello']], cut: false, redactions: 0 });
+    fs.writeFileSync(path.join(inbox, 'codex-a-laptop.json'), JSON.stringify(digest('a')));
+    ingest();
+    assert.equal(indexStatus().indexed, 1);
+    // The file is rebuilt by another process while this one still has the old one open.
+    const db = path.join(dir, 'session-index', 'index.db');
+    for (const suffix of ['', '-wal', '-shm']) fs.rmSync(db + suffix, { force: true });
+    assert.equal(indexStatus().indexed, 0);                 // gone: nothing indexed, and no error
+    fs.writeFileSync(path.join(inbox, 'codex-b-laptop.json'), JSON.stringify(digest('b')));
+    ingest();
+    assert.equal(indexStatus().indexed, 2);
+    closeIndex();
+  });
+});

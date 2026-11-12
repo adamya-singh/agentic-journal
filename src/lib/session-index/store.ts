@@ -24,7 +24,11 @@ create table if not exists hosts(host text primary key, files integer not null, 
 create table if not exists meta(k text primary key, v text);
 `;
 
-let cached: { file: string; db: DatabaseSync } | null = null;
+let cached: { file: string; ino: number | null; db: DatabaseSync } | null = null;
+
+const inodeOf = (file: string): number | null => {
+  try { return fs.statSync(file).ino; } catch { return null; }
+};
 
 /**
  * Whether there is an index to read. A server no machine has sent sessions to has none; reading it must not make
@@ -38,10 +42,13 @@ export function indexExists(): boolean {
   }
 }
 
-/** The index, created on first use. Kept open per process; tests that move BACKEND_DATA_DIR get a fresh one. */
+/**
+ * The index, created on first use. Kept open per process; tests that move BACKEND_DATA_DIR get a fresh one, and so
+ * does a server whose index.db was replaced under it (restored from a backup, rebuilt from scratch).
+ */
 export function openIndex(): DatabaseSync {
   const file = path.join(sessionIndexDir(), 'index.db');
-  if (cached?.file === file) return cached.db;
+  if (cached?.file === file && cached.ino === inodeOf(file)) return cached.db;
   cached?.db.close();
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(file);
@@ -49,7 +56,7 @@ export function openIndex(): DatabaseSync {
   try { fs.chmodSync(path.dirname(file), 0o700); fs.chmodSync(file, 0o600); } catch { /* not ours to change */ }
   db.exec('pragma journal_mode = wal; pragma busy_timeout = 5000;');
   db.exec(SCHEMA);
-  cached = { file, db };
+  cached = { file, ino: inodeOf(file), db };
   return db;
 }
 

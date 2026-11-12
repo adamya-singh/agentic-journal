@@ -134,7 +134,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
     if (body.action === 'viewport') {
-      await setBrowserViewport(body.targetId, body.width && body.height ? { width: body.width, height: body.height } : null);
+      const size = body.width && body.height ? { width: body.width, height: body.height } : null;
+      try {
+        await setBrowserViewport(body.targetId, size);
+      } catch (error) {
+        // A tab that is already gone (the workspace closed it as he left) has no size to put back.
+        if (size !== null || !(error instanceof OpenClawBrowserError)) throw error;
+      }
       return NextResponse.json({ success: true });
     }
     let input = body.input;
