@@ -84,3 +84,29 @@ export function defaultSurfaceId(surfaces: Surface[], hasWork: boolean): string 
   if (hasWork) return 'work';
   return surfaces.find((surface) => surface.kind === 'web')?.id ?? 'work';
 }
+
+// ---- The pages he pasted, kept per task so they are there when he opens the task again.
+
+export const MAX_PASTED_PAGES = 24;
+
+/** The list with this page on it (once, at the end). Null when it is not a web address. */
+export function withPastedPage(pasted: string[], input: unknown): string[] | null {
+  const url = safeWebUrl(input);
+  if (url === null) return null;
+  const key = pageKey(url);
+  if (pasted.some((have) => pageKey(have) === key)) return pasted;
+  return [...pasted, url].slice(-MAX_PASTED_PAGES);
+}
+
+/** The list without this page, under whichever spelling of its address. */
+export function withoutPastedPage(pasted: string[], url: string): string[] {
+  const key = pageKey(safeWebUrl(url) ?? url);
+  return pasted.filter((have) => pageKey(have) !== key);
+}
+
+/** A stored list read back carefully: web addresses only, one per page. */
+export function readPastedPages(raw: unknown): string[] {
+  let out: string[] = [];
+  for (const item of Array.isArray(raw) ? raw : []) out = withPastedPage(out, item) ?? out;
+  return out;
+}

@@ -33,6 +33,8 @@ const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], sub
 
 // The journal's brief, chat and done components were drawn for Dawn's night sky; they read these.
 const HERO_CSS = `
+/* While a task's workspace is open, the page's floating Cedar button is not drawn over its chat composer. */
+html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!important}
 .sr-hero{--hz-ink:#f3efe7;--hz-dim:#a9b4c4;--hz-em:#ffd2a8;--hz-serif:var(--font-instrument-serif),'Instrument Serif',serif;--hz-sans:var(--font-geist-sans),Geist,sans-serif;--hz-mono:var(--font-geist-mono),'Geist Mono',monospace}
 .sr-tray .sr-t{margin:0;font:400 22px/1.1 var(--serif)}
 .sr-tray .sr-s{margin:4px 0 10px;color:#7a6656}
@@ -122,6 +124,15 @@ export function SunriseHero() {
   dataRef.current = data;
   const openRef = React.useRef<string | null>(null);
   openRef.current = open;
+  // A task's workspace has its own chat composer in the bottom right corner, where the page's floating "Chat with
+  // Cedar" button sits on top of everything. While a workspace is open the page is told, and that button steps
+  // aside (HERO_CSS).
+  const workspaceOpen = open !== null && !open.startsWith('card:');
+  React.useEffect(() => {
+    if (!workspaceOpen) return;
+    document.documentElement.setAttribute('data-sr-workspace', '');
+    return () => document.documentElement.removeAttribute('data-sr-workspace');
+  }, [workspaceOpen]);
 
   // The journal's data: on load, whenever tasks change anywhere on the page, and every five minutes.
   React.useEffect(() => {

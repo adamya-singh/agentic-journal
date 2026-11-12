@@ -66,7 +66,7 @@ export const SESSIONS_CSS = `
 }
 `;
 
-const APP: Record<SessionApp, { cls: string; tile: string; name: string }> = {
+export const SESSION_APP: Record<SessionApp, { cls: string; tile: string; name: string }> = {
   openclaw: { cls: 'oc', tile: 'OC', name: 'OpenClaw' },
   'claude-code': { cls: 'cc', tile: 'CC', name: 'Claude Code' },
   codex: { cls: 'cx', tile: 'CX', name: 'Codex' },
@@ -94,7 +94,7 @@ function ago(iso: string | null): string {
   return day(iso);
 }
 
-async function copyText(text: string) {
+export async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text);
   } catch {
@@ -117,7 +117,7 @@ async function call(url: string, init?: RequestInit) {
 
 function Row({ row, onNot }: { row: SessionRow; onNot: (row: SessionRow) => void }) {
   const [copied, setCopied] = React.useState(false);
-  const app = APP[row.app];
+  const app = SESSION_APP[row.app];
   const href = row.key ? openClawChatUrl(row.key) : row.href;
   const meta = [app.name, row.machine, sessionDates(row), row.turns ? `${row.turns} turn${row.turns === 1 ? '' : 's'}` : ''].filter(Boolean);
   const title = row.title;
@@ -171,7 +171,7 @@ function Picker({ target, linked, onLinked }: { target: string; linked: Set<stri
           {shown.map((h) => (
             <li key={h.uid}>
               <button type="button" onClick={() => link(h.uid)}>
-                <span className={`hzs-app ${APP[h.app].cls}`} aria-hidden="true">{APP[h.app].tile}</span>
+                <span className={`hzs-app ${SESSION_APP[h.app].cls}`} aria-hidden="true">{SESSION_APP[h.app].tile}</span>
                 <span>{h.title}</span>
                 <span className="d">{h.machine} · {sessionDates(h)}</span>
               </button>

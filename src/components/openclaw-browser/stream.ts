@@ -42,8 +42,12 @@ export function keyToInput(event: { key: string; ctrlKey: boolean; metaKey: bool
   return null;
 }
 
-/** How often to ask for a picture. `steady` asks at one pace; `adaptive` follows what he is doing. */
-export type StreamPace = { kind: 'steady'; everyMs: number } | { kind: 'adaptive' };
+/**
+ * How often to ask for a picture. `steady` asks at one pace, whatever happens (the job application viewer).
+ * `adaptive` follows what he is doing; with `watching` it never drops to the idle pace, for a page something else
+ * is expected to move.
+ */
+export type StreamPace = { kind: 'steady'; everyMs: number } | { kind: 'adaptive'; watching?: boolean };
 
 // Adaptive: quick right after he touches the page, a calm pace while he is watching, slow once nothing has moved
 // for a while. Any input, or a picture that changed, makes it quick again.
@@ -56,10 +60,12 @@ const IDLE_MS = 1600;
 const LIVE_WITHIN_MS = 5000;
 
 export function nextFrameDelay(pace: StreamPace, sinceActiveMs: number, failures: number): number {
-  if (failures > 0) return Math.min(8000, 1000 * 2 ** Math.min(failures - 1, 3));
+  // A steady viewer retries at its own pace, as it always has. An adaptive one would otherwise retry a browser
+  // that is down seven times a second, so it backs off: 1s, 2s, 4s, then every 8s.
   if (pace.kind === 'steady') return pace.everyMs;
+  if (failures > 0) return Math.min(8000, 1000 * 2 ** Math.min(failures - 1, 3));
   if (sinceActiveMs < QUICK_FOR_MS) return QUICK_MS;
-  if (sinceActiveMs < IDLE_AFTER_MS) return WATCH_MS;
+  if (sinceActiveMs < IDLE_AFTER_MS || pace.watching) return WATCH_MS;
   return IDLE_MS;
 }
 
@@ -166,21 +172,29 @@ export function useBrowserStream({ endpoint, targetId, active = true, pace, dedu
     if (frameSrcRef.current) URL.revokeObjectURL(frameSrcRef.current);
   }, []);
 
-  const send = React.useCallback(async (input: BrowserInput) => {
-    if (!targetId) return;
+  // What he does reaches the page in the order he did it: each input waits for the one before. Sent side by side,
+  // a fast typist's keys could overtake one another on the way (a Backspace landing before the letter it deletes).
+  const sending = React.useRef<Promise<void>>(Promise.resolve());
+  const send = React.useCallback((input: BrowserInput): Promise<void> => {
+    if (!targetId) return Promise.resolve();
     lastActive.current = Date.now();
-    try {
-      const response = await fetch(endpoint, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'input', targetId, input }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.success) throw new Error(data.error || 'That did not reach the browser');
-    } catch (inputError) {
-      setError(inputError instanceof Error ? inputError.message : 'That did not reach the browser');
-    }
-    // Pages take a moment to react.
-    setTimeout(() => kickRef.current(), 150);
+    const deliver = async () => {
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'input', targetId, input }),
+        });
+        const data = await response.json();
+        if (!response.ok || !data.success) throw new Error(data.error || 'That did not reach the browser');
+      } catch (inputError) {
+        setError(inputError instanceof Error ? inputError.message : 'That did not reach the browser');
+      }
+      // Pages take a moment to react.
+      setTimeout(() => kickRef.current(), 150);
+    };
+    const sent = sending.current.then(deliver);
+    sending.current = sent;
+    return sent;
   }, [endpoint, targetId]);
 
   return { frame, setFrame, error, setError, live, send, kick, touch };

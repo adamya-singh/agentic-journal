@@ -39,6 +39,8 @@ interface BrowserState {
   /** Tabs laid out for the space he views them in (setBrowserViewport), to be put back when he is done. */
   fitted?: Set<string>;
   fitWatch?: ReturnType<typeof setInterval>;
+  /** Tabs the Journal itself opened (openBrowserUrl made a new one). Only these may be closed from the Journal. */
+  made?: Set<string>;
 }
 
 // One server process, but each route bundle may load this module separately.
@@ -122,6 +124,8 @@ export async function openBrowserTab(urls: string[]): Promise<string> {
 }
 
 export interface BrowserTab { id: string; url: string; title: string }
+/** A tab as openBrowserUrl hands it back: `created` is true when the page was not open before and a tab was made for it. */
+export interface OpenedBrowserTab extends BrowserTab { created: boolean }
 
 /** The pages open in OpenClaw's browser right now. */
 export async function listBrowserTabs(): Promise<BrowserTab[]> {
@@ -132,16 +136,80 @@ export async function listBrowserTabs(): Promise<BrowserTab[]> {
  * A tab on exactly this page: the one already open there (`samePage` decides, so OpenClaw's own tab on it is the
  * one he sees), else a new one. Unlike openBrowserTab it never borrows a tab that is merely on the same site.
  */
-export async function openBrowserUrl(url: string, samePage: (a: string, b: string) => boolean): Promise<BrowserTab> {
+export async function openBrowserUrl(url: string, samePage: (a: string, b: string) => boolean): Promise<OpenedBrowserTab> {
   const open = await pages();
   let tab: BrowserTab | undefined = open.find((target) => samePage(target.url, url));
+  const created = !tab;
   if (!tab) {
     const response = await fetch(`${CDP_URL}/json/new?${encodeURI(url)}`, { method: 'PUT' });
     if (!response.ok) throw new OpenClawBrowserError('Could not open a tab in OpenClaw’s browser');
     tab = (await response.json()) as CdpTarget;
+    (state.made ??= new Set()).add(tab.id);
   }
   await fetch(`${CDP_URL}/json/activate/${tab.id}`).catch(() => undefined);
-  return { id: tab.id, url: tab.url || url, title: tab.title };
+  // A tab the Journal made earlier and found again is still the Journal's to close.
+  return { id: tab.id, url: tab.url || url, title: tab.title, created: created || (state.made?.has(tab.id) ?? false) };
+}
+
+/**
+ * Brings a tab to the front of OpenClaw's browser. Chrome only paints the tab in front, so a tab he comes back
+ * to after looking at another has no picture to give until it is in front again.
+ */
+export async function showBrowserTab(targetId: string): Promise<void> {
+  const response = await fetch(`${CDP_URL}/json/activate/${encodeURIComponent(targetId)}`).catch(() => null);
+  if (!response?.ok) throw new OpenClawBrowserError('That tab was closed');
+}
+
+/** One command to the browser itself (not a tab), over a connection opened for it and closed after. */
+async function browserCall<T>(method: string, params: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${CDP_URL}/json/version`, { cache: 'no-store' });
+  if (!response.ok) throw new OpenClawBrowserError(`OpenClaw's browser answered ${response.status}`);
+  const { webSocketDebuggerUrl } = (await response.json()) as { webSocketDebuggerUrl?: string };
+  if (!webSocketDebuggerUrl) throw new OpenClawBrowserError('OpenClaw’s browser did not say how to reach it');
+  // Chrome reports its own loopback address; reach it the way CDP_URL does (a tunnel, another port).
+  const address = new URL(webSocketDebuggerUrl);
+  const base = new URL(CDP_URL);
+  address.host = base.host;
+  const socket = new WebSocket(address);
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new OpenClawBrowserError(`${method} timed out`)), CALL_TIMEOUT_MS);
+      const fail = () => { clearTimeout(timer); reject(new OpenClawBrowserError('Could not reach OpenClaw’s browser')); };
+      socket.addEventListener('error', fail, { once: true });
+      socket.addEventListener('close', fail, { once: true });
+      socket.addEventListener('open', () => socket.send(JSON.stringify({ id: 1, method, params })), { once: true });
+      socket.addEventListener('message', (event) => {
+        const message = JSON.parse(String(event.data)) as { id?: number; result?: unknown; error?: { message: string } };
+        if (message.id !== 1) return;
+        clearTimeout(timer);
+        if (message.error) reject(new OpenClawBrowserError(message.error.message));
+        else resolve(message.result as T);
+      });
+    });
+  } finally {
+    socket.close();
+  }
+}
+
+/**
+ * Closes a tab the Journal opened. A tab that was already open when the Journal first showed its page (OpenClaw's
+ * own, or one he opened there by hand) is never closed from here: it is refused, and `false` comes back. A tab
+ * that is already gone counts as closed.
+ */
+export async function closeBrowserTab(targetId: string): Promise<boolean> {
+  if (!state.made?.has(targetId)) return false;
+  state.made.delete(targetId);
+  state.fitted?.delete(targetId);
+  state.fileChoosers.delete(targetId);
+  const connection = state.connections.get(targetId);
+  state.connections.delete(targetId);
+  connection?.then((open) => open.socket.close()).catch(() => undefined);
+  try {
+    await browserCall<{ success?: boolean }>('Target.closeTarget', { targetId });
+  } catch (error) {
+    if (!(error instanceof OpenClawBrowserError) || !/No target with given id/i.test(error.message)) throw error;
+  }
+  return true;
 }
 
 function hostOf(url: string): string {

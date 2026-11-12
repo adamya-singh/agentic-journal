@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
         const list = (all[body.taskId] ??= []);
         // A chat he opened and never wrote in is the new chat: empty ones do not pile up.
         const empty = list.find((t) => t.messages.length === 0 && !t.pendingSince);
-        if (empty) { empty.updatedAt = now.toISOString(); empty.about = about; return structuredClone(empty); }
+        if (empty) { empty.updatedAt = empty.touchedAt = now.toISOString(); empty.about = about; return structuredClone(empty); }
         const made = newChatThread(body.taskId, now, about);
         list.push(made);
         return structuredClone(made);
@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
       thread.pendingSince = now.toISOString();
       thread.updatedAt = now.toISOString();
       thread.seenAt = now.toISOString();
+      thread.touchedAt = now.toISOString();
       thread.error = null;
       return { thread: structuredClone(thread), first };
     });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { backendDataDir } from '../backend-data.ts';
-import { openIndex, type SessionRecord } from './store.ts';
+import { indexExists, openIndex, type SessionRecord } from './store.ts';
 import type { SessionApp, SessionRow, SessionTarget, SessionsView } from './types.ts';
 
 // Which sessions belong on a task or an action card. Exact links only: a session is on the card because
@@ -100,6 +100,7 @@ function linksFor(kind: 'task' | 'card', id: string, known: Set<string>): Link[]
 
 /** What a task or card's Sessions section shows. */
 export function sessionsFor(target: SessionTarget, now = Date.now()): SessionsView {
+  if (!indexExists()) return { rows: [], indexed: 0, hosts: [] };
   const db = openIndex();
   const kind = target.slice(0, target.indexOf(':')) as 'task' | 'card';
   const id = target.slice(kind.length + 1);
@@ -129,6 +130,7 @@ export function sessionsFor(target: SessionTarget, now = Date.now()): SessionsVi
 }
 
 export function indexStatus(): Pick<SessionsView, 'indexed' | 'hosts'> {
+  if (!indexExists()) return { indexed: 0, hosts: [] };
   const db = openIndex();
   const indexed = (db.prepare('select count(*) as n from sessions').get() as { n: number }).n;
   const hosts = (db.prepare('select host, last_sync from hosts order by host').all() as { host: string; last_sync: string | null }[])
@@ -139,7 +141,7 @@ export function indexStatus(): Pick<SessionsView, 'indexed' | 'hosts'> {
 /** Sessions whose title or text match, for linking one by hand. */
 export function searchSessions(q: string, limit = 8, now = Date.now()): SessionRow[] {
   const words = (q.toLowerCase().match(/[\p{L}\p{N}]{2,}/gu) ?? []).slice(0, 8);
-  if (!words.length) return [];
+  if (!words.length || !indexExists()) return [];
   const db = openIndex();
   const match = words.map((w) => `"${w}"*`).join(' AND ');
   const hits = db.prepare(`select uid, min(score) as best from (select uid, bm25(chunks_fts) as score from chunks_fts where chunks_fts match ? order by score limit 300)
@@ -150,6 +152,10 @@ export function searchSessions(q: string, limit = 8, now = Date.now()): SessionR
 }
 
 export function setFeedback(target: SessionTarget, uid: string, verdict: 'link' | 'not' | 'clear', now = new Date()) {
+  if (!indexExists()) {
+    if (verdict === 'clear') return;
+    throw new Error('That session is not in the index.');
+  }
   const db = openIndex();
   if (verdict === 'clear') {
     db.prepare('delete from feedback where target = ? and uid = ?').run(target, uid);

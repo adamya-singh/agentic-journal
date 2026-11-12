@@ -4,6 +4,7 @@
 // looking at when that is a page in OpenClaw's browser.
 // Pure: no filesystem, so the route and the tests share it.
 import type { TaskBrief } from '@/lib/task-brief';
+import { pageKey } from '@/lib/task-surfaces';
 
 /** What he was looking at in the task's workspace when he wrote: the work OpenClaw started, or a page in OpenClaw's browser. */
 export interface ChatSurfaceRef {
@@ -30,6 +31,7 @@ export interface TaskChatThread {
   createdAt: string;
   updatedAt: string;
   seenAt: string | null;         // when he last had this chat open
+  touchedAt: string;             // when he last did something in it (started it, wrote in it); a reply does not count
   about: ChatSurfaceRef | null;  // the surface it was started from
 }
 
@@ -44,12 +46,14 @@ export interface ChatThreadSummary {
   count: number;
   state: ChatState;
   about: ChatSurfaceRef | null;
+  ask: string;                   // the last thing he asked in it, clipped
+  askAbout: ChatSurfaceRef | null;   // the surface he asked it from
   sessionKey: string;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface ChatThreadView extends Omit<ChatThreadSummary, 'last' | 'lastRole' | 'count'> {
+export interface ChatThreadView extends Omit<ChatThreadSummary, 'last' | 'lastRole' | 'count' | 'ask' | 'askAbout'> {
   messages: TaskChatMessage[];
   pending: boolean;
   error: string | null;
@@ -64,6 +68,7 @@ export const CHAT_TURN_TIMEOUT_MS = 10 * 60_000;
 const NOTES_MAX = 1500;
 const TITLE_MAX = 60;
 const LAST_MAX = 140;
+const ASK_MAX = 90;
 
 function clip(text: string, limit: number): string {
   const clean = text.replace(/\s+/g, ' ').trim();
@@ -100,7 +105,7 @@ export function newChatThread(taskId: string, now: Date, about: ChatSurfaceRef |
   return {
     id: `${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     taskId, title: 'New chat', sessionKey: chatSessionKey(taskId, now), messages: [], pendingSince: null, error: null,
-    createdAt: at, updatedAt: at, seenAt: at, about,
+    createdAt: at, updatedAt: at, seenAt: at, touchedAt: at, about,
   };
 }
 
@@ -113,9 +118,11 @@ export function chatState(thread: TaskChatThread): ChatState {
 
 export function chatSummary(thread: TaskChatThread): ChatThreadSummary {
   const last = thread.messages[thread.messages.length - 1];
+  const asked = thread.messages.findLast((m) => m.role === 'you');
   return {
     id: thread.id, title: thread.title, last: last ? clip(last.text.replace(/[*_`#>]+/g, ''), LAST_MAX) : '', lastRole: last?.role ?? null,
-    count: thread.messages.length, state: chatState(thread), about: thread.about, sessionKey: thread.sessionKey,
+    count: thread.messages.length, state: chatState(thread), about: thread.about,
+    ask: asked ? clip(asked.text, ASK_MAX) : '', askAbout: asked?.about ?? null, sessionKey: thread.sessionKey,
     createdAt: thread.createdAt, updatedAt: thread.updatedAt,
   };
 }
@@ -130,9 +137,34 @@ export function listChats(threads: TaskChatThread[] | undefined): TaskChatThread
   return (threads ?? []).filter((t) => t.messages.length > 0).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-/** The chat a bare "send" goes to: the one touched last, empty or not. */
+/**
+ * The chat a bare "send" goes to: the one he touched last, empty or not. A reply that lands late in an older chat
+ * does not make that chat the latest again.
+ */
 export function latestChat(threads: TaskChatThread[] | undefined): TaskChatThread | undefined {
-  return (threads ?? []).reduce<TaskChatThread | undefined>((best, t) => (!best || t.updatedAt > best.updatedAt ? t : best), undefined);
+  return (threads ?? []).reduce<TaskChatThread | undefined>((best, t) => (!best || t.touchedAt > best.touchedAt ? t : best), undefined);
+}
+
+/** What OpenClaw is doing about one surface of the workspace, as far as the chats say. */
+export interface SurfaceActivity { state: 'working' | 'answered'; threadId: string; ask: string }
+
+const sameSurface = (a: ChatSurfaceRef, b: ChatSurfaceRef) =>
+  a.kind === b.kind && (a.kind === 'work' || (!!a.url && !!b.url && pageKey(a.url) === pageKey(b.url)));
+
+/**
+ * The one thing known about OpenClaw and a surface: a chat whose last request was sent from that surface has a turn
+ * out (working), or has an answer he has not looked at (answered). Null otherwise. A page counts as the surface
+ * under any of the addresses given (the tab's own, and where it has since gone). Working wins over answered, then
+ * the most recent chat.
+ */
+export function surfaceActivity(threads: ChatThreadSummary[], surface: ChatSurfaceRef[]): SurfaceActivity | null {
+  let best: { rank: number; t: ChatThreadSummary } | null = null;
+  for (const t of threads) {
+    if (t.state === 'idle' || !t.askAbout || !surface.some((ref) => sameSurface(ref, t.askAbout!))) continue;
+    const rank = t.state === 'working' ? 1 : 0;
+    if (!best || rank > best.rank || (rank === best.rank && t.updatedAt > best.t.updatedAt)) best = { rank, t };
+  }
+  return best ? { state: best.t.state === 'working' ? 'working' : 'answered', threadId: best.t.id, ask: best.t.ask } : null;
 }
 
 export function chatsGlance(threads: TaskChatThread[] | undefined): ChatsGlance {
@@ -171,6 +203,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
   const last = messages[messages.length - 1];
   const updatedAt = iso(r.updatedAt) ?? iso(r.pendingSince) ?? last?.at ?? born;
   const first = messages.find((m) => m.role === 'you');
+  const asked = messages.findLast((m) => m.role === 'you');
   return {
     id: typeof r.id === 'string' && r.id ? r.id : Number.isFinite(keyMs) ? keyMs.toString(36) : `t${index}`,
     taskId,
@@ -183,6 +216,8 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     updatedAt,
     // Version 1 never recorded a look: what was already there when the chats became a list counts as read.
     seenAt: 'seenAt' in r ? iso(r.seenAt) : updatedAt,
+    // Before this was recorded: the last thing he wrote, or the moment he opened it.
+    touchedAt: iso(r.touchedAt) ?? asked?.at ?? born,
     about: parseSurfaceRef(r.about),
   };
 }

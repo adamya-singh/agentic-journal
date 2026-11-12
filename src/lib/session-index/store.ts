@@ -26,6 +26,18 @@ create table if not exists meta(k text primary key, v text);
 
 let cached: { file: string; db: DatabaseSync } | null = null;
 
+/**
+ * Whether there is an index to read. A server no machine has sent sessions to has none; reading it must not make
+ * one, and must not fail.
+ */
+export function indexExists(): boolean {
+  try {
+    return fs.statSync(path.join(sessionIndexDir(), 'index.db')).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** The index, created on first use. Kept open per process; tests that move BACKEND_DATA_DIR get a fresh one. */
 export function openIndex(): DatabaseSync {
   const file = path.join(sessionIndexDir(), 'index.db');

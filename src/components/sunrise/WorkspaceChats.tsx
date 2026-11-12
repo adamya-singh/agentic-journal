@@ -22,8 +22,13 @@ export const CHATS_CSS = `
 .srk-pill.waiting{background:color-mix(in srgb,var(--a) 16%,#fff);color:var(--a)}
 .srk-pill.working{background:#22130a;color:#ffe9d2}
 .srk-list{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:flex;flex-direction:column;gap:8px;padding:2px 12px 12px}
-.srk-row{display:grid;gap:4px;width:100%;text-align:left;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08);cursor:pointer;color:inherit;font:inherit}
+.srk-row{flex:none;position:relative;display:grid;gap:4px;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08);cursor:pointer}
 .srk-row:hover{background:#fff;border-color:color-mix(in srgb,var(--a) 35%,#fff)}
+/* The row opens its chat wherever it is pressed; the page chip in it is its own button, on top. */
+.srk-rowmain{display:grid;gap:4px;min-width:0;width:100%;padding:0;border:0;background:none;text-align:left;color:inherit;font:inherit;cursor:pointer;outline:0}
+.srk-rowmain::after{content:"";position:absolute;inset:0;border-radius:14px}
+.srk-rowmain:focus-visible::after{box-shadow:0 0 0 2px var(--a)}
+.srk-row .srk-about{position:relative;z-index:1}
 .srk-row .t{display:flex;align-items:flex-start;gap:8px}
 .srk-row .t b{flex:1;min-width:0;font:600 13.5px/1.3 var(--sans);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .srk-row .l{color:#6a4a32;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -199,7 +204,8 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
     waiting: threads.filter((t) => t.state === 'waiting').length,
     working: threads.filter((t) => t.state === 'working').length,
     setDraft,
-    open: (id) => { setError(null); setThread(null); setCurrent(id); },
+    // Opening the chat that is already the current one (from the strip under a surface) keeps what is loaded.
+    open: (id) => { setError(null); if (currentRef.current === id) { void load(); return; } setThread(null); setCurrent(id); },
     startNew: () => { setError(null); setThread(null); setCurrent('new'); },
     back: () => { setError(null); setThread(null); setCurrent(null); },
     send,
@@ -270,8 +276,9 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, onShowSurface }
 const mdLink = { a: ({ href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props} {...(href?.startsWith('/') ? {} : { target: '_blank', rel: 'noopener noreferrer' })} /> };
 
 /** The chats panel: the list, or the one chat that is open. */
-export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose }: {
+export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, below }: {
   chats: TaskChats; about: ChatSurfaceRef | null; autoFocus: boolean; onShowSurface: (about: ChatSurfaceRef) => void; onClose?: () => void;
+  below?: React.ReactNode;        // what follows the chats in the list (the sessions that worked on the task)
 }) {
   const logRef = React.useRef<HTMLDivElement>(null);
   const { thread } = chats;
@@ -296,11 +303,13 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose }: 
         </div>
         <div className="srk-list">
           {chats.threads.map((t) => (
-            <button key={t.id} type="button" className="srk-row" onClick={() => chats.open(t.id)}>
-              <span className="t"><b>{t.title}</b><i className={`srk-pill ${t.state}`} style={{ fontStyle: 'normal' }}>{STATE_WORDS[t.state]}</i></span>
-              {t.last && <span className="l">{t.lastRole === 'openclaw' ? 'OpenClaw: ' : 'You: '}{t.last}</span>}
-              <span className="srk-meta">{chatWhen(t.updatedAt)}{t.about && <AboutChip about={t.about} />}</span>
-            </button>
+            <div key={t.id} className="srk-row">
+              <button type="button" className="srk-rowmain" onClick={() => chats.open(t.id)}>
+                <span className="t"><b>{t.title}</b><i className={`srk-pill ${t.state}`} style={{ fontStyle: 'normal' }}>{STATE_WORDS[t.state]}</i></span>
+                {t.last && <span className="l">{t.lastRole === 'openclaw' ? 'OpenClaw: ' : 'You: '}{t.last}</span>}
+              </button>
+              <span className="srk-meta">{chatWhen(t.updatedAt)}{t.about && <AboutChip about={t.about} onShow={onShowSurface} />}</span>
+            </div>
           ))}
           {chats.loaded && chats.threads.length === 0 && (
             <div className="srk-empty">
@@ -310,6 +319,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose }: 
               </div>
             </div>
           )}
+          {below}
         </div>
         <ChatComposer chats={chats} about={about} autoFocus={false} onShowSurface={onShowSurface} />
       </div>

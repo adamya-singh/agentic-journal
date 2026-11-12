@@ -13,6 +13,7 @@ import { safeWebUrl, type WebSurface } from '@/lib/task-surfaces';
 
 const ENDPOINT = '/api/openclaw/browser';
 const ADAPTIVE = { kind: 'adaptive' } as const;
+const WATCHING = { kind: 'adaptive', watching: true } as const;
 
 export const BROWSER_SURFACE_CSS = `
 .srb{position:absolute;inset:0;display:flex;flex-direction:column;min-height:0;background:#f4f1ec}
@@ -58,15 +59,19 @@ export const BROWSER_SURFACE_CSS = `
 .narrow .srb-ttl{display:none}
 `;
 
-/** What the workspace keeps about a page it opened: the tab, and the machine the browser runs on. */
-export interface OpenedTab { targetId: string; host: string }
+/**
+ * What the workspace keeps about a page it opened: the tab, the machine the browser runs on, and whether the tab
+ * was made for this (false when the page was already open there, in a tab that is not the Journal's to close).
+ */
+export interface OpenedTab { targetId: string; host: string; created: boolean }
 
-export function BrowserSurface({ surface, armed, covered, opened, narrow, onArm, onOpened, onPage }: {
+export function BrowserSurface({ surface, armed, covered, opened, narrow, watching, onArm, onOpened, onPage }: {
   surface: WebSurface;
   armed: boolean;                 // he chose this page: it may be opened in OpenClaw's browser
   covered: boolean;               // something is drawn over it (the brief, on a phone)
   opened: OpenedTab | null;
   narrow: boolean;
+  watching: boolean;              // OpenClaw has a turn out about this page: keep looking at the calm pace
   onArm: () => void;
   onOpened: (tab: OpenedTab | null) => void;
   onPage: (page: { url: string; title: string }) => void;
@@ -94,7 +99,7 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, onArm,
 
   const targetId = opened?.targetId ?? null;
   const active = armed && !covered && onScreen;
-  const { frame, error, live, send, kick, touch } = useBrowserStream({ endpoint: ENDPOINT, targetId, active, pace: ADAPTIVE, dedupe: true });
+  const { frame, error, live, send, kick, touch } = useBrowserStream({ endpoint: ENDPOINT, targetId, active, pace: watching ? WATCHING : ADAPTIVE, dedupe: true });
 
   const open = React.useCallback(async () => {
     setOpening(true);
@@ -106,7 +111,7 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, onArm,
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.success) throw new Error(data.error || 'OpenClaw’s browser could not be reached');
-      onOpened({ targetId: data.targetId as string, host: typeof data.host === 'string' ? data.host : '' });
+      onOpened({ targetId: data.targetId as string, host: typeof data.host === 'string' ? data.host : '', created: data.created === true });
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : 'OpenClaw’s browser could not be reached');
     } finally {
@@ -122,6 +127,18 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, onArm,
     void open();
   }, [armed, targetId, open]);
   const retry = () => { onOpened(null); tried.current = true; void open(); };
+  // Coming back to a page that is already open there: its tab may be behind another one he looked at since, and
+  // Chrome paints only the tab in front. Bring it forward once, when this page is shown again.
+  const shownAgain = React.useRef(targetId);
+  React.useEffect(() => {
+    const id = shownAgain.current;
+    if (!id || !armed) return;
+    void fetch(ENDPOINT, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'show', targetId: id }) })
+      .then(() => kick())
+      .catch(() => {});
+    // Only for the tab this was given when it appeared: a tab opened just now is already in front.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const pageUrl = frame?.url ?? '';
   const pageTitle = frame?.title ?? '';

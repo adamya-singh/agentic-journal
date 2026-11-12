@@ -24,10 +24,11 @@ import { isActive, type WorkBlock } from '@/lib/shapes/work';
 import { iconOf, renderPart } from '@/lib/shapes/render';
 import type { SunriseData } from '@/lib/sunrise/data';
 import { confirmText, runBriefAction } from '@/components/horizon/brief-actions';
-import type { ChatSurfaceRef } from '@/lib/task-chat';
-import { defaultSurfaceId, deriveSurfaces, pageKey, safeWebUrl, surfaceId, type Surface } from '@/lib/task-surfaces';
+import { surfaceActivity, type ChatSurfaceRef, type SurfaceActivity } from '@/lib/task-chat';
+import { defaultSurfaceId, deriveSurfaces, pageKey, readPastedPages, safeWebUrl, surfaceId, withoutPastedPage, type Surface, type WebSurface } from '@/lib/task-surfaces';
 import { BROWSER_SURFACE_CSS, BrowserSurface, type OpenedTab } from './BrowserSurface';
 import { CHATS_CSS, ChatsPanel, MiniChat, useTaskChats } from './WorkspaceChats';
+import { SESSIONS_PANEL_CSS, TaskSessions } from './WorkspaceSessions';
 
 const BRIEF_AND_WORK_CSS = `
 /* Daylight, tinted by what the task is: a low sun in its colour, sky above it, and the work on top. */
@@ -404,12 +405,26 @@ const WORKSPACE_CSS = `
 .srw-tabs{flex:none;display:flex;align-items:flex-end;gap:6px;min-width:0}
 .srw-tablist{position:relative;flex:1;min-width:0;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 .srw-tablist::-webkit-scrollbar{display:none}
+.srw-tabwrap{flex:none;position:relative;display:inline-flex;align-items:flex-end}
 .srw-tab{flex:none;max-width:168px;display:inline-flex;align-items:center;gap:7px;padding:9px 13px 10px;border:0;border-radius:13px 13px 0 0;background:transparent;color:#6a4a32;font:500 13.5px var(--sans);cursor:pointer;white-space:nowrap}
 .srw-tab small{flex:none;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:999px;background:rgba(34,19,10,.1);color:#5b4230}
 .srw-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .srw-tab:hover{color:#22130a;background:rgba(255,255,255,.45)}
 .srw-tab[aria-selected=true]{max-width:240px;background:#fff;color:#22130a;box-shadow:0 -1px 0 rgba(255,255,255,.9),0 -8px 18px -14px rgba(120,60,10,.5)}
 .srw-tab[aria-selected=true] small{background:#22130a;color:#fff6ec}
+.srw-tabwrap.closes .srw-tab{padding-right:30px}
+.srw-tabx{position:absolute;right:7px;top:50%;width:18px;height:18px;margin-top:-10px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:transparent;color:#8a6a52;font:15px/1 var(--sans);cursor:pointer}
+.srw-tabx:hover,.srw-tabx:focus-visible{background:rgba(34,19,10,.12);color:#22130a;outline:0}
+.srw-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--a)}
+.srw-dot.working{animation:srp-pulse 1.4s ease-in-out infinite}
+/* What OpenClaw is doing about the surface that is showing, as far as the chats say. It opens that chat. */
+.srw-live{flex:none;display:flex;align-items:center;gap:8px;min-width:0;margin-top:8px;padding:6px 12px;border-radius:11px;border:1px solid color-mix(in srgb,var(--a) 26%,transparent);background:rgba(255,255,255,.72);color:#4a2a14;font:12.5px var(--sans);text-align:left;cursor:pointer}
+.srw-live:hover{background:#fff;border-color:var(--a)}
+.srw-live i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--a)}
+.srw-live.working i{animation:srp-pulse 1.4s ease-in-out infinite}
+.srw-live b{flex:none;font-weight:600;color:#22130a}
+.srw-live span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6a4a32}
+.srw-live em{flex:none;font-style:normal;font-weight:500;color:var(--a)}
 .srw-ico{flex:none;height:34px;min-width:34px;margin-bottom:5px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 9px;border-radius:11px;border:1px solid rgba(40,22,10,.18);background:linear-gradient(180deg,#fff,#f1ece5);color:#22130a;font:500 13px var(--sans);cursor:pointer;box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.1)}
 .srw-ico:hover{border-color:rgba(40,22,10,.34)}
 .srw-ico[aria-pressed=true]{background:#22130a;border-color:#22130a;color:#fff6ec;box-shadow:none}
@@ -442,6 +457,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-foot{justify-content:flex-start}
 .cols-1 .srw-mid{padding:8px 8px 0}
 .cols-1 .srw-tab{padding:8px 10px 9px;max-width:150px}
+.cols-1 .srw-live em{display:none}
 .cols-1 .srw-tab[aria-selected=true]{max-width:190px}
 .cols-1 .srw-work{padding:14px 12px 24px}
 .cols-1 .srw-chats{flex:0 0 60%;width:auto;border-left:0;border-top:1px solid rgba(60,30,10,.14);background:#fffaf4;box-shadow:0 -14px 30px -22px rgba(60,30,10,.6)}
@@ -451,7 +467,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
-export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + BROWSER_SURFACE_CSS + CHATS_CSS;
+export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + BROWSER_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -1250,6 +1266,18 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
 
   // ---- The surfaces: the work, and one page per real link. Which is showing, and which pages he has opened.
   const [pasted, setPasted] = React.useState<string[]>([]);
+  // The pages he pasted here before are tabs again.
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/tasks/workspace-tabs?id=${encodeURIComponent(taskId)}`)
+      .then((r) => r.json())
+      .then((json) => {
+        const kept = readPastedPages(json?.data?.pasted);
+        if (!cancelled && kept.length > 0) setPasted((was) => readPastedPages([...kept, ...was]));
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [taskId]);
   const n = brief?.next;
   const surfaces = React.useMemo<Surface[]>(() => deriveSurfaces({
     links: brief?.links ?? [],
@@ -1267,7 +1295,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const tablist = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     const list = tablist.current;
-    const tab = list?.querySelector<HTMLElement>('[aria-selected=true]');
+    const tab = list?.querySelector<HTMLElement>('[aria-selected=true]')?.parentElement;
     if (!list || !tab) return;
     if (tab.offsetLeft < list.scrollLeft) list.scrollLeft = tab.offsetLeft;
     else if (tab.offsetLeft + tab.offsetWidth > list.scrollLeft + list.clientWidth) list.scrollLeft = tab.offsetLeft + tab.offsetWidth - list.clientWidth;
@@ -1287,24 +1315,13 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const key = pageKey(url);
     const live = Object.entries(pages).find(([, page]) => pageKey(page.url) === key)?.[0];
     const id = surfaces.find((surface) => surface.kind === 'web' && pageKey(surface.url) === key)?.id ?? live ?? surfaceId(url);
-    if (!surfaces.some((surface) => surface.id === id)) setPasted((was) => [...was, url]);
+    if (!surfaces.some((surface) => surface.id === id)) {
+      setPasted((was) => [...was, url]);
+      void post('/api/tasks/workspace-tabs', { taskId, action: 'add', url }).catch(() => {});
+    }
     choose(id);
     return id;
-  }, [surfaces, pages, choose]);
-  // When the workspace closes, the application worker gets OpenClaw's browser back straight away.
-  const usedBrowser = React.useRef(false);
-  usedBrowser.current = Object.keys(opened).length > 0;
-  React.useEffect(() => () => {
-    if (usedBrowser.current) void fetch('/api/openclaw/browser', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'end' }), keepalive: true }).catch(() => {});
-  }, []);
-  // A link in the brief shows its page here; with a modifier key it opens the ordinary way.
-  const linkClick = (href: string) => (event: React.MouseEvent) => {
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0 || isInternal(href)) return;
-    if (showPage(href) === null) return;
-    event.preventDefault();
-    if (cols === 1) setBriefOpen(false);
-  };
-
+  }, [surfaces, pages, choose, taskId]);
   // ---- The chats. What he is on goes with every message.
   const about = React.useMemo<ChatSurfaceRef | null>(() => {
     if (!selected) return null;
@@ -1313,6 +1330,57 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
   }, [selected, pages, hasWork]);
   const chats = useTaskChats(taskId, chatsOpen);
+  // What OpenClaw is doing about each surface, as far as the chats say: a chat whose last request was sent from
+  // it has a turn out, or an answer he has not looked at. Nothing more is known, and nothing more is said.
+  const activity = React.useMemo(() => {
+    const found: Record<string, SurfaceActivity> = {};
+    for (const surface of surfaces) {
+      const refs: ChatSurfaceRef[] = surface.kind === 'work' ? [{ kind: 'work', label: '' }]
+        : [surface.url, pages[surface.id]?.url].filter((url): url is string => !!url).map((url) => ({ kind: 'web', label: '', url }));
+      const doing = surfaceActivity(chats.threads, refs);
+      if (doing) found[surface.id] = doing;
+    }
+    return found;
+  }, [surfaces, pages, chats.threads]);
+
+  // When the workspace closes, the application worker gets OpenClaw's browser back straight away, and the tabs
+  // this workspace made there are closed. A tab that was already open before is left as it was, and so is a page
+  // OpenClaw is still working on for him.
+  const leave = React.useRef<() => void>(() => {});
+  leave.current = () => {
+    const tabs = Object.entries(opened);
+    if (tabs.length === 0) return;
+    const close = tabs.filter(([id, tab]) => tab.created && activity[id]?.state !== 'working').map(([, tab]) => tab.targetId);
+    void fetch('/api/openclaw/browser', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, keepalive: true,
+      body: JSON.stringify({ action: 'end', ...(close.length > 0 ? { close } : {}) }),
+    }).catch(() => {});
+  };
+  React.useEffect(() => {
+    const onHide = () => leave.current();
+    window.addEventListener('pagehide', onHide);
+    return () => { window.removeEventListener('pagehide', onHide); leave.current(); };
+  }, []);
+  /** Takes a page he pasted off the tabs, and closes its tab in OpenClaw's browser when this workspace made it. */
+  const closeTab = (surface: WebSurface) => {
+    setPasted((was) => withoutPastedPage(was, surface.url));
+    void post('/api/tasks/workspace-tabs', { taskId, action: 'remove', url: surface.url }).catch(() => {});
+    const tab = opened[surface.id];
+    if (tab?.created) void post('/api/openclaw/browser', { action: 'close', targetIds: [tab.targetId] }).catch(() => {});
+    const without = <T,>(was: Record<string, T>) => Object.fromEntries(Object.entries(was).filter(([id]) => id !== surface.id));
+    setOpened(without);
+    setArmed(without);
+    setPages(without);
+    if (picked === surface.id) setPicked(null);
+  };
+  // A link in the brief shows its page here; with a modifier key it opens the ordinary way.
+  const linkClick = (href: string) => (event: React.MouseEvent) => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0 || isInternal(href)) return;
+    if (showPage(href) === null) return;
+    event.preventDefault();
+    if (cols === 1) setBriefOpen(false);
+  };
+
   const showSurface = React.useCallback((ref: ChatSurfaceRef) => {
     if (ref.kind === 'work') choose('work');
     else if (ref.url) showPage(ref.url);
@@ -1385,6 +1453,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const why = says ? says[1] : form?.what ?? '';
   const links = (brief?.links ?? []).filter((l) => l.href !== n?.href);
   const webCount = surfaces.length - 1;
+  const doing = selected ? activity[selected.id] : undefined;
+  const chatKeys = React.useMemo(() => chats.threads.map((t) => t.sessionKey), [chats.threads]);
 
   return (
     <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
@@ -1459,12 +1529,21 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
         <div className="srw-tabs">
           <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief"><i className="pane" aria-hidden="true" /></button>
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
-            {surfaces.map((surface) => (
-              <button key={surface.id} type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.label} onClick={() => choose(surface.id)}>
-                <small>{surface.kind === 'web' ? 'web' : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
-                <span>{surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work'}</span>
-              </button>
-            ))}
+            {surfaces.map((surface) => {
+              const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work';
+              const state = activity[surface.id]?.state;
+              const closes = surface.kind === 'web' && surface.pasted === true;
+              return (
+                <span key={surface.id} role="presentation" className={`srw-tabwrap${closes ? ' closes' : ''}`}>
+                  <button type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.label} onClick={() => choose(surface.id)}>
+                    <small>{surface.kind === 'web' ? 'web' : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
+                    <span>{name}</span>
+                    {state && <i className={`srw-dot ${state}`} role="img" aria-label={state === 'working' ? 'OpenClaw is working on this' : 'OpenClaw answered'} />}
+                  </button>
+                  {closes && <button type="button" className="srw-tabx" onClick={() => closeTab(surface)} aria-label={`Close ${name}`} title="Close this page">×</button>}
+                </span>
+              );
+            })}
           </div>
           {adding ? (
             <form className="srw-add" onSubmit={addPage}>
@@ -1490,6 +1569,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               covered={cols === 1 && briefOpen}
               opened={opened[selected.id] ?? null}
               narrow={cols === 1}
+              watching={doing?.state === 'working'}
               onArm={() => choose(selected.id)}
               onOpened={(tab) => setOpened((was) => {
                 const rest = Object.fromEntries(Object.entries(was).filter(([id]) => id !== selected.id));
@@ -1539,11 +1619,21 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             </div>
           )}
         </div>
+        {doing && (
+          <button type="button" className={`srw-live ${doing.state}`} onClick={() => { showChats(true); chats.open(doing.threadId); }}
+            title={doing.state === 'working' ? 'A chat about this has a turn out to OpenClaw. Open that chat.' : 'OpenClaw answered in a chat about this. Open that chat.'}>
+            <i aria-hidden="true" />
+            <b role="status">{doing.state === 'working' ? 'OpenClaw is working on this' : 'OpenClaw answered'}</b>
+            {doing.ask && <span>· {doing.ask}</span>}
+            <em>Open the chat</em>
+          </button>
+        )}
         {!chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
       </div>
       {chatsOpen && (
         <aside className="srw-chats">
-          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} onShowSurface={showSurface} onClose={() => setChatsOpen(false)} />
+          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} onShowSurface={showSurface} onClose={() => setChatsOpen(false)}
+            below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded} />} />
         </aside>
       )}
     </div>
