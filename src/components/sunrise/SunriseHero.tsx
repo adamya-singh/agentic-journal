@@ -14,6 +14,8 @@ import { BRIEF_CSS } from '@/components/horizon/TaskBriefCard';
 import { CHAT_CSS } from '@/components/horizon/BriefChat';
 import { ActionCardView, CARD_CSS, type CardDecisionInput } from '@/components/horizon/ActionCardView';
 import { decideCard, undoCard } from '@/components/horizon/card-actions';
+import type { DawnSpace } from '@/components/horizon/dawn-space';
+import { SPACE_CSS } from '@/components/horizon/space-css';
 import type { ActionCard, FarSideView } from '@/lib/action-cards/types';
 import { cardFormSpec, cardSalience } from '@/lib/sunrise/form-spec';
 import { getCurrentDateISO } from '@/lib/current-date';
@@ -62,6 +64,18 @@ const HERO_CSS = `
 .thing.is-card .shape.sm{border-style:dashed}
 .src{position:absolute;inset:0;overflow:auto;background:linear-gradient(180deg,#161b30,#090c18)}
 .src .ac{position:static;width:100%;max-height:none;border:0;border-radius:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;background:none}
+/* Stepping inside: Dawn's 3D world takes the sky over, and Sunrise's own layers step back until you leave. */
+.sr-sky.hz-live{cursor:crosshair}
+.sr-sky .sr-flat{transition:opacity .28s ease}
+.sr-sky.hz-on3d .sr-flat{pointer-events:none}
+.sr-sky.hz-on3d :is(.sr-labels,.sr-threads,.sr-arcs,.sr-sunbtn,.sr-ground,.sr-streak,.sr-day){opacity:0;visibility:hidden;transition:opacity .28s ease,visibility 0s .28s}
+.sr-sky:not(.hz-settled) .hz3d-btns{pointer-events:none}
+.sr-sky .hz3d-enter,.sr-enter3d{bottom:84px}
+.sr-enter3d{position:absolute;right:24px;z-index:7;display:flex;align-items:center;gap:9px;font:500 13px var(--sans);color:#f3efe7;background:rgba(10,14,24,.55);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:8px 16px;cursor:pointer;transition:transform .2s ease,border-color .2s ease}
+.sr-enter3d i{width:8px;height:8px;border-radius:50%;background:#ffd2a8;box-shadow:0 0 0 4px rgba(255,210,168,.2)}
+.sr-enter3d:hover,.sr-enter3d:focus-visible{transform:translateY(-2px);border-color:#ffd2a8;outline:none}
+.sr-enter3d:disabled{opacity:.6;cursor:default}
+.sr-hero:has(.sr-sky.working) .sr-enter3d{display:none}
 .sr-undo{position:absolute;left:50%;bottom:104px;z-index:31;transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;font:12.5px var(--sans);color:#f3e3cf;background:rgba(10,14,24,.85);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 6px 5px 13px;white-space:nowrap}
 .sr-undo button{font:500 11px var(--mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
 `;
@@ -91,6 +105,13 @@ export function SunriseHero() {
   const [letGoAsk, setLetGoAsk] = React.useState<{ id: string; listType: string; short: string; title: string } | null>(null);
   const [tick, setTick] = React.useState(0);
   const [cards, setCards] = React.useState<ActionCard[]>([]);
+  // Dawn's 3D world, loaded (with three.js) the first time you step inside.
+  const spaceRef = React.useRef<DawnSpace | null>(null);
+  const [space, setSpace] = React.useState<'off' | 'loading' | 'on'>('off');
+  const dataRef = React.useRef<SunriseData | null>(null);
+  dataRef.current = data;
+  const openRef = React.useRef<string | null>(null);
+  openRef.current = open;
 
   // The journal's data: on load, whenever tasks change anywhere on the page, and every five minutes.
   React.useEffect(() => {
@@ -148,8 +169,39 @@ export function SunriseHero() {
     }
     refreshTasks();
   }, [refreshTasks]);
-  const hostRef = React.useRef({ toggleDaily });
-  hostRef.current = { toggleDaily };
+  // The 3D world stands its tasks where Sunrise's rings put them.
+  const feedSpace = React.useCallback(() => {
+    const layout = engineRef.current?.layoutForSpace();
+    if (spaceRef.current && layout && dataRef.current) spaceRef.current.setLayout(layout.spots, dataRef.current.horizon, layout.sectors);
+  }, []);
+  const hostRef = React.useRef({ toggleDaily, feedSpace });
+  hostRef.current = { toggleDaily, feedSpace };
+
+  const stepInside = React.useCallback(async () => {
+    const sky = skyRef.current, made = engineRef.current;
+    if (!sky || !made || spaceRef.current) return;
+    setSpace('loading');
+    try {
+      const { DawnSpace: Space } = await import('@/components/horizon/dawn-space');
+      if (engineRef.current !== made) return;
+      const world = new Space(sky, made.flat);
+      spaceRef.current = world;
+      // Flying to a task opens it; Escape closes what is open before it leaves the world.
+      world.onArrive = (item) => made.openTask(item.id);
+      world.onEscape = () => { if (!openRef.current) return false; made.closeTask(); return true; };
+      world.onDailyToggle = (id) => {
+        const daily = dataRef.current?.horizon.dailies.find((d) => d.id === id);
+        if (daily) void hostRef.current.toggleDaily(daily);
+      };
+      hostRef.current.feedSpace();
+      setSpace('on');
+      sky.querySelector<HTMLButtonElement>('.hz3d-enter')?.click();
+    } catch (err) {
+      console.warn('Sunrise 3D unavailable:', err);
+      setSpace('off');
+      made.toast('The 3D view could not start here');
+    }
+  }, []);
 
   // The engine lives for the life of the component. It and the layout programs are loaded on demand, so building
   // them (most of a second) never holds up the page's first paint.
@@ -162,11 +214,20 @@ export function SunriseHero() {
         onOpen: setOpen,
         onTray: (kind) => { setTray(kind); setTrayError(null); },
         onToggleDaily: (daily) => void hostRef.current.toggleDaily(daily),
+        onLayout: () => hostRef.current.feedSpace(),
       });
       engineRef.current = made;
       setEngine(made);
     }).catch((err) => { console.error('Sunrise could not start:', err); if (!disposed) setError('Sunrise could not start'); });
-    return () => { disposed = true; engineRef.current?.destroy(); engineRef.current = null; setEngine(null); };
+    return () => {
+      disposed = true;
+      spaceRef.current?.destroy();
+      spaceRef.current = null;
+      setSpace('off');
+      engineRef.current?.destroy();
+      engineRef.current = null;
+      setEngine(null);
+    };
   }, []);
   React.useEffect(() => { if (engine && data) engine.update(data, cardThings, cards.length); }, [engine, data, cardThings, cards.length]);
 
@@ -300,7 +361,7 @@ export function SunriseHero() {
 
   return (
     <section className={`sr-hero ${serif.variable}`} aria-label="Sunrise: your tasks by how soon they are due">
-      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + SPACE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
       <div
         ref={skyRef}
         className="sr-sky"
@@ -336,6 +397,11 @@ export function SunriseHero() {
           onUndo={offerUndo}
         />,
         engine.slots.pane,
+      )}
+      {engine && data && space !== 'on' && (
+        <button type="button" className="sr-enter3d" disabled={space === 'loading'} onClick={() => void stepInside()}>
+          <i />{space === 'loading' ? 'Opening the 3D view…' : 'Step inside · explore in 3D'}
+        </button>
       )}
       {undo && <span className="sr-undo" role="status">{undo.text}<button type="button" onClick={() => void runUndo()}>Undo</button></span>}
       {waiting.length > 0 && (

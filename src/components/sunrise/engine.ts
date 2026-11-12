@@ -30,7 +30,11 @@ export type EngineHost = {
   onTray(kind: TrayKind | null): void
   /** A daily's arc was pressed. */
   onToggleDaily(daily: HorizonDaily): void
+  /** The sky was laid out again (new data, a new size, time passing). */
+  onLayout?(): void
 }
+/** Where the rings put a task and the slices, in Horizon Dawn's own units (dawn-svg.ts's 1200 × 630 drawing). */
+export type SpaceLayout = {spots: {item: HorizonItem, x: number, y: number}[], sectors: {group: string, a0: number, a1: number, mid: number}[]}
 
 // ---- The programs, built once for the page. Building takes most of a second, so it yields between them.
 type Programs = {dawn: ReturnType<typeof createDawnLayout>, grow: ReturnType<typeof createGrowLayout>, attention: ReturnType<typeof createAttention>}
@@ -101,7 +105,9 @@ export class SunriseEngine {
   private readonly observer: ResizeObserver
   private readonly timers = new Set<number>()
 
-  private readonly flat: SVGSVGElement
+  /** The flat drawing of the sky, which the 3D world fades out as it takes over. */
+  readonly flat: SVGSVGElement
+  private spaceLayout: SpaceLayout = {spots: [], sectors: []}
   private readonly threads: SVGSVGElement
   private readonly labels: HTMLElement
   private readonly say: HTMLElement
@@ -251,7 +257,8 @@ export class SunriseEngine {
       if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton) this.closeTray()
     }, {signal})
     window.addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      // Inside the 3D world Escape is the world's (it asks the host first).
+      if (event.key !== 'Escape' || event.defaultPrevented || this.root.classList.contains('hz-live')) return
       // Typing somewhere (the chat, the work, a reason): Escape is that field's.
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return
@@ -262,7 +269,7 @@ export class SunriseEngine {
     }, {signal})
     // Shift and scroll pulls back to the tasks past the next two weeks, and comes back.
     root.addEventListener('wheel', event => {
-      if (!event.shiftKey || this.open !== null) return
+      if (!event.shiftKey || this.open !== null || this.root.classList.contains('hz-live')) return
       event.preventDefault()
       const delta = event.deltaY !== 0 ? event.deltaY : event.deltaX
       if (delta > 8) this.setFar(true)
@@ -397,6 +404,9 @@ export class SunriseEngine {
     this.tray.hidden = true
     this.host.onTray(null)
   }
+
+  /** The current layout in Dawn's units, for the 3D world (dawn-space.ts's setLayout). */
+  layoutForSpace(): SpaceLayout { return this.spaceLayout }
 
   /** A short message at the foot of the sky. */
   toast(text: string) {
@@ -776,6 +786,13 @@ export class SunriseEngine {
         demoted = true
       }
       if (!demoted || final) {
+        // The same places in Dawn's units: the 3D world stands its tasks where the rings put them.
+        this.spaceLayout = {
+          spots: [...pillBoxes].flatMap(([thing, box]) => thing.item === null ? [] : [{
+            item: thing.item, x: 600 + (box.left + box.width / 2 - W / 2) / kxNow, y: 560 - (Y - (box.top + box.height / 2)) / kyNow,
+          }]),
+          sectors: groups.flatMap((group, index) => { const sector = ring.sectors[index]; return sector === undefined || !sector.shown ? [] : [{group, a0: sector.a0, a1: sector.a1, mid: sector.mid}] }),
+        }
         this.commit = () => {
           this.render(pillBoxes, kxNow)
           this.renderSubjects(ring.sectors, kxNow, kyNow)
@@ -791,6 +808,7 @@ export class SunriseEngine {
     this.commit()
     this.drawFlat()
     this.writeHeadline(order)
+    this.host.onLayout?.()
     // The words changed size: the corners the rings keep clear of changed with them, so lay it out once more.
     if (this.open === null && this.saidSize !== `${this.say.offsetWidth}x${this.say.offsetHeight}` && !this.resolving) {
       this.resolving = true
