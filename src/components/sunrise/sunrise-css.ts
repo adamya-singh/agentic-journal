@@ -354,6 +354,8 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .zoomed .thing,.zoomed .sr-glow{will-change:auto}
 .sr-say{transition:opacity .25s ease}
 .zoomed .sr-say{opacity:0}
+.thing.veiled{opacity:0!important;pointer-events:none;transition:opacity .35s ease}
+.zoomed .thing.veiled{opacity:1!important;pointer-events:auto}
 .gliding .sr-world,.gliding .sr-flat{transition:transform .34s cubic-bezier(.22,.8,.24,1)}
 .sr-ctl{position:absolute;left:50%;top:12px;z-index:9;transform:translateX(-50%);display:flex;gap:6px;align-items:center}
 .sr-ctl button{border:1px solid rgba(255,255,255,.2);background:rgba(10,14,24,.5);color:rgba(243,239,231,.78);border-radius:999px;padding:4px 12px;font:500 11px var(--mono);cursor:pointer;white-space:nowrap;transition:border-color .15s ease,color .15s ease,background .15s ease}

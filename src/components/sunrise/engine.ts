@@ -1022,12 +1022,16 @@ export class SunriseEngine {
           const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
           const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
           const {width, height} = this.formBox(thing, rowSize[1])
-          // A place that lands on the words or the capture box goes further out along its ray until it is clear
-          // of them: off camera at first, and there when he moves out to it.
+          // A place that lands under the headline stays where it is and fades away while the words are up: it is
+          // there again as soon as he moves the camera, when the words step back. One under the capture box, which
+          // never steps back, goes further out along its ray until it is clear.
           const boxAt = (reach: number) => ({left: cx + vx / r * reach - width / 2, top: cy + vy / r * reach - height / 2, width, height})
-          const onCorner = (box: Box) => cornerBoxes.some(corner => box.left < corner.right + 14 && box.left + box.width > corner.left - 14 && box.top < corner.bottom + 14 && box.top + box.height > corner.top - 14)
+          const on = (box: Box, corner: GrowBox | undefined) => corner !== undefined && box.left < corner.right + 14 && box.left + box.width > corner.left - 14 && box.top < corner.bottom + 14 && box.top + box.height > corner.top - 14
+          const words: GrowBox | undefined = cornersAsDrawn.topLeft.width > 0 ? {left: 0, top: 0, right: cornersAsDrawn.topLeft.width, bottom: cornersAsDrawn.topLeft.height} : undefined
+          const capture: GrowBox | undefined = cornersAsDrawn.topRight.width > 0 ? {left: W - cornersAsDrawn.topRight.width, top: 0, right: W, bottom: cornersAsDrawn.topRight.height} : undefined
           let reach = push
-          while (reach < push + 900 && onCorner(boxAt(reach))) reach += 16
+          while (reach < push + 900 && on(boxAt(reach), capture)) reach += 16
+          if (on(boxAt(reach), words)) thing.look += ' veiled'
           pillBoxes.set(thing, boxAt(reach))
         })
       } else if (boxed && !this.farSide && this.subject === null) {
