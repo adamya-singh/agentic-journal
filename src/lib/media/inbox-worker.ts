@@ -76,7 +76,7 @@ async function readOne(entry: Entry) {
       .map((t) => `${t.title}${t.year ? ` (${t.year})` : ''}`);
     const reply = await runOpenClawAgentTurn({
       message: readPrompt(entry.text, library),
-      sessionKey: `agent:main:journal-media-add-${entry.id}`,
+      sessionKey: `agent:main:cron:journal-media-add-${entry.id}`,
       timeoutMs: 6 * 60_000,
     });
     const reading = parseReply(extractJsonObject(reply));

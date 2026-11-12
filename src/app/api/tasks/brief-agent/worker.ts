@@ -155,7 +155,7 @@ async function fillOne(taskId: string): Promise<void> {
   try {
     const reply = await runOpenClawAgentTurn({
       message,
-      sessionKey: `agent:main:journal-brief-${taskId}-${now.getTime()}`,
+      sessionKey: `agent:main:cron:journal-brief-${taskId}-${now.getTime()}`,
       timeoutMs: 12 * 60_000,
     });
     const checked = validateAgentReply(extractJsonObject(reply), {

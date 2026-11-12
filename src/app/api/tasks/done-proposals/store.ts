@@ -120,7 +120,7 @@ export function newProposal(input: {
     proposal: null,
     question: null,
     error: null,
-    sessionKey: `agent:main:journal-done-${input.id}`,
+    sessionKey: `agent:main:cron:journal-done-${input.id}`,
     turn: 1,
     createdAt: at,
     updatedAt: at,
