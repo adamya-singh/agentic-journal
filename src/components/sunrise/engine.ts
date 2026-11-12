@@ -20,9 +20,11 @@ import {salienceOf} from '@/lib/sunrise/salience'
 import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms'
 
 export type Box = {left: number, top: number, width: number, height: number}
-export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies'
+export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards'
+/** An action card that competes for attention beside the tasks: its form, and how much it matters now (0 to 1). */
+export type CardThing = {id: string, salience: number, form: FormThing}
 export type EngineHost = {
-  /** A task was opened into the workspace (its id), or the workspace closed (null). */
+  /** A task or an action card was opened into the workspace (its id), or the workspace closed (null). */
   onOpen(taskId: string | null): void
   /** A tray opened, or closed (null). */
   onTray(kind: TrayKind | null): void
@@ -63,8 +65,9 @@ function starField(width: number, height: number, count: number) {
   return svg
 }
 
+// A task on the rings (item), or an action card that rose from the sun (item is null, salience is its own).
 type Thing = {
-  id: string, item: HorizonItem, form: FormThing, signature: string
+  id: string, item: HorizonItem | null, salience: number, form: FormThing, signature: string
   el: HTMLElement, face: HTMLElement, body: HTMLElement, day: HTMLElement, seat: HTMLElement
   level: number, hook: Box | null, shown: boolean, lifted: boolean, from: {x: number, y: number} | null
   lastBox: Box | null
@@ -112,6 +115,7 @@ export class SunriseEngine {
   private readonly measureContext = document.createElement('canvas').getContext('2d')
 
   private data: SunriseData | null = null
+  private cardCount = 0
   private things: Thing[] = []
   private subject: string | null = null // the subject you've gone into, if any
   private open: string | null = null // the task in the workspace
@@ -261,26 +265,34 @@ export class SunriseEngine {
     void (document.fonts?.ready ?? Promise.resolve()).then(() => this.start(), () => this.start())
   }
 
-  /** New data from the journal: tasks keep their elements and move; new ones appear, finished ones sink into the sun. */
-  update(data: SunriseData) {
+  /**
+   * New data from the journal: tasks keep their elements and move; new ones appear, finished ones sink into the sun.
+   * `cards` are the action cards that may rise beside the tasks, heaviest first; `cardCount` is how many wait in all.
+   */
+  update(data: SunriseData, cards: CardThing[] = [], cardCount = cards.length) {
     if (this.destroyed) return
     const before = this.data
     this.data = data
+    this.cardCount = cardCount
     for (const daily of data.horizon.dailies) if (this.dailyDone.get(daily.id) === daily.done) this.dailyDone.delete(daily.id)
     const items = ringItems(data.horizon.items)
-    const keep = new Set(items.map(item => item.id))
+    const wanted = [
+      ...items.map(item => ({id: item.id, item: item as HorizonItem | null, salience: 0, form: this.formOf(item)})),
+      // As many as attention can still rank beside the tasks.
+      ...cards.slice(0, thingCount - items.length).map(card => ({id: card.id, item: null, salience: card.salience, form: card.form})),
+    ]
+    const keep = new Set(wanted.map(each => each.id))
     const wasUndated = new Set(before?.horizon.undated.map(undated => undated.id) ?? [])
     const chip = this.groundEl.querySelector('.nodate')
     for (const thing of this.things.filter(candidate => !keep.has(candidate.id))) this.removeThing(thing)
     this.things = this.things.filter(thing => keep.has(thing.id))
-    for (const item of items) {
-      const form = this.formOf(item)
-      const signature = JSON.stringify(form)
-      const thing = this.things.find(candidate => candidate.id === item.id)
+    for (const each of wanted) {
+      const signature = JSON.stringify(each.form)
+      const thing = this.things.find(candidate => candidate.id === each.id)
       if (thing === undefined) {
-        const added = this.addThing(item, form, signature)
+        const added = this.addThing(each.id, each.item, each.salience, each.form, signature)
         // A task that just got its When flies up from the ground to its ring.
-        if (wasUndated.has(item.id) && chip !== null && this.ready) {
+        if (wasUndated.has(each.id) && chip !== null && this.ready) {
           const rect = this.rectIn(chip)
           added.el.style.transition = 'none'
           this.setBox(added.el, {left: rect.left, top: rect.top, width: Math.max(60, rect.width), height: 28})
@@ -289,18 +301,20 @@ export class SunriseEngine {
         }
         continue
       }
-      thing.item = item
-      thing.day.textContent = item.day
+      thing.item = each.item
+      thing.salience = each.salience
+      thing.day.textContent = each.item?.day ?? ''
       if (thing.signature !== signature) {
-        thing.form = form
+        thing.form = each.form
         thing.signature = signature
         this.forget(thing.id)
         thing.body.dataset['key'] = ''
         thing.face.dataset['key'] = ''
       }
     }
-    // The order attention reads them in is the rings' own: soonest first.
-    this.things.sort((a, b) => items.indexOf(a.item) - items.indexOf(b.item))
+    // The order attention reads them in: the rings' own, soonest first, then the cards.
+    const position = new Map(wanted.map((each, index) => [each.id, index]))
+    this.things.sort((a, b) => position.get(a.id)! - position.get(b.id)!)
     if (this.subject !== null && !groupsOf(data.horizon.items).includes(this.subject)) this.subject = null
     if (this.open !== null && this.workBox === null) this.open = null
     this.flatKey = ''
@@ -314,7 +328,7 @@ export class SunriseEngine {
     const thing = this.things.find(candidate => candidate.id === taskId)
     const from = thing?.at ?? null
     this.open = taskId
-    this.startedHere.add(taskId)
+    if (!taskId.startsWith('card:')) this.startedHere.add(taskId)
     this.closeTray()
     window.clearTimeout(this.hotTimer)
     this.hot = null
@@ -326,7 +340,7 @@ export class SunriseEngine {
     void this.pane.offsetWidth
     this.pane.style.transition = ''
     this.root.classList.add('working')
-    this.workBox = this.workRect(from)
+    this.workBox = this.workRect(from, taskId.startsWith('card:'))
     this.solve()
     requestAnimationFrame(() => { if (this.workBox !== null) this.placePane(this.workBox, true) })
     this.host.onOpen(taskId)
@@ -381,22 +395,22 @@ export class SunriseEngine {
     }
     return {spec, when: shortDay(item.day)}
   }
-  private addThing(item: HorizonItem, form: FormThing, signature: string): Thing {
+  private addThing(id: string, item: HorizonItem | null, salience: number, form: FormThing, signature: string): Thing {
     const el = document.createElement('div')
     el.className = 'thing lv0 gone'
-    el.dataset['id'] = item.id
+    el.dataset['id'] = id
     const face = document.createElement('div')
     face.className = 'face'
     const body = document.createElement('div')
     body.className = 'body'
     const day = document.createElement('span')
     day.className = 'd'
-    day.textContent = item.day
+    day.textContent = item?.day ?? ''
     el.append(face, body, day)
     const seat = document.createElement('div')
     seat.className = 'seat'
     this.labels.append(seat, el)
-    const thing: Thing = {id: item.id, item, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null}
+    const thing: Thing = {id, item, salience, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null}
     this.things.push(thing)
     return thing
   }
@@ -422,7 +436,7 @@ export class SunriseEngine {
     return Math.ceil(this.measureContext.measureText(text).width)
   }
   private pillLabel(thing: Thing) {
-    const short = trimDots(thing.item.short)
+    const short = trimDots(thing.item?.short ?? thing.form.spec.name)
     return short.length > 16 ? `${short.slice(0, 15).trimEnd()}…` : short
   }
   private pillWidth(thing: Thing) { return this.textWidth(this.pillLabel(thing), thing.level > 0 ? 600 : 500) + 20 }
@@ -501,6 +515,8 @@ export class SunriseEngine {
   // ---- Solving: attention, then the rings, then the lead's place in the sky.
   private salience(thing: Thing, elapsed: number, todayOpen: Set<string>) {
     const data = this.data!
+    // A card's salience is its own. Inside a subject, and on a narrow screen, the cards wait on the ground.
+    if (thing.item === null) return this.subject !== null || this.narrow ? 0 : thing.salience
     const value = salienceOf({
       hours: thing.item.hours - elapsed, weight: thing.item.weight, today: todayOpen.has(thing.id),
       currentRank: data.current[thing.id] ?? null, ready: thing.form.spec.ready,
@@ -541,10 +557,11 @@ export class SunriseEngine {
     if (shelf) corners.topLeft.height += this.fullBox(lead, 3, true).height + 30
 
     // 2. The rings. Gone into a subject, its slice opens to the whole fan and the others fold away.
-    const items = things.map(thing => thing.item)
+    const ringThings = things.filter(thing => thing.item !== null)
+    const items = ringThings.map(thing => thing.item!)
     const groups = groupsOf(horizon.items)
     const weights = this.subject === null ? undefined : new Map(groups.map(group => [group, group === this.subject ? 4 : 0]))
-    const thingOf = (item: HorizonItem) => things.find(thing => thing.item === item)
+    const thingOf = (item: HorizonItem) => ringThings.find(thing => thing.item === item)
     const bounds = {climb: horizon.bounds.climb - elapsed, altitude: horizon.bounds.altitude - elapsed}
     this.narrowForms.clear()
     this.narrowSeat = false
@@ -643,8 +660,9 @@ export class SunriseEngine {
       ].filter(box => box.right > box.left && box.bottom > box.top)
       const growBox = (box: Box): GrowBox => ({left: Math.floor(box.left), top: Math.floor(box.top), right: Math.ceil(box.left + box.width), bottom: Math.ceil(box.top + box.height + 18)})
       const growBounds = {left: 10, top: 10, right: W - 10, bottom: Y - 6}
+      const placed: GrowBox[] = []
       const place = (thing: Thing, size: {width: number, height: number}, anchor: {x: number, y: number, width: number, height: number}) => {
-        const obstacles = [sunBox, ...cornerBoxes, ...[...pillBoxes].filter(([other]) => other !== thing && other.level !== 3).map(([, box]) => growBox(box))].slice(0, 40)
+        const obstacles = [sunBox, ...cornerBoxes, ...placed, ...[...pillBoxes].filter(([other]) => other !== thing && other.level !== 3).map(([, box]) => growBox(box))].slice(0, 40)
         const sticky = thing.hook !== null && thing.hook.width === size.width && thing.hook.height === size.height
         const growInput: GrowInput = {
           bounds: growBounds, gap: narrow ? 8 : 14, box: {width: Math.round(size.width), height: Math.round(size.height)},
@@ -661,13 +679,26 @@ export class SunriseEngine {
         const r = rings[4] + 6
         return {x: W / 2 + r * this.last.kx * Math.cos(angle), y: Y - r * this.last.ky * Math.sin(angle), width: 2, height: 2}
       }
+      // An action card comes from the sun: its anchor is just above it.
+      const cardThings = things.filter(thing => thing.item === null)
+      const cardAnchor = (thing: Thing) => ({x: W / 2 + (cardThings.indexOf(thing) - (cardThings.length - 1) / 2) * 60, y: Y - this.last.sunR - 24, width: 2, height: 2})
       for (const thing of order) {
         const pill = pillBoxes.get(thing)
-        const anchor = pill === undefined ? null : {x: pill.left + pill.width / 2, y: pill.top + pill.height / 2, width: pill.width, height: pill.height}
+        const isCard = thing.item === null
+        const anchor = pill !== undefined ? {x: pill.left + pill.width / 2, y: pill.top + pill.height / 2, width: pill.width, height: pill.height}
+          : isCard && thing.level >= 1 ? cardAnchor(thing) : null
         thing.shown = anchor !== null
         thing.from = anchor === null ? null : {x: anchor.x, y: anchor.y}
-        thing.hook = thing.level === 3 ? thing.hook : null
-        if (anchor === null || thing.level !== 3) { if (anchor === null) thing.hook = null; continue }
+        if (anchor === null) { thing.hook = null; continue }
+        if (thing.level !== 3) {
+          // A task sits where the rings put it. A card that matters now gets a small form near the sun.
+          if (!isCard) { thing.hook = null; continue }
+          const size = this.formBox(thing, rowSize[1])
+          const result = place(thing, size, anchor)
+          const near = Math.hypot(result.left + size.width / 2 - anchor.x, result.top + size.height / 2 - anchor.y) < Math.max(280, W * 0.26)
+          if (result.free && near) { thing.hook = {left: result.left, top: result.top, ...size}; placed.push(growBox(thing.hook)) } else { thing.hook = null; thing.shown = false }
+          continue
+        }
         let size = this.fullBox(thing, 3, narrow)
         const hookAnchor = shelf ? {x: Math.round(W / 2), y: shelfTop + size.height + 8 + 1, width: 2, height: 2} : rayAnchor(anchor.x, anchor.y)
         // It looks for room above its own slice, then beside its seat, then in the open sky under the capture box,
@@ -684,6 +715,7 @@ export class SunriseEngine {
         }
         if (result.free) {
           thing.hook = {left: result.left, top: result.top, ...size}
+          placed.push(growBox(thing.hook))
           continue
         }
         // No room to open: it stays a form like the rest, lit.
@@ -735,7 +767,7 @@ export class SunriseEngine {
       thing.at = null
       thing.rest = null
       const isStarted = started[thing.id] !== undefined || this.startedHere.has(thing.id)
-      el.className = `thing lv${level} ${thing.item.zone}${isHook ? ' hook' : ''}${isBox ? ' form' : ''}${isBox && thing.id === this.leadId ? ' lead' : ''}${isHot ? ' hot' : ''}${isStarted ? ' started' : ''}`
+      el.className = `thing lv${level} ${thing.item?.zone ?? 'daily is-card'}${isHook ? ' hook' : ''}${isBox ? ' form' : ''}${isBox && thing.id === this.leadId ? ' lead' : ''}${isHot ? ' hot' : ''}${isStarted ? ' started' : ''}`
       if (pill !== undefined && !isHook) thing.lastBox = pill
       if (this.open === thing.id && box !== null && thing.shown) {
         // It grew into the workspace right where it was: its form waits underneath.
@@ -747,8 +779,8 @@ export class SunriseEngine {
         continue
       }
       if (!thing.shown || box === null) {
-        // Folded, not finished: it stays where it was as a faint bubble.
-        if (thing.lastBox !== null && this.open === null && this.subject === null) {
+        // Folded, not finished: it stays where it was as a faint bubble. A card just waits on the ground.
+        if (thing.item !== null && thing.lastBox !== null && this.open === null && this.subject === null) {
           el.classList.add('ghost')
           this.setBox(el, thing.lastBox)
         } else {
@@ -929,11 +961,12 @@ export class SunriseEngine {
     this.setBox(this.pane, box)
     this.pane.classList.toggle('risen', risen)
   }
-  private workRect(from: Box | null): Box {
+  private workRect(from: Box | null, card = false): Box {
     const {width: W, height: H} = this.stage
     if (this.narrow) return {left: 8, top: 8, width: W - 16, height: H - 16}
-    const width = Math.min(960, W - 32)
-    const height = Math.min(760, H - 28)
+    // A card to decide is one column; a task has its work and its brief side by side.
+    const width = Math.min(card ? 500 : 960, W - 32)
+    const height = Math.min(card ? 680 : 760, H - 28)
     const centre = from ?? this.sunCircle()
     const left = Math.max(16, Math.min(W - 16 - width, centre.left + centre.width / 2 - width / 2))
     const top = Math.max(14, Math.min(H - 14 - height, centre.top + centre.height / 2 - height / 2))
@@ -961,6 +994,7 @@ export class SunriseEngine {
     else if (horizon.holds.length > 1) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
     if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> with no date</button>`
     if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
+    if (this.cardCount > 0) html += `<button type="button" class="chip cards" data-tray="cards"><b>${this.cardCount}</b> to decide</button>`
     // What the rings have no room for is counted, never dropped.
     const beyond = horizon.further.length + ringOverflow(horizon.items).length
     if (beyond > 0) html += `<span class="chip more" title="Later tasks the rings have no room for"><b>+${beyond}</b> further out</span>`
@@ -1062,7 +1096,8 @@ export class SunriseEngine {
     this.fullHeights.clear()
     this.solve()
     if (this.open !== null) {
-      this.workBox = this.workRect(this.things.find(thing => thing.id === this.open)?.at ?? null)
+      const opened = this.things.find(thing => thing.id === this.open)
+      this.workBox = this.workRect(opened?.at ?? null, this.open.startsWith('card:'))
       this.placePane(this.workBox, true)
     }
     if (this.trayKind !== null) this.closeTray()

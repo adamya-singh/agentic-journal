@@ -12,6 +12,7 @@ import { CARD_WHENS, type ActionCard, type CardAnswer, type FarSideView } from '
 import { DAWN, FAN_LEFT, FAN_RIGHT, SECTOR_GAP, textWidth, type PillSpot, type Sector } from './dawn-svg';
 import type { DawnSpace } from './dawn-space';
 import { ActionCardView, CARD_CSS, SRC_ICON, SRC_NAME, type CardDecisionInput } from './ActionCardView';
+import { decideCard, undoCard } from './card-actions';
 
 const { W, H: SY, X: SX, R } = DAWN;
 const VH = 630;                 // the drawing's full height, sky plus ground
@@ -358,30 +359,17 @@ export function FarSide({ skyRef, svgRef, spots, sectors, data, space, groundSlo
   }, []);
 
   const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
-  const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 
   const undo = React.useCallback(async (id: string) => {
     setToast(null);
-    const r = await post('/api/action-cards/decide', { id, undo: true });
-    if (r.success && r.data.removeTask) await post('/api/tasks/remove', { taskId: r.data.removeTask.id, listType: r.data.removeTask.listType });
+    await undoCard(id);
     load(); onTasksChanged();
   }, [load, onTasksChanged]);
 
   const decide = React.useCallback(async (card: ActionCard, d: CardDecisionInput): Promise<string | void> => {
-    let taskId: string | undefined, taskListType: 'have-to-do' | 'want-to-do' | undefined;
-    const o = card.outcomes.find((x) => x.kind === d.outcome);
-    if (d.verdict === 'agree' && d.outcome === 'task') {
-      taskListType = o?.listType ?? 'want-to-do';
-      const notes = [`From an action card${card.source === 'x' ? ' (Openclaw folder)' : ` OpenClaw noticed in ${SRC_NAME[card.source]}`}.`, '', card.what, card.post ? `\n${card.post.url}` : card.link ? `\n${card.link}` : '', '', `Why: ${d.reason}`].join('\n');
-      const t = await post('/api/tasks/add', { task: card.title, listType: taskListType, ...(o?.due ? { dueDate: o.due } : {}), notesMarkdown: notes });
-      if (!t.success) return t.error || 'Could not make the task.';
-      taskId = t.taskId;
-    }
-    const r = await post('/api/action-cards/decide', { id: card.id, verdict: d.verdict, reason: d.reason, ...(d.outcome ? { outcome: d.outcome } : {}), ...(taskId ? { taskId, taskListType } : {}), ...(d.snooze ? { snooze: true } : {}) });
-    if (!r.success) {
-      if (taskId) await post('/api/tasks/remove', { taskId, listType: taskListType });
-      return r.error || 'Could not save that answer.';
-    }
+    const decided = await decideCard(card, d);
+    if (!decided.ok) return decided.error;
+    const o = decided.outcome;
     setOpen(null);
     const q = `<q>“${esc(d.reason)}”</q>`;
     if (d.verdict === 'agree' && d.outcome === 'task') {

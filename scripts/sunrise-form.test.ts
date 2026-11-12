@@ -6,7 +6,8 @@ import {buildTaskBrief, type BriefTaskRef} from '../src/lib/task-brief.ts'
 import {parseHook} from '../src/lib/shapes/hook.ts'
 import {thresholds} from '../src/lib/sunrise/attention-reference.ts'
 import {demoHook} from '../src/lib/sunrise/demo-hooks.ts'
-import {formSpecFor, kindLine} from '../src/lib/sunrise/form-spec.ts'
+import type {ActionCard} from '../src/lib/action-cards/types.ts'
+import {cardFormSpec, cardSalience, formSpecFor, kindLine} from '../src/lib/sunrise/form-spec.ts'
 import {salienceOf, salienceUnits} from '../src/lib/sunrise/salience.ts'
 
 const now = new Date(2026, 9, 8, 12, 0) // Thu Oct 8 2026
@@ -81,4 +82,25 @@ test('salience follows the clock, the weight and the lists, and lands on the att
   assert.ok(units(90, {currentRank: 0}) > units(90, {currentRank: 4}) && units(90, {currentRank: 4}) > units(90, {currentRank: 9}))
   assert.ok(units(90, {ready: true}) > units(90))
   assert.ok(units(1, {weight: 5, today: true, currentRank: 0, ready: true}) <= 64)
+})
+
+test('an action card reads like a task: where it came from, its name, what to do, and it never outranks a pressing task', () => {
+  const card: ActionCard = {
+    id: 'ac_12345678', key: 'k', source: 'x', evidence: [], kind: 'Try', short: 'Claude Code TV mod', title: 'Explore Claude Code for home hardware',
+    what: 'Ryan customized his TV UI via Claude Code.', why: {tone: 'park', label: 'Not now · side hacks', text: 'Parked during Fall 2026.'},
+    next: 'Read the thread', estimate: '15 min', bet: 'learning', betLabel: 'Learning', when: 'after', weight: 0.4,
+    reasons: {agree: ['Cool'], dismiss: ['Not now']}, outcomes: [{kind: 'task', label: 'Park it'}], createdAt: '', updatedAt: '', status: 'open', history: [],
+    post: {author: 'Ryan Doyle', handle: 'doooyle', text: 'Hacked my TV with Claude Code today https://t.co/abc', url: 'https://x.com/i/status/1'},
+  }
+  const form = cardFormSpec(card)
+  assert.deepStrictEqual([form.id, form.kind, form.name, form.next, form.shape], ['card:ac_12345678', 'Saved post · try', 'Claude Code TV mod', 'Read the thread', 'note'])
+  assert.deepStrictEqual(form.parts[0], {kind: 'quote', text: 'Hacked my TV with Claude Code today', by: 'Ryan Doyle'})
+  // A card OpenClaw noticed shows what it saw instead of a post.
+  const noticed = cardFormSpec({...card, source: 'jobs', post: undefined, evidence: [{source: 'jobs', text: 'The application is drafted.'}]})
+  assert.deepStrictEqual([noticed.kind, noticed.shape, noticed.parts[0]], ['Jobs · try', 'pill', {kind: 'rows', items: [{text: 'The application is drafted.'}]}])
+  // The heaviest card that fits now sits just above what leads, below an ordinary task due within two days.
+  const heaviest = salienceUnits(cardSalience({...card, weight: 1, when: 'now'}))
+  assert.ok(heaviest >= thresholds.lead)
+  assert.ok(heaviest < salienceUnits(salienceOf({hours: 40, weight: 3, today: false, currentRank: null, ready: true})))
+  assert.ok(salienceUnits(cardSalience(card)) < thresholds.hook)
 })

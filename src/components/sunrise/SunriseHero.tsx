@@ -12,13 +12,17 @@ import { LetGoReasonModal } from '@/components/LetGoReasonModal';
 import { DONE_CSS, DoneTray } from '@/components/horizon/DoneTray';
 import { BRIEF_CSS } from '@/components/horizon/TaskBriefCard';
 import { CHAT_CSS } from '@/components/horizon/BriefChat';
+import { ActionCardView, CARD_CSS, type CardDecisionInput } from '@/components/horizon/ActionCardView';
+import { decideCard, undoCard } from '@/components/horizon/card-actions';
+import type { ActionCard, FarSideView } from '@/lib/action-cards/types';
+import { cardFormSpec, cardSalience } from '@/lib/sunrise/form-spec';
 import { getCurrentDateISO } from '@/lib/current-date';
 import { useRefresh } from '@/lib/RefreshContext';
 import type { HorizonDaily } from '@/lib/horizon';
 import type { SunriseData } from '@/lib/sunrise/data';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
-import type { SunriseEngine, TrayKind } from './engine';
+import type { CardThing, SunriseEngine, TrayKind } from './engine';
 import { SUNRISE_CSS } from './sunrise-css';
 import { PANE_CSS, TaskPane } from './TaskPane';
 
@@ -50,10 +54,19 @@ const HERO_CSS = `
 .hz-hold button:hover,.hz-hold button:focus-visible{border-color:#ffd2a8;outline:none}
 .hz-hold button:disabled{opacity:.5;cursor:default}
 .hz-hold .hz-letgo{background:transparent;border-color:rgba(255,255,255,.12);color:#c9b8a6}
+.sr-tray .sr-card{display:grid;gap:1px;width:100%;text-align:left;padding:7px 2px;border:0;border-top:1px solid #efe5d9;background:none;cursor:pointer;color:inherit}
+.sr-tray .sr-card:hover b{color:#b0521c}
+.sr-tray .sr-card small{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#9a5a24}
+.sr-tray .sr-card span{color:#7a6656;font-size:12px}
+.sr-tray .sr-cards{max-height:320px;overflow:auto}
+.thing.is-card .shape.sm{border-style:dashed}
+.src{position:absolute;inset:0;overflow:auto;background:linear-gradient(180deg,#161b30,#090c18)}
+.src .ac{position:static;width:100%;max-height:none;border:0;border-radius:0;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;background:none}
 .sr-undo{position:absolute;left:50%;bottom:104px;z-index:31;transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;font:12.5px var(--sans);color:#f3e3cf;background:rgba(10,14,24,.85);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 6px 5px 13px;white-space:nowrap}
 .sr-undo button{font:500 11px var(--mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
 `;
 
+const CARD_WHEN: Record<ActionCard['when'], string> = { now: 'Fits a Focus bet right now', period: 'Fine on a build day this period', after: 'Parked until after finals', someday: 'No date yet' };
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
 const dayFrom = (days: number) => {
@@ -77,6 +90,7 @@ export function SunriseHero() {
   const undoTimer = React.useRef<number | null>(null);
   const [letGoAsk, setLetGoAsk] = React.useState<{ id: string; listType: string; short: string; title: string } | null>(null);
   const [tick, setTick] = React.useState(0);
+  const [cards, setCards] = React.useState<ActionCard[]>([]);
 
   // The journal's data: on load, whenever tasks change anywhere on the page, and every five minutes.
   React.useEffect(() => {
@@ -95,6 +109,20 @@ export function SunriseHero() {
     const timer = window.setInterval(() => setTick((n) => n + 1), 5 * 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  // The action cards still to decide: things OpenClaw noticed and posts he saved. The heaviest rise beside the
+  // tasks; all of them wait in the "to decide" chip on the ground.
+  const loadCards = React.useCallback(() => {
+    fetch('/api/action-cards')
+      .then((r) => r.json())
+      .then((json) => { if (json.success) setCards((json.data as FarSideView).cards.filter((card) => card.status === 'open')); })
+      .catch(() => {});
+  }, []);
+  React.useEffect(() => { loadCards(); }, [loadCards, taskRefreshCounter, tick]);
+  const cardThings = React.useMemo<CardThing[]>(() => cards
+    .map((card) => ({ id: `card:${card.id}`, salience: cardSalience(card), form: { spec: cardFormSpec(card), when: card.estimate } }))
+    .sort((a, b) => b.salience - a.salience)
+    .slice(0, 3), [cards]);
 
   const loadProposals = React.useCallback(() => {
     fetch('/api/tasks/done-proposals')
@@ -140,7 +168,7 @@ export function SunriseHero() {
     }).catch((err) => { console.error('Sunrise could not start:', err); if (!disposed) setError('Sunrise could not start'); });
     return () => { disposed = true; engineRef.current?.destroy(); engineRef.current = null; setEngine(null); };
   }, []);
-  React.useEffect(() => { if (engine && data) engine.update(data); }, [engine, data]);
+  React.useEffect(() => { if (engine && data) engine.update(data, cardThings, cards.length); }, [engine, data, cardThings, cards.length]);
 
   const offerUndo = React.useCallback((text: string, run: () => Promise<unknown>) => {
     setUndo({ text, run });
@@ -185,6 +213,20 @@ export function SunriseHero() {
     refreshTasks();
   }, [refreshTasks]);
 
+  // Answering a card always takes a reason. Agreeing can make it a task, which then rises on the rings.
+  const decide = React.useCallback(async (card: ActionCard, d: CardDecisionInput): Promise<string | void> => {
+    const decided = await decideCard(card, d);
+    if (!decided.ok) return decided.error;
+    engineRef.current?.closeTask();
+    loadCards();
+    refreshTasks();
+    const said = d.verdict === 'agree'
+      ? d.outcome === 'task' ? `Agreed. ${card.short} is a task now.` : d.outcome === 'hand' ? 'Agreed. OpenClaw is on it.' : `Agreed. ${decided.outcome?.label ?? ''}`
+      : d.snooze ? 'Dismissed for now; it comes back later.' : 'Dismissed. OpenClaw keeps your reason.';
+    offerUndo(said, async () => { await undoCard(card.id); loadCards(); });
+  }, [loadCards, offerUndo, refreshTasks]);
+  const openCard = open?.startsWith('card:') ? cards.find((card) => `card:${card.id}` === open) ?? null : null;
+
   const horizon = data?.horizon ?? null;
   const openTask = (id: string) => engineRef.current?.openTask(id);
 
@@ -221,6 +263,20 @@ export function SunriseHero() {
       ))}
       {trayError && <p className="sr-err" role="alert">{trayError}</p>}
     </>
+  ) : tray === 'cards' ? (
+    <>
+      <p className="sr-t">To decide</p>
+      <p className="sr-s">Things OpenClaw noticed and posts you saved. Agree or dismiss, with a reason.</p>
+      <div className="sr-cards">
+        {cards.slice().sort((a, b) => cardSalience(b) - cardSalience(a)).map((card) => (
+          <button key={card.id} type="button" className="sr-card" onClick={() => openTask(`card:${card.id}`)}>
+            <small>{card.kind} · {card.estimate}</small>
+            <b>{card.short || card.title}</b>
+            <span>{card.next}</span>
+          </button>
+        ))}
+      </div>
+    </>
   ) : tray === 'today' ? (
     <>
       <p className="sr-t">Today</p>
@@ -244,7 +300,7 @@ export function SunriseHero() {
 
   return (
     <section className={`sr-hero ${serif.variable}`} aria-label="Sunrise: your tasks by how soon they are due">
-      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + HERO_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + PANE_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
       <div
         ref={skyRef}
         className="sr-sky"
@@ -255,7 +311,20 @@ export function SunriseHero() {
       {engine && error && !data && <div className="sr-loading">{error}</div>}
       {engine && createPortal(<div onClick={(e) => e.stopPropagation()}><QuickCaptureInput variant="inline" /></div>, engine.slots.cap)}
       {engine && trayBody && createPortal(trayBody, engine.slots.tray)}
-      {engine && open && data && createPortal(
+      {engine && openCard && createPortal(
+        <div className="src">
+          <ActionCardView
+            key={openCard.id}
+            card={openCard}
+            where={`${CARD_WHEN[openCard.when]}. ${openCard.betLabel}.`}
+            side="r"
+            onClose={() => engineRef.current?.closeTask()}
+            onDecide={(d) => decide(openCard, d)}
+          />
+        </div>,
+        engine.slots.pane,
+      )}
+      {engine && open && !open.startsWith('card:') && data && createPortal(
         <TaskPane
           key={open}
           taskId={open}

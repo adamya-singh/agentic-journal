@@ -1,6 +1,7 @@
 // What Sunrise shows for one task. From the task's hook when OpenClaw has filled one; until then from the brief the
 // journal's rules build, so every task reads the same way from the first load: what it belongs to and what sort of
 // thing it is, a plain name, and the next step. Pure: the route, the page and the tests share it.
+import type {ActionCard} from '@/lib/action-cards/types'
 import type {TaskBrief, BriefKind} from '@/lib/task-brief'
 import {GROUP_OTHER} from '@/lib/horizon'
 import type {IconName, Part, ShapeId} from '@/lib/shapes/catalog'
@@ -71,5 +72,29 @@ export function formSpecFor(brief: TaskBrief): FormSpec {
     kind: kindLine(brief.group, kindWords[brief.kind]), name, next, what, did: [],
     say: [name.replace(/[.!?…]*$/, '.'), next !== '' ? next.replace(/[.!?…]*$/, '.') : when],
     parts, ready: false, hasWork: false,
+  }
+}
+
+// ---- Action cards beside the tasks.
+
+const cardSources: Record<ActionCard['source'], string> = {x: 'Saved post', jobs: 'Jobs', inbox: 'Inbox', compass: 'Compass', tasks: 'Tasks', other: 'Journal'}
+/**
+ * How much an open card matters now, on the tasks' scale: its own weight, a little more when it fits now. It tops
+ * out just above what leads (0.5), so a card leads only on a day when no task with a date is pressing.
+ */
+export const cardSalience = (card: ActionCard) => Math.min(1, Math.max(0, card.weight) * 0.5 + (card.when === 'now' ? 0.08 : card.when === 'period' ? 0.03 : 0))
+
+/** An action card as a form: where it came from and what sort of thing it is, its name, and what to do with it. */
+export function cardFormSpec(card: ActionCard): FormSpec {
+  const post = card.post?.text.replace(/https:\/\/t\.co\/\S+/g, '').replace(/\s+/g, ' ').trim() ?? ''
+  const parts: Part[] = []
+  if (post !== '') parts.push({kind: 'quote', text: clip(post, 180), by: card.post?.author ?? ''})
+  else if (card.evidence.length > 0) parts.push({kind: 'rows', items: card.evidence.slice(0, 3).map(evidence => ({text: clip(evidence.text, 90)}))})
+  parts.push({kind: 'pairs', items: [{key: card.why.label, value: clip(card.why.text, 120)}]})
+  return {
+    id: `card:${card.id}`, listType: 'want-to-do', shape: post !== '' ? 'note' : 'pill', icon: 'spark',
+    kind: `${cardSources[card.source]} · ${card.kind.toLowerCase()}`, name: clip(card.short || card.title, 60), next: clip(card.next, 60),
+    what: clip(card.what, 240), did: [], say: [clip(card.title, 60).replace(/[.!?…]*$/, '.'), clip(`Agree or dismiss it. ${card.estimate}.`, 120)],
+    parts, ready: true, hasWork: false, filling: false,
   }
 }
