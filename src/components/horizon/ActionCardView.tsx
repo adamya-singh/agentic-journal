@@ -3,6 +3,7 @@
 // The far side's card: what it is, why act, the next step, and a decision that always carries a reason.
 import React from 'react';
 import type { ActionCard, CardOutcome, CardSource, OutcomeKind } from '@/lib/action-cards/types';
+import { CardSessions } from './CardSessions';
 
 export const SRC_NAME: Record<CardSource, string> = { x: 'X', jobs: 'Jobs', inbox: 'Inbox', compass: 'Compass', tasks: 'Tasks', other: 'Journal' };
 export const SRC_ICON: Record<CardSource, string> = {
@@ -176,6 +177,7 @@ export function ActionCardView({ card, where, side, onClose, onDecide }: {
         <div className="ac-where"><i />{where}</div>
         <div><div className="ac-lab">What it is</div><p>{card.what}{card.link && <> <a href={card.link} target="_blank" rel="noopener noreferrer">{host(card.link)} ↗</a></>}</p></div>
         <div><div className="ac-lab">Why act</div><span className={`ac-fit ${card.why.tone}`}>{card.why.label}</span><p>{card.why.text}</p></div>
+        <CardSessions target={`card:${card.id}`} variant="full" prompt={`Action card from my Agentic Journal: ${card.title}\n${card.what}\nNext: ${card.next}`} />
         <div className="ac-next"><i /><span>{card.next}</span><em>{card.estimate}</em></div>
         {card.ask && <div className="ac-ask">OpenClaw asks: {card.ask}</div>}
         <form className="ac-dec" onSubmit={submit}>

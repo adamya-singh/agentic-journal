@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm';
 import type { BriefAction, BriefLink, BriefRelated, BriefSource, TaskBrief } from '@/lib/task-brief';
 import { confirmText, runBriefAction } from './brief-actions';
 import { CHAT_CSS } from './BriefChat';
+import { CardSessions, SESSIONS_CSS } from './CardSessions';
 
 export const BRIEF_CSS = `
 .hzb{color:var(--hz-ink);font:13.5px/1.5 var(--hz-sans)}
@@ -113,7 +114,7 @@ export const BRIEF_CSS = `
 .hzb-act .err{color:#ff8a5c;font-size:12px;width:100%}
 .hzb-act pre{width:100%;margin:2px 0 0;white-space:pre-wrap;font:11.5px/1.45 var(--hz-mono);color:var(--hz-dim);max-height:140px;overflow:auto}
 @media (prefers-reduced-motion:reduce){.hzb-agent .pulse{animation:none}}
-` + CHAT_CSS;
+` + CHAT_CSS + SESSIONS_CSS;
 
 export interface BriefActions {
   onGoto: (taskId: string) => void;
@@ -364,6 +365,10 @@ function Markdown({ text }: { text: string }) {
   );
 }
 
+/** What a new Claude Code / Codex / OpenClaw session started on this task is told. */
+const briefPrompt = (b: TaskBrief) =>
+  [`Task from my Agentic Journal: ${b.title}`, b.stakes, b.next && `Start here: ${b.next.label}`].filter(Boolean).join('\n');
+
 /** The small card beside the task: what it is, the one thing to press, three facts and the top warning. The chat with OpenClaw folds out of it. */
 export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose, chatOpen, onToggleChat }: {
   brief: TaskBrief | null; loading: boolean; onGoto: (id: string) => void; onOpenFull: () => void; onClose: () => void;
@@ -379,6 +384,7 @@ export function BriefCompact({ brief, loading, onGoto, onOpenFull, onClose, chat
             <Next brief={brief} onGoto={onGoto} />
             <Facts brief={brief} max={3} />
             <Flags brief={brief} max={1} />
+            <CardSessions target={`task:${brief.id}`} variant="compact" onMore={onOpenFull} />
             <AgentStatus brief={brief} compact />
             <div className="hzb-cardfoot">
               <button type="button" className="hzb-more" onClick={onOpenFull}>Open full brief →</button>
@@ -412,6 +418,7 @@ export function BriefFull({ brief, actions }: { brief: TaskBrief; actions: Brief
         </div>
       )}
       <Related brief={brief} onGoto={actions.onGoto} />
+      <CardSessions target={`task:${brief.id}`} variant="full" prompt={briefPrompt(brief)} />
       <Facts brief={brief} />
       <Links brief={brief} />
       {brief.sections.map((s) => (

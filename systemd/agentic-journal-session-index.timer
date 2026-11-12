@@ -1,0 +1,10 @@
+[Unit]
+Description=Fold new agent session digests into the Agentic Journal session index every 15 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
