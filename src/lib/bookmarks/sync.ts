@@ -382,7 +382,7 @@ export async function refreshVideoLinks(postIds: string[], fetcher: typeof fetch
 /**
  * Imports X bookmark folder names and which saved posts are in each, on explicit request.
  * Each page reserves budget before the request and settles to the returned resource count.
- * Membership is replaced only after every folder was read, so a failure leaves the old copy.
+ * Membership is written only after every folder was read, so a failure leaves the old copy.
  */
 /** The connected account, once X is connected and the spending limit is confirmed. */
 function connectedAccount() {
@@ -421,19 +421,35 @@ async function readFolderPages(accountId: string, folderId: string | undefined, 
   }
   throw new XError('invalid_request', 'A bookmark folder is too large to import.');
 }
+/** X returns only a folder's newest posts, this many at most (see docs/x-bookmarks.md). */
+const FOLDER_API_CAP = 20;
+/**
+ * The posts to record for one folder after reading it from X. A read under the cap is the whole
+ * folder. A read at the cap is only its newest posts, so posts recorded earlier stay: dropping
+ * them would empty the folder a little more with every new save. The cost is that a post taken
+ * out of a full folder on X stays listed here until the folder is read from x.com again.
+ */
+function folderPostIds(previous: Record<string, string[]>, folderId: string, read: string[]) {
+  if (read.length < FOLDER_API_CAP) return read;
+  const older = Object.keys(previous).filter((postId) => previous[postId].includes(folderId) && !read.includes(postId));
+  return [...read, ...older];
+}
 export async function importFolders(fetcher: typeof fetch = fetch) {
   return withLock(async () => {
     const accountId = await connectedAccount();
     const folders = (await readFolderPages(accountId, undefined, fetcher)).map((f) => ({ id: f.id, name: f.name! }));
-    const membership: Record<string, string[]> = {};
-    for (const folder of folders)
-      for (const post of await readFolderPages(accountId, folder.id, fetcher)) {
-        const list = (membership[post.id] ||= []);
-        if (!list.includes(folder.id)) list.push(folder.id);
-      }
+    const read: Record<string, string[]> = {};
+    for (const folder of folders) read[folder.id] = (await readFolderPages(accountId, folder.id, fetcher)).map((p) => p.id);
     const syncedAt = new Date().toISOString();
+    const membership: Record<string, string[]> = {};
     await withLock(() => {
       const previous = readFolders();
+      const known = previous.accountId === accountId ? previous.membership : {};
+      for (const folder of folders)
+        for (const postId of folderPostIds(known, folder.id, read[folder.id])) {
+          const list = (membership[postId] ||= []);
+          if (!list.includes(folder.id)) list.push(folder.id);
+        }
       // Website-read folder lists are complete where the API is capped at 20; keep them.
       const web = previous.accountId === accountId ? previous.web : undefined;
       writeJson('folders.json', {
@@ -466,7 +482,7 @@ export async function importFolder(folderId: string, fetcher: typeof fetch = fet
         const rest = folderIds.filter((id) => id !== folderId);
         if (rest.length) membership[postId] = rest;
       }
-      for (const postId of ids) (membership[postId] ||= []).push(folderId);
+      for (const postId of folderPostIds(previous.membership, folderId, ids)) (membership[postId] ||= []).push(folderId);
       writeJson('folders.json', { ...previous, membership, folderSyncedAt: { ...(previous.folderSyncedAt || {}), [folderId]: syncedAt } });
     });
     return { folder: folderId, posts: ids.length, syncedAt };

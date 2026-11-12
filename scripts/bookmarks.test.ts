@@ -750,6 +750,23 @@ test('refreshing one folder pays for that folder only and keeps the others', asy
   await assert.rejects(importFolder('999', folderFetch({})), /not known yet/);
 });
 
+test('a folder read at the 20-post cap keeps its older posts; a shorter read replaces them', async () => {
+  await reviewed();
+  const ids = (from: number, count: number) => Array.from({ length: count }, (_, i) => ({ id: String(from + i) }));
+  const folders = { data: [{ id: '100', name: 'Good advice' }, { id: '200', name: 'Funny' }] };
+  await importFolders(folderFetch({ '/': [folders], '/100': [{ data: ids(1, 20) }], '/200': [{ data: ids(500, 3) }] }));
+  // Five new saves push five older posts out of what X returns for the full folder.
+  await importFolders(folderFetch({ '/': [folders], '/100': [{ data: ids(6, 20) }], '/200': [{ data: ids(501, 2) }] }));
+  const members = (folder: string) => {
+    const store = JSON.parse(fs.readFileSync(path.join(dataRoot(), 'folders.json'), 'utf8'));
+    return Object.keys(store.membership).filter((id) => store.membership[id].includes(folder)).map(Number).sort((a, b) => a - b);
+  };
+  assert.deepEqual(members('100'), ids(1, 25).map((p) => Number(p.id)));
+  assert.deepEqual(members('200'), [501, 502]);
+  await importFolder('100', folderFetch({ '/100': [{ data: ids(11, 20) }] }));
+  assert.equal(members('100').length, 30);
+});
+
 function videoPage() {
   const p = page(['5']) as ReturnType<typeof page> & {
     data: { attachments?: { media_keys: string[] } }[];
