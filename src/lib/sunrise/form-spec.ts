@@ -1,0 +1,75 @@
+// What Sunrise shows for one task. From the task's hook when OpenClaw has filled one; until then from the brief the
+// journal's rules build, so every task reads the same way from the first load: what it belongs to and what sort of
+// thing it is, a plain name, and the next step. Pure: the route, the page and the tests share it.
+import type {TaskBrief, BriefKind} from '@/lib/task-brief'
+import {GROUP_OTHER} from '@/lib/horizon'
+import type {IconName, Part, ShapeId} from '@/lib/shapes/catalog'
+import {iconForKind} from '@/lib/shapes/hook'
+
+export type FormSpec = {
+  id: string
+  listType: 'have-to-do' | 'want-to-do'
+  shape: ShapeId
+  icon: IconName
+  kind: string // "Info Viz · talk"
+  name: string
+  next: string // the one step to take now; '' when nothing is known yet
+  what: string // a sentence on what the task is
+  did: string[] // what OpenClaw did to get it ready
+  say: [string, string] // what the page says when this leads: the ask, then why it is easy now
+  parts: Part[]
+  ready: boolean // OpenClaw has started it: there is a hook
+  hasWork: boolean // the hook carries started work to open
+  filling: boolean // OpenClaw is working on it right now, or it is queued
+}
+
+const kindWords: Record<BriefKind, string> = {
+  assessment: 'assessment', exam: 'exam', assignment: 'assignment', 'catch-up': 'catch-up', presentation: 'talk', reading: 'reading',
+  build: 'build', errand: 'errand', plan: 'plan', task: 'task',
+}
+const capital = (text: string) => text.slice(0, 1).toUpperCase() + text.slice(1)
+function clip(text: string, limit: number) {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (clean.length <= limit) return clean
+  const cut = clean.slice(0, limit - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > limit * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`
+}
+// The task's title without its "[Course]" tag.
+const plainTitle = (title: string) => title.replace(/^\s*\[[^\]]+\]\s*/, '').trim() || title.trim()
+
+/** "Subject · kind". Tasks in no subject say only their kind. */
+export function kindLine(group: string, kind: string): string {
+  if (kind === '') return group === GROUP_OTHER ? '' : group
+  return group === GROUP_OTHER || group === '' ? capital(kind) : `${group} · ${kind}`
+}
+
+export function formSpecFor(brief: TaskBrief): FormSpec {
+  const hook = brief.hook
+  const filling = brief.agent?.status === 'queued' || brief.agent?.status === 'running'
+  const base = {id: brief.id, listType: brief.listType, filling}
+  if (hook !== null) {
+    return {
+      ...base, shape: hook.shape, icon: hook.icon, kind: kindLine(brief.group, hook.kind), name: hook.name, next: hook.next,
+      what: hook.what, did: hook.did, say: hook.say, parts: hook.parts, ready: true, hasWork: hook.work !== null,
+    }
+  }
+  // No hook yet: what the rules know. The steps become rows, the facts pairs.
+  const name = clip(plainTitle(brief.title), 60)
+  const open = brief.steps.filter(step => !step.done)
+  const next = clip(brief.next?.label ?? open[0]?.text ?? '', 60)
+  const parts: Part[] = []
+  if (brief.steps.length >= 2) {
+    parts.push({kind: 'rows', check: true, items: brief.steps.slice(0, 5).map(step => ({text: clip(step.text, 80), ...step.done ? {done: true} : {}}))})
+  }
+  if (brief.facts.length > 0) parts.push({kind: 'pairs', items: brief.facts.slice(0, 4).map(fact => ({key: clip(fact.k, 24), value: clip(fact.v, 80)}))})
+  if (filling) parts.push({kind: 'line', text: 'OpenClaw is getting this ready.'})
+  const when = brief.when.due === null ? '' : brief.when.left?.endsWith('over') ? `It was due ${brief.when.day}.` : `It is due ${brief.when.day}.`
+  const what = clip(brief.stakes ?? [capital(plainTitle(brief.title)).replace(/[.!?]*$/, '.'), when].filter(Boolean).join(' '), 240)
+  return {
+    ...base, shape: brief.steps.length >= 2 ? 'list' : 'pill', icon: iconForKind(brief.kind),
+    kind: kindLine(brief.group, kindWords[brief.kind]), name, next, what, did: [],
+    say: [name.replace(/[.!?…]*$/, '.'), next !== '' ? next.replace(/[.!?…]*$/, '.') : when],
+    parts, ready: false, hasWork: false,
+  }
+}

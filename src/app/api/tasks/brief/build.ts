@@ -7,7 +7,7 @@ import { mergeAgentLayer } from '@/lib/brief-agent';
 import { readCompletedTaskIndex, readGeneralTasks } from '../today/today-store-utils';
 import { readJobListings } from '../../jobs/job-store-utils';
 import { readJobApplicationsStore } from '../../jobs/application-store-utils';
-import { readAgentRecord } from '../brief-agent/store';
+import { readAgentRecord, readAgentRecords } from '../brief-agent/store';
 
 const JOURNAL_WINDOW_DAYS = 45;
 
@@ -22,21 +22,24 @@ function ymd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-// Every planned or logged journal slot that points at the task, a few weeks either side of today.
-function journalEntriesFor(taskId: string, now: Date): JournalTaskEntry[] {
+// Every planned or logged journal slot that points at a wanted task, a few weeks either side of today, by task.
+// One pass over the day files however many tasks are wanted.
+function journalEntriesByTask(wanted: (taskId: string) => boolean, now: Date): Map<string, JournalTaskEntry[]> {
+  const out = new Map<string, JournalTaskEntry[]>();
   const dir = journalDataDir();
-  if (!fs.existsSync(dir)) return [];
+  if (!fs.existsSync(dir)) return out;
   const lo = ymd(new Date(now.getTime() - JOURNAL_WINDOW_DAYS * 864e5));
   const hi = ymd(new Date(now.getTime() + JOURNAL_WINDOW_DAYS * 864e5));
-  const out: JournalTaskEntry[] = [];
   for (const file of fs.readdirSync(dir)) {
     const m = /^(\d{4}-\d{2}-\d{2})\.json$/.exec(file);
     if (!m || m[1] < lo || m[1] > hi) continue;
     let day: Record<string, unknown>;
     try { day = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf-8')); } catch { continue; }
     const push = (hour: string, e: Record<string, unknown>) => {
-      if (e && e.taskId === taskId) {
-        out.push({
+      if (e && typeof e.taskId === 'string' && wanted(e.taskId)) {
+        const list = out.get(e.taskId) ?? [];
+        out.set(e.taskId, list);
+        list.push({
           date: m[1], hour,
           entryMode: String(e.entryMode || 'logged'),
           planStatus: typeof e.planStatus === 'string' ? e.planStatus : undefined,
@@ -62,23 +65,40 @@ export function openTaskRefs(): BriefTaskRef[] {
 }
 
 /**
+ * The rule-built briefs for several tasks, before OpenClaw's layer, by task id. Tasks that aren't open are left
+ * out. Everything the rules read (the journal's day files, the completed index, the job stores) is read once.
+ */
+export function loadRuleBriefs(taskIds: string[], now = new Date(), tasks = openTaskRefs()): Map<string, TaskBrief> {
+  const wanted = new Set(taskIds);
+  const out = new Map<string, TaskBrief>();
+  if (wanted.size === 0) return out;
+  const journal = journalEntriesByTask((id) => wanted.has(id), now);
+  const completed = Object.values(readCompletedTaskIndex().tasks).map((t) => ({ id: t.id, text: t.text, completedAt: t.completedAt }));
+  let listings: ReturnType<typeof readJobListings>['listings'] | null = null;
+  let applications: ReturnType<typeof readJobApplicationsStore>['applications'] | null = null;
+
+  for (const ref of tasks) {
+    const taskId = ref.task.id;
+    if (!wanted.has(taskId)) continue;
+    // Online assessments link their application; the listing is keyed by the same id.
+    let job = null;
+    const appId = /\/jobs\?application=([0-9a-f-]{36})/.exec(ref.task.notesMarkdown || '')?.[1];
+    if (appId) {
+      listings ??= readJobListings().listings;
+      applications ??= readJobApplicationsStore().applications;
+      job = { listing: listings.find((l) => l.id === appId) ?? null, submittedAt: applications[appId]?.submittedAt ?? null };
+    }
+    const brief = buildTaskBrief({ taskId, tasks, completed, journal: journal.get(taskId) ?? [], job, now });
+    if (brief) out.set(taskId, brief);
+  }
+  return out;
+}
+
+/**
  * The rule-built brief for one task, before OpenClaw's layer. Null when the task isn't open.
  */
 export function loadRuleBrief(taskId: string, now = new Date(), tasks = openTaskRefs()): TaskBrief | null {
-  const ref = tasks.find((r) => r.task.id === taskId);
-  if (!ref) return null;
-
-  // Online assessments link their application; the listing is keyed by the same id.
-  let job = null;
-  const appId = /\/jobs\?application=([0-9a-f-]{36})/.exec(ref.task.notesMarkdown || '')?.[1];
-  if (appId) {
-    const listing = readJobListings().listings.find((l) => l.id === appId) ?? null;
-    const application = readJobApplicationsStore().applications[appId];
-    job = { listing, submittedAt: application?.submittedAt ?? null };
-  }
-
-  const completed = Object.values(readCompletedTaskIndex().tasks).map((t) => ({ id: t.id, text: t.text, completedAt: t.completedAt }));
-  return buildTaskBrief({ taskId, tasks, completed, journal: journalEntriesFor(taskId, now), job, now });
+  return loadRuleBriefs([taskId], now, tasks).get(taskId) ?? null;
 }
 
 /** The brief as the Horizon shows it: the rules' brief with OpenClaw's layer merged in. */
@@ -87,4 +107,14 @@ export function loadTaskBrief(taskId: string, now = new Date()): TaskBrief | nul
   const brief = loadRuleBrief(taskId, now, tasks);
   if (!brief) return null;
   return mergeAgentLayer(brief, readAgentRecord(taskId), { tasks: new Map(tasks.map((r) => [r.task.id, r])), now });
+}
+
+/** Several briefs as the Horizon shows them, by task id: one read of everything, however many tasks. */
+export function loadTaskBriefs(taskIds: string[], now = new Date()): Map<string, TaskBrief> {
+  const tasks = openTaskRefs();
+  const records = readAgentRecords();
+  const ctx = { tasks: new Map(tasks.map((r) => [r.task.id, r])), now };
+  const out = new Map<string, TaskBrief>();
+  for (const [taskId, brief] of loadRuleBriefs(taskIds, now, tasks)) out.set(taskId, mergeAgentLayer(brief, records[taskId], ctx));
+  return out;
 }
