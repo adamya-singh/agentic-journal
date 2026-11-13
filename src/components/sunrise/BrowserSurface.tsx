@@ -126,7 +126,9 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
     tried.current = true;
     void open();
   }, [armed, targetId, open]);
-  const retry = () => { onOpened(null); tried.current = true; void open(); };
+  // One open at a time: a second press while the first is out would open a second tab, and only
+  // the later one would be remembered and closed when he leaves.
+  const retry = () => { if (opening) return; onOpened(null); tried.current = true; void open(); };
   // Coming back to a page that is already open there: its tab may be behind another one he looked at since, and
   // Chrome paints only the tab in front. Bring it forward once, when this page is shown again.
   const shownAgain = React.useRef(targetId);
@@ -261,7 +263,7 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
         </form>
       )}
       {frame && error && (
-        <p className="srb-note" role="alert">{error}<button type="button" onClick={kick}>Try again</button><button type="button" onClick={retry}>Open the page again</button></p>
+        <p className="srb-note" role="alert">{error}<button type="button" onClick={kick}>Try again</button><button type="button" onClick={retry} disabled={opening}>Open the page again</button></p>
       )}
       <div
         ref={screenRef}

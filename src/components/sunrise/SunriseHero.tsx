@@ -83,6 +83,8 @@ html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!
 .sr-enter3d:hover,.sr-enter3d:focus-visible{transform:translateY(-2px);border-color:#ffd2a8;outline:none}
 .sr-enter3d:disabled{opacity:.6;cursor:default}
 .sr-hero:has(.sr-sky.working) .sr-enter3d{display:none}
+/* Once the 3D world has loaded, its own button takes this one's place: it follows the same rule. */
+.sr-sky:is(.farside,.working):not(.hz-live) .hz3d-enter{display:none}
 /* Full page: the hero fills the window and the rest of the page waits under it. Locked or full, the page does not scroll. */
 .sr-hero.sr-fullpage{position:fixed;inset:0;z-index:60}
 .sr-hero.sr-fullpage .sr-sky{height:100%}
@@ -190,9 +192,14 @@ export function SunriseHero() {
 
   const toggleDaily = React.useCallback(async (daily: HorizonDaily) => {
     try {
-      const json = await post('/api/tasks/today/complete', { taskId: daily.id, listType: daily.listType, date: getCurrentDateISO() });
-      if (!json?.success) engineRef.current?.toast(`${daily.short}: ${json?.error || 'could not be updated'}`);
+      // `daily.done` is what it was before the press; say which way so a retry cannot flip it back.
+      const json = await post('/api/tasks/today/complete', { taskId: daily.id, listType: daily.listType, date: getCurrentDateISO(), completed: !daily.done });
+      if (!json?.success) {
+        engineRef.current?.dailyFailed(daily.id);
+        engineRef.current?.toast(`${daily.short}: ${json?.error || 'could not be updated'}`);
+      }
     } catch {
+      engineRef.current?.dailyFailed(daily.id);
       engineRef.current?.toast(`${daily.short} could not be updated: the Journal did not answer`);
     }
     refreshTasks();
