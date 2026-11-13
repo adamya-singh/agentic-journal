@@ -15,8 +15,12 @@ async function check() {
   const queued = read<Queued>('queued');
   if (!queued) return 0;
   const reasons = waitReasons(new Date(), await playing(), await chats());
+  // Looking takes up to two minutes. Read the request again, so a cancel or a newer request made
+  // meanwhile is not written over with the copy read before the look.
+  const current = read<Queued>('queued');
+  if (!current) return 0;
   if (reasons.length) {
-    write('queued', { ...queued, checkedAt: now(), waitingOn: reasons });
+    write('queued', { ...current, checkedAt: now(), waitingOn: reasons });
     console.log(`Deploy waiting: ${reasons.join('; ')}`);
     return 0;
   }

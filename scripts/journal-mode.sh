@@ -184,11 +184,25 @@ usage() {
 require_command systemctl
 require_command curl
 
+# Switching modes stops and starts the units a deploy has stopped while it builds, so wait for it.
+hold_deploy_lock() {
+  local lock_dir="${XDG_RUNTIME_DIR:-}"
+  [[ -d "$lock_dir" ]] || lock_dir="/run/user/$(id -u)"
+  [[ -d "$lock_dir" ]] || lock_dir="/tmp"
+  exec 9>"${lock_dir}/agentic-journal-deploy.lock"
+  if ! flock -n 9; then
+    echo "A deploy is running; switch modes once it has finished (npm run deploy:status)." >&2
+    exit 75
+  fi
+}
+
 case "${1:-}" in
   dev)
+    hold_deploy_lock
     switch_to_dev
     ;;
   prod | production)
+    hold_deploy_lock
     switch_to_prod
     ;;
   status)
