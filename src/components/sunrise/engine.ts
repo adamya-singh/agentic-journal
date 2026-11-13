@@ -21,7 +21,7 @@ import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms
 import {glanceWidth} from './glance'
 
 export type Box = {left: number, top: number, width: number, height: number}
-export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers'
+export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers' | 'track'
 /**
  * An action card on the far side: its form, how much it matters now (0 to 1), the ring it sits on (0 fits now,
  * 1 this period, 2 after, 3 someday), the bet whose slice it is in, and how it is marked.
@@ -30,8 +30,8 @@ export type CardThing = {id: string, salience: number, form: FormThing, ring: nu
 export type EngineHost = {
   /** A task or an action card was opened into the workspace (its id), or the workspace closed (null). */
   onOpen(taskId: string | null): void
-  /** A tray opened, or closed (null). */
-  onTray(kind: TrayKind | null): void
+  /** A tray opened, or closed (null). A section's tray under the sun also names its section. */
+  onTray(kind: TrayKind | null, track?: string): void
   /** A daily's arc was pressed. */
   onToggleDaily(daily: HorizonDaily): void
   /** The sky was laid out again (new data, a new size, time passing). */
@@ -146,6 +146,8 @@ export class SunriseEngine {
   private pinch: {z: number} | null = null
   private readonly zoneEls: HTMLElement[]
   private readonly subjectEls = new Map<string, HTMLButtonElement>()
+  private readonly trackEls = new Map<string, HTMLElement>()
+  private trackSectors: {name: string, mid: number}[] = [] // the sections under the sun that have a slice, and its middle in degrees
   private smallHost: HTMLElement | null = null
   private measurer: HTMLElement | null = null
   private readonly measureContext = document.createElement('canvas').getContext('2d')
@@ -165,6 +167,7 @@ export class SunriseEngine {
   private open: string | null = null // the task in the workspace
   private hot: Thing | null = null // the form under the pointer
   private trayKind: TrayKind | null = null
+  private trayTrack: string | null = null // the section whose tray is open
   private readonly dailyDone = new Map<string, boolean>() // dailies pressed here, until the journal's answer arrives
   private readonly startedHere = new Set<string>()
   private ready = false
@@ -317,7 +320,8 @@ export class SunriseEngine {
     this.backButton.addEventListener('click', () => this.leaveSubject(), {signal})
     document.addEventListener('pointerdown', event => {
       if (this.trayKind === null || !(event.target instanceof Node)) return
-      if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton && !this.streakEl.contains(event.target)) this.closeTray()
+      const onTrack = event.target instanceof Element && event.target.closest('.sl-track') !== null
+      if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton && !this.streakEl.contains(event.target) && !onTrack) this.closeTray()
     }, {signal})
     window.addEventListener('keydown', event => {
       // Inside the 3D world Escape is the world's (it asks the host first).
@@ -407,7 +411,7 @@ export class SunriseEngine {
       // What today's rings have no room for sits further out in the same sky, on rings by the month and season.
       ...(this.farSide ? [] : this.outerItems(data)).map(item => ({id: item.id, item, salience: 0 as number | null, outer: true, form: this.formOf(item)})),
     ].map(each => ({...each, under: false, inert: false}))
-    // Under the sun is what is behind today: what is overdue, what has no date, and what was cleared this week.
+    // Under the sun is the want-to-do side, in its sections.
     this.underPlace.clear()
     if (!this.farSide) {
       for (const below of this.underItems(data)) {
@@ -537,6 +541,7 @@ export class SunriseEngine {
   closeTray() {
     if (this.trayKind === null) return
     this.trayKind = null
+    this.trayTrack = null
     this.tray.hidden = true
     this.host.onTray(null)
   }
@@ -605,28 +610,27 @@ export class SunriseEngine {
   private outerItems(data: SunriseData): HorizonItem[] {
     return [...ringOverflow(data.horizon.items), ...data.horizon.further].sort((a, b) => a.hours - b.hours).slice(0, 16)
   }
-  // What sits under the sun, nearest the horizon first: tasks that are overdue (by how long), then the ones
-  // with no date, then what was cleared this week. At most what one run of the ring program holds.
+  // What sits under the sun: the want-to-do side. Each section (Recharge, Level Up, his own labels, Life) is a
+  // slice, as each class is one above, and a task sits nearer the horizon the higher it is in his queue. What is
+  // overdue or has no date stays one press away, on the ground's chips.
   private underItems(data: SunriseData): {item: HorizonItem, ring: number, through: number, look: string, inert: boolean, form: FormThing}[] {
-    const horizon = data.horizon
-    const blank = {listType: 'have-to-do' as const, weight: 2, due: '', implied: false, hours: 0, zone: 'hold' as const, left: ''}
-    const late = horizon.holds.map(item => {
-      const over = Math.max(0, -item.hours)
-      return {item, ring: over <= 48 ? 0 : 1, through: over <= 48 ? over / 48 : Math.min(1, (over - 48) / (12 * 24)), look: 'under late', inert: false, form: {...this.formOf(item), when: item.left}}
+    const blank = {listType: 'want-to-do' as const, weight: 2, due: '', implied: false, hours: 0, zone: 'hold' as const, left: '', day: ''}
+    const rows = new Map<string, number>()
+    const shown = new Map<string, number>()
+    for (const want of data.horizon.wants) shown.set(want.track, (shown.get(want.track) ?? 0) + 1)
+    return data.horizon.wants.slice(0, 16).map(want => {
+      const row = rows.get(want.track) ?? 0
+      rows.set(want.track, row + 1)
+      const count = shown.get(want.track) ?? 1
+      // The ring nearest the sun is too short an arc for a form: sections start on the second.
+      const depth = 1 + row * 3 / Math.max(3, count)
+      const ring = Math.min(3, Math.floor(depth))
+      const item: HorizonItem = {...blank, id: want.id, title: want.title, short: want.short, label: want.label, group: want.track}
+      // Its form names its section where a task above names its class.
+      const {spec} = this.formOf(item)
+      const kind = spec.kind.replace(/^(Life|Other|Task)\b/i, want.track)
+      return {item, ring, through: count <= 3 ? 0.5 : depth - ring, look: 'under want', inert: false, form: {spec: {...spec, kind}, when: ''}}
     })
-    const undated = horizon.undated.map((entry, index, all) => {
-      const item: HorizonItem = {...blank, id: entry.id, title: entry.title, short: entry.short, label: entry.label, group: entry.label || GROUP_OTHER, day: 'No date'}
-      return {item, ring: 2, through: all.length < 2 ? 0.5 : index / (all.length - 1), look: 'under nodate', inert: false, form: {...this.formOf(item), when: 'No date'}}
-    })
-    const cleared = horizon.cleared.slice(0, Math.max(0, 16 - late.length - undated.length)).map((entry, index, all) => {
-      const item: HorizonItem = {...blank, id: `done:${entry.id}`, title: entry.short, short: entry.short, label: '', group: GROUP_OTHER, day: entry.day}
-      const spec = {
-        id: item.id, listType: 'have-to-do' as const, shape: 'pill' as const, icon: 'check' as const, kind: 'Done this week', name: trimDots(entry.short), next: '',
-        what: `Cleared ${entry.day}.`, did: [], say: [trimDots(entry.short), ''] as [string, string], parts: [], ready: false, hasWork: false, filling: false,
-      }
-      return {item, ring: 3, through: all.length < 2 ? 0.5 : index / (all.length - 1), look: 'under cleared', inert: true, form: {spec, when: entry.day}}
-    })
-    return [...late, ...undated, ...cleared].slice(0, 16)
   }
   // A task further out as the ring program reads it: its ring is by how far off it is (a month, a season, a
   // year, beyond), and its place in the ring by how far through that stretch.
@@ -1042,18 +1046,29 @@ export class SunriseEngine {
       // Under the sun: the same ring program lays out what is behind today, and each place is mirrored below the
       // horizon and pushed down past the ground's own strip.
       this.underK = kxNow
-      if (boxed && underThings.length > 0 && this.subject === null) {
+      const tracks = this.farSide ? [] : horizon.wantTracks
+      this.trackSectors = []
+      if (boxed && (underThings.length > 0 || tracks.length > 0) && this.subject === null && !this.farSide) {
         const low = underThings.map(thing => {
           const at = this.underPlace.get(thing.id) ?? {ring: 3, through: 0.5, look: 'under'}
           thing.look = at.look
           return {...thing.item, zone: ringZones[at.ring]!, hours: ringHours(at.ring, at.through)}
         })
+        // A section with nothing in it still has its slice: a place that is held, with no task in it.
+        const lowGroups = tracks.map(track => track.name)
+        for (const track of tracks) {
+          if (low.some(item => item.group === track.name) || low.length >= 16) continue
+          low.push({id: `track:${track.name}`, listType: 'want-to-do', title: '', short: '', label: '', group: track.name, weight: 1, due: '', implied: false, hours: ringHours(3, 0.5), zone: ringZones[3]!, day: '', left: ''})
+        }
         const stageLow = {viewportWidth: Math.floor(W / S), horizonY: Math.floor(Y / S), topLeft: {width: 0, height: 0}, topRight: {width: 0, height: 0}}
-        const under = dawn.run(toInput({items: low, groups: groupsOf(low), bounds: farBounds, dailies: false}, stageLow, item => {
+        // No section is squeezed to a sliver by a fuller one: each is at least as wide as three tasks.
+        const lowWeights = new Map(lowGroups.map(group => { const count = low.filter(item => item.group === group).length; return [group, Math.round(Math.max(3, count) / Math.max(1.25, count) * 16) / 16] }))
+        const under = dawn.run(toInput({items: low, groups: lowGroups.length > 0 ? lowGroups : groupsOf(low), bounds: farBounds, dailies: false, weights: lowWeights}, stageLow, item => {
           const thing = underThings.find(candidate => candidate.id === item.id)
           return thing === undefined ? 80 : Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10
         }))
         this.underK = under.kx * S
+        this.trackSectors = tracks.flatMap((track, index) => { const sector = under.sectors[index]; return sector === undefined || !sector.shown ? [] : [{name: track.name, mid: sector.mid}] })
         underThings.forEach((thing, index) => {
           const pill = under.pills[index]!
           if (!pill.visible || !pill.free) return
@@ -1105,6 +1120,7 @@ export class SunriseEngine {
         this.commit = () => {
           this.render(pillBoxes, kxNow)
           this.renderSubjects(ring.sectors, kxNow, kyNow)
+          this.renderTracks()
           this.renderGround()
         }
       }
@@ -1476,15 +1492,18 @@ export class SunriseEngine {
     this.solve()
     this.host.onToggleDaily({...daily, done: !done})
   }
-  private openTray(kind: TrayKind, from: HTMLElement) {
+  private openTray(kind: TrayKind, from: HTMLElement, track?: string) {
     this.trayKind = kind
+    this.trayTrack = track ?? null
     this.tray.hidden = false
     this.tray.dataset['kind'] = kind
-    this.host.onTray(kind)
+    this.host.onTray(kind, track)
     const rect = this.rectIn(from)
     const width = this.tray.offsetWidth
     this.tray.style.left = `${Math.round(Math.max(10, Math.min(this.stage.width - width - 10, rect.left + rect.width / 2 - width / 2)))}px`
     this.tray.style.bottom = `${Math.round(this.stage.height - rect.top + 10)}px`
+    // The room above what opened it, so a long list scrolls inside the tray instead of leaving the sky.
+    this.tray.style.setProperty('--room', `${Math.round(Math.max(160, rect.top - 20))}px`)
   }
 
   // ---- Subjects at the rim: press one to go into it.
@@ -1527,6 +1546,49 @@ export class SunriseEngine {
       })
       el.classList.toggle('off', covered)
     })
+  }
+  // ---- Sections under the sun: each is named at the rim of its slice, below the horizon, with how many of its
+  // open tasks are drawn. The permanent ones are named even when empty. Press a name for the section's tray, every
+  // open task in it in his queue's order; press it again to close it.
+  private renderTracks() {
+    const {width: W, horizonY: Y} = this.stage
+    const tracks = this.data?.horizon.wantTracks ?? []
+    const live = new Set(this.trackSectors.map(sector => sector.name))
+    for (const [name, el] of this.trackEls) if (!live.has(name)) el.classList.add('off')
+    for (const sector of this.trackSectors) {
+      const track = tracks.find(candidate => candidate.name === sector.name)
+      if (track === undefined) continue
+      let el = this.trackEls.get(sector.name)
+      if (el === undefined) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.className = 'sl-track off'
+        const name = sector.name
+        button.addEventListener('click', event => {
+          event.stopPropagation()
+          if (this.trayKind === 'track' && this.trayTrack === name) this.closeTray()
+          else this.openTray('track', button, name)
+        }, {signal: this.abort.signal})
+        el = button
+        this.labels.append(el)
+        this.trackEls.set(sector.name, el)
+      }
+      const drawn = this.things.filter(thing => thing.under && thing.shown && thing.item.group === track.name).length
+      const html = `${escapeText(track.name.toUpperCase())}<small>${track.open === 0 ? 'nothing yet' : drawn < track.open ? `${drawn} of ${track.open}` : String(track.open)}</small>`
+      if (el.dataset['html'] !== html) { el.innerHTML = html; el.dataset['html'] = html }
+      el.title = track.about || `${track.open} open in ${track.name}`
+      el.classList.remove('off')
+      el.classList.toggle('empty', track.open === 0)
+      const width = el.offsetWidth || Math.ceil(track.name.length * 7.6 + 60)
+      // Named at the head of its slice, between the sun and its first task, so the names are the first thing
+      // seen on the way down. A name leans away from the middle, as the classes' names do at the rim.
+      const angle = sector.mid * Math.PI / 180
+      const r = (rings[0] + rings[1]) / 2 * this.underK + underPush
+      const lean = Math.max(-1, Math.min(1, Math.cos(angle) * 2.5))
+      const x = Math.min(W - 8 - width, Math.max(8, W / 2 + r * Math.cos(angle) + (-50 + 50 * lean) / 100 * width))
+      const y = Y + Math.max(underPush + 26, r * Math.sin(angle)) - 9
+      el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`
+    }
   }
   private enterSubject(group: string) { this.subject = group; this.closeTray(); this.solve() }
   private leaveSubject() { this.subject = null; this.solve() }

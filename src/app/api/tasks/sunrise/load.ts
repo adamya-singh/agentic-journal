@@ -16,7 +16,7 @@ export type { SunriseData };
 /** Everything the Sunrise hero draws, in one read. */
 export function loadSunrise(now = new Date()): SunriseData {
   const horizon = loadHorizon();
-  const ids = [...new Set([...horizon.holds, ...horizon.items, ...horizon.further, ...horizon.undated].map((item) => item.id))];
+  const ids = [...new Set([...horizon.holds, ...horizon.items, ...horizon.further, ...horizon.undated, ...horizon.wants].map((item) => item.id))];
   const forms: Record<string, FormSpec> = {};
   // A task's form also says how many chats it has, and whether OpenClaw is waiting on him in one.
   const chats = readAllChatThreads();

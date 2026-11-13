@@ -1,6 +1,7 @@
 // Horizon: the home page's priority view. Tasks are sorted into zones by how soon they are due,
 // from "holds" (overdue, clear these first) out to "orbit" (later). Shared by the API route and the client.
 import type { Task } from '@/lib/types';
+import { PERMANENT_TRACKS, trackFor, trackOrder, type WantTrack } from '@/lib/want-tracks';
 
 export type HorizonZone = 'hold' | 'ignition' | 'climb' | 'altitude' | 'orbit';
 export const HORIZON_RING_ZONES: Exclude<HorizonZone, 'hold'>[] = ['ignition', 'climb', 'altitude', 'orbit'];
@@ -28,6 +29,23 @@ export interface HorizonUndated {
   label: string;
 }
 
+// A want-to-do task under the sun: it has no date, so it sits in its section by how high it is in his queue.
+export interface HorizonWant {
+  id: string;
+  short: string;
+  title: string;
+  label: string;
+  track: string;          // the section it sits in: Recharge, Level Up, his own label, or Life
+}
+
+// One section under the sun. The permanent ones are listed even with nothing in them.
+export interface HorizonWantTrack {
+  name: string;
+  about: string;          // what belongs in it; empty for his own labels and Life
+  open: number;           // every open task in it, shown or not
+  permanent: boolean;
+}
+
 // A daily task: it never comes due, so it rides on the ring around the sun instead of the zones.
 export interface HorizonDaily {
   id: string;
@@ -50,6 +68,9 @@ export interface HorizonData {
   further: HorizonItem[];   // later tasks the outer ring has no room for; the pulled-back view shows them
   holds: HorizonItem[];
   undated: HorizonUndated[];
+  wants: HorizonWant[];             // want-to-do tasks with no date, the top of each section
+  wantTracks: HorizonWantTrack[];   // the sections under the sun, in the order drawn
+  wantsBySection: Record<string, HorizonWant[]>;  // every section's open tasks in queue order, for its tray (capped)
   cleared: HorizonCleared[];
   dailies: HorizonDaily[];
   dailyWeek: number[];    // dailies checked off on each of the last 7 days, oldest first, today last
@@ -62,6 +83,9 @@ const HOLD_WINDOW_DAYS = 7;       // overdue longer than this is treated as stal
 const HOLDS_MAX = 4;
 const ORBIT_MAX = 6;              // keep the outer ring readable
 const UNDATED_MAX = 8;
+const WANTS_MAX = 12;             // under the sun, across every section
+const WANT_TRACKS_MAX = 6;
+const WANTS_BY_SECTION_MAX = 60;  // a section's tray; its track's open still counts them all
 const OA_ASSUMED_WINDOW_DAYS = 3;
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -208,6 +232,8 @@ export interface HorizonInputs {
   haveToDo: Task[];
   wantToDo: Task[];
   currentHaveToDoIds: string[];
+  currentWantToDoIds?: string[];  // his want-to-do queue, first is highest
+  wantTracks?: readonly WantTrack[];
   completed: { id: string; text: string; completedAt?: string }[];
   letGoThisWeek?: number;
   dailyDoneByDay?: string[][];   // ids of dailies checked off on each of the last 7 days, oldest first
@@ -290,6 +316,33 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     if (undated.length >= UNDATED_MAX) break;
   }
 
+  // Under the sun: want-to-do tasks with no date, by section. Each section shows the top of his queue (then the
+  // list's own order), one from each section in turn until the room is used, so no section crowds out another.
+  const tracks = input.wantTracks ?? PERMANENT_TRACKS;
+  const queue = new Map((input.currentWantToDoIds ?? []).map((id, rank) => [id, rank]));
+  const bySection = new Map<string, HorizonWant[]>();
+  flatten(input.wantToDo).filter(pending).filter((t) => !t.dueDate && !datedIds.has(t.id))
+    .map((t, index) => ({ t, index }))
+    .sort((a, b) => (queue.get(a.t.id) ?? Infinity) - (queue.get(b.t.id) ?? Infinity) || a.index - b.index)
+    .forEach(({ t }) => {
+      const { short, label } = shortenTask(t.text);
+      const track = trackFor(t, label, tracks);
+      bySection.set(track, [...(bySection.get(track) ?? []), { id: t.id, short, title: t.text, label, track }]);
+    });
+  const sections = trackOrder(bySection.keys(), tracks).filter((name) => tracks.some((track) => track.name === name) || bySection.has(name)).slice(0, WANT_TRACKS_MAX);
+  const wants: HorizonWant[] = [];
+  for (let row = 0; wants.length < WANTS_MAX && sections.some((name) => (bySection.get(name)?.length ?? 0) > row); row += 1) {
+    for (const name of sections) {
+      const want = bySection.get(name)?.[row];
+      if (want && wants.length < WANTS_MAX) wants.push(want);
+    }
+  }
+  const wantTracks: HorizonWantTrack[] = sections.map((name) => {
+    const track = tracks.find((candidate) => candidate.name === name);
+    return { name, about: track?.about ?? '', open: bySection.get(name)?.length ?? 0, permanent: !!track };
+  });
+  const wantsBySection: Record<string, HorizonWant[]> = Object.fromEntries(sections.map((name) => [name, (bySection.get(name) ?? []).slice(0, WANTS_BY_SECTION_MAX)]));
+
   const weekAgo = now.getTime() - 7 * 864e5;
   const cleared: HorizonCleared[] = input.completed
     .filter((c) => c.completedAt && new Date(c.completedAt).getTime() >= weekAgo)
@@ -313,7 +366,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
   };
   return {
-    now: now.toISOString(), items: ringItems, further, holds, undated, cleared,
+    now: now.toISOString(), items: ringItems, further, holds, undated, wants, wantTracks, wantsBySection, cleared,
     dailies, dailyWeek: doneByDay.map((ids) => ids.length),
     hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds,
   };

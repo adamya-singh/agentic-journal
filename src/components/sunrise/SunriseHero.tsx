@@ -64,6 +64,10 @@ html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!
 .sr-tray .sr-card small{font:10px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#9a5a24}
 .sr-tray .sr-card span{color:#7a6656;font-size:12px}
 .sr-tray .sr-cards{max-height:320px;overflow:auto}
+.sr-tray[data-kind=track] .sr-cards{max-height:min(360px,calc(var(--room,460px) - 100px))}
+.sr-tray .sr-want{display:flex;gap:8px;align-items:baseline}
+.sr-tray .sr-want b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sr-tray .sr-s code{font:11.5px var(--mono);color:#9a5a24}
 .sr-tray .sr-answers li{line-height:1.35}
 .sr-tray .sr-answers b.y{color:#b0521c}
 .sr-tray .sr-answers b.n{color:#9a8676}
@@ -110,6 +114,7 @@ export function SunriseHero() {
   const [open, setOpen] = React.useState<string | null>(null);
   const [tray, setTray] = React.useState<TrayKind | null>(null);
   const [trayError, setTrayError] = React.useState<string | null>(null);
+  const [trayTrack, setTrayTrack] = React.useState<string | null>(null);
   const [proposals, setProposals] = React.useState<DoneProposalRecord[]>([]);
   const [undo, setUndo] = React.useState<{ text: string; run: () => Promise<unknown> } | null>(null);
   const undoTimer = React.useRef<number | null>(null);
@@ -241,7 +246,7 @@ export function SunriseHero() {
       if (disposed || !skyRef.current) return;
       const made = new Engine(skyRef.current, programs, {
         onOpen: setOpen,
-        onTray: (kind) => { setTray(kind); setTrayError(null); },
+        onTray: (kind, track) => { setTray(kind); setTrayTrack(track ?? null); setTrayError(null); },
         onToggleDaily: (daily) => void hostRef.current.toggleDaily(daily),
         onLayout: () => hostRef.current.feedSpace(),
       });
@@ -321,6 +326,8 @@ export function SunriseHero() {
 
   const horizon = data?.horizon ?? null;
   const openTask = (id: string) => engineRef.current?.openTask(id);
+  const section = tray === 'track' ? horizon?.wantTracks.find((t) => t.name === trayTrack) : undefined;
+  const sectionWants = section ? horizon?.wantsBySection[section.name] ?? [] : [];
 
   const trayBody = !horizon || !data || !tray ? null : tray === 'holds' ? (
     <>
@@ -354,6 +361,28 @@ export function SunriseHero() {
         </div>
       ))}
       {trayError && <p className="sr-err" role="alert">{trayError}</p>}
+    </>
+  ) : tray === 'track' ? (
+    // A section under the sun: every open task in it, in his queue's order. Press one to open it.
+    <>
+      <p className="sr-t">{section?.name ?? trayTrack}</p>
+      {!section || section.open === 0 ? (
+        <p className="sr-s">
+          {section?.about ? `${section.about} ` : ''}Nothing here yet. Start a want-to-do task with <code>[{section?.name ?? trayTrack}]</code>, or list a project for {section?.name ?? trayTrack} in <code>tasks/want-tracks.json</code>.
+        </p>
+      ) : (
+        <>
+          <p className="sr-s">{section.about ? `${section.about} ` : ''}{sectionWants.length < section.open ? `The first ${sectionWants.length} of ${section.open} open, in your queue's order.` : `${section.open} open, in your queue's order.`}</p>
+          <div className="sr-cards">
+            {sectionWants.map((w, index) => (
+              <button key={w.id} type="button" className="sr-card sr-want" title={w.title} onClick={() => openTask(w.id)}>
+                <small>{index + 1}</small>
+                <b>{w.title.replace(/^\s*\[[^\]]*\]\s*/, '') || w.short}</b>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </>
   ) : tray === 'answers' ? (
     <>

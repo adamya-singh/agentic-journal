@@ -86,6 +86,14 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .sl-subject:hover{opacity:1;background:rgba(255,255,255,.08)}
 .sl-subject.here{opacity:1;color:var(--em)}
 .sl-subject.off{opacity:0;pointer-events:none}
+/* The sections under the sun, named below the horizon as the classes are above it. */
+.sl-track{position:absolute;left:0;top:0;pointer-events:auto;cursor:pointer;border:0;background:none;border-radius:999px;padding:3px 6px;font:500 10px var(--mono);letter-spacing:1.6px;color:#ffe2c4;white-space:nowrap;opacity:.82;transition:opacity .4s ease,transform .5s ease}
+.sl-track small{margin-left:6px;font:inherit;color:#ffb37a;letter-spacing:0}
+.sl-track.empty{opacity:.6}
+.sl-track:hover{opacity:1;background:rgba(255,255,255,.08)}
+.sl-track.empty small{color:rgba(255,226,196,.6)}
+.sl-track.off{opacity:0;pointer-events:none}
+.working .sl-track{opacity:0;pointer-events:none}
 .sr-back{display:inline-flex;margin:0 0 10px 8px;border:1px solid rgba(255,210,168,.45);background:rgba(10,14,24,.4);border-radius:999px;padding:3px 10px;font:500 11px var(--mono);color:var(--em);cursor:pointer}
 .sr-back[hidden]{display:none}
 /* The ground: chips you can press. */

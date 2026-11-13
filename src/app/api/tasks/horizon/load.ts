@@ -3,6 +3,19 @@ import { getCurrentTasks } from '../current/current-store-utils';
 import { readCompletedTaskIndex, readCompletedTaskSnapshots, readGeneralTasks } from '../today/today-store-utils';
 import { localDateIso } from '@/lib/done-at';
 import { letGoSince, readLetGo } from '../let-go/let-go-store';
+import * as fs from 'fs';
+import * as path from 'path';
+import { tasksDataDir } from '@/lib/backend-data';
+import { readWantTracks } from '@/lib/want-tracks';
+
+/** The sections under the sun, with the projects tasks/want-tracks.json lists for each. He edits that file by hand. */
+function loadWantTracks() {
+  try {
+    return readWantTracks(JSON.parse(fs.readFileSync(path.join(tasksDataDir(), 'want-tracks.json'), 'utf-8')));
+  } catch {
+    return readWantTracks(null);
+  }
+}
 
 /** The Horizon as the home page sees it. Shared by GET /api/tasks/horizon and the brief worker. */
 export function loadHorizon(): HorizonData {
@@ -25,6 +38,8 @@ export function loadHorizon(): HorizonData {
     haveToDo: readGeneralTasks('have-to-do').tasks,
     wantToDo: readGeneralTasks('want-to-do').tasks,
     currentHaveToDoIds,
+    currentWantToDoIds: getCurrentTasks('want-to-do').map((task) => task.id),
+    wantTracks: loadWantTracks(),
     completed,
     letGoThisWeek: letGoSince(readLetGo(), new Date(now.getTime() - 7 * 864e5)).length,
     dailyDoneByDay,
