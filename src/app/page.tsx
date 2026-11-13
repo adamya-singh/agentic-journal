@@ -972,15 +972,16 @@ export default function HomePage() {
       completeTask: {
         name: 'completeTask',
         description:
-          'Toggle task completion for the active date: completing removes non-daily tasks from General and Current; calling it on an already-completed task uncompletes it.',
+          'Mark a task completed for the active date (removes non-daily tasks from General and Current). Calling it again on a completed task changes nothing; pass completed: false to mark it not completed.',
         argsSchema: z.object({
           taskId: z.string().min(1).describe('The ID of the task to mark as completed'),
           listType: z.enum(['have-to-do', 'want-to-do']).describe('Which list the task belongs to'),
+          completed: z.boolean().optional().describe('false to mark the task not completed; defaults to true'),
         }),
         execute: async (
           currentData: TaskListsData | null,
           setValue: (newValue: TaskListsData | null) => void,
-          args: { taskId: string; listType: ListType },
+          args: { taskId: string; listType: ListType; completed?: boolean },
         ) => {
           if (!currentData) return;
 
@@ -991,6 +992,7 @@ export default function HomePage() {
               taskId: args.taskId,
               listType: args.listType,
               date: currentData.currentDate,
+              completed: args.completed ?? true,
             }),
           });
           const data = await response.json();

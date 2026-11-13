@@ -217,32 +217,6 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (
-        rangeTaskId &&
-        rangeEntryMode === 'logged' &&
-        completeEarliestActiveTaskPlanInPlace(
-          journal,
-          date,
-          rangeTaskId,
-          { date, range: { start, end } },
-          now.toISOString()
-        )
-      ) {
-        if (journal.staged && Array.isArray(journal.staged)) {
-          journal.staged = journal.staged.filter((stagedEntry) => stagedEntry.taskId !== rangeTaskId);
-        }
-
-        writeJournalFile(date, journal);
-
-        return NextResponse.json({
-          success: true,
-          date,
-          message: `Marked planned task complete for ${date}`,
-          newRange,
-          planUpdatedInPlace: true,
-        });
-      }
-
       const duplicateRangeExists = (journal.ranges || []).some((r) => r.start === start && r.end === end);
       if (duplicateRangeExists) {
         return NextResponse.json(
@@ -253,6 +227,21 @@ export async function POST(request: NextRequest) {
           { status: 409 }
         );
       }
+
+      // Logging completes the earliest active plan for the task and still adds the logged range
+      // (as /api/journal/append and the CLI do): the plan records intent, the range records when
+      // it really happened. This used to return before adding the range, which lost those hours.
+      const planUpdatedInPlace = Boolean(
+        rangeTaskId &&
+        rangeEntryMode === 'logged' &&
+        completeEarliestActiveTaskPlanInPlace(
+          journal,
+          date,
+          rangeTaskId,
+          { date, range: { start, end } },
+          now.toISOString()
+        )
+      );
 
       journal.ranges = journal.ranges || [];
       journal.ranges.push(newRange);
@@ -266,8 +255,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         date,
-        message: `Added range ${start}-${end} on ${date}`,
+        message: planUpdatedInPlace
+          ? `Added range ${start}-${end} on ${date} and marked the planned task complete`
+          : `Added range ${start}-${end} on ${date}`,
         newRange,
+        ...(planUpdatedInPlace ? { planUpdatedInPlace: true } : {}),
       });
     }
 

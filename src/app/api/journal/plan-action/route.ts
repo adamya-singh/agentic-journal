@@ -145,6 +145,12 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+    if (result.status === 'not-actionable') {
+      return NextResponse.json(
+        { success: false, error: `This plan was ${result.planStatus}; act on the plan that replaced it.` },
+        { status: 409 }
+      );
+    }
 
     let taskCompletionChanged = false;
     if (action === 'complete' && result.entryType === 'task' && result.task) {
@@ -162,7 +168,9 @@ export async function POST(request: NextRequest) {
       taskCompletionChanged: result.entryType === 'task' ? taskCompletionChanged : undefined,
       message: action === 'complete'
         ? 'Plan marked complete.'
-        : 'Plan marked in progress.',
+        : result.entryType === 'task'
+          ? 'Logged as started. The task stays open.'
+          : 'Logged as started.',
     });
   } catch (error) {
     console.error('Error applying plan action:', error);

@@ -61,7 +61,7 @@ export async function completeTaskWithLogging(params: {
   const response = await fetch('/api/tasks/today/complete', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, completed: !wasCompleted }),
   });
   const data = (await response.json()) as CompleteTaskResult;
   if (!response.ok || !data.success) {

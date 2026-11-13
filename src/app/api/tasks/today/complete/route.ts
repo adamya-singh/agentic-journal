@@ -29,17 +29,29 @@ function markMissedPlansIfJournalExists(date: string): void {
 
 /**
  * POST /api/tasks/today/complete
- * Toggles completion status for a task in a computed today list.
+ * Sets completion status for a task in a computed today list.
+ *
+ * Send `completed: true` or `false` to say which way. Asking for the state the task is already in
+ * succeeds and changes nothing, so a retry, a double press or an undo that arrives twice cannot
+ * flip it back. Without `completed` the request toggles, which is only safe from a control that
+ * shows the current state.
  *
  * - Complete: write completion snapshot for this date, remove from general list (non-daily only)
  * - Uncomplete: remove completion snapshot for this date, re-add to general list (non-daily only)
  *
- * Body: { taskId: string, listType: 'have-to-do' | 'want-to-do', date: string }
+ * Body: { taskId: string, listType: 'have-to-do' | 'want-to-do', date: string, completed?: boolean }
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { taskId, listType, date } = body;
+    const { taskId, listType, date, completed } = body;
+
+    if (completed !== undefined && typeof completed !== 'boolean') {
+      return NextResponse.json(
+        { success: false, error: 'completed must be true or false when given' },
+        { status: 400 }
+      );
+    }
 
     if (listType !== 'have-to-do' && listType !== 'want-to-do') {
       return NextResponse.json(
@@ -67,6 +79,16 @@ export async function POST(request: NextRequest) {
     markMissedPlansIfJournalExists(date);
     const completedSnapshots = readCompletedTaskSnapshots(date, typedListType);
     const existingSnapshot = completedSnapshots.find((snapshot) => snapshot.id === taskId) ?? null;
+
+    const wanted = typeof completed === 'boolean' ? completed : !existingSnapshot;
+    if (wanted === Boolean(existingSnapshot)) {
+      return NextResponse.json({
+        success: true,
+        completed: wanted,
+        unchanged: true,
+        message: wanted ? 'Task is already completed for this date' : 'Task is not completed for this date',
+      });
+    }
 
     if (existingSnapshot) {
       // UNCOMPLETE

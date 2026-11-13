@@ -253,7 +253,7 @@ export default function LibraryPage() {
       const response = await fetch('/api/tasks/today/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: row.id, listType: row.listType, date: currentDate }),
+        body: JSON.stringify({ taskId: row.id, listType: row.listType, date: currentDate, completed: !wasCompleted }),
       });
       const result = await response.json();
       if (!response.ok || !result.success) {
