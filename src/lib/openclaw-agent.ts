@@ -3,6 +3,8 @@ import { parseJsonObjectOutput, runOpenClawCli } from './openclaw-cron';
 /**
  * Runs one turn of OpenClaw's main agent through the gateway and returns its reply text.
  * Reusing a session key continues the same conversation. Nothing is delivered to a chat channel.
+ * No model or thinking level is passed: the turn runs on OpenClaw's own defaults (agents.defaults in
+ * openclaw.json), the same as a chat started in OpenClaw's app.
  * The `--json` envelope is { status: 'ok', result: { payloads: [{ text }] } }.
  */
 export async function runOpenClawAgentTurn(input: {
@@ -16,7 +18,6 @@ export async function runOpenClawAgentTurn(input: {
       'agent', '--agent', 'main',
       '--session-key', input.sessionKey,
       '--message', input.message,
-      '--thinking', 'low',
       '--timeout', String(Math.floor(timeoutMs / 1000) - 10),
       '--json',
     ],
