@@ -1,0 +1,286 @@
+diff --git a/scripts/capture_priority_ops.py b/scripts/capture_priority_ops.py
+--- a/scripts/capture_priority_ops.py	2026-11-13 00:41:19.414944440 -0500
++++ b/scripts/capture_priority_ops.py	2026-11-13 00:41:37.878639384 -0500
+@@ -16,6 +16,7 @@
+ 
+ from current_store_utils import list_current_tasks
+ from io_utils import (
++    utc_now_iso,
+     DATA_ROOT,
+     build_response,
+     build_write_plan,
+@@ -70,7 +71,7 @@
+     date = local_today_new_york()
+     ledger, exists = _load_ledger(date)
+     after = copy.deepcopy(ledger)
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     for request in requests:
+         after["requests"][request["taskId"]] = {
+             "status": "requested",
+@@ -183,7 +184,7 @@
+     after = copy.deepcopy(ledger)
+     resolved = dict(after["requests"][task_id])
+     resolved["status"] = status
+-    resolved["updatedAt"] = datetime.utcnow().isoformat()
++    resolved["updatedAt"] = utc_now_iso()
+     if rank is not None:
+         resolved["rank"] = rank
+     if reason:
+diff --git a/scripts/io_utils.py b/scripts/io_utils.py
+--- a/scripts/io_utils.py	2026-11-13 00:41:19.417253760 -0500
++++ b/scripts/io_utils.py	2026-11-13 00:41:37.876708467 -0500
+@@ -3,6 +3,7 @@
+ from contextlib import contextmanager
+ from dataclasses import dataclass
+ import copy
++from datetime import datetime, timezone
+ import json
+ import os
+ import tempfile
+@@ -213,10 +214,43 @@
+             os.remove(tmp_path)
+ 
+ 
++def utc_now_iso() -> str:
++    """UTC now, written the way the Journal app writes it (JavaScript's toISOString).
++
++    `datetime.utcnow().isoformat()` has no zone, and JavaScript reads a zoneless
++    timestamp as local time, so the app showed CLI-stamped times hours off.
++    """
++    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
++
++
+ def _lock_path(path: str) -> str:
+     return f"{path}.lock"
+ 
+ 
++def _lock_holder_gone(lock_file: str, unsigned_grace_seconds: float) -> bool:
++    """True when the process that wrote this lock no longer exists.
++
++    A CLI run that is killed leaves its lock file behind; without this check
++    every later write to that file timed out until the lock was deleted by hand.
++    The Journal app takes the same lock (src/lib/cli-file-lock.ts) and writes its
++    pid the same way.
++    """
++    try:
++        with open(lock_file, "r", encoding="utf-8") as handle:
++            raw = handle.read().strip()
++        if not raw.isdigit() or int(raw) <= 0:
++            # Created but not signed yet, unless it has sat that way.
++            return time.time() - os.path.getmtime(lock_file) > unsigned_grace_seconds
++        os.kill(int(raw), 0)
++        return False
++    except ProcessLookupError:
++        return True
++    except PermissionError:
++        return False
++    except FileNotFoundError:
++        return False
++
++
+ @contextmanager
+ def file_locks(paths: Iterable[str], timeout_seconds: float = 5.0):
+     ordered = sorted(set(paths))
+@@ -236,6 +270,12 @@
+                     lock_files.append(lock_file)
+                     acquired = True
+                 except FileExistsError:
++                    if _lock_holder_gone(lock_file, timeout_seconds):
++                        try:
++                            os.remove(lock_file)
++                        except FileNotFoundError:
++                            pass
++                        continue
+                     if time.time() - start > timeout_seconds:
+                         raise TimeoutError(f"timed out acquiring lock for {target}")
+                     time.sleep(0.05)
+diff --git a/scripts/journal_ops.py b/scripts/journal_ops.py
+--- a/scripts/journal_ops.py	2026-11-13 00:41:19.415070574 -0500
++++ b/scripts/journal_ops.py	2026-11-13 00:41:37.877499425 -0500
+@@ -6,6 +6,7 @@
+ from uuid import uuid4
+ 
+ from io_utils import (
++    utc_now_iso,
+     build_response,
+     build_write_plan,
+     journal_path,
+@@ -82,7 +83,7 @@
+     text = task.get("text") if isinstance(task, dict) and isinstance(task.get("text"), str) else "[Task not found]"
+     return {
+         "taskText": text,
+-        "taskTextCapturedAt": datetime.utcnow().isoformat(),
++        "taskTextCapturedAt": utc_now_iso(),
+     }
+ 
+ 
+@@ -243,7 +244,7 @@
+ def _normalize_planned_entry(entry: JSONDict, now_iso: str | None = None) -> JSONDict:
+     if entry.get("entryMode") != "planned" or not (_is_task_entry(entry) or _is_text_entry(entry)):
+         return copy.deepcopy(entry)
+-    now_iso = now_iso or datetime.utcnow().isoformat()
++    now_iso = now_iso or utc_now_iso()
+     normalized = copy.deepcopy(entry)
+     if not isinstance(normalized.get("planId"), str) or not normalized.get("planId"):
+         normalized["planId"] = str(uuid4())
+@@ -392,7 +393,7 @@
+     range_start: str | None = None,
+     range_end: str | None = None,
+ ) -> tuple[JSONDict, bool]:
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     updated = copy.deepcopy(journal)
+     candidates: list[JSONDict] = []
+ 
+@@ -1137,7 +1138,7 @@
+     ) = _prepare_day_state(date)
+ 
+     journal_work = copy.deepcopy(journal_synced)
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+ 
+     target_entry: JSONDict | None = None
+     target_scope: str | None = None
+@@ -1297,7 +1298,7 @@
+     journal_work = copy.deepcopy(journal_synced)
+     old_slot = copy.deepcopy(journal_work.get(hour))
+ 
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     new_entry = {"text": text, "entryMode": entry_mode}
+     if entry_mode == "planned":
+         new_entry = _normalize_planned_entry(new_entry, now_iso)
+@@ -1599,7 +1600,7 @@
+     ) = _prepare_day_state(date)
+ 
+     journal_work = copy.deepcopy(journal_synced)
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     log_ref: JSONDict = {"date": date}
+     if hour:
+         log_ref["hour"] = hour
+diff --git a/scripts/omi_journal_ops.py b/scripts/omi_journal_ops.py
+--- a/scripts/omi_journal_ops.py	2026-11-13 00:41:19.415218220 -0500
++++ b/scripts/omi_journal_ops.py	2026-11-13 00:41:37.878405204 -0500
+@@ -10,6 +10,7 @@
+ from uuid import uuid4
+ 
+ from io_utils import (
++    utc_now_iso,
+     build_response,
+     build_write_plan,
+     journal_path,
+@@ -634,7 +635,7 @@
+     run_id: str,
+     journal_ref: JSONDict,
+ ) -> JSONDict:
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     return {
+         "status": "logged",
+         "transcriptHash": segment["transcriptHash"],
+@@ -655,7 +656,7 @@
+     run_id: str,
+     reason: str,
+ ) -> JSONDict:
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     return {
+         "status": "skipped",
+         "transcriptHash": segment["transcriptHash"],
+@@ -670,7 +671,7 @@
+ 
+ 
+ def _requested_ledger_entry_for_segment(segment: JSONDict) -> JSONDict:
+-    now_iso = datetime.utcnow().isoformat()
++    now_iso = utc_now_iso()
+     return {
+         "status": "requested",
+         "transcriptHash": segment["transcriptHash"],
+@@ -1005,7 +1006,7 @@
+                 continue
+             new_task = result["data"]["task"]
+             ref["taskId"] = new_task["id"]
+-            ref["createdAt"] = datetime.utcnow().isoformat()
++            ref["createdAt"] = utc_now_iso()
+             created_tasks.append(
+                 {"taskId": new_task["id"], "text": new_task["text"], "listType": task["listType"]}
+             )
+diff --git a/scripts/task_ops.py b/scripts/task_ops.py
+--- a/scripts/task_ops.py	2026-11-13 00:41:19.415344005 -0500
++++ b/scripts/task_ops.py	2026-11-13 00:41:37.878062141 -0500
+@@ -8,6 +8,7 @@
+ from uuid import uuid4
+ 
+ from io_utils import (
++    utc_now_iso,
+     read_json,
+     build_response,
+     build_write_plan,
+@@ -290,7 +291,7 @@
+                     "taskId": task_id,
+                     "listType": list_type,
+                     "taskText": task_text,
+-                    "taskTextCapturedAt": datetime.utcnow().isoformat(),
++                    "taskTextCapturedAt": utc_now_iso(),
+                 }
+             )
+ 
+@@ -697,7 +698,7 @@
+                         "taskId": new_task["id"],
+                         "listType": list_type,
+                         "taskText": new_task["text"],
+-                        "taskTextCapturedAt": datetime.utcnow().isoformat(),
++                        "taskTextCapturedAt": utc_now_iso(),
+                     }
+                 )
+ 
+@@ -906,7 +907,7 @@
+                         "taskId": task_id,
+                         "listType": list_type,
+                         "taskText": updated_task["text"],
+-                        "taskTextCapturedAt": datetime.utcnow().isoformat(),
++                        "taskTextCapturedAt": utc_now_iso(),
+                     }
+                 )
+ 
+@@ -1261,7 +1262,7 @@
+                 "taskId": task_id,
+                 "listType": list_type,
+                 "taskText": task.get("text", "[Task not found]"),
+-                "taskTextCapturedAt": datetime.utcnow().isoformat(),
++                "taskTextCapturedAt": utc_now_iso(),
+             }
+         )
+ 
+@@ -1482,7 +1483,7 @@
+                 "id": task_to_complete["id"],
+                 "text": task_to_complete["text"],
+                 "completed": True,
+-                "completedAt": datetime.utcnow().isoformat(),
++                "completedAt": utc_now_iso(),
+                 "listType": list_type,
+             }
+             if isinstance(task_to_complete.get("dueDate"), str) and task_to_complete.get("dueDate"):
+diff --git a/scripts/today_store_utils.py b/scripts/today_store_utils.py
+--- a/scripts/today_store_utils.py	2026-11-13 00:41:19.415432774 -0500
++++ b/scripts/today_store_utils.py	2026-11-13 00:41:37.878881107 -0500
+@@ -341,7 +341,7 @@
+         "_comment": "Global index for completed task snapshots by taskId",
+         "schemaVersion": 1,
+         "tasks": tasks,
+-        "updatedAt": payload.get("updatedAt") if isinstance(payload.get("updatedAt"), str) else datetime.utcnow().isoformat(),
++        "updatedAt": payload.get("updatedAt") if isinstance(payload.get("updatedAt"), str) else io_utils.utc_now_iso(),
+     }
+ 
+ 
+@@ -350,7 +350,7 @@
+         "_comment": "Global index for completed task snapshots by taskId",
+         "schemaVersion": 1,
+         "tasks": tasks,
+-        "updatedAt": datetime.utcnow().isoformat(),
++        "updatedAt": io_utils.utc_now_iso(),
+     }
+ 
+ 
