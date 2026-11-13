@@ -318,8 +318,17 @@ const STATUS_RANK: Record<ComponentStatus, number> = {
   major: 4,
 };
 
+/**
+ * The worst of the statuses that say something. With none that do (nothing checked yet, or
+ * everything paused) the answer is `unknown` or `paused`, never `operational`: the page used to
+ * read "All systems operational" when it had not managed to check a single one.
+ */
 export function worstStatus(statuses: ComponentStatus[]): ComponentStatus {
-  return statuses.reduce<ComponentStatus>(
+  const checked = statuses.filter((status) => status !== 'unknown' && status !== 'paused');
+  if (checked.length === 0) {
+    return statuses.length > 0 && statuses.every((status) => status === 'paused') ? 'paused' : 'unknown';
+  }
+  return checked.reduce<ComponentStatus>(
     (worst, status) => (STATUS_RANK[status] > STATUS_RANK[worst] ? status : worst),
     'operational',
   );

@@ -60,15 +60,21 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
       owned = true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-      // Reclaim only dead owners. An empty file during creation is never reclaimed.
+      // Reclaim only dead owners. A file with no owner in it is being created right now, unless
+      // it has sat empty for 30 s: then its holder died between creating and signing it.
       let recovering = false;
       const recovery = `${file}.recovery`;
       try {
         fs.mkdirSync(recovery);
         recovering = true;
-        if (ownerGone(fs.readFileSync(file, 'utf8'))) fs.unlinkSync(file);
+        const owner = fs.readFileSync(file, 'utf8');
+        if (owner.trim() ? ownerGone(owner) : Date.now() - fs.statSync(file).mtimeMs > STALE_UNSIGNED_MS) fs.unlinkSync(file);
       } catch (err) {
-        if (!['EEXIST', 'ENOENT'].includes((err as NodeJS.ErrnoException).code || '')) throw err;
+        const code = (err as NodeJS.ErrnoException).code || '';
+        if (!['EEXIST', 'ENOENT'].includes(code)) throw err;
+        // The recovery marker is held for a few file calls. One that outlives that was left by a
+        // reclaimer killed mid-check, and would block every later reclaim.
+        if (code === 'EEXIST') dropStaleRecovery(recovery);
       } finally {
         if (recovering) fs.rmdirSync(recovery);
       }
@@ -79,7 +85,20 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = 'store'): Pro
   try {
     return await fn();
   } finally {
-    fs.unlinkSync(file);
+    // Only our own lock: if it was reclaimed from under us, the file now belongs to someone else.
+    try {
+      if (fs.readFileSync(file, 'utf8') === lockOwner()) fs.unlinkSync(file);
+    } catch {
+      /* Already gone. */
+    }
+  }
+}
+const STALE_UNSIGNED_MS = 30_000;
+function dropStaleRecovery(recovery: string) {
+  try {
+    if (Date.now() - fs.statSync(recovery).mtimeMs > STALE_UNSIGNED_MS) fs.rmdirSync(recovery);
+  } catch {
+    /* Released meanwhile. */
   }
 }
 export function view(): MediaView {

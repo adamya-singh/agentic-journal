@@ -81,7 +81,12 @@ export function useBrowserStream({ endpoint, targetId, active = true, pace, dedu
   dedupe?: boolean;
 }) {
   const [frame, setFrame] = React.useState<BrowserFrame | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setErrorState] = React.useState<string | null>(null);
+  // Whether the message showing is the picture's own ("Lost the browser picture"). Only that one
+  // is cleared by the next good frame: a failed save, upload or keypress used to be written to the
+  // same slot and was wiped within one poll, before it could be read.
+  const frameError = React.useRef(false);
+  const setError = React.useCallback((message: string | null) => { frameError.current = false; setErrorState(message); }, []);
   const [live, setLive] = React.useState(false);
   const kickRef = React.useRef<() => void>(() => undefined);
   const lastActive = React.useRef(0);
@@ -138,12 +143,13 @@ export function useBrowserStream({ endpoint, targetId, active = true, pace, dedu
             lastFrameAt = Date.now();
             failures = 0;
             setLive(true);
-            setError(null);
-          } catch (frameError) {
+            if (frameError.current) { frameError.current = false; setErrorState(null); }
+          } catch (pictureError) {
             if (stopped) return;
             failures += 1;
             setLive(false);
-            setError(frameError instanceof Error ? frameError.message : 'Lost the browser picture');
+            frameError.current = true;
+            setErrorState(pictureError instanceof Error ? pictureError.message : 'Lost the browser picture');
           }
         } else {
           setLive(false);
@@ -186,6 +192,8 @@ export function useBrowserStream({ endpoint, targetId, active = true, pace, dedu
         });
         const data = await response.json();
         if (!response.ok || !data.success) throw new Error(data.error || 'That did not reach the browser');
+        // The next thing he does that gets through takes the last failure's message down.
+        if (!frameError.current) setErrorState(null);
       } catch (inputError) {
         setError(inputError instanceof Error ? inputError.message : 'That did not reach the browser');
       }
@@ -195,7 +203,7 @@ export function useBrowserStream({ endpoint, targetId, active = true, pace, dedu
     const sent = sending.current.then(deliver);
     sending.current = sent;
     return sent;
-  }, [endpoint, targetId]);
+  }, [endpoint, targetId, setError]);
 
   return { frame, setFrame, error, setError, live, send, kick, touch };
 }

@@ -911,17 +911,27 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
   const latest = React.useRef(blocks);
   latest.current = blocks;
 
+  // One save is out at a time, and the next one sent is always the newest text. Two out together
+  // could arrive in either order: an older text could land last, on the page ("Saved") and in the
+  // journal.
+  const sending = React.useRef(false);
+  const waiting = React.useRef<WorkBlock[] | null>(null);
   const save = React.useCallback(async (next: WorkBlock[]) => {
+    if (sending.current) { waiting.current = next; return; }
     if (next === saved.current) return;
+    sending.current = true;
     setState('saving');
+    let ok = false;
     try {
       const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks: next, baseHash: work.baseHash });
-      if (!json?.success) { setState('failed'); return; }
-      saved.current = next;
-      setState('saved');
-    } catch {
-      setState('failed');
-    }
+      ok = !!json?.success;
+    } catch { /* reported below */ }
+    sending.current = false;
+    if (ok) saved.current = next;
+    const queued = waiting.current;
+    waiting.current = null;
+    if (queued && queued !== saved.current) { void save(queued); return; }
+    setState(ok ? 'saved' : 'failed');
   }, [taskId, work.baseHash]);
   const change = (block: WorkBlock) => {
     const next = latest.current.map((b) => (b.id === block.id ? block : b));
@@ -938,9 +948,16 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
 
   const takeTheirs = async () => {
     if (timer.current) window.clearTimeout(timer.current);
-    saved.current = latest.current;   // his version is being dropped on purpose: nothing to save on the way out
+    waiting.current = null;
     const json = await post('/api/tasks/hook-work', { taskId, action: 'reset' }).catch(() => null);
-    if (json?.success) onWork((json.data as ResolvedWork | null) ?? null);
+    if (json?.success) {
+      saved.current = latest.current;   // his version was dropped on purpose: nothing to save on the way out
+      onWork((json.data as ResolvedWork | null) ?? null);
+    } else {
+      // His text is still the one on file, so what he typed since the last save still has to get there.
+      setState('failed');
+      void save(latest.current);
+    }
   };
   const edited = work.edited || blocks !== work.blocks;
   const status = (
@@ -1427,11 +1444,11 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     setBusy(true);
     setError(null);
     const body = { taskId, listType, date: getCurrentDateISO() };
-    const json = await post('/api/tasks/today/complete', body).catch(() => null);
+    const json = await post('/api/tasks/today/complete', { ...body, completed: true }).catch(() => null);
     setBusy(false);
     if (!json?.success) { setError(json?.error || 'That did not save. Try again.'); return; }
     onClose();
-    onUndo(`Done: ${short}.`, () => post('/api/tasks/today/complete', body));
+    onUndo(`Done: ${short}.`, () => post('/api/tasks/today/complete', { ...body, completed: false }));
     onChanged();
   };
   const setWhen = async (dueDate: string) => {
@@ -1460,7 +1477,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     }
   };
   const actionDone = (actionId: string) => {
-    void post('/api/tasks/brief-agent', { action: 'action-done', taskId, actionId }).then(() => { onChanged(); loadBrief(); });
+    void post('/api/tasks/brief-agent', { action: 'action-done', taskId, actionId, fill: brief?.agent?.finishedAt ?? null }).then(() => { onChanged(); loadBrief(); });
   };
   // On a wide sheet the caret goes straight to the place to pick up from; on a phone that would raise the keyboard.
   const focusJump = cols > 1;

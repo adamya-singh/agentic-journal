@@ -3,7 +3,11 @@ set -euo pipefail
 
 # One deploy at a time. Overlapping deploys stop each other's services, delete each other's build
 # output and run out of memory together, which keeps the Journal down (seen 2026-10-07).
-DEPLOY_LOCK="${XDG_RUNTIME_DIR:-/tmp}/agentic-journal-deploy.lock"
+# scripts/recover-build.sh and scripts/journal-mode.sh find the lock the same way.
+DEPLOY_LOCK_DIR="${XDG_RUNTIME_DIR:-}"
+[[ -d "$DEPLOY_LOCK_DIR" ]] || DEPLOY_LOCK_DIR="/run/user/$(id -u)"
+[[ -d "$DEPLOY_LOCK_DIR" ]] || DEPLOY_LOCK_DIR="/tmp"
+DEPLOY_LOCK="${DEPLOY_LOCK_DIR}/agentic-journal-deploy.lock"
 exec 9>"$DEPLOY_LOCK"
 if ! flock -n 9; then
   echo "Another Agentic Journal deploy is already running; not starting a second one." >&2
@@ -98,6 +102,49 @@ stamp_matches() {
   [[ -f "$1" && "$(cat "$1")" == "$2" ]]
 }
 
+start_services() {
+  systemctl_cmd start "$PROD_SERVICE"
+  systemctl_cmd start "$OMI_WORKER_SERVICE"
+  systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
+  systemctl_cmd start "$MEDIA_WORKER_SERVICE"
+  systemctl_cmd start "$LIBRARY_WORKER_SERVICE"
+  systemctl_cmd start "$ACQUISITION_WORKER_SERVICE"
+  systemctl_cmd start "$ACQUISITION_GUARD_SERVICE"
+}
+
+stop_services() {
+  systemctl_cmd stop "$DEV_SERVICE" || true
+  systemctl_cmd stop "$OMI_WORKER_SERVICE" || true
+  systemctl_cmd stop "$BOOKMARKS_WORKER_SERVICE" || true
+  systemctl_cmd stop "$MEDIA_WORKER_SERVICE" || true
+  systemctl_cmd stop "$LIBRARY_WORKER_SERVICE" || true
+  systemctl_cmd stop "$ACQUISITION_WORKER_SERVICE" || true
+  systemctl_cmd stop "$ACQUISITION_GUARD_SERVICE" || true
+  systemctl_cmd stop "$PROD_SERVICE" || true
+}
+
+# Once the services are stopped, any way out of this script other than a verified new build puts
+# the previous build back and starts the services again. Before this, a failure after the Next
+# build (pnpm install, the Mastra build, a service start) left everything stopped.
+SERVICES_STOPPED=0
+DEPLOY_VERIFIED=0
+roll_back() {
+  local code=$?
+  trap - EXIT
+  if (( SERVICES_STOPPED && ! DEPLOY_VERIFIED )); then
+    echo >&2
+    echo "Deploy failed (exit ${code}); going back to the previous build." >&2
+    stop_services
+    DEPLOY_LOCK_HELD=1 bash "${ROOT_DIR}/scripts/recover-build.sh" --force || true
+    start_services || true
+    wait_for_http "Next root" "http://127.0.0.1:3000/" 60 || true
+  fi
+  exit "$code"
+}
+trap roll_back EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM HUP
+
 require_command npm
 require_command pnpm
 require_command curl
@@ -136,14 +183,16 @@ systemctl_cmd enable --now "$SESSION_INDEX_TIMER" >/dev/null
 systemctl_cmd disable "$DEV_SERVICE" >/dev/null 2>&1 || true
 
 echo "Stopping Agentic Journal services..."
-systemctl_cmd stop "$DEV_SERVICE" || true
-systemctl_cmd stop "$OMI_WORKER_SERVICE" || true
-systemctl_cmd stop "$BOOKMARKS_WORKER_SERVICE" || true
-systemctl_cmd stop "$MEDIA_WORKER_SERVICE" || true
-systemctl_cmd stop "$LIBRARY_WORKER_SERVICE" || true
-systemctl_cmd stop "$ACQUISITION_WORKER_SERVICE" || true
-systemctl_cmd stop "$ACQUISITION_GUARD_SERVICE" || true
-systemctl_cmd stop "$PROD_SERVICE" || true
+SERVICES_STOPPED=1
+stop_services
+
+# A deploy that was killed mid-build (reboot, timeout) left the good build set aside. Put it back
+# before anything below deletes it.
+DEPLOY_LOCK_HELD=1 bash "${ROOT_DIR}/scripts/recover-build.sh"
+# Whatever is still set aside now is older than the build in place; a rollback must never reach it.
+PREVIOUS_BUILD_DIR="${ROOT_DIR}/.next-previous"
+PREVIOUS_MASTRA_DIR="${BACKEND_DIR}/.mastra-previous"
+rm -rf "$PREVIOUS_BUILD_DIR" "$PREVIOUS_MASTRA_DIR"
 
 echo
 ROOT_DEPS_HASH="$(inputs_hash package-lock.json)"
@@ -166,51 +215,22 @@ if [[ -d "${ROOT_DIR}/.next/cache" ]] && (( $(du -sm "${ROOT_DIR}/.next/cache" |
   echo "Next cache exceeds 4 GB; clearing it."
   rm -rf "${ROOT_DIR}/.next/cache"
 fi
-# Keep the running build aside instead of deleting it, so a failed build can put it back and the
+# Keep the running build aside instead of deleting it, so a failed deploy can put it back and the
 # Journal comes back up on the old code rather than staying down (2026-10-08: two OOMed builds kept it
-# down ~45 minutes).
-PREVIOUS_BUILD_DIR="${ROOT_DIR}/.next-previous"
-rm -rf "$PREVIOUS_BUILD_DIR"
+# down ~45 minutes). It stays aside until the new build has answered a request.
 mkdir -p "$PREVIOUS_BUILD_DIR" "${ROOT_DIR}/.next"
 find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec mv -t "$PREVIOUS_BUILD_DIR" {} +
 
-build_next() {
-  # Combine a bounded heap with Next's compiler memory optimizations on the shared host.
-  if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
-    systemd-run --user --wait --pipe --collect \
-      -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
-      -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
-      /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
-  else
-    NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
-  fi
-  test -s "${ROOT_DIR}/.next/BUILD_ID"
-}
-
-restore_previous_build() {
-  if [[ ! -s "${PREVIOUS_BUILD_DIR}/BUILD_ID" ]]; then
-    echo "No previous build to restore; the Journal stays down until a build succeeds." >&2
-    return 1
-  fi
-  echo "Restoring the previous build and restarting services..." >&2
-  find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec rm -rf {} +
-  find "$PREVIOUS_BUILD_DIR" -mindepth 1 -maxdepth 1 -exec mv -t "${ROOT_DIR}/.next" {} +
-  systemctl_cmd start "$PROD_SERVICE"
-  systemctl_cmd start "$OMI_WORKER_SERVICE"
-  systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
-  systemctl_cmd start "$MEDIA_WORKER_SERVICE"
-  systemctl_cmd start "$LIBRARY_WORKER_SERVICE"
-  systemctl_cmd start "$ACQUISITION_WORKER_SERVICE"
-  systemctl_cmd start "$ACQUISITION_GUARD_SERVICE"
-  wait_for_http "Next root" "http://127.0.0.1:3000/" 60 || true
-}
-
-if ! build_next; then
-  echo "Next.js build failed." >&2
-  restore_previous_build || true
-  exit 1
+# Combine a bounded heap with Next's compiler memory optimizations on the shared host.
+if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
+  systemd-run --user --wait --pipe --collect \
+    -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
+    -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
+    /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
+else
+  NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
 fi
-rm -rf "$PREVIOUS_BUILD_DIR"
+test -s "${ROOT_DIR}/.next/BUILD_ID"
 
 echo
 echo "Installing backend dependencies with pnpm..."
@@ -223,7 +243,9 @@ if stamp_matches "$BACKEND_STAMP" "$BACKEND_HASH" && [[ -s "${MASTRA_OUTPUT_DIR}
   echo "Mastra backend unchanged; reusing the existing build."
 else
   echo "Building Mastra from a clean output directory..."
-  rm -rf "${BACKEND_DIR}/.mastra"
+  if [[ -d "${BACKEND_DIR}/.mastra" ]]; then
+    mv "${BACKEND_DIR}/.mastra" "$PREVIOUS_MASTRA_DIR"
+  fi
   pnpm --dir "$BACKEND_DIR" run build
   test -s "${MASTRA_OUTPUT_DIR}/package.json"
 
@@ -235,17 +257,15 @@ fi
 
 echo
 echo "Starting Agentic Journal service..."
-systemctl_cmd start "$PROD_SERVICE"
-systemctl_cmd start "$OMI_WORKER_SERVICE"
-systemctl_cmd start "$BOOKMARKS_WORKER_SERVICE"
-systemctl_cmd start "$MEDIA_WORKER_SERVICE"
-systemctl_cmd start "$LIBRARY_WORKER_SERVICE"
-systemctl_cmd start "$ACQUISITION_WORKER_SERVICE"
-systemctl_cmd start "$ACQUISITION_GUARD_SERVICE"
+start_services
 
 echo
 echo "Verifying local endpoints..."
 wait_for_http "Next root" "http://127.0.0.1:3000/"
+# The new build serves pages, so it stays. A failing check below still fails the deploy, but no
+# longer rolls it back.
+DEPLOY_VERIFIED=1
+rm -rf "$PREVIOUS_BUILD_DIR" "$PREVIOUS_MASTRA_DIR"
 wait_for_http "Bookmarks API" "http://127.0.0.1:3000/api/bookmarks/status"
 wait_for_http "Media API" "http://127.0.0.1:3000/api/media"
 wait_for_http "Jobs API" "http://127.0.0.1:3000/api/jobs/list"

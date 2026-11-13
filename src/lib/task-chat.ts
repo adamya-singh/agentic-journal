@@ -252,9 +252,15 @@ export function migrateChatThreads(raw: unknown): { threads: Record<string, Task
   return { threads: out, migrated: file.schemaVersion !== CHAT_SCHEMA_VERSION };
 }
 
-/** A turn that was out when the server restarted never comes back; show it as failed. */
-export function settleStalePending(thread: Pick<TaskChatThread, 'pendingSince' | 'error'>, now: Date): boolean {
-  if (!thread.pendingSince || now.getTime() - Date.parse(thread.pendingSince) <= CHAT_TURN_TIMEOUT_MS + 60_000) return false;
+/**
+ * A turn that was out when the server restarted never comes back; show it as failed. `serverStartedAt`
+ * settles it at once: a turn sent before this server started has nobody left to bring its answer.
+ */
+export function settleStalePending(thread: Pick<TaskChatThread, 'pendingSince' | 'error'>, now: Date, serverStartedAt?: number): boolean {
+  if (!thread.pendingSince) return false;
+  const sent = Date.parse(thread.pendingSince);
+  const orphaned = serverStartedAt !== undefined && sent < serverStartedAt;
+  if (!orphaned && now.getTime() - sent <= CHAT_TURN_TIMEOUT_MS + 60_000) return false;
   thread.pendingSince = null;
   thread.error = 'OpenClaw never answered.';
   return true;
@@ -463,6 +469,8 @@ export function mergeChatHistory(thread: TaskChatThread, history: ChatHistory, n
   thread.messages = all.map((entry) => entry.message);
   const last = thread.messages[thread.messages.length - 1];
   if (last.at > thread.updatedAt) thread.updatedAt = last.at;
+  // The turn was given up on ("never answered"), and here is its answer after all.
+  if (thread.error && !thread.pendingSince && last.role === 'openclaw') thread.error = null;
   const first = thread.messages.find((m) => m.role === 'you');
   if (thread.title === 'New chat' && first) thread.title = chatTitle(first.text);
   return true;

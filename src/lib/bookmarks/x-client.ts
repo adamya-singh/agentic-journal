@@ -111,8 +111,13 @@ interface Credentials {
   accountId?: string;
   localKey?: string;
   pending?: { stateHash: string; verifier: string; expiresAt: number };
+  // X refused to renew the token (revoked, or the refresh token expired). The token stays on
+  // file, but it no longer works: the account has to be connected again.
+  renewalRefusedAt?: number;
 }
 export const credentials = () => readJson<Credentials>('credentials.json', {});
+/** A token is on file and X has not refused to renew it. */
+export const isConnected = (c: Credentials = credentials()) => !!c.accessToken && !c.renewalRefusedAt;
 export const appOrigin = journalOrigin;
 export const callbackUrl = () => `${appOrigin()}/api/bookmarks/oauth/callback`;
 export const configured = () => !!process.env.X_CLIENT_ID && !!process.env.X_CLIENT_SECRET;
@@ -360,6 +365,7 @@ export async function completeOAuth(
       refreshToken: token.refresh_token,
       expiresAt: Date.now() + token.expires_in * 1000,
       accountId: user.data.id,
+      renewalRefusedAt: undefined,
     });
     return { id: user.data.id as string, username: user.data.username as string };
   });
@@ -408,12 +414,20 @@ export async function accessToken(fetcher: typeof fetch = fetch) {
     if (!c.accessToken) throw new XError('authentication', 'Connect your X account first.');
     if ((c.expiresAt || 0) > Date.now() + 60_000) return c.accessToken;
     if (!c.refreshToken) throw new XError('authentication', 'Reconnect X to renew access.');
-    const t = await exchange(
-      { grant_type: 'refresh_token', refresh_token: c.refreshToken },
-      fetcher,
-    );
+    let t: Awaited<ReturnType<typeof exchange>>;
+    try {
+      t = await exchange({ grant_type: 'refresh_token', refresh_token: c.refreshToken }, fetcher);
+    } catch (e) {
+      // Only X saying no counts; a network failure or an outage leaves the account connected.
+      if (e instanceof XError && e.kind === 'authentication') {
+        writeJson('credentials.json', { ...credentials(), renewalRefusedAt: Date.now() });
+      }
+      throw e;
+    }
+    const { renewalRefusedAt: _refused, ...kept } = c;
+    void _refused;
     writeJson('credentials.json', {
-      ...c,
+      ...kept,
       accessToken: t.access_token,
       refreshToken: t.refresh_token || c.refreshToken,
       expiresAt: Date.now() + t.expires_in * 1000,

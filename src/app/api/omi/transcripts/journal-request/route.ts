@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { backendDataDir } from '@/lib/backend-data';
+import { withCliFileLock } from '@/lib/cli-file-lock';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   findOpenClawCronJob,
@@ -96,30 +97,37 @@ export async function POST(request: NextRequest) {
     }
 
     const ledgerPath = path.join(journalLinkDir(), `${date}.json`);
-    const ledger = readLedger(date);
-    const existing = ledger.segments?.[segmentId];
-    if (existing?.status === 'logged') {
+    // The ingestion skill rewrites this ledger under its own lock; take the same one, so a
+    // segment it marks logged between the read and the write below is not set back to requested.
+    const outcome = withCliFileLock(ledgerPath, () => {
+      const ledger = readLedger(date);
+      const existing = ledger.segments?.[segmentId];
+      if (existing?.status === 'logged') return 'logged' as const;
+
+      const nowIso = new Date().toISOString();
+      const alreadyRequested =
+        existing?.status === 'requested' &&
+        existing.transcriptHash === segment.transcriptHash;
+
+      if (!alreadyRequested) {
+        ledger.segments = ledger.segments ?? {};
+        ledger.segments[segmentId] = {
+          status: 'requested',
+          transcriptHash: segment.transcriptHash,
+          requestSource: 'transcripts-page',
+          requestedAt: nowIso,
+          updatedAt: nowIso,
+          startedAt: segment.startedAt,
+          endedAt: segment.endedAt,
+        };
+        writeJsonAtomically(ledgerPath, ledger);
+      }
+      return { alreadyRequested };
+    });
+    if (outcome === 'logged') {
       return NextResponse.json({ success: false, error: 'Omi transcript segment is already logged' }, { status: 409 });
     }
-
-    const nowIso = new Date().toISOString();
-    const alreadyRequested =
-      existing?.status === 'requested' &&
-      existing.transcriptHash === segment.transcriptHash;
-
-    if (!alreadyRequested) {
-      ledger.segments = ledger.segments ?? {};
-      ledger.segments[segmentId] = {
-        status: 'requested',
-        transcriptHash: segment.transcriptHash,
-        requestSource: 'transcripts-page',
-        requestedAt: nowIso,
-        updatedAt: nowIso,
-        startedAt: segment.startedAt,
-        endedAt: segment.endedAt,
-      };
-      writeJsonAtomically(ledgerPath, ledger);
-    }
+    const { alreadyRequested } = outcome;
 
     const queue = await queueOmiIngestionCron();
 

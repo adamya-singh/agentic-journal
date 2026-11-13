@@ -49,6 +49,7 @@ export interface AgentRecord {
   layer: AgentLayer | null;    // the last good layer, kept while a refresh runs
   doneActions: string[];
   promptVersion?: number;      // BRIEF_PROMPT_VERSION of the prompt that produced `layer`; absent means 1
+  runId?: string;              // the run now filling it; only that run may write its outcome
 }
 
 /** Raised when the prompt asks OpenClaw for something new, so finished briefs are filled again. 2: the hook. 3: no fill-in slots. */

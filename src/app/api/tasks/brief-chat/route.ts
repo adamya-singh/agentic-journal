@@ -19,7 +19,7 @@ import {
   type TaskChatThread,
 } from '@/lib/task-chat';
 import { loadTaskBrief } from '../brief/build';
-import { mutateChatThreads, readChatThreads } from './store';
+import { mutateChatThreads, readChatThreads, settleStaleChatTurns } from './store';
 import { chatSyncFailed, syncChatThread, syncChatThreadsSoon } from './sync';
 
 // How often an open thread is brought up to date with its OpenClaw session, and how long Dawn's chat waits for that.
@@ -49,14 +49,8 @@ export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const taskId = params.get('id');
   if (!taskId) return NextResponse.json({ success: false, error: 'Missing id' }, { status: 400 });
-  let threads = readChatThreads(taskId);
-  if (threads.some((t) => t.pendingSince)) {
-    const now = new Date();
-    threads = mutateChatThreads((all) => {
-      for (const t of all[taskId] ?? []) settleStalePending(t, now);
-      return all[taskId] ?? [];
-    });
-  }
+  settleStaleChatTurns(new Date(), taskId);
+  const threads = readChatThreads(taskId);
   if (!params.has('list')) {
     // Dawn's chat reads once when it opens: give the session's history a moment to arrive, then answer either way.
     let latest = latestChat(threads);
@@ -150,7 +144,7 @@ export async function POST(request: NextRequest) {
     if (turn.first) {
       try { brief = loadTaskBrief(body.taskId); } catch (error) { console.error('brief chat: could not load the brief:', error); }
     }
-    void answer(body.taskId, turn.thread.id, turn.thread.sessionKey, buildChatTurnMessage({ brief, text: body.text, first: turn.first, about }));
+    void answer(body.taskId, turn.thread.id, turn.thread.sessionKey, turn.thread.pendingSince, buildChatTurnMessage({ brief, text: body.text, first: turn.first, about }));
     return NextResponse.json({ success: true, data: chatView(turn.thread) });
   } catch (error) {
     console.error('Error handling brief-chat request:', error);
@@ -159,7 +153,7 @@ export async function POST(request: NextRequest) {
 }
 
 /** Runs the turn after the response is sent; the reply (or the failure) lands in the thread. */
-async function answer(taskId: string, threadId: string, sessionKey: string, message: string): Promise<void> {
+async function answer(taskId: string, threadId: string, sessionKey: string, sentAt: string | null, message: string): Promise<void> {
   let reply: string | null = null;
   let error: string | null = null;
   try {
@@ -172,8 +166,14 @@ async function answer(taskId: string, threadId: string, sessionKey: string, mess
     const t = (all[taskId] ?? []).find((candidate) => candidate.id === threadId);
     if (!t || t.sessionKey !== sessionKey) return;
     const at = new Date().toISOString();
-    t.pendingSince = null;
-    t.error = error;
+    // `pendingSince` names the turn that is out. If it is no longer this one, the turn was given
+    // up on or a newer one is out: its answer is still recorded, but it settles nothing.
+    if (t.pendingSince === sentAt) {
+      t.pendingSince = null;
+      t.error = error;
+    } else if (reply && !t.pendingSince) {
+      t.error = null;
+    }
     t.updatedAt = at;
     if (reply) recordChatReply(t, reply, at);
   });

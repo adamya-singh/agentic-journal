@@ -87,6 +87,12 @@ export type PlanActionResult =
   | {
       status: 'not-found';
       loggedCreated: false;
+    }
+  | {
+      /** The plan was moved or cancelled; its replacement is the one to act on. */
+      status: 'not-actionable';
+      loggedCreated: false;
+      planStatus: PlanStatus;
     };
 
 export type CompleteTextPlanResult =
@@ -618,6 +624,8 @@ export function applyPlanActionInJournal(
   dateIso: string,
   planId: string,
   source: TextPlanSource,
+  // Both actions fulfil the plan the same way: "in progress" means he started it as planned, and
+  // the task stays open. Only the caller treats them differently, by completing the task or not.
   _action: PlanAction,
   nowIso: string = new Date().toISOString()
 ): PlanActionResult {
@@ -635,6 +643,10 @@ export function applyPlanActionInJournal(
 
   if (!target) {
     return { status: 'not-found', loggedCreated: false };
+  }
+  const targetStatus = getPlanStatus(target.entry);
+  if (targetStatus === 'rescheduled' || targetStatus === 'canceled') {
+    return { status: 'not-actionable', loggedCreated: false, planStatus: targetStatus };
   }
 
   const logRef: PlanLogRef = source.kind === 'hour'
@@ -718,9 +730,38 @@ export function applyPlanActionInJournal(
   );
   completeTaskPlanInPlace(journal, target, logRef, nowIso);
 
+  // The plan records intent; a logged entry in the same slot records that it happened, and is
+  // what `completedByLogRef` points at. Without it the reference led nowhere.
+  const loggedTask = { taskId: normalizedTask.taskId, listType: normalizedTask.listType, entryMode: 'logged' as const };
+  if (target.kind === 'hour') {
+    const slot = journal[target.hour];
+    const entries = isJournalEntryArray(slot) ? slot : slot ? [slot] : [];
+    const exists = entries.some((entry) =>
+      isTaskJournalEntry(entry) && entry.entryMode === 'logged' && entry.taskId === normalizedTask.taskId
+    );
+    if (!exists) {
+      appendEntryToHour(journal, target.hour, loggedTask);
+      loggedCreated = true;
+    }
+  } else {
+    const ranges = journal.ranges ?? [];
+    const exists = ranges.some((entry) =>
+      isTaskJournalRangeEntry(entry) &&
+      entry.entryMode === 'logged' &&
+      entry.taskId === normalizedTask.taskId &&
+      entry.start === target.entry.start &&
+      entry.end === target.entry.end
+    );
+    if (!exists) {
+      ranges.push({ ...loggedTask, start: target.entry.start, end: target.entry.end });
+      journal.ranges = ranges;
+      loggedCreated = true;
+    }
+  }
+
   return {
     status: 'applied',
-    loggedCreated: false,
+    loggedCreated,
     entryType: 'task',
     planStatus: 'completed',
     task: {

@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { backendDataDir } from '@/lib/backend-data';
+import { ownerGone } from '@/lib/lock-owner';
 import { NextRequest, NextResponse } from 'next/server';
 
 export const runtime = 'nodejs';
@@ -30,6 +31,8 @@ type StatusSegment = {
   lastRetryRequestedAt?: string;
   retryAfter?: string | null;
   operationName?: string | null;
+  /** "pid boot start" of the run transcribing it (scripts/omi-transcribe-day.mjs). */
+  runner?: string;
   gcsUri?: string | null;
   uploadedAt?: string | null;
   failedAt?: string | null;
@@ -89,6 +92,14 @@ export async function POST(request: NextRequest) {
     for (const id of targets) {
       const segment = statusFile.segments[id];
       if (segment.status === 'completed') {
+        continue;
+      }
+      // A run that is alive is transcribing it right now; resetting it would start a second one.
+      if (
+        segment.status === 'running' &&
+        typeof segment.runner === 'string' &&
+        !ownerGone(segment.runner)
+      ) {
         continue;
       }
 

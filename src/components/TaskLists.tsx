@@ -1395,7 +1395,8 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     refreshJournal();
   }, [fetchTodayTasks, fetchCurrentTasks, fetchGeneralTasks, refreshJournal]);
 
-  const completeTaskRequest = useCallback(async (taskId: string, listType: ListType) => {
+  // `completed` says which way; leave it out only for a checkbox that toggles what it shows.
+  const completeTaskRequest = useCallback(async (taskId: string, listType: ListType, completed?: boolean) => {
     const response = await fetch('/api/tasks/today/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1403,6 +1404,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
         taskId,
         listType,
         date: currentDate,
+        ...(completed === undefined ? {} : { completed }),
       }),
     });
 
@@ -1445,7 +1447,7 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     );
 
     if (shouldCompleteParent) {
-      await completeTaskRequest(data.parentTask.id, data.parentTask.listType);
+      await completeTaskRequest(data.parentTask.id, data.parentTask.listType, true);
       refreshTaskViews();
     }
   }, [completeTaskRequest, refreshTaskViews]);
@@ -1482,13 +1484,13 @@ export function TaskLists({ onDataChange, refreshTrigger }: TaskListsProps) {
     try {
       const orderedSubtasks = [...pendingSubtaskCompletion.openSubtasks].sort((a, b) => b.depth - a.depth);
       for (const subtask of orderedSubtasks) {
-        const data = await completeTaskRequest(subtask.id, pendingSubtaskCompletion.listType);
+        const data = await completeTaskRequest(subtask.id, pendingSubtaskCompletion.listType, true);
         if (!data.success && !data.completed) {
           throw new Error(data.error || `Failed to complete subtask "${subtask.text}"`);
         }
       }
 
-      const parentData = await completeTaskRequest(pendingSubtaskCompletion.task.id, pendingSubtaskCompletion.listType);
+      const parentData = await completeTaskRequest(pendingSubtaskCompletion.task.id, pendingSubtaskCompletion.listType, true);
       if (!parentData.success) {
         throw new Error(parentData.error || 'Failed to complete parent task');
       }

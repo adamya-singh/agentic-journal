@@ -10,6 +10,8 @@ Group=openclaw
 WorkingDirectory=/home/openclaw/projects/agentic-journal
 Environment=NODE_ENV=production
 EnvironmentFile=-/home/openclaw/projects/agentic-journal/.env
+# A deploy cut short by a reboot leaves the good build set aside; put it back before checking for it.
+ExecStartPre=-/usr/bin/env bash /home/openclaw/projects/agentic-journal/scripts/recover-build.sh
 ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/.next/BUILD_ID
 ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/.next/routes-manifest.json
 ExecStartPre=/usr/bin/test -s /home/openclaw/projects/agentic-journal/src/backend/.mastra/output/package.json

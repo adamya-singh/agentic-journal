@@ -47,6 +47,8 @@ next-env.d.ts
 # database
 src/backend/storage.db
 src/backend/.mastra/
+src/backend/.mastra-previous/
+/.next-previous/
 
 #journal data
 src/backend/data

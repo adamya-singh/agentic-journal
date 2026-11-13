@@ -527,6 +527,7 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
           taskId: entry.taskId,
           listType: entry.listType,
           date,
+          completed: true,
         }),
       });
       
@@ -1066,9 +1067,12 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                     {/* Scheduled entries */}
                     {visibleEntries.map(({ hour, text, entryMode, entryKind, planId, taskId, listType, planStatus, completed, isRange, startHour, endHour, sourceRefs }, index) => {
                       const isTask = entryKind === 'task' && Boolean(taskId);
+                      // A task plan can be fulfilled ("In Progress": he started it as planned) while
+                      // the task itself is still open. That is started, not done.
                       const isCompleted = isTask
-                        ? (completed === true || planStatus === 'completed')
+                        ? completed === true
                         : entryMode === 'planned' && planStatus === 'completed';
+                      const isStartedPlan = isTask && !isCompleted && entryMode === 'planned' && planStatus === 'completed';
                       const isMissedPlan = entryMode === 'planned' && planStatus === 'missed';
                       const isRescheduledPlan = entryMode === 'planned' && planStatus === 'rescheduled';
                       const isActionablePlanEntry =
@@ -1080,6 +1084,8 @@ export function WeekView({ onDataChange, refreshTrigger }: WeekViewProps) {
                         : { kind: 'hour' as const, hour };
                       const suffixLabel = isCompleted
                         ? '(done)'
+                        : isStartedPlan
+                          ? '(started)'
                         : isMissedPlan
                           ? '(missed)'
                           : isRescheduledPlan

@@ -543,7 +543,10 @@ async function syncCronRuns(store: UptimeStore, job: RawCronJob): Promise<void> 
   const days = (store.runs[id] ??= {});
   // The gateway caps a page at 200; the first sync backfills what OpenClaw still keeps.
   const pageSize = 200;
-  const maxPages = cursor ? 3 : 10;
+  // Catching up reads back to the cursor however far that is (a per-minute job runs 600 times in
+  // ten hours of Journal downtime); three pages used to stop short and the cursor then jumped
+  // past the runs in between, which were never read. 50 pages is a stop for a runaway log.
+  const maxPages = cursor ? 50 : 10;
   let newest = cursor;
   for (let page = 0; page < maxPages; page += 1) {
     let parsed: Record<string, unknown> | null;

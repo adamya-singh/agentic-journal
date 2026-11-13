@@ -158,11 +158,16 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
   const currentRef = React.useRef(current);
   currentRef.current = current;
 
+  // Only the newest read is shown. A read that set off before a message was sent can come back
+  // after it, with the chat as it was before: that put the composer back as if nothing was out.
+  const reads = React.useRef(0);
   const load = React.useCallback(async () => {
     const id = currentRef.current;
+    const mine = ++reads.current;
     const wanted = id && id !== 'new' ? `&thread=${encodeURIComponent(id)}` : '';
     try {
       const data = await call<{ threads: ChatThreadSummary[]; thread: ChatThreadView | null }>(`/api/tasks/brief-chat?id=${encodeURIComponent(taskId)}&list=1${wanted}`);
+      if (mine !== reads.current) return;
       setThreads(data.threads);
       if (currentRef.current === id) setThread(id && id !== 'new' ? data.thread : null);
     } catch { /* keep what we have */ }
@@ -194,10 +199,15 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
     setError(null);
     try {
       const sent = await post<ChatThreadView>({ action: 'send', taskId, text, ...(id && id !== 'new' ? { threadId: id } : { fresh: true }), ...(about ? { about } : {}) });
-      currentRef.current = sent.id;
-      setCurrent(sent.id);
-      setThread(sent);
-      setDraft('');
+      reads.current += 1;   // reads still out show the chat from before this message
+      // Still where he sent it from: show it. If he has gone back or opened another chat since,
+      // he stays there; the message is in its chat.
+      if (currentRef.current === id) {
+        currentRef.current = sent.id;
+        setCurrent(sent.id);
+        setThread(sent);
+        setDraft('');
+      }
       void load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'That didn’t send.');

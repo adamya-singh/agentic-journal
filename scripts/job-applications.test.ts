@@ -644,7 +644,7 @@ describe('job application state', () => {
       data.enabledApplicationCategories = ['spring-internship', 'new-grad'];
       for (const [id, application] of Object.entries(data.applications)) {
         store.releaseApplicationLease(application);
-        if (id !== 'saved-old' && application.status !== 'submitted') {
+        if (id !== 'saved-old' && !store.isApplicationFinished(application)) {
           store.setApplicationStatus(application, 'awaiting-user-input', now);
           application.autoCompleteEligibleAt = '2100-01-01T00:00:00.000Z';
         }

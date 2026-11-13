@@ -172,9 +172,9 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
   }, [reloadBrief]);
 
   const actionDone = React.useCallback(async (id: string, actionId: string) => {
-    await fetch('/api/tasks/brief-agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'action-done', taskId: id, actionId }) });
+    await fetch('/api/tasks/brief-agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'action-done', taskId: id, actionId, fill: briefs[id]?.agent?.finishedAt ?? null }) });
     onChanged();
-  }, [onChanged]);
+  }, [onChanged, briefs]);
 
   const chipFor = React.useCallback((id: string): HTMLElement | null => {
     const title = titles.get(id);
@@ -457,7 +457,7 @@ export function BriefLayer({ heroRef, svgRef, space, data, spots, onChanged }: {
                     actions={{
                       onGoto: select,
                       busy,
-                      onDone: () => act('/api/tasks/today/complete', { taskId: brief.id, listType: brief.listType, date: getCurrentDateISO() }),
+                      onDone: () => act('/api/tasks/today/complete', { taskId: brief.id, listType: brief.listType, date: getCurrentDateISO(), completed: true }),
                       onRefresh: () => void refreshAgent(brief.id),
                       onActionDone: (actionId) => void actionDone(brief.id, actionId),
                     }}

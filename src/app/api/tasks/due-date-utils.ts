@@ -131,7 +131,7 @@ function ceilHourLabelFromDueTime(value: string): HourLiteral {
   return hourLabelFrom24Hour(ceiledHour);
 }
 
-function isTaskEntryLike(value: unknown): value is { taskId: string; listType: ListType; entryMode?: string; autoPlannedFromDueTime?: true } {
+function isTaskEntryLike(value: unknown): value is { taskId: string; listType: ListType; entryMode?: string; autoPlannedFromDueTime?: true; planStatus?: string } {
   return typeof value === 'object' && value !== null && 'taskId' in value && 'listType' in value;
 }
 
@@ -141,7 +141,10 @@ function isAutoPlannedEntryForTask(value: unknown, taskId: string, listType: Lis
     value.taskId === taskId &&
     value.listType === listType &&
     value.entryMode === 'planned' &&
-    value.autoPlannedFromDueTime === true
+    value.autoPlannedFromDueTime === true &&
+    // Only a plan still waiting to happen moves with the due time. One that was completed,
+    // missed or replanned is history, and other entries point at it.
+    (value.planStatus ?? 'active') === 'active'
   );
 }
 

@@ -10,6 +10,7 @@ import {
   buildRollingSegments,
   formatLocalDate,
   getValidTimezone,
+  isRunningElsewhere,
   readManifestMaybe,
   readRawState,
   readStatus,
@@ -220,11 +221,14 @@ function isRetryable(date, segment, maxRetries = DEFAULT_MAX_RETRIES) {
   if (existing.status === 'completed') {
     return false;
   }
+  if (existing.status === 'running') {
+    // Left running by a run that died: pick it up, even on its last allowed try (that try was
+    // interrupted, not failed; testing the cap first left such a segment running for good).
+    // One a live run still holds is not retried underneath it.
+    return !isRunningElsewhere(existing);
+  }
   if (Number(existing.retryCount || 0) >= maxRetries) {
     return false;
-  }
-  if (existing.status === 'running') {
-    return true;
   }
   if (existing.status !== 'failed') {
     return true;

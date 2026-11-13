@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { PROGRESS_LINE_MAX, recordProgress } from '@/lib/task-progress';
-import { readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
+import { withCliFileLock } from '@/lib/cli-file-lock';
+import { getGeneralTasksFilePath, readGeneralTasks, writeGeneralTasks } from '../today/today-store-utils';
 import { scheduleBriefFills } from '../brief-agent/worker';
 
 export const runtime = 'nodejs';
@@ -20,13 +21,18 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ success: false, error: 'Send { taskId, did, next?, waitingOn? }, each one line.' }, { status: 400 });
   const { taskId, did, next, waitingOn } = parsed.data;
   for (const listType of ['have-to-do', 'want-to-do'] as const) {
-    const data = readGeneralTasks(listType);
-    const task = data.tasks.find((candidate) => candidate.id === taskId);
-    if (!task) continue;
-    task.notesMarkdown = recordProgress(task.notesMarkdown, { did, next, waitingOn }, new Date());
-    writeGeneralTasks(data, listType);
+    // OpenClaw's CLI may be rewriting the same list in the same turn: the read and the write share its lock.
+    const notesMarkdown = withCliFileLock(getGeneralTasksFilePath(listType), () => {
+      const data = readGeneralTasks(listType);
+      const task = data.tasks.find((candidate) => candidate.id === taskId);
+      if (!task) return null;
+      task.notesMarkdown = recordProgress(task.notesMarkdown, { did, next, waitingOn }, new Date());
+      writeGeneralTasks(data, listType);
+      return task.notesMarkdown;
+    });
+    if (notesMarkdown === null) continue;
     scheduleBriefFills({ force: taskId });
-    return NextResponse.json({ success: true, data: { listType, notesMarkdown: task.notesMarkdown } });
+    return NextResponse.json({ success: true, data: { listType, notesMarkdown } });
   }
   return NextResponse.json({ success: false, error: `No open task has the id ${taskId}.` }, { status: 404 });
 }

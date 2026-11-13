@@ -215,9 +215,12 @@ export async function vote(id: string, value: Vote | null, compass: Lens = 'long
       item.votedAt = now;
       item.votedIn = trackOf(compass);
     } else {
-      // Undo: back into the queue as seen.
+      // Undo: back into the queue as seen, with nothing left of the vote. The sighting count
+      // starts over too, or the next time it scrolled past it was skipped for good.
       item.state = 'seen';
       delete item.votedAt;
+      delete item.votedIn;
+      item.seenCount = 0;
     }
     item.seenAt ??= now;
     refill(f, compass);
@@ -231,6 +234,10 @@ export async function skip(id: string, undo = false, compass: Lens = 'long') {
     item.state = undo ? 'seen' : 'skipped';
     item.seenAt = new Date().toISOString();
     if (!undo) item.votedIn = trackOf(compass);
+    else {
+      delete item.votedIn;
+      item.seenCount = 0;
+    }
     refill(f, compass);
     return summarize(f, compass);
   });

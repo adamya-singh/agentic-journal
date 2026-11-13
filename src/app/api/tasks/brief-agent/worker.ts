@@ -9,6 +9,7 @@ import {
   BRIEF_PROMPT_VERSION,
   RUNNING_TIMEOUT_MS,
 } from '@/lib/brief-agent';
+import { randomUUID } from 'node:crypto';
 import { iconForKind } from '@/lib/shapes/hook';
 import { extractJsonObject, localDateIso } from '@/lib/done-at';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
@@ -116,7 +117,17 @@ function browserBusy(now = Date.now()): boolean {
 async function runWorker(): Promise<void> {
   const s = state();
   if (s.running) return;
-  if (!isOpenClawCliAvailable()) return;
+  if (!isOpenClawCliAvailable()) {
+    // Nothing here can run a fill. Left queued, a brief said "OpenClaw is looking" for good and
+    // its card polled every 8 s; failed, it says why and is queued again once an hour.
+    const finishedAt = new Date().toISOString();
+    mutateAgentRecords((records) => {
+      for (const r of Object.values(records)) {
+        if (r.status === 'queued') Object.assign(r, { status: 'failed', finishedAt, error: 'OpenClaw isn’t available on this machine.' });
+      }
+    });
+    return;
+  }
   s.running = true;
   try {
     for (;;) {
@@ -145,9 +156,10 @@ async function fillOne(taskId: string): Promise<void> {
     mutateAgentRecords((records) => { delete records[taskId]; });
     return;
   }
+  const runId = randomUUID();
   mutateAgentRecords((records) => {
     const r = records[taskId];
-    if (r) Object.assign(r, { status: 'running', startedAt: now.toISOString(), error: null });
+    if (r) Object.assign(r, { status: 'running', startedAt: now.toISOString(), error: null, runId });
   });
 
   const others = refs
@@ -188,7 +200,9 @@ async function fillOne(taskId: string): Promise<void> {
   const finishedAt = new Date().toISOString();
   mutateAgentRecords((records) => {
     const r = records[taskId];
-    if (!r || r.status !== 'running') return;   // forgotten or re-queued meanwhile
+    // Forgotten, re-queued or taken over by a later run meanwhile: this outcome is stale.
+    if (!r || r.status !== 'running' || r.runId !== runId) return;
+    delete r.runId;
     if ('layer' in outcome) {
       // Actions are numbered per fill; a new fill starts with none done.
       Object.assign(r, { status: 'done', finishedAt, error: null, failures: 0, layer: outcome.layer, doneActions: [], promptVersion: BRIEF_PROMPT_VERSION });

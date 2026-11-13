@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
   if (!targetId) return NextResponse.json({ success: false, error: 'targetId is required' }, { status: 400 });
   try {
     // He is looking at the browser: the application worker waits (see touchManualBrowserSession).
-    touchManualBrowserSession();
+    touchManualBrowserSession('workspace');
     const frame = await captureBrowserFrame(targetId);
     const frameId = createHash('sha1').update(frame.jpeg).digest('hex').slice(0, 16);
     const headers = {
@@ -109,7 +109,7 @@ export async function POST(request: NextRequest) {
     if (body.action === 'end') {
       for (const id of body.close ?? []) await closeBrowserTab(id).catch(() => false);
       await resetBrowserViewports();
-      endManualBrowserSession();
+      endManualBrowserSession('workspace');
       return NextResponse.json({ success: true });
     }
     if (body.action === 'close') {
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
       const tabs = (await listBrowserTabs()).filter((tab) => /^https?:\/\//i.test(tab.url));
       return NextResponse.json({ success: true, tabs, host: hostname() });
     }
-    touchManualBrowserSession();
+    touchManualBrowserSession('workspace');
     if (body.action === 'open') {
       const url = safeWebUrl(body.url);
       if (url === null) return NextResponse.json({ success: false, error: 'That is not a web address' }, { status: 400 });

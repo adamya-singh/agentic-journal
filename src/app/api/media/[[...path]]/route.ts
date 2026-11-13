@@ -513,8 +513,8 @@ export async function POST(req: NextRequest) {
         })
         .strict()
         .parse(await req.json());
+      // confirm() also stages the download when asked to.
       const title = await confirm(body.id, body.pick, body.settings);
-      if (body.settings.download) await stageAcquisition(body.pick);
       return result({ title: title.title, inbox: inboxView() });
     }
     if (action === 'inbox/clarify') {

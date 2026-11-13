@@ -5,7 +5,8 @@ import { briefAgentDisabled, scheduleBriefFills } from './worker';
 
 const BodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('refresh'), taskId: z.string().min(1) }),
-  z.object({ action: z.literal('action-done'), taskId: z.string().min(1), actionId: z.string().min(1) }),
+  // `fill` is the finishedAt of the fill whose action list the click was made on.
+  z.object({ action: z.literal('action-done'), taskId: z.string().min(1), actionId: z.string().min(1), fill: z.string().nullish() }),
 ]);
 
 /**
@@ -27,11 +28,17 @@ export async function POST(request: NextRequest) {
 
     const found = mutateAgentRecords((records) => {
       const r = records[body.taskId];
-      if (!r) return false;
+      if (!r) return 'missing' as const;
+      // Actions are numbered a1, a2… afresh in every fill, so an id from an older fill names a
+      // different action now.
+      if (body.fill !== undefined && body.fill !== r.finishedAt) return 'refilled' as const;
       if (!r.doneActions.includes(body.actionId)) r.doneActions.push(body.actionId);
-      return true;
+      return 'ok' as const;
     });
-    return NextResponse.json({ success: found }, { status: found ? 200 : 404 });
+    if (found === 'refilled') {
+      return NextResponse.json({ success: false, error: 'This brief was filled again; its actions have changed.' }, { status: 409 });
+    }
+    return NextResponse.json({ success: found === 'ok' }, { status: found === 'ok' ? 200 : 404 });
   } catch (error) {
     console.error('Error handling brief-agent request:', error);
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });

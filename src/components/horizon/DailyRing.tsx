@@ -76,7 +76,7 @@ export function DailyRing({ data, space, onChanged }: {
       const res = await fetch('/api/tasks/today/complete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ taskId: d.id, listType: d.listType, date: getCurrentDateISO() }),
+        body: JSON.stringify({ taskId: d.id, listType: d.listType, date: getCurrentDateISO(), completed: !d.done }),
       });
       const json = await res.json().catch(() => null);
       if (!json?.success) setError(`${d.short}: ${json?.error || 'could not be updated'}. Try again.`);

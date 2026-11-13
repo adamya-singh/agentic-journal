@@ -119,6 +119,13 @@ export class SunriseEngine {
   private readonly abort = new AbortController()
   private readonly observer: ResizeObserver
   private readonly timers = new Set<number>()
+  private glideTimer = 0
+  /** A one-off timer that destroy() cancels, and that leaves the set once it has run. */
+  private later(run: () => void, ms: number): number {
+    const timer = window.setTimeout(() => { this.timers.delete(timer); run() }, ms)
+    this.timers.add(timer)
+    return timer
+  }
 
   /** The flat drawing of the sky, which the 3D world fades out as it takes over. */
   readonly flat: SVGSVGElement
@@ -335,6 +342,8 @@ export class SunriseEngine {
       else if (this.subject !== null) this.leaveSubject()
       else if (this.farSide) this.turn(false)
       else if (this.full) this.setFull(false)
+      // The lock's own button is hidden on a narrow window; Escape is then the way out.
+      else if (this.locked) this.setLocked(false)
     }, {signal})
     // Shift and scroll pulls back to the tasks past the next two weeks, and comes back.
     // The sky is a space the camera moves through. Over it, a pinch zooms about the pointer and a two-finger
@@ -458,6 +467,9 @@ export class SunriseEngine {
     this.things.sort((a, b) => position.get(a.id)! - position.get(b.id)!)
     if (this.subject !== null && !groupsOf(this.source).includes(this.subject)) this.subject = null
     if (this.open !== null && this.workBox === null) this.open = null
+    // The card that was open is gone (withdrawn, or answered somewhere else): its pane would stay
+    // up with nothing in it, and on a narrow screen cover the whole sky.
+    if (this.open?.startsWith('card:') && !cards.some(card => card.id === this.open)) this.closeTask()
     this.flatKey = ''
     if (this.ready) this.solve()
   }
@@ -511,19 +523,19 @@ export class SunriseEngine {
       this.root.classList.toggle('farside', farSide)
       this.root.classList.add('resizing')
       this.update(this.data!, this.cards, this.answers)
-      this.timers.add(window.setTimeout(() => this.root.classList.remove('resizing'), 50))
+      this.later(() => this.root.classList.remove('resizing'), 50)
     }
     if (!this.ready || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) { swap(); return }
     this.turning = true
     this.root.style.setProperty('--hy', `${this.stage.horizonY}px`)
     this.root.classList.add('turn-out')
-    this.timers.add(window.setTimeout(() => {
+    this.later(() => {
       if (this.destroyed) return
       swap()
       this.root.classList.remove('turn-out')
       this.root.classList.add('turn-in')
-      this.timers.add(window.setTimeout(() => { this.root.classList.remove('turn-in'); this.turning = false }, 460))
-    }, 300))
+      this.later(() => { this.root.classList.remove('turn-in'); this.turning = false }, 460)
+    }, 300)
   }
 
   /** Closes the workspace: it shrinks back into the task's form. */
@@ -586,10 +598,10 @@ export class SunriseEngine {
   toast(text: string) {
     this.toastEl.textContent = text
     this.toastEl.classList.add('on')
-    window.clearTimeout(Number(this.toastEl.dataset['timer'] ?? 0))
-    const timer = window.setTimeout(() => this.toastEl.classList.remove('on'), 2600)
-    this.toastEl.dataset['timer'] = String(timer)
-    this.timers.add(timer)
+    const earlier = Number(this.toastEl.dataset['timer'] ?? 0)
+    window.clearTimeout(earlier)
+    this.timers.delete(earlier)
+    this.toastEl.dataset['timer'] = String(this.later(() => this.toastEl.classList.remove('on'), 2600))
   }
 
   destroy() {
@@ -686,8 +698,7 @@ export class SunriseEngine {
     thing.seat.remove()
     thing.el.className = `${thing.el.className.replace(/\b(ghost|hot|opened)\b/g, '')} gone leaving`
     this.setBox(thing.el, {left: this.stage.width / 2 - 10, top: this.stage.horizonY - 10, width: 20, height: 20})
-    const timer = window.setTimeout(() => thing.el.remove(), 1000)
-    this.timers.add(timer)
+    this.later(() => thing.el.remove(), 1000)
   }
   private forget(id: string) {
     for (const cache of [this.formSizes, this.fullHeights]) for (const key of [...cache.keys()]) if (key.startsWith(`${id}|`)) cache.delete(key)
@@ -780,7 +791,12 @@ export class SunriseEngine {
     const home = this.isHome()
     const transform = home ? '' : `translate(${this.view.x.toFixed(1)}px,${this.view.y.toFixed(1)}px) scale(${this.view.z.toFixed(4)})`
     this.root.classList.toggle('gliding', glide)
-    if (glide) this.timers.add(window.setTimeout(() => this.root.classList.remove('gliding'), 420))
+    if (glide) {
+      // One glide at a time: an earlier glide's timer would end this one's early.
+      window.clearTimeout(this.glideTimer)
+      this.timers.delete(this.glideTimer)
+      this.glideTimer = this.later(() => this.root.classList.remove('gliding'), 420)
+    }
     this.world.style.transform = transform
     this.flat.style.transform = transform
     this.root.classList.toggle('zoomed', !home)
@@ -1137,8 +1153,7 @@ export class SunriseEngine {
     // The words changed size: the corners the rings keep clear of changed with them, so lay it out once more.
     if (this.open === null && this.saidSize !== `${this.say.offsetWidth}x${this.say.offsetHeight}` && !this.resolving) {
       this.resolving = true
-      this.solve()
-      this.resolving = false
+      try { this.solve() } finally { this.resolving = false }
     }
   }
   private resolving = false
@@ -1492,6 +1507,12 @@ export class SunriseEngine {
     this.solve()
     this.host.onToggleDaily({...daily, done: !done})
   }
+  /** The journal refused the toggle: show what it holds again, not what was pressed. */
+  dailyFailed(id: string) {
+    if (!this.dailyDone.delete(id) || this.destroyed) return
+    this.flatKey = ''
+    this.solve()
+  }
   private openTray(kind: TrayKind, from: HTMLElement, track?: string) {
     this.trayKind = kind
     this.trayTrack = track ?? null
@@ -1597,6 +1618,8 @@ export class SunriseEngine {
     if (this.destroyed) return
     this.root.classList.add('resizing')
     this.fullHeights.clear()
+    // Where a folded task last stood was measured on the old stage.
+    for (const thing of this.things) thing.lastBox = null
     this.solve()
     if (this.open !== null) {
       const opened = this.things.find(thing => thing.id === this.open)
@@ -1605,7 +1628,7 @@ export class SunriseEngine {
     }
     this.setView(this.view.z, this.view.x, this.view.y)
     if (this.trayKind !== null) this.closeTray()
-    this.timers.add(window.setTimeout(() => this.root.classList.remove('resizing'), 50))
+    this.later(() => this.root.classList.remove('resizing'), 50)
   }
   private start() {
     if (this.destroyed) return
@@ -1622,6 +1645,6 @@ export class SunriseEngine {
     this.root.classList.add('resizing')
     this.solve()
     this.root.classList.add('ready')
-    this.timers.add(window.setTimeout(() => this.root.classList.remove('resizing'), 50))
+    this.later(() => this.root.classList.remove('resizing'), 50)
   }
 }

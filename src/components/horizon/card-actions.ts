@@ -3,8 +3,11 @@
 import type { ActionCard, CardOutcome } from '@/lib/action-cards/types';
 import { SRC_NAME, type CardDecisionInput } from './ActionCardView';
 
-const post = (url: string, body: unknown) =>
-  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
+// Always answers: a request that never got through, or an answer that is not JSON, reads as a failure.
+const post = (url: string, body: unknown): Promise<{ success?: boolean; error?: string; [key: string]: any }> => // eslint-disable-line @typescript-eslint/no-explicit-any
+  fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then((r) => r.json())
+    .catch(() => ({ success: false, error: 'The Journal did not answer.' }));
 
 export type CardDecided = { ok: true; outcome: CardOutcome | undefined } | { ok: false; error: string };
 
