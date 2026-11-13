@@ -222,10 +222,12 @@ mkdir -p "$PREVIOUS_BUILD_DIR" "${ROOT_DIR}/.next"
 find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec mv -t "$PREVIOUS_BUILD_DIR" {} +
 
 # Combine a bounded heap with Next's compiler memory optimizations on the shared host.
+# The caps can be raised for one deploy when the build outgrows them and the host has room (the OpenClaw
+# gateway stopped): NEXT_BUILD_MEMORY_HIGH, NEXT_BUILD_MEMORY_MAX, NEXT_BUILD_SWAP_MAX.
 if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemd-run --user --wait --pipe --collect \
     -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
-    -p MemoryHigh=6G -p MemoryMax=7G -p MemorySwapMax=2G \
+    -p "MemoryHigh=${NEXT_BUILD_MEMORY_HIGH:-6G}" -p "MemoryMax=${NEXT_BUILD_MEMORY_MAX:-7G}" -p "MemorySwapMax=${NEXT_BUILD_SWAP_MAX:-2G}" \
     /usr/bin/env "NODE_OPTIONS=--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
 else
   NODE_OPTIONS="--max-old-space-size=${NEXT_BUILD_HEAP_MB:-4096}" npm run build
