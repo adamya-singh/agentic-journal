@@ -41,7 +41,9 @@ export function readInbox(dir = inboxDir()) {
     let newest = 0;
     for (const f of files) {
       const full = path.join(hdir, f);
-      newest = Math.max(newest, fs.statSync(full).mtimeMs);
+      // Another machine can replace a file between the listing and this read; skip it this time
+      // rather than give up on the whole run.
+      try { newest = Math.max(newest, fs.statSync(full).mtimeMs); } catch { continue; }
       const data = readJson<unknown>(full);
       if (f.startsWith('apps-')) {
         for (const r of (data as { records?: AppRecord[] } | null)?.records ?? []) {

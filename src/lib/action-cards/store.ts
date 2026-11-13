@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { backendDataDir, writeJsonFileAtomic } from '../backend-data.ts';
 import { isGenericLink } from '../deep-link.ts';
+import { lockOwner, ownerGone } from '../lock-owner.ts';
 import {
   CARD_SOURCES,
   CARD_WHENS,
@@ -14,7 +15,9 @@ import {
 } from './types.ts';
 
 // Every function here is synchronous on purpose: Node runs each to completion, so two requests in
-// this process can't interleave a read-modify-write of cards.json. The CLI writes through the API.
+// this process can't interleave a read-modify-write of cards.json. scripts/action-cards.ts (the
+// twice-daily cron) is a second process calling the same functions, so each read-modify-write also
+// holds cards.json.lock: without it, an answer given while the cron was writing could be lost.
 
 export class ActionCardError extends Error {
   readonly status: number;
@@ -42,6 +45,40 @@ export function readCards(): ActionCard[] {
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw new ActionCardError('Action card storage could not be read. Check action-cards/cards.json.', 500);
+  }
+}
+
+const pause = (ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+function locked<T>(fn: () => T): T {
+  fs.mkdirSync(actionCardsDir(), { recursive: true });
+  const lock = `${cardsFile()}.lock`;
+  let owned = false;
+  for (let n = 0; n < 250 && !owned; n++) {
+    try {
+      fs.writeFileSync(lock, lockOwner(), { flag: 'wx' });
+      owned = true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      try {
+        // A holder that died left its file; one that has not signed it yet gets 30 s to do so.
+        const owner = fs.readFileSync(lock, 'utf8');
+        if (owner.trim() ? ownerGone(owner) : Date.now() - fs.statSync(lock).mtimeMs > 30_000) fs.rmSync(lock, { force: true });
+      } catch {
+        /* Released meanwhile. */
+      }
+      pause(20);
+    }
+  }
+  if (!owned) throw new ActionCardError('Action cards are busy. Try again shortly.', 503);
+  try {
+    return fn();
+  } finally {
+    try {
+      if (fs.readFileSync(lock, 'utf8') === lockOwner()) fs.rmSync(lock, { force: true });
+    } catch {
+      /* Already gone. */
+    }
   }
 }
 
@@ -112,6 +149,7 @@ function parse<S extends z.ZodTypeAny>(schema: S, value: unknown): z.output<S> {
 export function upsertCard(value: unknown, now = new Date()): ActionCard {
   const input = parse(cardInput, value);
   checkBet(input);
+  return locked(() => {
   const cards = readCards();
   // One slice, one name: a bet keeps the label it was first written with.
   const named = cards.find((c) => c.bet === input.bet && c.key !== input.key);
@@ -122,7 +160,11 @@ export function upsertCard(value: unknown, now = new Date()): ActionCard {
   if (i >= 0) {
     card = { ...cards[i], ...input, id: cards[i].id, createdAt: cards[i].createdAt, updatedAt: at };
     // A withdrawn card whose signal came back is open again; anything Adamya answered stays answered.
-    if (card.status === 'withdrawn') { card.status = 'open'; delete card.withdrawn; }
+    // It comes back without the answer it had before it was withdrawn (a hand-off): that answer
+    // is in its history, and was about the card as it stood then.
+    if (card.status === 'withdrawn') { card.status = 'open'; delete card.withdrawn; delete card.decision; }
+    // A snooze that has run out is shown as open; store it that way too, so it is updated like one.
+    else if (isDue(card, now)) { card.status = 'open'; delete card.decision; }
     cards[i] = card;
   } else {
     let id: string;
@@ -132,6 +174,7 @@ export function upsertCard(value: unknown, now = new Date()): ActionCard {
   }
   writeCards(cards);
   return card;
+  });
 }
 
 // Only the compass Focus bets (bet1, bet2, ...) can claim to serve a bet; learning and life cards are parked.
@@ -159,7 +202,7 @@ export function validateCards(values: unknown[]): { key: string; action: 'add' |
       const input = parse(cardInput, v);
       checkBet(input);
       const c = cards.find((x) => x.key === input.key);
-      const action = !c ? 'add' : c.status === 'withdrawn' ? 'reopen' : c.status === 'open' || c.status === 'handed' ? 'update' : 'keep-answered';
+      const action = !c ? 'add' : c.status === 'withdrawn' ? 'reopen' : c.status === 'open' || c.status === 'handed' || isDue(c, new Date()) ? 'update' : 'keep-answered';
       const warning = linkWarning(input);
       return { key: input.key, action, ...(warning ? { warning } : {}) };
     } catch (e) {
@@ -171,6 +214,7 @@ export function validateCards(values: unknown[]): { key: string; action: 'add' |
 
 /** OpenClaw takes back a card it wrote because the thing it noticed is resolved. Answered cards are left alone. */
 export function withdraw(key: string, why: string, now = new Date()): ActionCard {
+  return locked(() => {
   const cards = readCards();
   const i = cards.findIndex((c) => c.key === key);
   if (i < 0) throw new ActionCardError('No card has that key.', 404);
@@ -180,6 +224,7 @@ export function withdraw(key: string, why: string, now = new Date()): ActionCard
   cards[i] = { ...card, status: 'withdrawn', withdrawn: { at: now.toISOString(), why: why.trim().slice(0, 300) }, updatedAt: now.toISOString() };
   writeCards(cards);
   return cards[i];
+  });
 }
 
 function findIndex(cards: ActionCard[], id: string): number {
@@ -204,6 +249,7 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 /** Agree or dismiss, with the reason. Agreeing to a task records the task it made, so Undo can remove it. */
 export function decide(value: unknown, now = new Date()): ActionCard {
   const d = parse(decisionInput, value);
+  return locked(() => {
   const cards = readCards();
   const i = findIndex(cards, d.id);
   const card = cards[i];
@@ -224,10 +270,12 @@ export function decide(value: unknown, now = new Date()): ActionCard {
   cards[i] = { ...card, status, decision, history: [...card.history, decision], updatedAt: decision.at };
   writeCards(cards);
   return cards[i];
+  });
 }
 
 /** Take the last answer back. Returns the card and the task to remove, if agreeing made one. */
 export function undo(id: string, now = new Date()): { card: ActionCard; removeTask?: { id: string; listType: 'have-to-do' | 'want-to-do' } } {
+  return locked(() => {
   const cards = readCards();
   const i = findIndex(cards, id);
   const card = cards[i];
@@ -241,6 +289,7 @@ export function undo(id: string, now = new Date()): { card: ActionCard; removeTa
     card: cards[i],
     ...(decision.taskId ? { removeTask: { id: decision.taskId, listType: decision.taskListType ?? 'want-to-do' } } : {}),
   };
+  });
 }
 
 function isDue(card: ActionCard, now: Date): boolean {

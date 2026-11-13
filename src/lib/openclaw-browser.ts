@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { backendDataDir, writeJsonFileAtomic } from './backend-data';
 import { runOpenClawCli } from './openclaw-cron';
 
 /**
@@ -36,6 +39,10 @@ interface BrowserState {
   connections: Map<string, Promise<Connection>>;
   fileChoosers: Map<string, FileChooserRequest>;
   manualUntil: number;
+  /** Who holds the manual session (each viewer names itself) and until when; `manualUntil` is the latest. */
+  holders?: Map<string, number>;
+  /** When a viewer last ended its session, so a frame request already on its way does not start it again. */
+  ended?: Map<string, number>;
   /** Tabs laid out for the space he views them in (setBrowserViewport), to be put back when he is done. */
   fitted?: Set<string>;
   fitWatch?: ReturnType<typeof setInterval>;
@@ -50,22 +57,43 @@ state.fileChoosers ??= new Map();
 
 export class OpenClawBrowserError extends Error {}
 
-/** Adamya is using the browser: keep the worker from claiming new work for a little while. */
-export function touchManualBrowserSession(now = Date.now()): void {
-  state.manualUntil = now + MANUAL_SESSION_TTL_MS;
+export type BrowserViewer = 'workspace' | 'application';
+const END_GRACE_MS = 3_000;
+
+/**
+ * Adamya is using the browser: keep the worker from claiming new work for a little while. `viewer`
+ * says which screen he is using it from; the task workspace and the application viewer can both
+ * be open, and one closing must not take the browser from the other.
+ */
+export function touchManualBrowserSession(viewer: BrowserViewer = 'application', now = Date.now()): void {
+  // A frame request that left the page just before he pressed Done arrives after it.
+  if (now - (state.ended?.get(viewer) ?? 0) < END_GRACE_MS) return;
+  (state.holders ??= new Map()).set(viewer, now + MANUAL_SESSION_TTL_MS);
+  state.manualUntil = Math.max(state.manualUntil, now + MANUAL_SESSION_TTL_MS);
 }
 
 /**
  * Hands the browser back: closing our DevTools sessions also ends their
  * file-picker interception, so the worker's own uploads behave normally.
+ * While another viewer still holds the session, only this viewer's hold ends.
+ * Returns whether the session itself ended.
  */
-export function endManualBrowserSession(): void {
+export function endManualBrowserSession(viewer: BrowserViewer = 'application', now = Date.now()): boolean {
+  (state.ended ??= new Map()).set(viewer, now);
+  state.holders?.delete(viewer);
+  const others = [...(state.holders?.values() ?? [])].filter((until) => until > now);
+  if (others.length > 0) {
+    state.manualUntil = Math.max(...others);
+    return false;
+  }
+  state.holders?.clear();
   state.manualUntil = 0;
   state.fileChoosers.clear();
   for (const opening of state.connections.values()) {
     opening.then((connection) => connection.socket.close()).catch(() => undefined);
   }
   state.connections.clear();
+  return true;
 }
 
 export function isManualBrowserSessionActive(now = Date.now()): boolean {
@@ -144,11 +172,12 @@ export async function openBrowserUrl(url: string, samePage: (a: string, b: strin
     const response = await fetch(`${CDP_URL}/json/new?${encodeURI(url)}`, { method: 'PUT' });
     if (!response.ok) throw new OpenClawBrowserError('Could not open a tab in OpenClaw’s browser');
     tab = (await response.json()) as CdpTarget;
-    (state.made ??= new Set()).add(tab.id);
+    madeTabs().add(tab.id);
+    saveMadeTabs();
   }
   await fetch(`${CDP_URL}/json/activate/${tab.id}`).catch(() => undefined);
   // A tab the Journal made earlier and found again is still the Journal's to close.
-  return { id: tab.id, url: tab.url || url, title: tab.title, created: created || (state.made?.has(tab.id) ?? false) };
+  return { id: tab.id, url: tab.url || url, title: tab.title, created: created || madeTabs().has(tab.id) };
 }
 
 /**
@@ -197,8 +226,7 @@ async function browserCall<T>(method: string, params: Record<string, unknown>): 
  * that is already gone counts as closed.
  */
 export async function closeBrowserTab(targetId: string): Promise<boolean> {
-  if (!state.made?.has(targetId)) return false;
-  state.made.delete(targetId);
+  if (!madeTabs().has(targetId)) return false;
   state.fitted?.delete(targetId);
   state.fileChoosers.delete(targetId);
   const connection = state.connections.get(targetId);
@@ -207,9 +235,35 @@ export async function closeBrowserTab(targetId: string): Promise<boolean> {
   try {
     await browserCall<{ success?: boolean }>('Target.closeTarget', { targetId });
   } catch (error) {
+    // Still the Journal's tab: it stays on the list, so closing it can be tried again.
     if (!(error instanceof OpenClawBrowserError) || !/No target with given id/i.test(error.message)) throw error;
   }
+  madeTabs().delete(targetId);
+  saveMadeTabs();
   return true;
+}
+
+// The tabs the Journal opened are kept on disk as well: every deploy restarts the server, and a
+// tab it had opened before could then never be closed from the Journal again.
+const madeTabsFile = () => path.join(backendDataDir(), 'openclaw-browser', 'journal-tabs.json');
+function madeTabs(): Set<string> {
+  if (state.made) return state.made;
+  let ids: unknown = [];
+  try {
+    ids = (JSON.parse(fs.readFileSync(madeTabsFile(), 'utf8')) as { tabs?: unknown }).tabs;
+  } catch {
+    /* No file yet, or unreadable: start empty. */
+  }
+  state.made = new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === 'string') : []);
+  return state.made;
+}
+function saveMadeTabs(): void {
+  try {
+    // Chrome forgets its tabs when it restarts; 200 ids is far more than can be open.
+    writeJsonFileAtomic(madeTabsFile(), { tabs: [...madeTabs()].slice(-200) });
+  } catch (error) {
+    console.error('Could not save the list of tabs the Journal opened:', error);
+  }
 }
 
 function hostOf(url: string): string {
@@ -327,18 +381,22 @@ export async function answerFileChooser(targetId: string, files: string[]): Prom
 export async function setBrowserViewport(targetId: string, size: { width: number; height: number } | null): Promise<void> {
   const fitted = (state.fitted ??= new Set());
   if (size === null) {
-    fitted.delete(targetId);
+    // Forgotten only once Chrome has given the size back; a failed call is retried by the watch.
     await call(targetId, 'Emulation.clearDeviceMetricsOverride');
+    fitted.delete(targetId);
     return;
   }
   await call(targetId, 'Emulation.setDeviceMetricsOverride', {
     width: Math.round(size.width), height: Math.round(size.height), deviceScaleFactor: 0, mobile: false,
   });
   fitted.add(targetId);
-  if (!state.fitWatch) {
-    state.fitWatch = setInterval(() => { if (!isManualBrowserSessionActive()) void resetBrowserViewports(); }, 30_000);
-    state.fitWatch.unref?.();
-  }
+  watchFitted();
+}
+
+function watchFitted(): void {
+  if (state.fitWatch) return;
+  state.fitWatch = setInterval(() => { if (!isManualBrowserSessionActive()) void resetBrowserViewports(); }, 30_000);
+  state.fitWatch.unref?.();
 }
 
 /** Gives every tab sized by setBrowserViewport its own window size back. Call before ending the manual session. */
@@ -346,7 +404,16 @@ export async function resetBrowserViewports(): Promise<void> {
   const fitted = [...(state.fitted ?? [])];
   state.fitted?.clear();
   if (state.fitWatch) { clearInterval(state.fitWatch); state.fitWatch = undefined; }
-  await Promise.allSettled(fitted.map((targetId) => call(targetId, 'Emulation.clearDeviceMetricsOverride')));
+  const results = await Promise.allSettled(fitted.map((targetId) => call(targetId, 'Emulation.clearDeviceMetricsOverride')));
+  const failed = fitted.filter((_, index) => results[index].status === 'rejected');
+  if (failed.length === 0) return;
+  // A tab that is still open and still sized for the Journal is tried again; one that has closed
+  // has nothing left to put back. If the browser cannot be reached, all of them are kept.
+  const open = await pages().then((tabs) => new Set(tabs.map((tab) => tab.id)), () => null);
+  const retry = failed.filter((targetId) => !open || open.has(targetId));
+  if (retry.length === 0) return;
+  for (const targetId of retry) (state.fitted ??= new Set()).add(targetId);
+  watchFitted();
 }
 
 export type BrowserInput =

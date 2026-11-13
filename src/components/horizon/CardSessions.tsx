@@ -153,10 +153,13 @@ function Picker({ target, linked, onLinked }: { target: string; linked: Set<stri
   const [error, setError] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (q.trim().length < 2) { setHits(null); return; }
+    // Only the answer to what is typed now is shown; an earlier search can come back later.
+    let live = true;
     const t = setTimeout(() => {
-      call(`/api/session-index/search?q=${encodeURIComponent(q)}`).then(setHits, (e: Error) => setError(e.message));
+      call(`/api/session-index/search?q=${encodeURIComponent(q)}`)
+        .then((found) => { if (live) { setHits(found); setError(null); } }, (e: Error) => { if (live) setError(e.message); });
     }, 220);
-    return () => clearTimeout(t);
+    return () => { live = false; clearTimeout(t); };
   }, [q]);
   const link = (uid: string) => {
     call('/api/session-index/feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, uid, verdict: 'link' }) })
@@ -203,6 +206,7 @@ export function CardSessions({ target, variant, prompt, onMore }: {
     let live = true;
     setView(null);
     setPicking(false);
+    setError(null);
     call(`/api/session-index/card?target=${encodeURIComponent(target)}`).then((v) => { if (live) setView(v); }, () => { if (live) setView(null); });
     return () => { live = false; };
   }, [target]);

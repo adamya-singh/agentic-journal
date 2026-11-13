@@ -13,6 +13,7 @@ import {
 } from './store.ts';
 import {
   credentials,
+  isConnected,
   configured,
   callbackUrl,
   fetchPage,
@@ -42,7 +43,7 @@ export function status(): BookmarkStatus {
     ...s,
     job: s.job ? { ...s.job, knownIds: [], seenCursors: [] } : undefined,
     configured: configured(),
-    connected: !!credentials().accessToken,
+    connected: isConnected(),
     total: Object.values(readSources()).filter((v) => v.accountId === s.accountId).length,
     estimate: s.usage[billingMonth()] || 0,
     monthlyLimit: MONTHLY_LIMIT,
