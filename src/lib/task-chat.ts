@@ -275,6 +275,9 @@ function briefContext(brief: TaskBrief): string {
   if (brief.notesMarkdown) {
     const notes = brief.notesMarkdown.trim();
     lines.push('Notes:', notes.length > NOTES_MAX ? `${notes.slice(0, NOTES_MAX)}…` : notes);
+    // What was done so far sits at the end of long notes: it is never the part that is cut.
+    const progress = notes.length > NOTES_MAX ? /(^|\n)## Progress\n[\s\S]*?(?=\n#{1,2} |$)/.exec(notes)?.[0].trim() : undefined;
+    if (progress) lines.push('Progress so far (from the notes):', progress.length > NOTES_MAX ? `…${progress.slice(-NOTES_MAX)}` : progress);
   }
   lines.push(`Journal task id: ${brief.id} (${brief.listType})`);
   return lines.join('\n');
@@ -285,6 +288,20 @@ function surfaceContext(about: ChatSurfaceRef | null | undefined): string {
   if (about?.kind !== 'web' || !about.url) return '';
   const title = about.label && about.label !== about.url ? `"${about.label}" ` : '';
   return `[Adamya has this page open in your browser, in the Journal's workspace for the task: ${title}${about.url} . When he says "this page", he means that tab: use your browser tool on it.]`;
+}
+
+/**
+ * The one write a chat always makes: what OpenClaw did for the task goes into the task itself, so the workspace
+ * and the next session know it. (POST /api/tasks/progress, src/lib/task-progress.ts.)
+ */
+function progressRule(taskId: string): string[] {
+  const body = JSON.stringify({ taskId, did: '<what you did, one line>', next: '<what comes next>', waitingOn: '<who or what it waits on, and since when>' });
+  return [
+    'The one exception, which needs no asking: keep the task up to date with what happens in this chat. Each time you do something for the task (send an email, submit or book something, find out a fact that changes what comes next) or he tells you something happened, record it before you answer, for the whole life of this chat:',
+    `curl -s -X POST http://127.0.0.1:3000/api/tasks/progress -H 'Content-Type: application/json' -d '${body}'`,
+    '"did" names the specifics (who, which address, the subject, the amount). "next" and "waitingOn" are optional and replace the last ones; send "" to clear one. This only adds to the task’s notes under "## Progress".',
+    'You are not running between his messages, so never say you will watch, monitor or check back later. When the next step is waiting for something (a reply, a decision, a date), say so in "waitingOn" and tell him the task now records it.',
+  ];
 }
 
 /**
@@ -299,6 +316,7 @@ export function buildChatTurnMessage(input: { brief: TaskBrief | null; text: str
     'Adamya is asking about one of the tasks in the Agentic Journal, from the chat in the task’s workspace.',
     'Keep answers short: a few sentences or a short list (markdown is fine). Look things up (Canvas, email, the journal, the web) when that helps.',
     'Do not change the task, the journal or anything else unless Adamya asks you to.',
+    ...(input.brief ? progressRule(input.brief.id) : []),
     '',
     '--- The task, as the Journal knows it ---',
     context,
