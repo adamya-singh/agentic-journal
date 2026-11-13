@@ -90,6 +90,13 @@ export async function withLock<T>(fn: () => T | Promise<T>, name = '.store-lock'
         if (stale) fs.rmSync(lock, { recursive: true, force: true });
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        // The recovery marker is held for a few file calls. One that outlives that was left by a
+        // reclaimer killed mid-check, and would block every later reclaim of a dead owner's lock.
+        try {
+          if (Date.now() - fs.statSync(recoveryLock).mtimeMs > 30_000) fs.rmSync(recoveryLock, { recursive: true, force: true });
+        } catch {
+          /* Released meanwhile. */
+        }
       } finally {
         if (recovering) fs.rmSync(recoveryLock, { recursive: true, force: true });
       }

@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mediaRoot, withLock } from './store.ts';
+import { lockOwner, ownerGone } from '../lock-owner.ts';
 import { episodeKey } from './catalog.ts';
 import { stackConfig } from './stack-config.ts';
 
@@ -49,6 +50,8 @@ export interface LibFile {
   mtimeMs: number;
   seenAt: string;
   status: 'settling' | 'new' | 'preparing' | 'ready' | 'failed';
+  // Who is preparing it ("pid boot start"), so a file whose worker died goes back to `new`.
+  preparingBy?: string;
   guess?: Guess;
   match?: { showId: string; key: string; by: string; at: string };
   probe?: Probe;
@@ -187,6 +190,13 @@ export async function scan(now = Date.now()) {
         old.status = 'new';
         res.settled++;
       }
+      // Its worker was killed mid-ffmpeg (deploy, reboot, OOM). Nothing else ever moved a file
+      // out of `preparing`, so it stayed there for good.
+      if (old.status === 'preparing' && (!old.preparingBy || ownerGone(old.preparingBy))) {
+        fs.rmSync(resolveInLibrary(path.join(READY, `${old.id}.part.mp4`)), { force: true });
+        old.status = 'new';
+        delete old.preparingBy;
+      }
     }
     for (const [id, f] of Object.entries(l.files))
       if (!seen.has(id)) {
@@ -302,11 +312,19 @@ async function extractSubtitles(f: LibFile, abs: string, p: Probe) {
 }
 // Probes one settled file and makes it playable. Long transcodes run with low priority.
 export async function prepare(id: string) {
-  const f = readLibrary().files[id];
-  if (!f || f.status !== 'new') return undefined;
-  await withLibrary((l) => {
-    if (l.files[id]) l.files[id].status = 'preparing';
+  const me = lockOwner();
+  const f = await withLibrary((l) => {
+    const cur = l.files[id];
+    if (!cur || cur.status !== 'new') return undefined;
+    cur.status = 'preparing';
+    cur.preparingBy = me;
+    return { ...cur };
   });
+  if (!f) return undefined;
+  // The file as it was claimed. A scan that saw it change since has started it over (and removed
+  // the old copy), so what this run made describes a file that no longer exists.
+  const still = (cur: LibFile | undefined): cur is LibFile =>
+    !!cur && cur.status === 'preparing' && cur.preparingBy === me && cur.size === f.size && cur.mtimeMs === f.mtimeMs;
   const abs = resolveInLibrary(f.rel);
   try {
     const p = await probeFile(abs);
@@ -323,18 +341,24 @@ export async function prepare(id: string) {
     const subtitles = await extractSubtitles(f, abs, p);
     return withLibrary((l) => {
       const cur = l.files[id];
-      if (!cur) return undefined;
+      if (!still(cur)) {
+        if (playPath.startsWith(READY)) fs.rmSync(resolveInLibrary(playPath), { force: true });
+        for (const s of subtitles) fs.rmSync(resolveInLibrary(s.file), { force: true });
+        return undefined;
+      }
       Object.assign(cur, { probe: p, plan, playPath, subtitles, status: 'ready', readyAt: new Date().toISOString() });
       delete cur.error;
+      delete cur.preparingBy;
       return cur;
     });
   } catch (e) {
     fs.rmSync(resolveInLibrary(path.join(READY, `${f.id}.part.mp4`)), { force: true });
     return withLibrary((l) => {
       const cur = l.files[id];
-      if (!cur) return undefined;
+      if (!still(cur)) return undefined;
       cur.status = 'failed';
       cur.error = ((e as Error).message || 'ffmpeg failed').slice(0, 300);
+      delete cur.preparingBy;
       return cur;
     });
   }

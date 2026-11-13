@@ -340,21 +340,37 @@ export function applyAddition(s: MediaState, c: Candidate, settings: Settings, n
   return t;
 }
 export async function confirm(id: string, pick: string, settings: Settings) {
-  const { a } = findAddition(readInbox(), id);
-  if (a.state !== 'pending') throw new Error('This one is already done.');
-  const c = a.candidates.find((x) => x.id === pick);
-  if (!c) throw new Error('Pick one of the matches shown.');
-  const title = await withLock(() => {
-    const s = readState();
-    const t = applyAddition(s, c, settings);
-    writeState(s);
-    return t;
-  });
-  await withInbox((inbox) => {
+  // Claim it under the inbox lock before touching the library. The check used to read an
+  // unlocked copy, so two confirms (a double press, two tabs) both passed it and both applied.
+  const { c, read } = await withInbox((inbox) => {
     const found = findAddition(inbox, id).a;
+    if (found.state !== 'pending') throw new Error('This one is already done.');
+    const candidate = found.candidates.find((x) => x.id === pick);
+    if (!candidate) throw new Error('Pick one of the matches shown.');
+    const read = found.settings;
     Object.assign(found, { state: 'added', pick, settings, doneAt: new Date().toISOString() });
-    prune(inbox);
+    return { c: candidate, read };
   });
+  let title: MediaTitle;
+  try {
+    title = await withLock(() => {
+      const s = readState();
+      const t = applyAddition(s, c, settings);
+      writeState(s);
+      return t;
+    });
+  } catch (e) {
+    // Nothing reached the library: hand it back so he can confirm again.
+    await withInbox((inbox) => {
+      const found = findAddition(inbox, id).a;
+      found.state = 'pending';
+      found.settings = read;
+      delete found.pick;
+      delete found.doneAt;
+    });
+    throw e;
+  }
+  await withInbox((inbox) => prune(inbox));
   const { stageAcquisition, cancelAcquisition, readAcquisitions } = await import('./acquisition-store.ts');
   if (settings.download) await stageAcquisition(pick);
   else if (readAcquisitions().requests[pick]?.wanted) await cancelAcquisition(pick);

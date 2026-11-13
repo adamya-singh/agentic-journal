@@ -7,7 +7,7 @@ import { loadTaskBriefs } from '../brief/build';
 import { readCurrentTaskIds } from '../current/current-store-utils';
 import { computeTodayTasksByList } from '../today/staged-sync-utils';
 import { readHookWorkRecords } from '../hook-work/store';
-import { readAllChatThreads } from '../brief-chat/store';
+import { readAllChatThreads, settleStaleChatTurns } from '../brief-chat/store';
 import { syncChatThreadsSoon } from '../brief-chat/sync';
 import { chatsGlance } from '@/lib/task-chat';
 
@@ -19,6 +19,7 @@ export function loadSunrise(now = new Date()): SunriseData {
   const ids = [...new Set([...horizon.holds, ...horizon.items, ...horizon.further, ...horizon.undated].map((item) => item.id))];
   const forms: Record<string, FormSpec> = {};
   // A task's form also says how many chats it has, and whether OpenClaw is waiting on him in one.
+  settleStaleChatTurns(now);
   const chats = readAllChatThreads();
   // What was said in those sessions outside the Journal is fetched behind this read, each thread at most once a
   // minute, so the next read counts an answer that is waiting on him.

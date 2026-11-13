@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { v2 as speechV2 } from '@google-cloud/speech';
 import { Storage } from '@google-cloud/storage';
+import { lockOwner, ownerGone } from '../src/lib/lock-owner.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,6 +67,12 @@ async function runTranscribeDay(args, options = {}) {
   const allSegments = options.segments ?? buildSegments(manifestEntries, config);
   const selectedSegments = options.segments ?? selectSegments(allSegments, config);
   const status = readStatus(date);
+  // This run only ever changes the segments it selected. Every write re-reads the file and keeps
+  // the rest as found, so a retry request or another run saved meanwhile is not written over.
+  Object.defineProperty(status, 'ownedIds', {
+    value: new Set(selectedSegments.map((segment) => segment.id)),
+    enumerable: false,
+  });
   const pendingSegments = selectedSegments.filter((segment) => {
     if (config.force) {
       return true;
@@ -183,6 +190,10 @@ async function runTranscribeDay(args, options = {}) {
   const completed = [];
 
   for (const segment of pendingSegments) {
+    if (isRunningElsewhere(status.segments[segment.id])) {
+      console.log(`Skipping ${segment.id}: another run is transcribing it.`);
+      continue;
+    }
     console.log(
       `\nTranscribing ${segment.id} (${segment.entries.length} chunks, ${formatSeconds(segment.durationSeconds)})`,
     );
@@ -211,6 +222,7 @@ async function runTranscribeDay(args, options = {}) {
       ...existingSegmentStatus,
       id: segment.id,
       status: 'running',
+      runner: lockOwner(),
       hash: segment.hash,
       startedAt: new Date().toISOString(),
       chunkCount: segment.entries.length,
@@ -862,8 +874,30 @@ function readStatus(date) {
 }
 
 function writeStatus(date, status) {
+  if (status.ownedIds) {
+    const onDisk = readStatus(date).segments;
+    for (const [id, segment] of Object.entries(onDisk)) {
+      if (!status.ownedIds.has(id)) status.segments[id] = segment;
+    }
+    for (const id of Object.keys(status.segments)) {
+      if (!status.ownedIds.has(id) && !(id in onDisk)) delete status.segments[id];
+    }
+  }
   status.updatedAt = new Date().toISOString();
   writeJsonAtomically(statusPathForDate(date), status);
+}
+
+/**
+ * A segment marked running names its runner ("pid boot start"). It is someone else's only while
+ * that process is alive; a runner that died (deploy, reboot, crash) left it for whoever is next.
+ */
+function isRunningElsewhere(segmentStatus) {
+  return (
+    segmentStatus?.status === 'running' &&
+    typeof segmentStatus.runner === 'string' &&
+    segmentStatus.runner !== lockOwner() &&
+    !ownerGone(segmentStatus.runner)
+  );
 }
 
 function readRawState(date) {
@@ -1157,6 +1191,7 @@ function toJsonSafe(value) {
 }
 
 export {
+  isRunningElsewhere,
   AUDIO_ROOT,
   DEFAULT_TIMEZONE,
   DATE_REGEX,

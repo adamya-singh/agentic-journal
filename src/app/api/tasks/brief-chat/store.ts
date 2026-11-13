@@ -5,7 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { tasksDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
-import { CHAT_SCHEMA_VERSION, migrateChatThreads, type TaskChatThread } from '@/lib/task-chat';
+import { CHAT_SCHEMA_VERSION, migrateChatThreads, settleStalePending, type TaskChatThread } from '@/lib/task-chat';
 
 type Threads = Record<string, TaskChatThread[]>;
 
@@ -49,6 +49,25 @@ export function updateChatThreads(fn: (threads: Threads) => boolean): boolean {
   if (data.unreadable) keepCopy(`unreadable-${Date.now()}`);
   writeJsonFileAtomic(briefChatFilePath(), { _comment: COMMENT, schemaVersion: CHAT_SCHEMA_VERSION, threads: data.threads });
   return true;
+}
+
+const SERVER_STARTED_AT = Date.now() - process.uptime() * 1000;
+
+/**
+ * Gives up on turns that can no longer come back. Every read that shows whether OpenClaw is
+ * working calls this, so a turn cut off by a restart does not read "working" until he opens it.
+ */
+export function settleStaleChatTurns(now = new Date(), taskId?: string): void {
+  const stale = (t: TaskChatThread) => settleStalePending({ ...t }, now, SERVER_STARTED_AT);
+  const lists = taskId ? [readChatThreads(taskId)] : Object.values(readAllChatThreads());
+  if (!lists.some((list) => list.some(stale))) return;
+  updateChatThreads((all) => {
+    let changed = false;
+    for (const list of taskId ? [all[taskId] ?? []] : Object.values(all)) {
+      for (const t of list) changed = settleStalePending(t, now, SERVER_STARTED_AT) || changed;
+    }
+    return changed;
+  });
 }
 
 /** Every task's threads, for reading only. */
