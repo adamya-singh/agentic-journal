@@ -595,7 +595,7 @@ export function hasActionableJobApplications(): boolean {
   }
   const now = new Date();
   if (Object.values(store.applications).some(
-    (application) => isSimplifySyncClaimable(application.simplifySync, now),
+    (application) => isTrackerMoveClaimable(application, now),
   )) return true;
   if (
     Object.values(store.applications).some(
@@ -641,11 +641,19 @@ export function requireApplicationLease(
   return application;
 }
 
+/**
+ * Every status change goes through here. `submitted` and `closed` are final: before this check,
+ * a late answers POST could stamp a submitted application again or turn a closed one into
+ * submitted, because each caller was left to remember the rule.
+ */
 export function setApplicationStatus(
   application: JobApplicationRecord,
   status: JobApplicationStatus,
   changedAt = new Date().toISOString(),
 ): void {
+  if (isApplicationFinished(application) && application.status !== status) {
+    throw new Error(`This application is already ${application.status}; it cannot become ${status}`);
+  }
   if (application.status !== status) {
     application.status = status;
     application.statusHistory.push({ status, changedAt });
@@ -663,6 +671,10 @@ export function setApplicationStatus(
     delete application.autoSubmitEligibleAt;
   }
   application.updatedAt = changedAt;
+}
+
+export function isApplicationFinished(application: Pick<JobApplicationRecord, 'status'>): boolean {
+  return application.status === 'submitted' || application.status === 'closed';
 }
 
 export function hasPendingReviewItems(store: JobApplicationsStoreData, listingId: string): boolean {
@@ -1363,6 +1375,16 @@ export function mergeApplicationQuestions(
     }
     // Classification survives rediscovery; source evidence must be supplied afresh.
     question = { ...question, employmentDateField: question.employmentDateField ?? existing.employmentDateField };
+    if (existing.resolution !== 'pending' && question.kind === 'action' && question.resolution === 'pending') {
+      // The same blocker again after Adamya dealt with it once. Ids are a hash of the prompt and
+      // page, so without this the new report came back already answered: the application waited
+      // on him with nothing to answer.
+      return {
+        ...question,
+        occurrences: (existing.occurrences ?? 1) + 1,
+        firstDiscoveredAt: existing.firstDiscoveredAt ?? existing.discoveredAt,
+      };
+    }
     if (existing.resolution !== 'pending') {
       return {
         ...question,
@@ -1474,6 +1496,14 @@ export function markApplicationSubmitted(
 }
 
 export { isAwaitingSubmissionConfirmation };
+
+/**
+ * A Simplify card is only moved once the application is known to have gone in. An employer email
+ * can record a stage while a Submit click is still unconfirmed; the move waits for the answer.
+ */
+export function isTrackerMoveClaimable(application: JobApplicationRecord, now: Date): boolean {
+  return isSimplifySyncClaimable(application.simplifySync, now) && !isAwaitingSubmissionConfirmation(application);
+}
 
 /** Clock skew between the Submit click and the employer's mail server. */
 const SUBMISSION_EMAIL_SLACK_MS = 10 * 60_000;

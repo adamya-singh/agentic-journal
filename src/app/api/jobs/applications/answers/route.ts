@@ -4,6 +4,7 @@ import type { JobApplicationAnswer, JobApplicationQuestion } from '@/lib/types';
 import {
   applicationFileExists,
   getJobApplicationReadiness,
+  isApplicationFinished,
   markApplicationSubmitted,
   materializeJobApplication,
   mutateJobApplicationsStore,
@@ -58,9 +59,11 @@ export async function POST(request: NextRequest) {
     const result = await mutateJobApplicationsStore((store) => {
       const application = materializeJobApplication(store, parsed.data.listingId);
       const now = new Date().toISOString();
+      if (isApplicationFinished(application)) throw new Error('This application is already finished');
       const pendingBefore = application.questions.filter(
         (question) => question.resolution === 'pending',
       ).length;
+      const answeredNow = new Set<string>();
 
       if (parsed.data.resumeVariant) {
         application.resumeOverride = parsed.data.resumeVariant;
@@ -91,6 +94,7 @@ export async function POST(request: NextRequest) {
         delete question.redoRequest;
         question.resolution = 'answered';
         question.answeredAt = now;
+        answeredNow.add(question.id);
         if (question.kind !== 'action') {
           upsertConfirmedAnswer({
             store,
@@ -105,9 +109,6 @@ export async function POST(request: NextRequest) {
       }
 
       if (parsed.data.submittedByHand) {
-        if (application.status === 'submitted' || application.status === 'closed') {
-          throw new Error('This application is already finished');
-        }
         // Whatever the worker was stuck on no longer matters.
         for (const question of application.questions) {
           if (question.resolution !== 'pending') continue;
@@ -122,10 +123,10 @@ export async function POST(request: NextRequest) {
       const pendingAfter = application.questions.filter(
         (question) => question.resolution === 'pending',
       ).length;
+      // Only an answer given in this request counts. An old “retry” used to be read again on
+      // every later POST, each time clearing the mark that stops a second Submit click.
       const ambiguity = application.questions.find(
-        (question) =>
-          question.prompt === SUBMISSION_CONFIRM_PROMPT &&
-          question.resolution === 'answered',
+        (question) => question.prompt === SUBMISSION_CONFIRM_PROMPT && answeredNow.has(question.id),
       );
       if (ambiguity && typeof ambiguity.answer === 'string') {
         const answer = ambiguity.answer.trim().toLowerCase();

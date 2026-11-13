@@ -2,6 +2,14 @@ import type { JobApplicationQuestion, JobApplicationRecord } from './types';
 
 export const SUBMISSION_CONFIRM_PROMPT = 'Confirm whether this application was submitted';
 
+/** A run holds this application right now: it claimed it and its lease has not run out. */
+export function isApplicationRunning(
+  application: Pick<JobApplicationRecord, 'lease'> | undefined,
+  now = Date.now(),
+): boolean {
+  return Boolean(application?.lease && Date.parse(application.lease.expiresAt) > now);
+}
+
 /** A historical attempt does not lock a stalled draft against human cancellation. */
 export function isApplicationSubmissionInFlight(
   application: JobApplicationRecord | undefined,

@@ -5,6 +5,7 @@ import { applyJobReviewResult, saveJobReview, saveJobReviewConfirmAll, saveJobRe
 import {
   applyJobEmailUpdatesResult, normalizeEmailUpdatesView, postJobEmailUpdate, type JobEmailUpdateRequest,
 } from './job-email-updates';
+import { isApplicationRunning } from './job-application-cancellation';
 import type { JobApplicationResponseInput } from '@/components/JobApplicationModal';
 import type {
   JobApplicationCategory,
@@ -146,8 +147,11 @@ export function useJobBoardState(
   // an in-progress claim and the worker is enabled) and the tab is visible —
   // this is what makes the WorkerStatusPanel's progress feel real-time without
   // hammering the laptop when nothing is happening.
+  // "In progress" also covers applications waiting between retries with no run on them, which
+  // kept this polling with nothing to show.
   const runActive = Boolean(
-    jobApplicationsData && jobApplicationsData.workerEnabled && jobApplicationsData.counts.inProgress > 0,
+    jobApplicationsData?.workerEnabled &&
+      Object.values(jobApplicationsData.applications).some((application) => isApplicationRunning(application)),
   );
   React.useEffect(() => {
     if (!pollWhileActive || !runActive) {

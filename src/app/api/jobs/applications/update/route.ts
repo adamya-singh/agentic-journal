@@ -22,6 +22,7 @@ import {
   failApplicationScreenshotCapture,
   hasCurrentCompleteScreenshotCapture,
   holdApplicationForReview,
+  isAwaitingSubmissionConfirmation,
   isSubmissionBlockedByReview,
   JOB_APPLICATION_RETRY_DELAYS_MS,
   mergeApplicationQuestions,
@@ -373,10 +374,13 @@ export async function POST(request: NextRequest) {
           ...(parsed.data.url ? { url: parsed.data.url } : {}),
           ...(parsed.data.message ? { message: parsed.data.message } : {}),
         };
+        const targetStatus = application.simplifySync?.targetStatus;
         application.simplifySync = {
           status: 'pending',
           attemptCount: application.simplifySync?.attemptCount ?? 0,
           updatedAt: now,
+          // An employer email during the run may already have said where the card belongs.
+          ...(targetStatus ? { targetStatus } : {}),
         };
         captureSubmissionSnapshot(application);
         for (const item of store.reviewItems) {
@@ -389,7 +393,22 @@ export async function POST(request: NextRequest) {
         updateJobListingLeadStatus(parsed.data.listingId, 'applied');
       }
 
-      if (parsed.data.action === 'closed') {
+      if (parsed.data.action === 'closed' && isAwaitingSubmissionConfirmation(application)) {
+        // Submit was clicked earlier and never confirmed, so it may have gone in. Closing here
+        // would archive a posting he may have applied to; ask him instead.
+        releaseApplicationLease(application);
+        delete application.progress;
+        if (!confirmSubmissionFromEmployerEmail(application, now)) {
+          application.questions = mergeApplicationQuestions(application.questions, [
+            createActionQuestion({
+              prompt: SUBMISSION_CONFIRM_PROMPT,
+              helpText: `After Submit was clicked, the worker found this application closed (${parsed.data.reason}). Answer “submitted” if it went in, or “retry” to let the worker look again and close it.`,
+              now,
+            }),
+          ]);
+          setApplicationStatus(application, 'awaiting-user-input', now);
+        }
+      } else if (parsed.data.action === 'closed') {
         setApplicationStatus(application, 'closed', now);
         application.closedAt = now;
         application.closedReason = parsed.data.reason;

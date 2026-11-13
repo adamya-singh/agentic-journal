@@ -2,8 +2,7 @@ import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { readJobListings } from '../../job-store-utils';
-import { mutateJobApplicationsStore } from '../../application-store-utils';
-import { isSimplifySyncClaimable } from '../../email-update-utils';
+import { isTrackerMoveClaimable, mutateJobApplicationsStore } from '../../application-store-utils';
 
 export const runtime = 'nodejs';
 
@@ -30,7 +29,7 @@ export async function POST(request: NextRequest) {
       if (parsed.data.action === 'claim') {
         for (const application of Object.values(store.applications)) {
           const sync = application.simplifySync;
-          if (!sync || !isSimplifySyncClaimable(sync, now)) continue;
+          if (!sync || !isTrackerMoveClaimable(application, now)) continue;
           const listing = listings.find((candidate) => candidate.id === application.listingId);
           if (!listing) continue;
           const leaseToken = randomUUID();
