@@ -128,9 +128,10 @@ function ComponentRow({ component, days }: { component: UptimeComponentView; day
       <div className="mb-2 flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="truncate font-medium text-gray-800 dark:text-gray-200">{component.name}</span>
-          <span className="group/info relative">
+          {/* Focusable so a tap shows the description on touch screens, where there is no hover. */}
+          <span tabIndex={0} className="group/info relative outline-none">
             <Info className="h-3.5 w-3.5 text-gray-400" aria-hidden />
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 hidden w-56 -translate-x-1/2 rounded-md bg-gray-900 px-2 py-1.5 text-xs text-white shadow group-hover/info:block">
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 hidden w-56 -translate-x-1/2 rounded-md bg-gray-900 px-2 py-1.5 text-xs text-white shadow group-hover/info:block group-focus/info:block">
               {component.description}
             </span>
           </span>

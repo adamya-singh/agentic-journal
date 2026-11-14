@@ -88,6 +88,10 @@ export const BF_CSS = `
   .bf-foot{padding-left:16px}
   .bf-status{flex-basis:100%}
   .bf-k{display:none}
+  /* iOS zooms into fields under 16px on focus; the close button keeps a 44px touch target */
+  .bf-root textarea,.bf-root .bf-term textarea{font-size:16px}
+  .bf-x{position:relative}
+  .bf-x::after{content:"";position:absolute;inset:-6px}
 }
 
 /* form */

@@ -547,12 +547,12 @@ export default function MediaPage() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search your media and recommendations"
               aria-label="Search media"
-              className="w-full min-w-[180px] bg-transparent text-sm outline-none"
+              className="w-full min-w-[180px] bg-transparent text-sm max-sm:text-base outline-none"
             />
           </label>
           <select
             aria-label="Media format"
-            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"
+            className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm max-sm:text-base dark:border-gray-700 dark:bg-gray-900"
             value={format}
             onChange={(e) => setFormat(e.target.value)}
           >

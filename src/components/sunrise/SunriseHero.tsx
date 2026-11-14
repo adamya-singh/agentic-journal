@@ -22,6 +22,7 @@ import { getCurrentDateISO } from '@/lib/current-date';
 import { useRefresh } from '@/lib/RefreshContext';
 import type { HorizonDaily } from '@/lib/horizon';
 import type { SunriseData } from '@/lib/sunrise/data';
+import { engineTaskId, parseTaskSearch, taskSearch, urlTaskId, type TaskTab } from '@/lib/task-link';
 import type { DoneProposalRecord } from '@/app/api/tasks/done-proposals/store';
 import type { DoneReceipt } from '@/app/api/tasks/done-at/apply';
 import type { CardThing, SunriseEngine, TrayKind } from './engine';
@@ -35,6 +36,8 @@ const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], sub
 const HERO_CSS = `
 /* While a task's workspace is open, the page's floating Cedar button is not drawn over its chat composer. */
 html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!important}
+/* On a phone the workspace is the whole screen (sunrise-css .sr-pane.full): the page under it is held still. */
+@media (max-width:699px){html[data-sr-workspace],html[data-sr-workspace] body{overflow:hidden;overscroll-behavior:none}}
 .sr-hero{--hz-ink:#f3efe7;--hz-dim:#a9b4c4;--hz-em:#ffd2a8;--hz-serif:var(--font-instrument-serif),'Instrument Serif',serif;--hz-sans:var(--font-geist-sans),Geist,sans-serif;--hz-mono:var(--font-geist-mono),'Geist Mono',monospace}
 .sr-tray .sr-t{margin:0;font:400 22px/1.1 var(--serif)}
 .sr-tray .sr-s{margin:4px 0 10px;color:#7a6656}
@@ -95,6 +98,32 @@ html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!
 html.sr-held{overflow:hidden}
 .sr-undo{position:absolute;left:50%;bottom:104px;z-index:31;transform:translateX(-50%);display:inline-flex;align-items:center;gap:10px;font:12.5px var(--sans);color:#f3e3cf;background:rgba(10,14,24,.85);border:1px solid rgba(255,255,255,.18);border-radius:999px;padding:5px 6px 5px 13px;white-space:nowrap}
 .sr-undo button{font:500 11px var(--mono);color:#ffd2a8;background:transparent;border:1px solid rgba(255,210,168,.4);border-radius:999px;padding:2px 9px;cursor:pointer}
+/* ---- A phone. The 3D world is laid out for a wide screen and steered with a mouse and a wheel: a phone, which
+   pans and pinches the sky itself, does without it. */
+.sr-hero:has(.sr-sky.narrow) .sr-enter3d,.sr-sky.narrow .hz3d-enter{display:none}
+/* Full page, the sky is under the status bar and over the home indicator: the words and the controls step clear. */
+.sr-hero.sr-fullpage .sr-sky.narrow .sr-say{top:calc(14px + env(safe-area-inset-top,0px))}
+.sr-hero.sr-fullpage .sr-sky.narrow .sr-ctl{top:calc(6px + env(safe-area-inset-top,0px))}
+/* A tray is a sheet at the foot of the window (sunrise-css): its rows and buttons are a finger wide, and nothing in
+   it is under 16px, so focusing a field does not zoom the page. The chat button steps aside while it, or a card, is up. */
+@media (max-width:699px){html[data-sr-sheet] [aria-label="Open Cedar chat (collapsed)"]{display:none!important}}
+.sr-sky.narrow .sr-tray .sr-u{gap:8px;padding:10px 0}
+.sr-sky.narrow .sr-tray .sr-u>span{flex-basis:100%}
+.sr-sky.narrow .sr-tray .sr-u .sr-b{position:relative;min-height:36px;padding:6px 13px;font-size:13px}
+.sr-sky.narrow .sr-tray .sr-u .sr-b::after{content:'';position:absolute;inset:-4px -2px}
+.sr-sky.narrow .sr-tray .sr-u input[type=date]{height:38px;padding:0 10px;font-size:16px}
+.sr-sky.narrow .sr-tray .sr-card{min-height:44px;padding:9px 2px}
+.sr-sky.narrow .sr-tray label.daily{min-height:44px}
+.sr-sky.narrow .sr-tray label.daily input{width:20px;height:20px}
+.sr-sky.narrow .sr-tray .sr-hold .sr-open{min-height:36px}
+.sr-sky.narrow .sr-tray .hz-ask input{min-width:0;flex-basis:100%;height:40px;font-size:16px}
+/* A card on a phone: its close and its reasons are a finger wide, and its reason field is 16px (no zoom on focus). */
+.sr-sky.narrow .src .ac-x{position:relative;width:36px;height:36px}
+.sr-sky.narrow .src .ac-x::after{content:'';position:absolute;inset:-4px}
+.sr-sky.narrow .src .ac-rs button{min-height:36px;padding:7px 13px}
+.sr-sky.narrow .src .ac-why input[type=text]{font-size:16px;padding:11px 12px}
+.sr-sky.narrow .src .ac-outs label{min-height:44px}
+.sr-sky.narrow .src .ac-ok{height:46px}
 `;
 
 const CARD_WHEN: Record<ActionCard['when'], string> = { now: 'Fits a Focus bet right now', period: 'Fine on a build day this period', after: 'Parked until after finals', someday: 'No date yet' };
@@ -124,6 +153,9 @@ export function SunriseHero() {
   const [tick, setTick] = React.useState(0);
   const [cards, setCards] = React.useState<ActionCard[]>([]);
   const [answers, setAnswers] = React.useState<CardAnswer[]>([]);
+  const [cardsReady, setCardsReady] = React.useState(false);   // the first load of the cards has answered
+  const cardsRef = React.useRef<ActionCard[]>([]);
+  cardsRef.current = cards;
   // Dawn's 3D world, loaded (with three.js) the first time you step inside.
   const spaceRef = React.useRef<DawnSpace | null>(null);
   const [space, setSpace] = React.useState<'off' | 'loading' | 'on'>('off');
@@ -131,6 +163,89 @@ export function SunriseHero() {
   dataRef.current = data;
   const openRef = React.useRef<string | null>(null);
   openRef.current = open;
+
+  // The open task lives in the address (/?task=<id>[&tab=brief|chat], lib/task-link): opening one pushes an entry,
+  // so a phone's back gesture closes it, a reload brings it back and a link can open it. The engine says what is
+  // open (onOpen) and the address follows it; back and forward drive the engine, and the address already agrees.
+  const engineOpen = React.useRef<string | null>(null);   // what the engine last said is open
+  // pushed: the entry naming the task was pushed here, so closing goes back to the one before it. backing: that
+  // back is on its way. fromUrl: the engine is opening or closing what the address says.
+  const urlState = React.useRef({ pushed: false, backing: false, fromUrl: false });
+  const startTab = React.useRef<TaskTab | null>(null);   // the tab the address asked the opening task for
+  const writeUrl = React.useCallback((id: string | null, tab: TaskTab | null, push: boolean) => {
+    const { pathname, search, hash } = window.location;
+    const next = `${pathname}${taskSearch(search, id === null ? null : urlTaskId(id), tab)}${hash}`;
+    // No state of our own: Next's patched History copies its router state in and keeps its idea of the URL in step.
+    if (push) window.history.pushState(null, '', next);
+    else window.history.replaceState(null, '', next);
+  }, []);
+  const followOpen = React.useCallback((id: string | null) => {
+    engineOpen.current = id;
+    const u = urlState.current;
+    if (!u.fromUrl) startTab.current = null;
+    if (u.fromUrl || u.backing) return;   // the address says so already, or a back is on its way (popstate settles)
+    const shown = parseTaskSearch(window.location.search).task;
+    if ((id === null ? null : urlTaskId(id)) === shown) return;
+    if (id === null) {
+      if (u.pushed) { u.pushed = false; u.backing = true; window.history.back(); }
+      else writeUrl(null, null, false);   // it was opened by the link the page loaded on: the address drops it
+    } else if (shown !== null) writeUrl(id, null, false);   // one task to another (a related task): the same entry
+    else { writeUrl(id, null, true); u.pushed = true; }
+  }, [writeUrl]);
+  const followTab = React.useCallback((tab: TaskTab) => {
+    const id = engineOpen.current;
+    if (id === null || id.startsWith('card:') || urlState.current.backing) return;
+    const shown = parseTaskSearch(window.location.search);
+    const next = tab === 'work' ? null : tab;
+    if (shown.task === urlTaskId(id) && shown.tab !== next) writeUrl(id, next, false);   // tabs add no entries
+  }, [writeUrl]);
+  // Opens what the address names, if it is still open in the journal; otherwise the address drops it.
+  const openFromUrl = React.useCallback(async (task: string, tab: TaskTab | null, pushed: boolean) => {
+    const id = engineTaskId(task);
+    const d = dataRef.current;
+    const listed = id.startsWith('card:')
+      ? cardsRef.current.some((card) => `card:${card.id}` === id)
+      : !!d && (id in d.forms || d.today.some((t) => t.id === id && !t.completed)
+        || [d.horizon.items, d.horizon.further, d.horizon.holds, d.horizon.undated, d.horizon.wants, ...Object.values(d.horizon.wantsBySection)]
+          .some((list) => list.some((t) => t.id === id)));
+    // A task further down a list than the sky shows: the brief knows every open task (and 404s the rest).
+    const ok = listed || (!id.startsWith('card:') && await fetch(`/api/tasks/brief?id=${encodeURIComponent(id)}`)
+      .then((r) => r.json()).then((json) => !!json?.success, () => false));
+    const made = engineRef.current;
+    // Only if the address still names it and nothing else was opened meanwhile.
+    if (!made || parseTaskSearch(window.location.search).task !== task || engineOpen.current === id) return;
+    if (!ok) { writeUrl(null, null, false); return; }
+    const u = urlState.current;
+    u.fromUrl = true;
+    startTab.current = tab;
+    try { made.openTask(id); } finally { u.fromUrl = false; }
+    if (engineOpen.current === id) u.pushed = pushed;
+  }, [writeUrl]);
+  React.useEffect(() => {
+    const onPop = () => {
+      const u = urlState.current;
+      const { task, tab } = parseTaskSearch(window.location.search);
+      const want = task === null ? null : engineTaskId(task);
+      if (u.backing) {
+        u.backing = false;
+        // Something was opened while the back was on its way: the address catches up with it.
+        if (engineOpen.current !== null && want !== engineOpen.current) { writeUrl(engineOpen.current, null, true); u.pushed = true; }
+        return;
+      }
+      const made = engineRef.current;
+      if (!made || want === engineOpen.current) return;
+      if (task === null) {
+        u.fromUrl = true;
+        try { made.closeTask(); } finally { u.fromUrl = false; }
+        u.pushed = false;
+        return;
+      }
+      // Forward onto an entry pushed here (or back onto one): the entry before it is the page without it.
+      void openFromUrl(task, tab, true);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [openFromUrl, writeUrl]);
   // A task's workspace has its own chat composer in the bottom right corner, where the page's floating "Chat with
   // Cedar" button sits on top of everything. While a workspace is open the page is told, and that button steps
   // aside (HERO_CSS).
@@ -140,6 +255,13 @@ export function SunriseHero() {
     document.documentElement.setAttribute('data-sr-workspace', '');
     return () => document.documentElement.removeAttribute('data-sr-workspace');
   }, [workspaceOpen]);
+  // So is a phone's tray, a sheet at the foot of the window where that button sits, and a card, which fills its sky.
+  const sheetOpen = tray !== null || !!open?.startsWith('card:');
+  React.useEffect(() => {
+    if (!sheetOpen) return;
+    document.documentElement.setAttribute('data-sr-sheet', '');
+    return () => document.documentElement.removeAttribute('data-sr-sheet');
+  }, [sheetOpen]);
 
   // The journal's data: on load, whenever tasks change anywhere on the page, and every five minutes.
   React.useEffect(() => {
@@ -170,7 +292,8 @@ export function SunriseHero() {
         setCards(view.cards);
         setAnswers(view.answers);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setCardsReady(true));
   }, []);
   React.useEffect(() => { loadCards(); }, [loadCards, taskRefreshCounter, tick]);
   const cardThings = React.useMemo<CardThing[]>(() => cards
@@ -252,7 +375,7 @@ export function SunriseHero() {
       const programs = await loadPrograms();
       if (disposed || !skyRef.current) return;
       const made = new Engine(skyRef.current, programs, {
-        onOpen: setOpen,
+        onOpen: (id) => { setOpen(id); followOpen(id); },
         onTray: (kind, track) => { setTray(kind); setTrayTrack(track ?? null); setTrayError(null); },
         onToggleDaily: (daily) => void hostRef.current.toggleDaily(daily),
         onLayout: () => hostRef.current.feedSpace(),
@@ -271,6 +394,15 @@ export function SunriseHero() {
     };
   }, []);
   React.useEffect(() => { if (engine && data) engine.update(data, cardThings, answers.length); }, [engine, data, cardThings, answers.length]);
+  // A page loaded on /?task=<id> (a reload, or a link) opens it once the sky has its tasks and cards, and its fonts.
+  const urlLoaded = React.useRef(false);
+  React.useEffect(() => {
+    if (urlLoaded.current || !engine || !data || !cardsReady) return;
+    urlLoaded.current = true;
+    const { task, tab } = parseTaskSearch(window.location.search);
+    if (task === null || engineOpen.current !== null) return;
+    void (document.fonts?.ready ?? Promise.resolve()).then(() => openFromUrl(task, tab, false));
+  }, [engine, data, cardsReady, openFromUrl]);
 
   const offerUndo = React.useCallback((text: string, run: () => Promise<unknown>) => {
     setUndo({ text, run });
@@ -448,7 +580,14 @@ export function SunriseHero() {
       {!engine && <div className="sr-loading">{error || 'Loading your horizon…'}</div>}
       {engine && error && !data && <div className="sr-loading">{error}</div>}
       {engine && createPortal(<div onClick={(e) => e.stopPropagation()}><QuickCaptureInput variant="inline" /></div>, engine.slots.cap)}
-      {engine && trayBody && createPortal(trayBody, engine.slots.tray)}
+      {engine && trayBody && createPortal(
+        <>
+          {/* Drawn only on a phone, where the tray is a sheet (sunrise-css). */}
+          <button type="button" className="sr-x" aria-label="Close" onClick={() => engineRef.current?.closeTray()}>✕</button>
+          {trayBody}
+        </>,
+        engine.slots.tray,
+      )}
       {engine && openCard && createPortal(
         <div className="src">
           <ActionCardView
@@ -472,6 +611,8 @@ export function SunriseHero() {
           onChanged={refreshTasks}
           onLetGo={(target) => setLetGoAsk(target)}
           onUndo={offerUndo}
+          startTab={startTab.current ?? undefined}
+          onTab={followTab}
         />,
         engine.slots.pane,
       )}

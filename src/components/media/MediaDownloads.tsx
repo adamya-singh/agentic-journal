@@ -111,6 +111,7 @@ export function KeepOnDisk({
                 type="button"
                 aria-label="Close season picker"
                 onClick={() => setOptions(undefined)}
+                className="relative after:absolute after:-inset-3 after:content-['']"
               >
                 <X size={20} />
               </button>

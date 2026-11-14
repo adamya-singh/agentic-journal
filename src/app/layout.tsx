@@ -35,6 +35,18 @@ export default function RootLayout({
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
+        {/* Add to Home Screen. This layout is a client component (no metadata export), so the tags are written
+            by hand; src/app/manifest.ts is still served at /manifest.webmanifest. No service worker. */}
+        <link rel="manifest" href="/manifest.webmanifest" />
+        <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-title" content="Journal" />
+        {/* "default", not "black-translucent": translucent always draws white status-bar text over the page, and
+            the header is white in light mode and scrolls away, so the time and battery would vanish. */}
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+        <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#111827" />
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <ThemeProvider>

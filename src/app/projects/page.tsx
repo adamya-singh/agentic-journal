@@ -825,7 +825,7 @@ function RoadmapStepper({
               value={goalDraft}
               onChange={(e) => setGoalDraft(e.target.value)}
               rows={2}
-              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
               placeholder="Define the project outcome"
             />
             <div className="mt-2 flex justify-end gap-2">
@@ -893,14 +893,14 @@ function RoadmapStepper({
               <input
                 value={newCheckpointTitle}
                 onChange={(e) => setNewCheckpointTitle(e.target.value)}
-                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                 placeholder="Checkpoint title"
                 autoFocus
               />
               <input
                 value={newCheckpointDescription}
                 onChange={(e) => setNewCheckpointDescription(e.target.value)}
-                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                 placeholder="Description (optional)"
               />
               <button
@@ -984,7 +984,7 @@ function RoadmapStepper({
                         [checkpoint.id]: { ...draft, title: e.target.value },
                       }))
                     }
-                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                   />
                   <select
                     value={draft.status}
@@ -997,7 +997,7 @@ function RoadmapStepper({
                         },
                       }))
                     }
-                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                    className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                   >
                     <option value="not-started">Not started</option>
                     <option value="in-progress">In progress</option>
@@ -1019,7 +1019,7 @@ function RoadmapStepper({
                       }))
                     }
                     rows={2}
-                    className="md:col-span-3 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
+                    className="md:col-span-3 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 focus:outline-none focus:ring-2 focus:ring-teal-500 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100"
                     placeholder="Checkpoint notes"
                   />
                 </div>
@@ -1037,7 +1037,7 @@ function RoadmapStepper({
                           [checkpoint.id]: e.target.value,
                         }))
                       }
-                      className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     >
                       <option value="">Link existing project task</option>
                       {linkableTasks.map((task) => (
@@ -1065,7 +1065,7 @@ function RoadmapStepper({
                           [checkpoint.id]: { ...taskDraft, text: e.target.value },
                         }))
                       }
-                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                       placeholder="New checkpoint task"
                     />
                     <select
@@ -1076,7 +1076,7 @@ function RoadmapStepper({
                           [checkpoint.id]: { ...taskDraft, listType: e.target.value as ListType },
                         }))
                       }
-                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     >
                       <option value="have-to-do">Have to do</option>
                       <option value="want-to-do">Want to do</option>
@@ -1090,7 +1090,7 @@ function RoadmapStepper({
                           [checkpoint.id]: { ...taskDraft, dueDate: e.target.value },
                         }))
                       }
-                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     />
                     <input
                       type="time"
@@ -1102,7 +1102,7 @@ function RoadmapStepper({
                           [checkpoint.id]: { ...taskDraft, dueTimeStart: e.target.value },
                         }))
                       }
-                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     />
                     <input
                       type="time"
@@ -1114,7 +1114,7 @@ function RoadmapStepper({
                           [checkpoint.id]: { ...taskDraft, dueTimeEnd: e.target.value },
                         }))
                       }
-                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+                      className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm max-sm:text-base text-gray-800 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                     />
                     <button
                       type="button"
@@ -1245,8 +1245,8 @@ function ProjectCard({
       }`}
     >
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/60">
-        <div className="flex items-center justify-between gap-3 mb-2">
-          <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <div className={`min-w-0 flex-1 ${isUnassigned ? '' : 'max-sm:basis-full'}`}>
             {isUnassigned ? (
               <h3 className="text-base font-semibold text-gray-700 dark:text-gray-100">
                 Unassigned
@@ -1529,7 +1529,7 @@ export default function ProjectsPage() {
               type="date"
               value={date}
               onChange={(e) => setDate(e.target.value)}
-              className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm text-gray-800 dark:text-gray-100"
+              className="px-3 py-1.5 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-sm max-sm:text-base text-gray-800 dark:text-gray-100"
             />
           </div>
         }

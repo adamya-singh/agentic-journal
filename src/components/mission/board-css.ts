@@ -45,8 +45,8 @@ export const BOARD_CSS = `
 .mi .chip[aria-pressed=true] .dot{background:var(--em);box-shadow:0 0 8px var(--em)}
 .mi .warn{flex-basis:100%;font-size:12.5px;color:var(--now)}
 .mi .split{display:flex;flex-wrap:wrap;gap:26px;align-items:flex-start}
-.mi .split>.main{flex:999 1 600px;min-width:0;display:grid;gap:14px}
-.mi .split>.side{flex:1 1 320px;max-width:440px;min-width:0;display:grid;gap:16px}
+.mi .split>.main{flex:999 1 600px;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}
+.mi .split>.side{flex:1 1 320px;max-width:440px;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}
 @media(max-width:700px){.mi .split>.side{max-width:none}}
 .mi .qgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:12px}
 .mi .qc{display:grid;gap:10px;align-content:start;padding:16px;border-radius:18px;background:var(--glass);box-shadow:inset 0 0 0 1px var(--line),inset 0 2px 0 -1px color-mix(in srgb,var(--now) 55%,transparent);transition:box-shadow .15s,transform .15s}

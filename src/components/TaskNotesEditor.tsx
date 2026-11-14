@@ -174,7 +174,7 @@ export function TaskNotesEditor({
           onChange={(e) => onChange(normalizeMarkdown(e.target.value))}
           rows={8}
           placeholder={placeholder}
-          className="w-full min-h-[180px] max-h-[280px] px-4 py-3 text-sm font-mono border-0 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 outline-none resize-y"
+          className="w-full min-h-[180px] max-h-[280px] px-4 py-3 text-sm max-sm:text-base font-mono border-0 bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-100 outline-none resize-y"
         />
       )}
     </div>

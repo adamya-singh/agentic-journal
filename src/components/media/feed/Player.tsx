@@ -311,7 +311,7 @@ export function ClipPlayer({
   return (
     <div
       className="relative w-full overflow-hidden bg-black"
-      style={{ aspectRatio: aspect ? String(Math.max(0.56, Math.min(aspect, 2.4))) : '16 / 9', maxHeight: '78vh' }}
+      style={{ aspectRatio: aspect ? String(Math.max(0.56, Math.min(aspect, 2.4))) : '16 / 9', maxHeight: '78svh' }}
     >
       <video
         ref={ref}

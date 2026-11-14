@@ -280,7 +280,7 @@ export function ChannelRules({
                   setShown(20);
                 }}
                 placeholder="Find a channel"
-                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-2 text-sm placeholder:text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-gray-700 dark:bg-gray-950"
+                className="w-full rounded-lg border border-gray-200 bg-white py-1.5 pl-8 pr-2 text-sm max-sm:text-base placeholder:text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 dark:border-gray-700 dark:bg-gray-950"
               />
             </label>
           </div>
@@ -376,7 +376,7 @@ export function ChannelRules({
       {toast && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900"
+          className="fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))] left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-xl bg-gray-900 px-4 py-2.5 text-sm text-white shadow-lg dark:bg-gray-100 dark:text-gray-900"
         >
           {toast.text}
           <button className="font-semibold underline" onClick={() => void undo(toast.saved)}>

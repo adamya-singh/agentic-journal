@@ -8,7 +8,7 @@ import React, {
 } from 'react';
 import { useCedarStore, useStyling } from 'cedar-os';
 import Container3DButton from '@/cedar/components/containers/Container3DButton';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, MessageCircle } from 'lucide-react';
 import InsetGlow from '@/cedar/components/ornaments/InsetGlow';
 
 /**
@@ -201,7 +201,8 @@ export const CollapsedButton = forwardRef<
 	return (
 		<div
 			ref={wrapperRef}
-			className={`${positionClasses} group !m-0`}
+			className={`${positionClasses} group !m-0 cedar-collapsed`}
+			data-side={side}
 			style={{
 				bottom: bottomOffset,
 				zIndex: 9999,
@@ -229,8 +230,33 @@ export const CollapsedButton = forwardRef<
 				<InsetGlow className='mr-2' />
 				<span className='truncate flex-1 text-left font-semibold'>{label}</span>
 			</Container3DButton>
+			{/* A phone: a round button in the corner, clear of the home indicator. A wide pill there covered the home
+			    page's ground (its chips and the sun); the home page's chips leave this corner free. */}
+			<style>{FAB_CSS}</style>
+			<button
+				type='button'
+				className='cedar-fab'
+				aria-label={label}
+				style={{ background: isDarkMode ? '#475569' : '#ffffff', color: isDarkMode ? '#f8fafc' : '#334155' }}
+				onClick={() => {
+					setShowChat(true);
+					onClick?.();
+				}}>
+				<MessageCircle className='w-5 h-5' aria-hidden='true' />
+			</button>
 		</div>
 	);
 });
 
 CollapsedButton.displayName = 'CollapsedButton';
+
+// Below 700px (where the home page's sky is a phone's) only the round button shows, wherever the pill was dragged.
+const FAB_CSS = `
+.cedar-fab{display:none}
+@media (max-width:699px){
+  .cedar-collapsed{bottom:max(8px,env(safe-area-inset-bottom,0px))!important;right:max(12px,env(safe-area-inset-right,0px))!important}
+  .cedar-collapsed[data-side=left]{right:auto!important;left:max(12px,env(safe-area-inset-left,0px))!important}
+  .cedar-collapsed>:not(.cedar-fab){display:none!important}
+  .cedar-collapsed .cedar-fab{display:grid;place-items:center;width:48px;height:48px;border-radius:50%;border:1px solid rgba(148,163,184,.45);box-shadow:0 8px 24px -8px rgba(0,0,0,.55);cursor:pointer}
+}
+`;

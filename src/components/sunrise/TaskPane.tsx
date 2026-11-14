@@ -10,8 +10,8 @@
 //   web tab, shown live in OpenClaw's own browser (BrowserSurface); he can paste an address for another.
 // - Right, his chats with OpenClaw about the task (WorkspaceChats). Folded away, their composer stays in one line
 //   under the surface.
-// On a phone it is one column: the tabs across the top, the brief behind a toggle, the chats as a sheet under the
-// surface. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
+// On a phone it is the whole screen, one part at a time: Brief, Work (the surfaces' tabs across its top) and Chat,
+// chosen at the foot, and as tall as the keyboard leaves room for. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
 // The engine grows the pane out of the task's form; this fills it.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -261,6 +261,9 @@ const BRIEF_AND_WORK_CSS = `
 .srp-line .mk{grid-column:1;min-width:18px;padding-top:1px;font:15.5px/1.6 var(--sans);color:var(--a);text-align:right;user-select:none}
 .srp-line.p .mk{display:none}
 .srp-line.p textarea{grid-column:1/-1}
+/* On a phone what is typed in is 16px or more: iOS zooms the page in on a smaller field when it is focused. */
+.cols-1 .srp-line textarea,.cols-1 .srp-line .shown,.cols-1 .srp-line .mk{font-size:16px}
+.cols-1 .srp-letter .srp-line textarea,.cols-1 .srp-letter .srp-line .shown{font-size:17px}
 .srp-line.h1 textarea{font:400 30px/1.15 var(--serif);padding:4px 0 2px}
 .srp-line.h2 textarea{font:400 23px/1.25 var(--serif);padding:8px 0 1px}
 .srp-line.h3 textarea{font:600 12.5px/1.6 var(--sans);letter-spacing:.08em;text-transform:uppercase;color:var(--a);padding-top:8px}
@@ -274,6 +277,7 @@ const BRIEF_AND_WORK_CSS = `
 .srp-line.done .tick{background:#1f8a52;border-color:#1f8a52;color:#fff}
 .srp-line.done textarea{color:#9a8676;text-decoration:line-through}
 .srp-line.dim textarea{font-size:12.5px;color:#9a8676}
+.cols-1 .srp-line.h3 textarea,.cols-1 .srp-line.dim textarea{font-size:16px}
 .srp-line.blank:not(:focus-within):not(.here) textarea{height:9px!important}
 .srp-line.here{background:linear-gradient(90deg,color-mix(in srgb,var(--a) 20%,transparent),color-mix(in srgb,var(--a) 6%,transparent));box-shadow:inset 3px 0 0 var(--a)}
 .srp-line:focus-within{background:color-mix(in srgb,var(--a) 9%,transparent)}
@@ -451,19 +455,57 @@ const WORKSPACE_CSS = `
 /* Two parts fit, not three: the brief or the chats beside the surface, one at a time. */
 .srp.cols-2 .srw-brief{width:clamp(320px,40%,400px)}
 .srp.cols-2 .srw-chats{width:clamp(300px,38%,360px)}
-/* A phone: one column. The brief opens over it; the chats are a sheet under the surface. */
-.srp.cols-1{flex-direction:column}
-.cols-1 .srw-brief{position:absolute;inset:0;z-index:6;width:auto;border-right:0;background:linear-gradient(180deg,#fbfcff 0%,#fffaf5 55%,#fff4e8 100%)}
-.cols-1 .srw-brief .srp-bar{padding:12px 12px 0 16px}
-.cols-1 .srw-brief .srp-scroll{padding:6px 16px 16px}
-.cols-1 .srw-foot{justify-content:flex-start}
-.cols-1 .srw-mid{padding:8px 8px 0}
-.cols-1 .srw-tab{padding:8px 10px 9px}
+/* A phone: the task is the whole screen (sunrise-css .sr-pane.full). A bar on top (back, its name), one part at a
+   time (Brief, Work or Chat), and the tabs between them at the foot, put away while the keyboard is up. The three
+   parts share one cell and stay drawn, so each keeps its scroll and its state; only the chosen one is seen. */
+.srp.ws.cols-1{display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr) auto auto}
+.cols-1>.srw-top{grid-row:1;display:flex;align-items:center;gap:2px;min-width:0;padding:env(safe-area-inset-top) max(14px,env(safe-area-inset-right)) 0 max(2px,env(safe-area-inset-left));border-bottom:1px solid rgba(60,30,10,.1);background:rgba(255,255,255,.55);touch-action:none}
+.srp .srw-back{flex:none;width:46px;height:48px;display:grid;place-items:center;padding:0 0 4px;border:0;background:none;color:#22130a;font:300 36px/1 var(--sans);cursor:pointer}
+.srw-top b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 16px var(--sans);color:#22130a}
+.cols-1>.srw-brief,.cols-1>.srw-mid,.cols-1>.srw-chats{grid-row:2;grid-column:1;min-height:0;visibility:hidden}
+.cols-1.on-brief>.srw-brief,.cols-1.on-work>.srw-mid,.cols-1.on-chat>.srw-chats{visibility:visible}
+.cols-1>.srw-brief{position:relative;width:auto;border-right:0}
+.cols-1 .srw-brief .srp-bar{padding:12px 16px 0}
+.cols-1 .srw-brief .srp-scroll{padding:6px 16px 24px}
+.cols-1 .srw-foot{justify-content:flex-start;align-items:center;padding:10px max(16px,env(safe-area-inset-right)) 12px max(16px,env(safe-area-inset-left))}
+.srp.cols-1 .srw-foot button{min-height:44px;padding:0 22px;font-size:15px}
+.srw-hint{flex:1 1 100%;margin:0;font-size:12.5px;color:#7a5a42}
+.cols-1>.srw-mid{padding:6px 8px 8px}
+.cols-1 .srw-tablist{overscroll-behavior-x:contain}
+.srp.cols-1 .srw-tab{min-height:44px;padding:8px 12px}
 .cols-1 .srw-tabwrap{max-width:min(150px,100%)}
-.cols-1 .srw-live em{display:none}
 .cols-1 .srw-tabwrap:has(>[aria-selected=true]){max-width:min(190px,100%)}
+.cols-1 .srw-tabwrap.closes .srw-tab{padding-right:40px}
+.srp.cols-1 .srw-tabx{right:0;width:40px;height:44px;margin-top:-22px;border-radius:12px;font-size:20px}
+.srp.cols-1 .srw-ico{height:44px;min-width:44px;margin-bottom:2px;font-size:20px}
+.cols-1 .srw-add{flex:1 1 60%;margin-bottom:2px}
+.cols-1 .srw-add input{height:44px}
 .cols-1 .srw-work{padding:14px 12px 24px}
-.cols-1 .srw-chats{flex:0 0 60%;width:auto;border-left:0;border-top:1px solid rgba(60,30,10,.14);background:#fffaf4;box-shadow:0 -14px 30px -22px rgba(60,30,10,.6)}
+.cols-1>.srw-chats{width:auto;border-left:0;background:rgba(255,255,255,.5)}
+.srp.cols-1>.srw-live{grid-row:3;margin:0 8px 6px;min-height:44px}
+.cols-1>.srw-phone{grid-row:4;display:flex;padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);border-top:1px solid rgba(60,30,10,.14);background:rgba(255,250,244,.96);touch-action:none}
+.srp .srw-phone button{position:relative;flex:1 1 0;min-width:0;min-height:52px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 6px;border:0;background:none;color:#6a4a32;font:500 15px var(--sans);cursor:pointer}
+.srp .srw-phone button[aria-selected=true]{color:#22130a;font-weight:650}
+.srw-phone button[aria-selected=true]::before{content:"";position:absolute;left:24%;right:24%;top:-1px;height:3px;border-radius:0 0 3px 3px;background:var(--a)}
+.srw-phone em{min-width:18px;height:18px;padding:0 5px;border-radius:999px;background:var(--a);color:#fff;font:600 11px/18px var(--mono);font-style:normal}
+.cols-1.kb>.srw-phone,.cols-1.kb>.srw-live{display:none}
+/* What is typed in is 16px (iOS zooms in on anything smaller), and what is pressed is a finger wide. */
+.cols-1 .srp-letter label input,.cols-1 .srp-fields input,.cols-1 .srp-slides .notes textarea,.cols-1 .srp-when input,.cols-1 .srw-add input,.cols-1 .srw-paste input{font-size:16px}
+.cols-1 .srp-when input,.cols-1 .srw-paste input{height:44px}
+.cols-1 .srp-line.blank:not(:focus-within):not(.here) textarea{height:26px!important}
+.cols-1 .srp-line.check,.cols-1 .srp-line.done{padding-top:6px;padding-bottom:6px}
+.cols-1 .srp-line .tick{position:relative}
+.cols-1 .srp-line .tick::after{content:"";position:absolute;inset:-11px -8px -11px -11px}
+.srp.cols-1 .srp-chip{position:relative;min-height:36px;padding:6px 14px;font-size:14px}
+.srp.cols-1 .srp-chip::after{content:"";position:absolute;inset:-4px -2px}
+.srp.cols-1 .srp-btn,.srp.cols-1 .srp-door,.srp.cols-1 .srp-jump,.cols-1 .srp-links a{min-height:44px;display:inline-flex;align-items:center}
+.srp.cols-1 .srp-who button{padding:12px 6px;margin:-12px -6px;font-size:13px}
+.cols-1 .srp-trail li.more{padding:10px 14px}
+.cols-1 .srp-rel button{min-height:44px;align-items:center}
+.cols-1 .srp-more>summary{min-height:44px}
+.cols-1 .srp-sec summary{padding:11px 0}
+.cols-1 .srp-jumprow a,.cols-1 .srp-under a:not(.srp-btn){padding:12px 0}
+.cols-1 .srp-oc.guess::after{content:" · may be wrong"}
 .cols-1 .srk-mini{margin:0 -8px;padding:8px 10px 10px}
 .srk-mini .srk-box .srk-box{flex:1;min-width:0}
 .srw-mid>.srk-mini{margin:8px -12px -12px;border-radius:0}
@@ -613,7 +655,7 @@ function Doc({ value, onChange, focusJump, lit }: { value: string; onChange: (te
     const el = e.currentTarget, line = lines[index];
     const at = el.selectionStart, plain = el.selectionStart === el.selectionEnd;
     const kind = lineKind(line.mark);
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       setHere(null);
       // Enter on an empty list line ends the list.
@@ -1007,7 +1049,7 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
 function Oc({ item }: { item: { oc?: true; src: string } }) {
   if (!item.oc) return null;
   const read = SRC_LABEL[item.src];
-  return <span className="srp-oc" title={read ? `OpenClaw read this in ${read}` : 'OpenClaw’s inference, not something it read. May be wrong.'}>{read ? `OpenClaw · ${read}` : 'OpenClaw guess'}</span>;
+  return <span className={`srp-oc${read ? '' : ' guess'}`} title={read ? `OpenClaw read this in ${read}` : 'OpenClaw’s inference, not something it read. May be wrong.'}>{read ? `OpenClaw · ${read}` : 'OpenClaw guess'}</span>;
 }
 
 /** A fix OpenClaw suggests beside a warning: press, confirm, done. */
@@ -1178,8 +1220,10 @@ const WORK_TAGS: Record<WorkBlock['kind'], string> = {
 // How wide the opened pane is for a sky this wide (engine.ts workRect), and how many of the three parts fit.
 const paneWidthFor = (sky: number) => (sky < 700 ? sky - 16 : Math.min(1480, sky - 32));
 const colsFor = (sky: number): 1 | 2 | 3 => (sky < 700 ? 1 : paneWidthFor(sky) >= 1180 ? 3 : 2);
+// A phone shows one part of the workspace at a time; these are the tabs at its foot.
+const PHONE_TABS = [['brief', 'Brief'], ['work', 'Work'], ['chat', 'Chat']] as const;
 
-export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo }: {
+export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo, startTab, onTab }: {
   taskId: string;
   data: SunriseData;
   onClose: () => void;
@@ -1187,6 +1231,10 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   onChanged: () => void;
   onLetGo: (target: { id: string; listType: string; short: string; title: string }) => void;
   onUndo: (text: string, run: () => Promise<unknown>) => void;
+  /** The part a link asked for (?tab=): a phone opens on that tab, a wide screen opens its column. */
+  startTab?: 'brief' | 'work' | 'chat';
+  /** The phone's tab as it changes, for the address; a wide screen, with no tabs, says 'work'. */
+  onTab?: (tab: 'brief' | 'work' | 'chat') => void;
 }) {
   const [brief, setBrief] = React.useState<TaskBrief | null | undefined>(undefined);   // undefined while loading
   const [work, setWork] = React.useState<ResolvedWork | null | undefined>(undefined);
@@ -1210,6 +1258,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     setCols(first);
     setBriefOpen(first >= 2);
     setChatsOpen(first === 3);
+    if (first >= 2 && startTab === 'chat') { setChatsOpen(true); if (first === 2) setBriefOpen(false); }
     if (typeof ResizeObserver === 'undefined') return;
     const watch = new ResizeObserver(() => setCols(colsFor(sky.clientWidth)));
     watch.observe(sky);
@@ -1222,9 +1271,47 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     watch.observe(el);
     return () => watch.disconnect();
   }, []);
-  // With room for two, the brief and the chats take turns beside the surface.
-  const showBrief = (on: boolean) => { setBriefOpen(on); if (on && cols === 2) setChatsOpen(false); };
-  const showChats = (on: boolean) => { setChatsOpen(on); if (on && cols === 2) setBriefOpen(false); };
+  // On a phone the pane is the whole screen and shows one part at a time, chosen by the tabs at its foot. It opens
+  // on the work.
+  const phone = cols === 1;
+  const [tab, setTab] = React.useState<'brief' | 'work' | 'chat'>(startTab ?? 'work');
+  const tabSink = React.useRef(onTab);
+  tabSink.current = onTab;
+  React.useEffect(() => { tabSink.current?.(phone ? tab : 'work'); }, [phone, tab]);
+  // The pane is exactly the part of the screen the keyboard leaves, so what is typed in sits right above it; the
+  // tabs step aside while the keyboard is up. Pinch-zoomed, the pane keeps the whole window.
+  const [keyboard, setKeyboard] = React.useState(false);
+  React.useEffect(() => {
+    if (!phone) return;
+    const pane = root.current?.closest<HTMLElement>('.sr-pane');
+    const vv = window.visualViewport;
+    if (!pane || !vv) return;   // without it the pane is 100dvh tall (sunrise-css)
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const pinched = vv.scale > 1.05;
+      pane.style.setProperty('--vvh', `${Math.round(pinched ? window.innerHeight : vv.height)}px`);
+      pane.style.setProperty('--vvt', `${Math.round(pinched ? 0 : Math.max(0, vv.offsetTop))}px`);
+      setKeyboard(!pinched && window.innerHeight - vv.height > 150);
+    };
+    const later = () => { if (!frame) frame = window.requestAnimationFrame(apply); };
+    apply();
+    vv.addEventListener('resize', later);
+    vv.addEventListener('scroll', later);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      vv.removeEventListener('resize', later);
+      vv.removeEventListener('scroll', later);
+      pane.style.removeProperty('--vvh');
+      pane.style.removeProperty('--vvt');
+      setKeyboard(false);
+    };
+  }, [phone]);
+  // With room for two, the brief and the chats take turns beside the surface. On a phone each is a tab.
+  const showBrief = (on: boolean) => { if (phone) { setTab(on ? 'brief' : 'work'); return; } setBriefOpen(on); if (on && cols === 2) setChatsOpen(false); };
+  const showChats = (on: boolean) => { if (phone) { setTab(on ? 'chat' : 'work'); return; } setChatsOpen(on); if (on && cols === 2) setBriefOpen(false); };
+  const briefShown = briefOpen || phone;
+  const chatsShown = chatsOpen || phone;
   React.useEffect(() => { if (cols === 2 && briefOpen && chatsOpen) setChatsOpen(false); }, [cols, briefOpen, chatsOpen]);
 
   const loadBrief = React.useCallback(() => {
@@ -1282,7 +1369,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const svg = iconOf(icon);
     host.prepend(svg);
     return () => svg.remove();
-  }, [icon, briefOpen]);
+  }, [icon, briefShown]);
 
   // ---- The surfaces: the work, and one page per real link. Which is showing, and which pages he has opened.
   const [pasted, setPasted] = React.useState<string[]>([]);
@@ -1373,7 +1460,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const page = pages[selected.id];
     return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
   }, [selected, pages, hasWork]);
-  const chats = useTaskChats(taskId, chatsOpen);
+  const chats = useTaskChats(taskId, phone ? tab === 'chat' : chatsOpen);
   // What OpenClaw is doing about each surface, as far as the chats say: a chat whose last request was sent from
   // it has a turn out, or an answer he has not looked at. Nothing more is known, and nothing more is said.
   const activity = React.useMemo(() => {
@@ -1422,13 +1509,14 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0 || isInternal(href)) return;
     if (showPage(href) === null) return;
     event.preventDefault();
-    if (cols === 1) setBriefOpen(false);
+    if (phone) setTab('work');
   };
 
   const showSurface = React.useCallback((ref: ChatSurfaceRef) => {
     if (ref.kind === 'work') choose('work');
     else if (ref.url) showPage(ref.url);
-  }, [choose, showPage]);
+    if (phone) setTab('work');
+  }, [choose, showPage, phone]);
   const [adding, setAdding] = React.useState(false);
   const [addText, setAddText] = React.useState('');
   const [addBad, setAddBad] = React.useState(false);
@@ -1499,10 +1587,28 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const webCount = surfaces.length - 1;
   const doing = selected ? activity[selected.id] : undefined;
   const chatKeys = React.useMemo(() => chats.threads.map((t) => t.sessionKey), [chats.threads]);
+  // What OpenClaw is doing about the surface that is showing, as far as the chats say. It opens that chat.
+  const live = doing && (
+    <button type="button" className={`srw-live ${doing.state}`} onClick={() => { showChats(true); chats.open(doing.threadId); }}
+      title={doing.state === 'working' ? 'A chat about this has a turn out to OpenClaw. Open that chat.' : 'OpenClaw answered in a chat about this. Open that chat.'}>
+      <i aria-hidden="true" />
+      <b role="status">{doing.state === 'working' ? 'OpenClaw is working on this' : 'OpenClaw answered'}</b>
+      {doing.ask && <span>· {doing.ask}</span>}
+      <em>Open the chat</em>
+    </button>
+  );
+  // The Chat tab says when a chat waits on him (OpenClaw answered and he has not looked) or has a turn out.
+  const chatBusy = chats.working > 0 || !!chats.thread?.pending;
 
   return (
-    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
-      {briefOpen && (
+    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
+      {phone && (
+        <header className="srw-top">
+          <button type="button" className="srw-back" onClick={onClose} aria-label="Close the task, back to Sunrise">‹</button>
+          <b>{title || short}</b>
+        </header>
+      )}
+      {briefShown && (
         <aside className="srw-brief" aria-label="The brief">
           <header className="srp-bar">
             <span className="srp-eyebrow" ref={eyebrow}>
@@ -1510,7 +1616,6 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
               {when?.where && <span className="srp-where">{when.where}</span>}
             </span>
-            {cols === 1 && <div className="srp-acts"><button type="button" className="x" onClick={() => setBriefOpen(false)} aria-label="Back to the work">✕</button></div>}
           </header>
           <div className="srp-scroll">
             <div className="srp-col">
@@ -1566,12 +1671,13 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
               title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
             <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
+            {phone && <p className="srw-hint">Let go: no longer worth doing. It leaves your lists without counting as done.</p>}
           </footer>
         </aside>
       )}
       <div className="srw-mid">
         <div className="srw-tabs">
-          <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief"><i className="pane" aria-hidden="true" /></button>
+          {!phone && <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief"><i className="pane" aria-hidden="true" /></button>}
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
             {surfaces.map((surface) => {
               const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work';
@@ -1599,10 +1705,14 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
           ) : (
             <button type="button" className="srw-ico" onClick={() => setAdding(true)} aria-label="Open another page in OpenClaw’s browser" title="Open a page in OpenClaw’s browser">+</button>
           )}
-          <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="Chats with OpenClaw about this task">
-            Chats{chats.threads.length > 0 && <em className={chats.waiting > 0 ? 'waiting' : undefined}>{chats.threads.length}</em>}
-          </button>
-          <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
+          {!phone && (
+            <>
+              <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="Chats with OpenClaw about this task">
+                Chats{chats.threads.length > 0 && <em className={chats.waiting > 0 ? 'waiting' : undefined}>{chats.threads.length}</em>}
+              </button>
+              <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
+            </>
+          )}
         </div>
         <div ref={surfaceBox} className="srw-surface" role="tabpanel" aria-label={selected?.label}>
           {selected?.kind === 'web' ? (
@@ -1610,7 +1720,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               key={selected.id}
               surface={selected}
               armed={armed[selected.id] === true}
-              covered={cols === 1 && briefOpen}
+              covered={phone && tab !== 'work'}
               opened={opened[selected.id] ?? null}
               narrow={cols === 1}
               watching={doing?.state === 'working'}
@@ -1658,27 +1768,32 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                     <span>It leaves your list and counts as cleared. You can undo it right after.</span>
                   </div>
                 )}
-                {!briefOpen && error && <p className="srp-err" role="alert">{error}</p>}
+                {(phone ? tab === 'work' : !briefOpen) && error && <p className="srp-err" role="alert">{error}</p>}
               </div>
             </div>
           )}
         </div>
-        {doing && (
-          <button type="button" className={`srw-live ${doing.state}`} onClick={() => { showChats(true); chats.open(doing.threadId); }}
-            title={doing.state === 'working' ? 'A chat about this has a turn out to OpenClaw. Open that chat.' : 'OpenClaw answered in a chat about this. Open that chat.'}>
-            <i aria-hidden="true" />
-            <b role="status">{doing.state === 'working' ? 'OpenClaw is working on this' : 'OpenClaw answered'}</b>
-            {doing.ask && <span>· {doing.ask}</span>}
-            <em>Open the chat</em>
-          </button>
-        )}
-        {!chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
+        {!phone && live}
+        {!phone && !chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
       </div>
-      {chatsOpen && (
+      {chatsShown && (
         <aside className="srw-chats">
-          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} onShowSurface={showSurface} onClose={() => setChatsOpen(false)}
+          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} phone={phone} onShowSurface={showSurface} onClose={phone ? undefined : () => setChatsOpen(false)}
             below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded} />} />
         </aside>
+      )}
+      {phone && tab !== 'chat' && live}
+      {phone && (
+        <nav className="srw-phone" role="tablist" aria-label="This task">
+          {PHONE_TABS.map(([id, label]) => (
+            <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
+              {label}
+              {id === 'chat' && (chats.waiting > 0
+                ? <em role="img" aria-label={`${chats.waiting} waiting on you`}>{chats.waiting}</em>
+                : chatBusy ? <i className="srw-dot working" role="img" aria-label="OpenClaw is working" /> : null)}
+            </button>
+          ))}
+        </nav>
       )}
     </div>
   );

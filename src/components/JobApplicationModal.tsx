@@ -345,7 +345,7 @@ export function JobApplicationModal({
         backdropArmedRef.current = false;
       }}
     >
-      <div className="max-h-[96vh] w-full overflow-y-auto rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:max-w-3xl sm:rounded-2xl">
+      <div className="max-h-[96dvh] w-full overflow-y-auto overscroll-contain rounded-t-2xl bg-white shadow-2xl dark:bg-slate-900 sm:max-w-3xl sm:rounded-2xl">
         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-wide text-indigo-600 dark:text-indigo-300">
@@ -359,7 +359,7 @@ export function JobApplicationModal({
             </h2>
             <p className="truncate text-sm text-slate-500 dark:text-slate-400">{listing.company}</p>
             {pendingQuestions.length > 0 && (
-              <p className="mt-1 flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+              <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-slate-500 dark:text-slate-400">
                 <span className="font-medium">
                   {answeredCount} of {pendingQuestions.length} answered
                 </span>
@@ -399,7 +399,7 @@ export function JobApplicationModal({
                 onChange={(event) =>
                   setResumeVariant(event.target.value as JobApplicationResumeVariant)
                 }
-                className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-900"
+                className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-900"
               >
                 <option value="swe">Software engineering</option>
                 <option value="mle">Machine learning</option>
@@ -638,7 +638,7 @@ export function JobApplicationModal({
         </div>
 
         {application.status !== 'submitted' && application.status !== 'closed' && (
-          <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 py-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+          <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {unresolvedQuestions.length > 0
                 ? `${unresolvedQuestions.length} question${unresolvedQuestions.length === 1 ? '' : 's'} still unanswered`
@@ -760,7 +760,7 @@ function ApplicationScreenshotGallery({
 
       {selected && (
         <div
-          className="fixed inset-0 z-[70] flex flex-col bg-slate-950/95 p-3 sm:p-6"
+          className="fixed inset-0 z-[70] flex flex-col bg-slate-950/95 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-6"
           role="dialog"
           aria-modal="true"
           aria-label={`Application screenshot ${selectedIndex! + 1} of ${images.length}`}
@@ -1050,7 +1050,7 @@ function QuestionField({
         <select
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
-          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-950"
         >
           <option value="">Choose…</option>
           <option value="submitted">It was submitted</option>
@@ -1069,13 +1069,13 @@ function QuestionField({
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
           rows={3}
-          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950"
+          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-950"
         />
       ) : (
         <input
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
-          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm dark:border-slate-700 dark:bg-slate-950"
+          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-950"
         />
       )}
       {!question.required && (
@@ -1270,7 +1270,7 @@ function EmployerUpdatesSection({
               value={application.employerStage ?? ''}
               disabled={saving}
               onChange={(event) => setStage(event.target.value)}
-              className="min-h-8 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+              className="min-h-8 rounded border border-slate-300 bg-white px-2 py-1 text-sm max-sm:text-base text-slate-900 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
             >
               <option value="">No reply yet</option>
               {EMPLOYER_STAGES.map((stage) => (

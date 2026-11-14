@@ -467,7 +467,7 @@ export default function LibraryPage() {
               type="date"
               value={dateFrom}
               onChange={(event) => setDateFrom(event.target.value)}
-              className="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200"
+              className="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 max-sm:text-base"
             />
           </label>
           <label className="flex items-center gap-1">
@@ -476,7 +476,7 @@ export default function LibraryPage() {
               type="date"
               value={dateTo}
               onChange={(event) => setDateTo(event.target.value)}
-              className="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200"
+              className="px-2 py-1 rounded border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 max-sm:text-base"
             />
           </label>
           {(query || projectFilter || taskStatuses.size > 0 || journalStatuses.size > 0 || dateFrom || dateTo || typeFilter !== 'all') && (
@@ -593,7 +593,8 @@ export default function LibraryPage() {
                                 event.stopPropagation();
                                 setMenuTaskId((prev) => (prev === row.id ? null : row.id));
                               }}
-                              className="p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800"
+                              aria-label="Task actions"
+                              className="relative p-1 rounded text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-200 dark:hover:bg-gray-800 after:absolute after:-inset-2.5 after:content-['']"
                             >
                               <MoreHorizontal className="w-4 h-4" />
                             </button>
@@ -602,7 +603,7 @@ export default function LibraryPage() {
                                 {row.source === 'general' && (
                                   <button
                                     onClick={() => setEditRow(row)}
-                                    className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+                                    className="w-full text-left px-3 py-1.5 max-sm:py-3 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
                                   >
                                     Edit
                                   </button>
@@ -611,13 +612,13 @@ export default function LibraryPage() {
                                   <>
                                     <button
                                       onClick={() => promoteMisc(row, 'have-to-do')}
-                                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+                                      className="w-full text-left px-3 py-1.5 max-sm:py-3 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
                                     >
                                       Promote → Have to Do
                                     </button>
                                     <button
                                       onClick={() => promoteMisc(row, 'want-to-do')}
-                                      className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
+                                      className="w-full text-left px-3 py-1.5 max-sm:py-3 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200"
                                     >
                                       Promote → Want to Do
                                     </button>
@@ -625,7 +626,7 @@ export default function LibraryPage() {
                                 )}
                                 <button
                                   onClick={() => deleteTask(row)}
-                                  className="w-full text-left px-3 py-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 text-red-600 dark:text-red-400"
+                                  className="w-full text-left px-3 py-1.5 max-sm:py-3 hover:bg-gray-50 dark:hover:bg-gray-700 text-red-600 dark:text-red-400"
                                 >
                                   Delete
                                 </button>

@@ -166,7 +166,7 @@ export function SegmentedControl<T extends string | number>({
 }
 
 export const CONTROL =
-  'ov-ctl min-h-9 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-900/60';
+  'ov-ctl min-h-9 rounded border border-slate-300 bg-white px-2 py-1 text-sm max-sm:text-base text-slate-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:focus:ring-indigo-900/60';
 export function Field({
   label,
   children,
@@ -242,6 +242,28 @@ export function InfoTip({ label, children }: { label: string; children: React.Re
   const [open, setOpen] = React.useState(false);
   const id = React.useId();
   const ref = React.useRef<HTMLSpanElement>(null);
+  const noteRef = React.useRef<HTMLSpanElement>(null);
+  // The note opens to the right of its button. On a narrow screen that runs past the screen edge, or past a
+  // card that clips its overflow, so slide it left until it fits (never past the left edge of that box).
+  React.useLayoutEffect(() => {
+    const note = noteRef.current;
+    if (!open || !note) return;
+    note.style.transform = '';
+    let right = window.innerWidth - 8;
+    let left = 8;
+    for (let el = note.parentElement; el && el !== document.body; el = el.parentElement) {
+      const style = getComputedStyle(el);
+      if (style.overflowX !== 'visible') {
+        const box = el.getBoundingClientRect();
+        right = Math.min(right, box.right - 4);
+        left = Math.max(left, box.left + 4);
+        break;
+      }
+    }
+    const rect = note.getBoundingClientRect();
+    const shift = Math.min(rect.right - right, rect.left - left);
+    if (shift > 0) note.style.transform = `translateX(-${Math.round(shift)}px)`;
+  }, [open]);
   React.useEffect(() => {
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
@@ -271,6 +293,7 @@ export function InfoTip({ label, children }: { label: string; children: React.Re
       </button>
       {open && (
         <span
+          ref={noteRef}
           id={id}
           role="note"
           className="ov-note absolute left-0 top-6 z-30 w-72 max-w-[80vw] rounded-md border border-slate-200 bg-white p-3 text-xs font-normal normal-case tracking-normal text-slate-600 shadow-lg dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300"

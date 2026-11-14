@@ -51,7 +51,7 @@ async function api<T>(path = '', body?: unknown): Promise<T> {
 const button =
   'inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition hover:bg-gray-100 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500';
 const field =
-  'rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm dark:border-gray-700 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400';
+  'rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-sm max-sm:text-base dark:border-gray-700 dark:bg-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-400';
 const SORTS: { value: BookmarkSort; label: string }[] = [
   { value: 'saved', label: 'Recently saved' },
   { value: 'saved-oldest', label: 'Oldest saved' },
@@ -788,7 +788,7 @@ export default function BookmarksPage() {
                   value={filters.q}
                   onChange={(e) => set({ q: e.target.value })}
                   placeholder="Search posts, people, links…"
-                  className="w-full rounded-xl bg-transparent py-2 pl-10 pr-10 text-sm outline-none focus:ring-2 focus:ring-indigo-400"
+                  className="w-full rounded-xl bg-transparent py-2 pl-10 pr-10 text-sm max-sm:text-base outline-none focus:ring-2 focus:ring-indigo-400"
                 />
                 <kbd className="pointer-events-none absolute right-3 top-1/2 hidden -translate-y-1/2 rounded border border-gray-200 px-1.5 text-[10px] text-gray-400 sm:block dark:border-gray-700">
                   /
@@ -819,7 +819,7 @@ export default function BookmarksPage() {
                 <select
                   value={filters.sort}
                   onChange={(e) => set({ sort: e.target.value as BookmarkSort })}
-                  className={`${field} !border-0 !bg-gray-100 !py-2 pl-8 text-xs font-medium dark:!bg-gray-800`}
+                  className={`${field} !border-0 !bg-gray-100 !py-2 pl-8 text-xs max-sm:text-base font-medium dark:!bg-gray-800`}
                 >
                   {SORTS.map((s) => (
                     <option key={s.value} value={s.value}>
@@ -877,7 +877,7 @@ export default function BookmarksPage() {
                     aria-label="Filter by tag"
                     value=""
                     onChange={(e) => set({ tag: e.target.value })}
-                    className="rounded-full border-0 bg-transparent py-0.5 text-xs text-gray-400 lg:hidden"
+                    className="rounded-full border-0 bg-transparent py-0.5 text-xs max-sm:text-base text-gray-400 lg:hidden"
                   >
                     <option value="">+ Tag</option>
                     {tags.map((t) => (
@@ -1201,7 +1201,7 @@ export default function BookmarksPage() {
                     <X size={20} />
                   </Dialog.Close>
                 </div>
-                <div className="space-y-6 px-6 py-7 sm:px-9">
+                <div className="space-y-6 px-6 pt-7 pb-[max(1.75rem,env(safe-area-inset-bottom))] sm:px-9">
                   {error && (
                     <p
                       role="alert"

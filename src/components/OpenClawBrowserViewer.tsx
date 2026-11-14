@@ -183,7 +183,7 @@ export function OpenClawBrowserViewer({
           onChange={(event) => setAddress(event.target.value)}
           onFocus={() => setEditingAddress(true)}
           onBlur={() => setEditingAddress(false)}
-          className="h-8 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-xs text-slate-200"
+          className="h-8 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-xs max-sm:text-base text-slate-200"
           aria-label="Address"
           spellCheck={false}
         />
@@ -282,7 +282,7 @@ export function OpenClawBrowserViewer({
             value={typed}
             onChange={(event) => setTyped(event.target.value)}
             placeholder="Type into the focused field…"
-            className="h-9 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 placeholder:text-slate-500"
+            className="h-9 min-w-0 flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 text-sm max-sm:text-base text-slate-100 placeholder:text-slate-500"
           />
           <button type="submit" className="inline-flex h-9 items-center gap-1.5 rounded-md border border-slate-700 px-3 text-sm text-slate-200 hover:bg-slate-800">
             <Send className="h-3.5 w-3.5" /> Type

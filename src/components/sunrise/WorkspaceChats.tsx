@@ -93,6 +93,16 @@ button.srk-about:hover{border-color:var(--a)}
 .srk-orb.working{animation:srp-breathe 1.1s ease-in-out infinite}
 .srk-orb em{position:absolute;right:-4px;top:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#22130a;color:#fff6ec;font:600 10px/16px var(--mono);font-style:normal;text-align:center}
 .srk-orb.waiting em{background:var(--a)}
+/* A phone: the chats are the whole Chat tab. What is typed in is 16px (iOS zooms in on anything smaller), and what
+   is pressed is a finger wide. */
+.cols-1 .srk-box textarea{font-size:16px;max-height:160px}
+.srp.cols-1 .srk-send{height:44px;padding:0 18px;font-size:15px}
+.srp.cols-1 .srk-back{padding:12px 8px;margin:-12px -8px;font-size:15px}
+.srp.cols-1 .srk-about{position:relative;min-height:28px}
+.srp.cols-1 .srk-about::before{content:"";position:absolute;inset:-8px -2px}
+.cols-1 .srk-sugg button{min-height:44px;padding:8px 14px;font-size:15px}
+.cols-1 .srk-thread a{display:inline-block;padding:10px 0;margin:-10px 0}
+.cols-1 .srk-head{padding:12px 12px 8px 16px}
 `;
 
 const POLL_BUSY_MS = 2500;
@@ -238,13 +248,21 @@ export function AboutChip({ about, onShow, said }: { about: ChatSurfaceRef; onSh
     : <span className={`srk-about${said ? ' said' : ''}`} title={title}>{inner}</span>;
 }
 
+/** A touch screen's keyboard has one Return key and no Shift+Enter: there it makes a new line and Send sends. */
+function useTouchKeyboard(): boolean {
+  const [coarse] = React.useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches);
+  return coarse;
+}
+
 /**
- * The one composer. Enter sends and Shift+Enter makes a new line; nothing typed here reaches the page's
- * shortcuts; Escape first leaves the field. `oneLine` is its folded form under the surface.
+ * The one composer. Enter sends and Shift+Enter makes a new line (on a phone, or any touch screen, Enter makes a new
+ * line and only Send sends); nothing typed here reaches the page's shortcuts; Escape first leaves the field.
+ * `oneLine` is its folded form under the surface.
  */
-export function ChatComposer({ chats, about, oneLine, autoFocus, onShowSurface }: {
-  chats: TaskChats; about: ChatSurfaceRef | null; oneLine?: boolean; autoFocus?: boolean; onShowSurface?: (about: ChatSurfaceRef) => void;
+export function ChatComposer({ chats, about, oneLine, autoFocus, touch, onShowSurface }: {
+  chats: TaskChats; about: ChatSurfaceRef | null; oneLine?: boolean; autoFocus?: boolean; touch?: boolean; onShowSurface?: (about: ChatSurfaceRef) => void;
 }) {
+  const newlines = useTouchKeyboard() || !!touch;
   const ref = React.useRef<HTMLTextAreaElement>(null);
   const pending = !!chats.thread?.pending;
   const shown = chats.current;
@@ -261,7 +279,7 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, onShowSurface }
     // What is typed here is his message and nothing else: no shortcut of the page sees it.
     e.stopPropagation();
     if (e.key === 'Escape') { e.preventDefault(); e.currentTarget.blur(); return; }
-    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && !newlines) { e.preventDefault(); submit(); }
   };
   const placeholder = chats.thread ? (pending ? 'OpenClaw is answering…' : 'Message OpenClaw…') : chats.current === null && chats.threads.length > 0 ? 'Start a new chat with OpenClaw…' : 'Ask OpenClaw about this, or tell it what to do…';
   const box = (
@@ -276,6 +294,7 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, onShowSurface }
         onChange={(e) => chats.setDraft(e.target.value)}
         onKeyDown={onKeyDown}
         onKeyUp={(e) => e.stopPropagation()}
+        enterKeyHint={newlines ? 'enter' : 'send'}
       />
       <button type="button" className="srk-send" disabled={!chats.draft.trim() || chats.sending || pending} onClick={submit}>Send</button>
     </div>
@@ -310,9 +329,12 @@ const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface 
   && was.message.at === now.message.at && was.message.about?.kind === now.message.about?.kind && was.message.about?.label === now.message.about?.label
   && was.message.about?.url === now.message.about?.url && was.message.from === now.message.from);
 
-/** The chats panel: the list, or the one chat that is open. */
-export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, below }: {
-  chats: TaskChats; about: ChatSurfaceRef | null; autoFocus: boolean; onShowSurface: (about: ChatSurfaceRef) => void; onClose?: () => void;
+/**
+ * The chats panel: the list, or the one chat that is open. `phone` is the whole Chat tab of a phone's workspace:
+ * a new chat can always be started, and the composer leaves Enter for new lines.
+ */
+export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onClose, below }: {
+  chats: TaskChats; about: ChatSurfaceRef | null; autoFocus: boolean; phone?: boolean; onShowSurface: (about: ChatSurfaceRef) => void; onClose?: () => void;
   below?: React.ReactNode;        // what follows the chats in the list (the sessions that worked on the task)
 }) {
   const logRef = React.useRef<HTMLDivElement>(null);
@@ -324,7 +346,21 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
     const log = logRef.current;
     if (log) log.scrollTop = log.scrollHeight;
   }, [count, pending, shown]);
+  // Read to the end, the chat stays at its end when its room changes: the keyboard coming up or going down, or the
+  // composer growing as he types.
+  const atEnd = React.useRef(true);
+  React.useEffect(() => {
+    const log = logRef.current;
+    if (!log) return;
+    atEnd.current = true;
+    const onScroll = () => { atEnd.current = log.scrollHeight - log.scrollTop - log.clientHeight < 48; };
+    log.addEventListener('scroll', onScroll, { passive: true });
+    const watch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { if (atEnd.current) log.scrollTop = log.scrollHeight; });
+    watch?.observe(log);
+    return () => { log.removeEventListener('scroll', onScroll); watch?.disconnect(); };
+  }, [shown]);
   const closer = onClose && <button type="button" className="srk-back" onClick={onClose} aria-label="Fold the chats away">Hide</button>;
+  const fresh = <button type="button" className="srp-chip" onClick={chats.startNew}>+ New chat</button>;
 
   if (chats.current === null) {
     return (
@@ -333,7 +369,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
           <h3>Chats</h3>
           {chats.threads.length > 0 && <span className="n">{chats.threads.length}</span>}
           <span className="sp" />
-          {chats.threads.length > 0 && <button type="button" className="srp-chip" onClick={chats.startNew}>+ New chat</button>}
+          {(phone || chats.threads.length > 0) && fresh}
           {closer}
         </div>
         <div className="srk-list">
@@ -356,7 +392,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
           )}
           {below}
         </div>
-        <ChatComposer chats={chats} about={about} autoFocus={false} onShowSurface={onShowSurface} />
+        <ChatComposer chats={chats} about={about} autoFocus={false} touch={phone} onShowSurface={onShowSurface} />
       </div>
     );
   }
@@ -367,6 +403,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
         <button type="button" className="srk-back" onClick={chats.back}>‹ Chats</button>
         <span className="sp" />
         {thread && <i className={`srk-pill ${thread.state}`} style={{ fontStyle: 'normal' }} role="status">{STATE_WORDS[thread.state]}</i>}
+        {phone && chats.current !== 'new' && fresh}
         {closer}
       </div>
       <div className="srk-thread">
@@ -393,7 +430,7 @@ export function ChatsPanel({ chats, about, autoFocus, onShowSurface, onClose, be
         {thread?.error && <p className="srk-err" role="alert">{thread.error}</p>}
         {thread?.outside === 'unreachable' && <p className="srk-note" role="status">Couldn’t reach OpenClaw for what was said in this chat outside the Journal.</p>}
       </div>
-      <ChatComposer chats={chats} about={about} autoFocus={autoFocus} onShowSurface={onShowSurface} />
+      <ChatComposer chats={chats} about={about} autoFocus={autoFocus} touch={phone} onShowSurface={onShowSurface} />
     </div>
   );
 }

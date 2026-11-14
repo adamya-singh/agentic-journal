@@ -437,7 +437,7 @@ export default function UnwindPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Silicon Valley, 12th Fail…"
-              className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-white/10 dark:bg-gray-900"
+              className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm max-sm:text-base outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-white/10 dark:bg-gray-900"
             />
             <button type="submit" disabled={searching || q.trim().length < 2} className={primary}>
               {searching ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />} Search

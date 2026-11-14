@@ -161,5 +161,7 @@ export const CASEBOOK_CSS = missionBase('cb') + `
 .cb .qc .src{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font:11.5px var(--mono);color:var(--dim)}
 .cb .qc .ans{font-size:13.5px;color:var(--ink2);line-height:1.55}
 .cb .qc .ans b{display:block;font:600 10px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--k);margin-bottom:3px}
+/* Phones: iOS zooms the page into any field under 16px when it takes focus. */
+@media(max-width:640px) and (pointer:coarse){.cb :is(input:not([type=checkbox],[type=radio],[type=range]),select,textarea){font-size:16px!important}}
 @media (prefers-reduced-motion: reduce){.cb *{animation:none!important;transition:none!important}}
 `;

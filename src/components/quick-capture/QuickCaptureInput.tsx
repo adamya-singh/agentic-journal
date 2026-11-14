@@ -95,8 +95,13 @@ export function QuickCaptureInput({ variant, autoFocus }: QuickCaptureInputProps
     setValue('');
   };
 
+  // ⌘K means nothing without a keyboard: a phone or a tablet is not offered it.
+  const [keys, setKeys] = React.useState(true);
+  React.useEffect(() => { setKeys(!window.matchMedia?.('(pointer: coarse)').matches); }, []);
+
   const overlay = variant === 'overlay';
-  const sizing = overlay ? 'px-4 py-3 text-base' : 'px-3.5 py-2 text-sm';
+  // 16px on a phone: iOS zooms the page into any field smaller than that when it is focused.
+  const sizing = overlay ? 'px-4 py-3 text-base' : 'px-3.5 py-2 text-base sm:text-sm';
   const thumb = overlay ? 32 : 24;
   const shown = images.slice(0, 4);
   const extra = images.length - shown.length;
@@ -118,7 +123,7 @@ export function QuickCaptureInput({ variant, autoFocus }: QuickCaptureInputProps
         onPaste={handlePaste}
         onDrop={handleDrop}
         autoFocus={autoFocus}
-        placeholder={images.length ? 'Add a note, or press Enter…' : 'Capture a thought… (⌘K)'}
+        placeholder={images.length ? 'Add a note, or press Enter…' : keys ? 'Capture a thought… (⌘K)' : 'Capture a thought…'}
         style={paddingRight ? { paddingRight } : undefined}
         className={`w-full ${sizing} pl-9 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500 shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 dark:focus:ring-indigo-500 focus:border-transparent transition-shadow`}
       />
@@ -137,7 +142,7 @@ export function QuickCaptureInput({ variant, autoFocus }: QuickCaptureInputProps
                 onClick={() => removeImage(image.key)}
                 title="Remove image"
                 aria-label="Remove image"
-                className="absolute -top-1.5 -right-1.5 hidden group-hover:flex items-center justify-center w-4 h-4 rounded-full bg-gray-700 text-white dark:bg-gray-200 dark:text-gray-900"
+                className="absolute -top-1.5 -right-1.5 hidden group-hover:flex [@media(pointer:coarse)]:flex items-center justify-center w-4 h-4 rounded-full bg-gray-700 text-white dark:bg-gray-200 dark:text-gray-900"
               >
                 <X className="w-2.5 h-2.5" />
               </button>

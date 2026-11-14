@@ -104,7 +104,7 @@ export function QuickAdd({ api, onLibraryChanged }: { api: Api; onLibraryChanged
             maxLength={2000}
             placeholder={EXAMPLES[example]}
             aria-label="Something you watched or want to watch"
-            className="min-h-[44px] w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-[15px] outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-gray-700 dark:bg-gray-950 dark:focus:bg-gray-950"
+            className="min-h-[44px] w-full resize-none rounded-xl border border-gray-200 bg-gray-50 px-3.5 py-2.5 text-[15px] max-sm:text-base outline-none transition placeholder:text-gray-400 focus:border-indigo-400 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-gray-700 dark:bg-gray-950 dark:focus:bg-gray-950"
           />
           <button
             type="submit"
@@ -321,7 +321,7 @@ function PendingCard({
             maxLength={500}
             placeholder="Which one, then? e.g. the 2008 one with Christian Bale"
             aria-label="Which one you meant"
-            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-indigo-400 dark:border-gray-700 dark:bg-gray-950"
+            className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm max-sm:text-base outline-none focus:border-indigo-400 dark:border-gray-700 dark:bg-gray-950"
           />
           <button className={`${button} !py-1.5 bg-gray-900 text-white hover:!bg-gray-700 dark:bg-gray-100 dark:text-gray-900`} disabled={busy || !hint.trim()}>
             Ask
@@ -444,7 +444,7 @@ function Unmatched({
           maxLength={500}
           placeholder="Add a hint: year, an actor, what it’s about"
           aria-label={`A hint for “${u.phrase}”`}
-          className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm outline-none focus:border-indigo-400 dark:border-gray-700 dark:bg-gray-950"
+          className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm max-sm:text-base outline-none focus:border-indigo-400 dark:border-gray-700 dark:bg-gray-950"
         />
         <button className={`${button} !py-1.5`} disabled={busy || !hint.trim()}>
           Ask

@@ -73,10 +73,13 @@ export function TheaterView({
     if (i >= 0) setIndex(i);
   };
   const video = item.x?.media.find((m) => (m.type === 'video' || m.type === 'animated_gif') && (m.localUrl || m.video));
+  // Below lg the player pins under the controls bar while the details scroll. A portrait clip stays in the flow:
+  // pinned, it would fill most of a phone screen and leave the vote bar and Up next nowhere to scroll into view.
+  const pinPlayer = !!item.youtube || (!!video && !(video.width && video.height && video.height > video.width));
   return (
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px] xl:grid-cols-[minmax(0,1fr)_420px]">
       <div className="min-w-0">
-        <div className={`overflow-hidden rounded-2xl bg-gray-950 shadow-[0_30px_80px_-40px_rgba(15,23,42,.8)] ring-1 ring-black/5 dark:ring-white/10 ${item.youtube || video ? 'sticky top-0 z-20 lg:static' : ''}`}>
+        <div className={`overflow-hidden rounded-2xl bg-gray-950 shadow-[0_30px_80px_-40px_rgba(15,23,42,.8)] ring-1 ring-black/5 dark:ring-white/10 ${pinPlayer ? 'sticky top-[61px] z-20 lg:static' : ''}`}>
           {item.youtube ? (
             <YouTubePlayer key={item.id} videoId={item.youtube.videoId} thumbnail={item.youtube.thumbnail} active title={item.title} url={item.url} short={item.youtube.short} onEnded={() => autoplay && next()} />
           ) : video ? (

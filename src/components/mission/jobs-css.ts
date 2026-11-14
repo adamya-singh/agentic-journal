@@ -46,6 +46,12 @@ const SHARED = `
 .mi .tl>li{border-top:1px dashed var(--line)}
 .mi .tl>li:first-child{border-top:0}
 .mi .seg{flex-wrap:wrap}
+/* Phones: a segmented control that wraps onto several rows is a rounded box, not a pill whose curve cuts into the end labels. */
+@media(max-width:640px){.mi .seg{border-radius:18px}.mi .seg button{border-radius:15px}}
+/* Phones: iOS zooms the page into any field under 16px when it takes focus. */
+@media(max-width:640px) and (pointer:coarse){.mi :is(input:not([type=checkbox],[type=radio],[type=range]),select,textarea){font-size:16px!important}}
+/* Touch: the small icon buttons (star, info dots, the worker's text links) get a finger-sized hit area without growing. */
+@media(pointer:coarse){.mi :is(.star,.linkbtn,.ov-info){position:relative}.mi :is(.star,.linkbtn,.ov-info)::after{content:"";position:absolute;inset:-10px}}
 @media (prefers-reduced-motion: reduce){.mi *{animation:none!important;transition:none!important}}
 `;
 

@@ -17,6 +17,7 @@ import {createGrowLayout} from '@/lib/sunrise/grow-layout'
 import {groupsOf, ringItems, ringOverflow, toInput} from '@/lib/sunrise/intent'
 import {createDawnLayout} from '@/lib/sunrise/layout'
 import {salienceOf} from '@/lib/sunrise/salience'
+import {type Point, type Tap, type TouchGesture, isDoubleTap, isTap, needsRestart, touchGesture, touchView} from '@/lib/sunrise/touch-camera'
 import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms'
 import {glanceWidth} from './glance'
 
@@ -142,6 +143,7 @@ export class SunriseEngine {
   private readonly arcsEl: HTMLElement
   private readonly tray: HTMLElement
   private readonly toastEl: HTMLElement
+  private readonly safeEl: HTMLElement // as tall as the window's bottom safe area (sunrise-css)
   private readonly world: HTMLElement
   private readonly viewButton: HTMLButtonElement
   private readonly lockButton: HTMLButtonElement
@@ -150,11 +152,23 @@ export class SunriseEngine {
   private full = false // the sky fills the whole window
   // The camera: the world is drawn at `z` times its size, moved by x and y px. Home is 1, 0, 0.
   private view = {z: 1, x: 0, y: 0}
-  private pinch: {z: number} | null = null
+  // On a phone, what is drawn in world px (the camera goes no further) and the least zoom that still shows it all.
+  private reach = {left: 0, top: 0, right: 1, bottom: 1}
+  private minZoom = 0.4
+  private lastPointer = '' // the kind of pointer that last pressed the sky: a tap on a faint bubble first shows its name
+  private pinch: {z: number} | null = null // a Mac trackpad's pinch, in Safari
+  // Fingers on the sky (client px): the gesture they make once one has gone further than a tap, where the stage was
+  // then, and what the page took of a pull, for its fling. `off` is a touch that belongs to a tray, the workspace or a form.
+  private touch: {fingers: Map<number, Point>, start: Point, gesture: TouchGesture | null, box: Point, off: boolean, paged: {at: number, dy: number}[]} | null = null
+  private lastTap: Tap | null = null
+  private swallowUntil = 0 // the click a drag ends with is not a press
+  private flingUntil = 0
   private readonly zoneEls: HTMLElement[]
   private readonly subjectEls = new Map<string, HTMLButtonElement>()
   private readonly trackEls = new Map<string, HTMLElement>()
   private trackSectors: {name: string, mid: number}[] = [] // the sections under the sun that have a slice, and its middle in degrees
+  private trackBoxes: Box[] = [] // on a phone, where their names were put, so no task covers one
+  private readonly nameBoxes = new Map<HTMLElement, Box>() // on a phone, where every name at the rim is, for roomToGrow
   private smallHost: HTMLElement | null = null
   private measurer: HTMLElement | null = null
   private readonly measureContext = document.createElement('canvas').getContext('2d')
@@ -165,7 +179,9 @@ export class SunriseEngine {
   private things: Thing[] = []
   private source: HorizonItem[] = [] // what the rings hold: today's tasks, or on the far side the cards
   private outerR = 0 // how far out the outer rings reach, in px from the sun; 0 when nothing is out there
+  private outerKy = 0 // on a phone, the outer rings' height scale (they stand taller than wide), in px per ring unit
   private underK = 0 // the scale of the rings under the sun, in px per ring unit
+  private underKy = 0 // and their height scale, which differs from it only on a phone
   // Where each thing under the sun sits: its ring (0 nearest the horizon) and how far through it.
   private readonly underPlace = new Map<string, {ring: number, through: number, look: string}>()
   private farSide = false // turned to the far side, where the action cards are
@@ -175,6 +191,7 @@ export class SunriseEngine {
   private hot: Thing | null = null // the form under the pointer
   private trayKind: TrayKind | null = null
   private trayTrack: string | null = null // the section whose tray is open
+  private trayWidth = 0 // the stage's width when it opened
   private readonly dailyDone = new Map<string, boolean>() // dailies pressed here, until the journal's answer arrives
   private readonly startedHere = new Set<string>()
   private ready = false
@@ -260,7 +277,8 @@ export class SunriseEngine {
     this.fullButton = control('sr-full')
     const controls = div('sr-ctl')
     controls.append(this.viewButton, this.lockButton, this.fullButton)
-    root.append(this.flat, div('sr-day'), this.world, this.pane, this.say, cap, controls, this.tray, this.toastEl)
+    this.safeEl = div('sr-safe')
+    root.append(this.flat, div('sr-day'), this.world, this.pane, this.say, cap, controls, this.tray, this.toastEl, this.safeEl)
     this.lockButton.addEventListener('click', event => { event.stopPropagation(); this.setLocked(!this.locked) }, {signal})
     this.fullButton.addEventListener('click', event => { event.stopPropagation(); this.setFull(!this.full) }, {signal})
     // A double click on the sky itself snaps the camera back to today.
@@ -279,7 +297,14 @@ export class SunriseEngine {
     this.labels.addEventListener('click', event => {
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
-      if (thing !== undefined && thing.shown && !thing.inert) this.openTask(thing.id)
+      if (thing === undefined) return
+      // A faint bubble shows its name only under a mouse. A finger's first tap shows it; the next opens it.
+      if (el!.classList.contains('ghost') && this.lastPointer !== 'mouse' && !el!.classList.contains('peek')) {
+        for (const other of this.things) other.el.classList.remove('peek')
+        el!.classList.add('peek')
+        return
+      }
+      if (thing.shown && !thing.inert) this.openTask(thing.id)
     }, {signal})
     // A form under the pointer opens a little and the others step back, for as long as the pointer stays.
     this.labels.addEventListener('pointerover', event => {
@@ -325,9 +350,16 @@ export class SunriseEngine {
       else this.openTray('dailies', this.streakEl)
     }, {signal})
     this.backButton.addEventListener('click', () => this.leaveSubject(), {signal})
+    this.say.addEventListener('click', event => {
+      if (!(event.target instanceof Element) || event.target.closest('.sr-dl') === null) return
+      event.stopPropagation()
+      if (this.trayKind === 'dailies') this.closeTray()
+      else this.openTray('dailies', this.say)
+    }, {signal})
+    root.addEventListener('pointerdown', event => { this.lastPointer = event.pointerType }, {signal, capture: true})
     document.addEventListener('pointerdown', event => {
       if (this.trayKind === null || !(event.target instanceof Node)) return
-      const onTrack = event.target instanceof Element && event.target.closest('.sl-track') !== null
+      const onTrack = event.target instanceof Element && event.target.closest('.sl-track, .sr-dl') !== null
       if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton && !this.streakEl.contains(event.target) && !onTrack) this.closeTray()
     }, {signal})
     window.addEventListener('keydown', event => {
@@ -366,15 +398,85 @@ export class SunriseEngine {
       // Locked in, a scroll never reaches the page, even when the camera has nowhere further to go.
       if (this.locked || this.full || this.view.x !== before.x || this.view.y !== before.y) event.preventDefault()
     }, {signal, passive: false})
-    // Safari's trackpad pinch.
+    // On a touch screen one finger moves the camera and two pinch it, about the point between them (the sky has
+    // touch-action none, sunrise-css.ts, so the browser leaves both to us). Nothing moves until a finger has gone
+    // further than a tap, so a tap on a form, a chip, an arc or the sun is still a press. A touch that starts in a
+    // tray, the workspace, the capture box or on a chip is theirs, as is any while a task is open. A mouse or a pen
+    // is left as it was.
+    root.addEventListener('pointerdown', event => {
+      if (event.pointerType !== 'touch') return
+      // The first finger of a new touch: whatever an earlier one left behind (a lift the sky never saw) is gone.
+      if (event.isPrimary) this.touch = null
+      this.swallowUntil = 0
+      if (this.touch === null) {
+        const target = event.target instanceof Element ? event.target : null
+        const off = this.open !== null || this.root.classList.contains('hz-live') || target === null || !overSky(target)
+          || target.closest('input, textarea, select, [contenteditable], .sr-ground button') !== null
+        this.touch = {fingers: new Map(), start: {x: event.clientX, y: event.clientY}, gesture: null, box: {x: 0, y: 0}, off, paged: []}
+        // The page still gliding from the last pull stops under the finger, as the page's own scrolling does.
+        if (!off && performance.now() < this.flingUntil) window.scrollTo({left: window.scrollX, top: window.scrollY, behavior: 'instant'})
+      }
+      this.touch.fingers.set(event.pointerId, {x: event.clientX, y: event.clientY})
+      if (this.touch.off) return
+      // A second finger is a pinch at once; a finger that lands mid-gesture starts it again from the camera as it is.
+      if (this.touch.gesture !== null || this.touch.fingers.size > 1) this.touchBegin()
+    }, {signal})
+    root.addEventListener('pointermove', event => {
+      const touch = this.touch
+      if (event.pointerType !== 'touch' || touch === null || touch.off) return
+      const before = touch.fingers.get(event.pointerId)
+      if (before === undefined) return
+      const at = {x: event.clientX, y: event.clientY}
+      touch.fingers.set(event.pointerId, at)
+      if (touch.gesture === null) {
+        if (!isTap(touch.start, at)) this.touchBegin()
+        return
+      }
+      this.touchMove(at.y - before.y)
+    }, {signal})
+    const lift = (event: PointerEvent) => {
+      const touch = this.touch
+      if (event.pointerType !== 'touch' || touch === null || !touch.fingers.delete(event.pointerId)) return
+      const moved = touch.gesture !== null
+      if (touch.fingers.size > 0) {
+        // The finger left goes on moving the camera from where it is.
+        if (moved && !touch.off) this.touchBegin()
+        return
+      }
+      this.touch = null
+      // Cancelled, the browser took the touch over: it was no press.
+      if (touch.off || event.type === 'pointercancel') return
+      if (moved) {
+        this.swallowUntil = performance.now() + 400
+        this.fling(touch.paged)
+        return
+      }
+      // A double tap on the open sky snaps the camera back to today, as a double click does.
+      const target = event.target instanceof Element ? event.target : null
+      const tap = {at: performance.now(), point: {x: event.clientX, y: event.clientY}}
+      if (target === null || target.closest('.thing, button, a, input, textarea, .sr-ground') !== null) { this.lastTap = null; return }
+      if (!isDoubleTap(this.lastTap, tap)) { this.lastTap = tap; return }
+      this.lastTap = null
+      if (!this.isHome()) this.resetView()
+    }
+    root.addEventListener('pointerup', lift, {signal})
+    root.addEventListener('pointercancel', lift, {signal})
+    root.addEventListener('click', event => {
+      if (performance.now() > this.swallowUntil) return
+      this.swallowUntil = 0
+      event.preventDefault()
+      event.stopPropagation()
+    }, {signal, capture: true})
+    // Safari's own pinch events. On a touch screen the fingers' pointer events (above) move the camera, so there
+    // these only keep iOS from zooming the page over the sky; a Mac trackpad's pinch still zooms the camera.
     type Gesture = Event & {scale: number, clientX: number, clientY: number}
     root.addEventListener('gesturestart', event => {
       if (this.open !== null || this.root.classList.contains('hz-live') || !overSky(event.target)) return
       event.preventDefault()
-      this.pinch = {z: this.view.z}
+      this.pinch = this.touch === null ? {z: this.view.z} : null
     }, {signal})
     root.addEventListener('gesturechange', event => {
-      if (this.pinch === null) return
+      if (this.pinch === null || this.touch !== null) return
       event.preventDefault()
       const gesture = event as Gesture
       const at = pointIn(gesture)
@@ -488,6 +590,8 @@ export class SunriseEngine {
     this.root.classList.remove('hovering')
     // It grows where its form is; a task with no form on the rings rises out of the sun.
     this.paneFrom = from ?? this.toScreen(this.sunCircle())
+    // On a phone a task's workspace is the whole screen (sunrise-css .sr-pane.full); a card stays in the sky.
+    this.pane.classList.toggle('full', this.narrow && !taskId.startsWith('card:'))
     this.pane.style.transition = 'none'
     this.placePane(this.paneFrom, false)
     void this.pane.offsetWidth
@@ -503,6 +607,21 @@ export class SunriseEngine {
   showOuter() {
     const {width: W, height: H} = this.stage
     if (this.outerR <= 0) return
+    if (this.narrow) {
+      // A phone: the outer rings stand tall around the others and some places sit above the stage (solve), so the
+      // camera takes in everything out there and the ground, as near as it may.
+      const Y = this.stage.horizonY
+      const far = {left: W / 2 - this.outerR, top: Y - (rings[4] * this.last.ky + 40 + (rings[4] - rings[0]) * this.outerKy), right: W / 2 + this.outerR, bottom: Y + 48}
+      for (const thing of this.things) {
+        if (!thing.outer || thing.rest === null) continue
+        far.left = Math.min(far.left, thing.rest.left)
+        far.right = Math.max(far.right, thing.rest.left + thing.rest.width)
+        far.top = Math.min(far.top, thing.rest.top)
+      }
+      const z = Math.max(0.4, Math.min(1, (W - 16) / (far.right - far.left), (H - 16) / (far.bottom - far.top)))
+      this.setView(z, W / 2 - (far.left + far.right) / 2 * z, H - 8 - far.bottom * z, true)
+      return
+    }
     const z = Math.max(0.4, Math.min(1, (W / 2 - 24) / this.outerR, (this.stage.horizonY - 24) / this.outerR))
     this.setView(z, W / 2 * (1 - z), H * (1 - z), true)
   }
@@ -546,6 +665,8 @@ export class SunriseEngine {
     this.workBox = null
     this.root.classList.remove('working')
     this.placePane(thing?.at === null || thing?.at === undefined ? this.paneFrom ?? this.toScreen(this.sunCircle()) : this.toScreen(thing.at), false)
+    // A whole-screen workspace fades where it is, and goes back into the sky once it is out of sight.
+    if (this.pane.classList.contains('full')) this.later(() => { if (this.open === null) this.pane.classList.remove('full') }, 340)
     this.host.onOpen(null)
     if (!this.destroyed) this.solve()
   }
@@ -586,7 +707,11 @@ export class SunriseEngine {
     this.lockButton.textContent = this.locked ? 'Locked in · unlock' : 'Lock scrolling here'
     this.lockButton.title = this.locked ? 'Let scrolling move the page again' : 'Keep scrolling inside the sky: the page will not move'
     this.lockButton.classList.toggle('on', this.locked)
-    this.fullButton.textContent = this.full ? 'Exit full page' : 'Full page'
+    // On a phone it is just its icon, in the corner (sunrise-css): corners out to fill the window, in to give it back.
+    const label = this.full ? 'Exit full page' : 'Full page'
+    const icon = this.full ? 'M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5' : 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'
+    this.fullButton.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icon}"/></svg><span>${label}</span>`
+    this.fullButton.setAttribute('aria-label', label)
     this.fullButton.title = this.full ? 'Give the rest of the page back' : 'Let the sky fill the whole window'
     this.fullButton.classList.toggle('on', this.full)
   }
@@ -773,19 +898,55 @@ export class SunriseEngine {
     return {left: (box.left - x) / z, top: (box.top - y) / z, width: box.width / z, height: box.height / z}
   }
   private isHome() { return this.view.z === 1 && this.view.x === 0 && this.view.y === 0 }
-  private zoomAt(px: number, py: number, to: number) {
+  private zoomLimit(to: number) {
     // Close to life size snaps to it, so home is easy to come back to.
-    let z = Math.max(0.4, Math.min(3, to))
-    if (Math.abs(z - 1) < 0.04) z = 1
+    const z = Math.max(this.narrow ? this.minZoom : 0.4, Math.min(3, to))
+    return Math.abs(z - 1) < 0.04 ? 1 : z
+  }
+  private zoomAt(px: number, py: number, to: number) {
+    const z = this.zoomLimit(to)
     const k = z / this.view.z
     this.setView(z, px - (px - this.view.x) * k, py - (py - this.view.y) * k)
   }
   // The camera stays inside what is drawn: one and a half stages to each side, a stage and a half up, and a
   // stage and a quarter down under the sun.
-  private setView(z: number, x: number, y: number, glide = false) {
+  private keptView(z: number, x: number, y: number) {
     const {width: W, height: H} = this.stage
     const keep = (at: number, size: number, low: number, high: number) => Math.min(-low * z, Math.max(size - high * z, at))
-    const next = {z, x: keep(x, W, -1.5 * W, 2.5 * W), y: keep(y, H, -1.6 * H, 2.25 * H)}
+    if (this.narrow) {
+      // A phone goes only as far as something is drawn, so a pull down reaches the sections and then the page under
+      // the sky, not empty ground. What fits on the screen whole sits in the middle of it.
+      const {left, top, right, bottom} = this.reach
+      const held = (at: number, size: number, low: number, high: number) => (high - low) * z <= size ? (size - (low + high) * z) / 2 : keep(at, size, low, high)
+      return {z, x: held(x, W, left, right), y: held(y, H, top, bottom)}
+    }
+    return {z, x: keep(x, W, -1.5 * W, 2.5 * W), y: keep(y, H, -1.6 * H, 2.25 * H)}
+  }
+  /** On a phone: how far what is drawn reaches, in world px, and so the least zoom that shows all of it. */
+  private measureReach() {
+    const {width: W, height: H, horizonY: Y} = this.stage
+    let left = 0, top = 0, right = W, bottom = H
+    if (this.outerR > 0) {
+      left = W / 2 - this.outerR
+      right = W / 2 + this.outerR
+      top = Y - (rings[4] * this.last.ky + 40 + (rings[4] - rings[0]) * this.outerKy)
+    }
+    const boxes = [...this.things.map(thing => thing.rest ?? (thing.el.classList.contains('ghost') ? thing.lastBox : null)), ...this.trackBoxes]
+    for (const box of boxes) {
+      if (box === null) continue
+      left = Math.min(left, box.left)
+      right = Math.max(right, box.left + box.width)
+      top = Math.min(top, box.top)
+      bottom = Math.max(bottom, box.top + box.height + 16) // a pill's day hangs under it
+    }
+    // A margin past whatever reaches out of the stage; what is inside it moves nothing.
+    this.reach = {left: Math.min(0, left - 16), top: Math.min(0, top - 24), right: Math.max(W, right + 16), bottom: Math.max(H, bottom + 24)}
+    const fits = Math.min(W / (this.reach.right - this.reach.left), H / (this.reach.bottom - this.reach.top))
+    // Never so far out that a name cannot be read (the names grow back as the camera pulls out, setView).
+    this.minZoom = Math.max(0.4, Math.min(1, Math.floor(fits * 100) / 100))
+  }
+  private setView(z: number, x: number, y: number, glide = false, keepTray = false) {
+    const next = this.keptView(z, x, y)
     // Within a couple of pixels of home is home.
     this.view = z === 1 && Math.abs(next.x) < 3 && Math.abs(next.y) < 3 ? {z: 1, x: 0, y: 0} : next
     const home = this.isHome()
@@ -799,10 +960,81 @@ export class SunriseEngine {
     }
     this.world.style.transform = transform
     this.flat.style.transform = transform
+    // Pulled back on a phone, the names grow back toward their own size (sunrise-css --lk), as far as they have
+    // room to (roomToGrow).
+    if (this.narrow) this.root.style.setProperty('--lk', this.view.z >= 0.85 ? '1' : Math.min(2.2, 0.85 / this.view.z).toFixed(3))
     this.root.classList.toggle('zoomed', !home)
     this.viewButton.hidden = home
-    if (!home) this.viewButton.textContent = this.view.z === 1 ? 'Back to today' : `${Math.round(this.view.z * 100)}% · Back to today`
-    if (this.trayKind !== null) this.closeTray()
+    // A phone has no room for the long label beside the chips that pass under it: one word there.
+    if (!home) this.viewButton.textContent = this.narrow ? '↺ Today' : this.view.z === 1 ? 'Back to today' : `${Math.round(this.view.z * 100)}% · Back to today`
+    if (this.narrow) this.viewButton.setAttribute('aria-label', 'Back to today')
+    if (this.trayKind !== null && !keepTray) this.closeTray()
+  }
+  // ---- Touch (the handlers are in the constructor): touch-camera.ts says where the camera goes, the camera above keeps it in.
+  /** The fingers in stage px, against where the stage was when the gesture (re)started. */
+  private touchPoints() {
+    const {fingers, box} = this.touch!
+    return new Map([...fingers].map(([id, at]) => [id, {x: at.x - box.x, y: at.y - box.y}]))
+  }
+  /** Takes the fingers for the camera, or starts the gesture again from the camera as it is now, so nothing jumps. */
+  private touchBegin() {
+    const touch = this.touch!
+    if (touch.gesture === null) {
+      // From here the fingers are the camera's, wherever they go.
+      for (const id of touch.fingers.keys()) { try { this.root.setPointerCapture(id) } catch { /* that finger is already up */ } }
+    }
+    const box = this.root.getBoundingClientRect()
+    touch.box = {x: box.left, y: box.top}
+    touch.gesture = touchGesture(this.touchPoints(), this.view)
+  }
+  /**
+   * The camera for where the fingers are now, kept inside what is drawn. A pull up or down that the camera cannot
+   * follow any further scrolls the page instead (`dy` is how far the finger just moved), so what is under the sky stays
+   * reachable on a phone, where the sky fills the screen; and a sky the page has half scrolled away comes back into
+   * view before the camera moves. Locked in or full page, the page never moves.
+   */
+  private touchMove(dy: number) {
+    const touch = this.touch!
+    let gesture = touch.gesture!
+    const points = this.touchPoints()
+    if (needsRestart(gesture, points)) { this.touchBegin(); gesture = touch.gesture! }
+    const paging = gesture.ids.length === 1 && !this.locked && !this.full
+    if (paging && dy !== 0) {
+      const box = this.root.getBoundingClientRect()
+      const owed = dy > 0 ? Math.max(0, Math.min(dy, -box.top)) : -Math.max(0, Math.min(-dy, box.bottom - window.innerHeight))
+      if (Math.abs(owed) >= 0.5 && this.scrollPage(owed)) { this.touchBegin(); return }
+    }
+    const want = touchView(gesture, points)
+    const z = this.zoomLimit(want.z)
+    const at = z === want.z ? want : touchView(gesture, points, z)
+    const kept = this.keptView(at.z, at.x, at.y)
+    this.setView(at.z, at.x, at.y)
+    // At an edge the gesture starts again from where the camera stopped, so coming back moves it at once.
+    const over = at.y - kept.y
+    if (want.z < (this.narrow ? this.minZoom : 0.4) || want.z > 3 || Math.abs(at.x - kept.x) >= 0.5 || Math.abs(over) >= 0.5) {
+      if (paging && Math.abs(over) >= 0.5) this.scrollPage(over)
+      this.touchBegin()
+    }
+  }
+  /** Scrolls the page as a finger moving `dy` px down would; true when it moved. What it took is kept for the fling. */
+  private scrollPage(dy: number) {
+    const was = window.scrollY
+    window.scrollBy(0, -dy)
+    const moved = was - window.scrollY
+    if (moved !== 0) this.touch?.paged.push({at: performance.now(), dy: moved})
+    return moved !== 0
+  }
+  /** A pull that was scrolling the page when the finger left carries on a little, as the page's own scrolling would. */
+  private fling(paged: {at: number, dy: number}[]) {
+    const now = performance.now()
+    const last = paged[paged.length - 1]
+    if (last === undefined || now - last.at > 60) return
+    const recent = paged.filter(step => now - step.at <= 100)
+    const span = Math.max(16, now - recent[0]!.at)
+    const speed = recent.reduce((sum, step) => sum + step.dy, 0) / span
+    if (Math.abs(speed) <= 0.3) return
+    window.scrollBy({top: -speed * 300, behavior: 'smooth'})
+    this.flingUntil = now + 800
   }
 
   private rectIn(el: Element): Box {
@@ -815,7 +1047,9 @@ export class SunriseEngine {
     const height = Math.max(480, Math.round(this.root.clientHeight))
     this.narrow = width < 700
     this.root.classList.toggle('narrow', this.narrow)
-    this.stage = {width, height, horizonY: Math.max(240, height - (this.narrow ? 64 : 70))}
+    // Full page on a phone, the ground's strip stays above the home indicator.
+    const safe = this.narrow && this.full ? this.safeEl.offsetHeight : 0
+    this.stage = {width, height, horizonY: Math.max(240, height - (this.narrow ? 64 + safe : 70))}
     const {say} = this
     const {cap} = this.slots
     cap.style.top = this.narrow ? `${say.offsetTop + say.offsetHeight + 10}px` : ''
@@ -975,6 +1209,44 @@ export class SunriseEngine {
         input.slots[next.index]!.visible = false
         ring = dawn.run(input)
       }
+      // A phone's bubble where the rings put it, nudged out along its ray until it and its day are clear of the sun
+      // and its dailies (the rings' core is a box in their own units, and stands taller than the sun is drawn) and
+      // the sun's own name over it (a finger cannot hover to see it, sunrise-css), and `further` past that when
+      // another bubble was in its way.
+      const further = new Map<number, number>()
+      const sunClear = (dailyRadius + 8) * ring.sunScale + 20
+      const pillAt = (index: number, extra = further.get(index) ?? 0) => {
+        const out = ring.pills[index]!, width = input.slots[index]!.width
+        const vx = out.x - W / 2, vy = out.y - Y, r = Math.hypot(vx, vy) || 1
+        const at = (more: number) => { const x = out.x + vx / r * more, y = out.y + vy / r * more; return {left: x - width / 2, right: x + width / 2, top: y - 14, bottom: y + 14, x} }
+        const clear = (box: ReturnType<typeof at>) => Math.hypot(Math.max(box.left - W / 2, 0, W / 2 - box.right), Math.max(box.top - Y, 0, Y - box.bottom - 16)) >= sunClear
+        let more = 0
+        while (more < 80 && !clear(at(more))) more += 4
+        return at(more + extra)
+      }
+      // A phone's report counts the lead's empty seat, so it can stay above zero with nothing left to fold. What is
+      // drawn is what counts there: a bubble over another's name or its day moves out along its ray into clear sky
+      // under the shelf, or else folds (a faint bubble reads better than one name over another). Always the less
+      // important of the two, never the lead.
+      if (narrow) {
+        type Pill = ReturnType<typeof pillAt>
+        const clash = (a: Pill, b: Pill) => a.left < b.right + 2 && a.right > b.left - 2
+          && (a.top < b.bottom + 2 && a.bottom > b.top - 2 || Math.abs(a.x - b.x) < 40 + (a.right - a.left) / 2 && a.top < b.bottom + 16 && a.bottom > b.bottom)
+        const onStage = (a: Pill) => a.left >= 4 && a.right <= W - 4 && a.top >= corners.topLeft.height + 4 && a.bottom + 16 <= Y - 4
+        for (let guard = 0; guard < 16; guard++) {
+          const shown = items.map((item, index) => ({item, index})).filter(({item, index}) => input.slots[index]!.visible && ring.pills[index]!.visible && item.id !== this.leadId)
+          const hit = shown.flatMap(a => shown.filter(b => b !== a && clash(pillAt(a.index), pillAt(b.index))).map(b => rankOf(a.item) > rankOf(b.item) ? a : b))
+          const least = hit.sort((a, b) => rankOf(b.item) - rankOf(a.item))[0]
+          if (least === undefined) break
+          const others = shown.filter(other => other !== least).map(other => pillAt(other.index))
+          const room = Array.from({length: 18}, (_, step) => (further.get(least.index) ?? 0) + 8 * (step + 1))
+            .find(extra => { const moved = pillAt(least.index, extra); return onStage(moved) && others.every(other => !clash(moved, other) && !clash(other, moved)) })
+          if (room !== undefined) { further.set(least.index, room); continue }
+          input.slots[least.index]!.visible = false
+          further.clear()
+          ring = dawn.run(input)
+        }
+      }
       // Back to real pixels. The sun is drawn no bigger than the core the forms keep clear of.
       const kxNow = ring.kx * S
       const kyNow = ring.ky * S
@@ -993,8 +1265,8 @@ export class SunriseEngine {
           pillBoxes.set(thing, {left: out.x * S + dx - width / 2, top: out.y * S + dy + 7 * S - height / 2, width, height})
           return
         }
-        const width = input.slots[index]!.width
-        pillBoxes.set(thing, {left: out.x - width / 2, top: out.y - 14, width, height: 28})
+        const {left, right, top} = pillAt(index)
+        pillBoxes.set(thing, {left, top, width: right - left, height: 28})
       })
 
       // 3. The lead, lifted into the nearest free sky, clear of everything on the rings.
@@ -1027,19 +1299,44 @@ export class SunriseEngine {
       // The outer rings: the same ring program lays out what is further off, and each place is then pushed out
       // along its own ray, past Orbit. Things only get further apart that way, so nothing it placed overlaps.
       this.outerR = 0
-      if (boxed && outerThings.length > 0 && this.subject === null) {
+      if (outerThings.length > 0 && this.subject === null) {
         const far = outerThings.map(thing => this.outerItem(thing.item, elapsed))
         const stageOut = {viewportWidth: Math.floor(W / S), horizonY: Math.floor(Y / S), topLeft: {width: 0, height: 0}, topRight: {width: 0, height: 0}}
         const out = dawn.run(toInput({items: far, groups: groupsOf(far), bounds: farBounds, dailies: false}, stageOut, item => {
           const thing = outerThings.find(candidate => candidate.id === item.id)
-          return thing === undefined ? 80 : Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10
+          if (thing === undefined) return 80
+          return boxed ? Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10 : this.pillWidth(thing)
         }))
         const push = rings[4] * kxNow + 40 - rings[0] * out.kx * S
         this.outerR = rings[4] * out.kx * S + push
+        this.outerKy = out.ky * S
+        // A phone's stage is topped by the words and the capture box, then the lead's shelf, all the way across. The
+        // words and the box step back once the camera moves (sunrise-css .zoomed); the lead never does.
+        const wordsBottom = cornersAsDrawn.topLeft.height, shelfBottom = corners.topLeft.height
         outerThings.forEach((thing, index) => {
           const pill = out.pills[index]!
           thing.look = far[index]!.zone === 'ignition' ? 'altitude' : 'orbit'
           if (!pill.visible || !pill.free) return
+          if (!boxed) {
+            // A phone's rings stand taller than they are wide, so the outer ones are ellipses around them, 40 past
+            // Orbit all the way round: each place keeps its angle and how far out it is. One that lands on the lead's
+            // shelf goes further out along its ray until it is clear (its day hangs 42 under its top); one under the
+            // words stays and is veiled while they are up, as on a wide screen, and so is one the screen's edge
+            // would cut in half.
+            const u = (pill.x - W / 2) / out.kx, v = (Y - pill.y) / out.ky, reach = Math.hypot(u, v) || 1
+            const cx = W / 2 + u / reach * (rings[4] * kxNow + 40 + (reach - rings[0]) * out.kx)
+            const cy = Y - v / reach * (rings[4] * kyNow + 40 + (reach - rings[0]) * out.ky)
+            const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
+            const width = this.pillWidth(thing)
+            const boxAt = (more: number): Box => ({left: cx + vx / r * more - width / 2, top: cy + vy / r * more - 14, width, height: 28})
+            const across = (box: Box, from: number, to: number) => box.top < to + 8 && box.top + 42 > from - 8
+            let more = 0
+            while (more < 900 && shelfBottom > wordsBottom && across(boxAt(more), wordsBottom, shelfBottom)) more += 16
+            const box = boxAt(more)
+            if (across(box, 0, wordsBottom) || box.left < 0 || box.left + width > W) thing.look += ' veiled'
+            pillBoxes.set(thing, box)
+            return
+          }
           const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
           const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
           const {width, height} = this.formBox(thing, rowSize[1])
@@ -1055,16 +1352,18 @@ export class SunriseEngine {
           if (on(boxAt(reach), words)) thing.look += ' veiled'
           pillBoxes.set(thing, boxAt(reach))
         })
-      } else if (boxed && !this.farSide && this.subject === null) {
+      } else if (!this.farSide && this.subject === null) {
         // Nothing is out there today; the rings still are, so the sky reads as going on.
         this.outerR = rings[4] * kxNow + 40 + (rings[4] - rings[0]) * kxNow
+        this.outerKy = kyNow
       }
       // Under the sun: the same ring program lays out what is behind today, and each place is mirrored below the
       // horizon and pushed down past the ground's own strip.
       this.underK = kxNow
+      this.underKy = kyNow
       const tracks = this.farSide ? [] : horizon.wantTracks
       this.trackSectors = []
-      if (boxed && (underThings.length > 0 || tracks.length > 0) && this.subject === null && !this.farSide) {
+      if ((underThings.length > 0 || tracks.length > 0) && this.subject === null && !this.farSide) {
         const low = underThings.map(thing => {
           const at = this.underPlace.get(thing.id) ?? {ring: 3, through: 0.5, look: 'under'}
           thing.look = at.look
@@ -1081,13 +1380,28 @@ export class SunriseEngine {
         const lowWeights = new Map(lowGroups.map(group => { const count = low.filter(item => item.group === group).length; return [group, Math.round(Math.max(3, count) / Math.max(1.25, count) * 16) / 16] }))
         const under = dawn.run(toInput({items: low, groups: lowGroups.length > 0 ? lowGroups : groupsOf(low), bounds: farBounds, dailies: false, weights: lowWeights}, stageLow, item => {
           const thing = underThings.find(candidate => candidate.id === item.id)
-          return thing === undefined ? 80 : Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10
+          if (thing === undefined) return 80
+          return boxed ? Math.ceil((this.formBox(thing, rowSize[1]).width + 10) / S) - 10 : this.pillWidth(thing)
         }))
         this.underK = under.kx * S
+        this.underKy = under.ky * S
         this.trackSectors = tracks.flatMap((track, index) => { const sector = under.sectors[index]; return sector === undefined || !sector.shown ? [] : [{name: track.name, mid: sector.mid}] })
         underThings.forEach((thing, index) => {
           const pill = under.pills[index]!
           if (!pill.visible || !pill.free) return
+          if (!boxed) {
+            // A phone's rings stand taller than they are wide: the place is mirrored onto the same ellipses below the
+            // horizon, then pushed down past the ground's strip, as a bubble like the rest.
+            const u = (pill.x - W / 2) / under.kx, v = (Y - pill.y) / under.ky, reach = Math.hypot(u, v) || 1
+            const cx = W / 2 + u / reach * (reach * under.kx + underPush), cy = Y + v / reach * (reach * under.ky + underPush)
+            const width = this.pillWidth(thing)
+            // One the screen's edge would cut comes in to it, unless that puts it on another.
+            const box = {left: cx - width / 2, top: cy - 14, width, height: 28}
+            const inside = {...box, left: Math.max(6, Math.min(W - 6 - width, box.left))}
+            const taken = [...pillBoxes].some(([other, at]) => other.under && inside.left < at.left + at.width + 6 && inside.left + width + 6 > at.left && inside.top < at.top + at.height + 6 && inside.top + 34 > at.top)
+            pillBoxes.set(thing, taken ? box : inside)
+            return
+          }
           const cx = pill.x * S + dx, cy = pill.y * S + dy + 7 * S
           const vx = cx - W / 2, vy = cy - Y, r = Math.hypot(vx, vy) || 1
           const {width, height} = this.formBox(thing, rowSize[1])
@@ -1138,6 +1452,7 @@ export class SunriseEngine {
           this.renderSubjects(ring.sectors, kxNow, kyNow)
           this.renderTracks()
           this.renderGround()
+          if (narrow) this.roomToGrow()
         }
       }
       return demoted
@@ -1149,6 +1464,12 @@ export class SunriseEngine {
     this.commit()
     this.drawFlat()
     this.writeHeadline(order)
+    if (narrow) {
+      // What is drawn changed: the camera stays inside it (without closing a tray it has not moved for).
+      this.measureReach()
+      const kept = this.keptView(Math.max(this.minZoom, this.view.z), this.view.x, this.view.y)
+      if (Math.abs(kept.z - this.view.z) > 1e-3 || Math.abs(kept.x - this.view.x) >= 0.5 || Math.abs(kept.y - this.view.y) >= 0.5) this.setView(kept.z, kept.x, kept.y, false, true)
+    }
     this.host.onLayout?.()
     // The words changed size: the corners the rings keep clear of changed with them, so lay it out once more.
     if (this.open === null && this.saidSize !== `${this.say.offsetWidth}x${this.say.offsetHeight}` && !this.resolving) {
@@ -1334,7 +1655,10 @@ export class SunriseEngine {
     const dailies = this.dailies()
     const parts = [`${horizon.cleared.length} cleared this week${horizon.letGoThisWeek > 0 ? `, ${horizon.letGoThisWeek} let go` : ''}`]
     if (dailies.length > 0) parts.push(`${dailies.filter(daily => daily.done).length} of ${dailies.length} dailies`)
-    p.textContent = parts.join(' · ')
+    if (!this.narrow || dailies.length === 0) { p.textContent = parts.join(' · '); p.dataset['html'] = ''; return }
+    // A phone's ground has no room for the week's streak: the dailies open from their count here instead.
+    const line = `${escapeText(parts[0]!)} · <button type="button" class="sr-dl" aria-label="Your dailies: ${escapeText(parts[1]!)}">${escapeText(parts[1]!)}</button>`
+    if (p.dataset['html'] !== line) { p.innerHTML = line; p.dataset['html'] = line }
   }
 
   // ---- The flat drawing: sky, rings, sun and dailies, as Dawn's.
@@ -1344,7 +1668,7 @@ export class SunriseEngine {
     const dailies = this.farSide ? [] : this.dailies()
     const doneCount = dailies.filter(daily => daily.done).length
     const {kx, ky, ss} = this.last
-    const key = [W, H, Y, kx, ky, ss, dailies.length, dailies.map(daily => daily.done ? 1 : 0).join(''), this.farSide, Math.round(this.outerR), this.underK.toFixed(3)].join()
+    const key = [W, H, Y, kx, ky, ss, dailies.length, dailies.map(daily => daily.done ? 1 : 0).join(''), this.farSide, Math.round(this.outerR), this.underK.toFixed(3), this.narrow, this.outerKy.toFixed(3), this.underKy.toFixed(3)].join()
     if (key === this.flatKey) return
     this.flatKey = key
     const X = W / 2
@@ -1376,7 +1700,10 @@ export class SunriseEngine {
       const outerK = (this.outerR - rings[4] * kx - 40) / (rings[4] - rings[0])
       for (let index = 1; index <= 4; index++) {
         const r = rings[4] * kx + 40 + (rings[index]! - rings[0]) * outerK
-        s += `<circle cx="${X}" cy="${Y}" r="${r.toFixed(1)}" fill="none" stroke="rgba(255,255,255,${(0.26 - index * 0.04).toFixed(2)})" stroke-width="1.6" stroke-dasharray="3 9"/>`
+        const stroke = `fill="none" stroke="rgba(255,255,255,${(0.26 - index * 0.04).toFixed(2)})" stroke-width="1.6" stroke-dasharray="3 9"`
+        // A phone's rings stand taller than they are wide, and the outer ones go round them (solve).
+        if (this.narrow) s += `<ellipse cx="${X}" cy="${Y}" rx="${r.toFixed(1)}" ry="${(rings[4] * ky + 40 + (rings[index]! - rings[0]) * this.outerKy).toFixed(1)}" ${stroke}/>`
+        else s += `<circle cx="${X}" cy="${Y}" r="${r.toFixed(1)}" ${stroke}/>`
       }
     }
     s += `<ellipse cx="${X}" cy="${Y}" rx="${(rings[2] * kx).toFixed(1)}" ry="${(rings[2] * ky).toFixed(1)}" fill="url(#sr-haze)"/>`
@@ -1402,7 +1729,10 @@ export class SunriseEngine {
     if (this.farSide) below += `<rect x="${left}" y="${Y}" width="${wide}" height="${deep - Y}" fill="rgb(60,26,46)" opacity=".5"/>`
     below += `<g clip-path="url(#sr-below)"><circle cx="${X}" cy="${Y}" r="${(rings[1] * under).toFixed(1)}" fill="url(#sr-haze)" opacity=".55"/>`
     for (let index = 1; index <= 4; index++) {
-      below += `<circle cx="${X}" cy="${Y}" r="${(rings[index]! * under + underPush).toFixed(1)}" fill="none" stroke="rgba(255,214,170,${(0.3 - index * 0.045).toFixed(2)})" stroke-width="1.2" stroke-dasharray="2 7"/>`
+      const stroke = `fill="none" stroke="rgba(255,214,170,${(0.3 - index * 0.045).toFixed(2)})" stroke-width="1.2" stroke-dasharray="2 7"`
+      const r = (rings[index]! * under + underPush).toFixed(1)
+      if (this.narrow) below += `<ellipse cx="${X}" cy="${Y}" rx="${r}" ry="${(rings[index]! * (this.underKy > 0 ? this.underKy : ky) + underPush).toFixed(1)}" ${stroke}/>`
+      else below += `<circle cx="${X}" cy="${Y}" r="${r}" ${stroke}/>`
     }
     below += '</g>'
     s += `${below}<rect x="${left}" y="${Y - 1}" width="${wide}" height="1.5" fill="rgba(255,243,220,.7)"/>`
@@ -1458,10 +1788,11 @@ export class SunriseEngine {
       const left = ringOverflow(this.source).length + this.things.filter(thing => !thing.shown).length
       if (left > 0) html += `<button type="button" class="chip cards" data-tray="cards" title="Every card, including the ones the rings have no room for"><b>+${left}</b> more cards</button>`
     } else {
+      // A phone's chips share one line with the chat button in the corner: they say less.
       const [onlyHold] = horizon.holds
-      if (horizon.holds.length === 1 && onlyHold !== undefined) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
-      else if (horizon.holds.length > 1) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
-      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> with no date</button>`
+      if (horizon.holds.length === 1 && onlyHold !== undefined && !this.narrow) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
+      else if (horizon.holds.length > 0) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
+      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> ${this.narrow ? 'no date' : 'with no date'}</button>`
       if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
       // What today's rings have no room for is counted, never dropped: it is further out, and the camera goes there.
       const beyond = horizon.further.length + ringOverflow(horizon.items).length
@@ -1518,7 +1849,10 @@ export class SunriseEngine {
     this.trayTrack = track ?? null
     this.tray.hidden = false
     this.tray.dataset['kind'] = kind
+    this.trayWidth = this.stage.width
     this.host.onTray(kind, track)
+    // A phone's tray is a sheet at the foot of the window (sunrise-css): it is not placed by what opened it.
+    if (this.narrow) return
     const rect = this.rectIn(from)
     const width = this.tray.offsetWidth
     this.tray.style.left = `${Math.round(Math.max(10, Math.min(this.stage.width - width - 10, rect.left + rect.width / 2 - width / 2)))}px`
@@ -1559,7 +1893,8 @@ export class SunriseEngine {
       el.classList.toggle('here', this.subject === group)
       const width = el.offsetWidth || Math.ceil(group.length * 7.6 + String(count).length * 7 + 24)
       const at = this.subjectLabelAt(group, sector.mid, kx, ky, width)
-      el.style.transform = `translate(${at.x.toFixed(1)}px,${at.y.toFixed(1)}px)`
+      el.style.transform = `translate(${at.x.toFixed(1)}px,${at.y.toFixed(1)}px)${this.narrow ? ' scale(min(var(--lk,1),var(--k,1)))' : ''}`
+      this.nameBoxes.set(el, {left: at.x, top: at.y, width, height: el.offsetHeight || 19})
       // A form that had to cover it wins: the label steps aside.
       const covered = this.things.some(thing => {
         const box = thing.rest
@@ -1576,6 +1911,8 @@ export class SunriseEngine {
     const tracks = this.data?.horizon.wantTracks ?? []
     const live = new Set(this.trackSectors.map(sector => sector.name))
     for (const [name, el] of this.trackEls) if (!live.has(name)) el.classList.add('off')
+    const under = this.things.flatMap(thing => thing.under && thing.rest !== null ? [thing.rest] : [])
+    this.trackBoxes = []
     for (const sector of this.trackSectors) {
       const track = tracks.find(candidate => candidate.name === sector.name)
       if (track === undefined) continue
@@ -1605,10 +1942,59 @@ export class SunriseEngine {
       // seen on the way down. A name leans away from the middle, as the classes' names do at the rim.
       const angle = sector.mid * Math.PI / 180
       const r = (rings[0] + rings[1]) / 2 * this.underK + underPush
+      // On a phone the rings under the sun are taller than they are wide.
+      const down = this.narrow ? (rings[0] + rings[1]) / 2 * this.underKy + underPush : r
       const lean = Math.max(-1, Math.min(1, Math.cos(angle) * 2.5))
       const x = Math.min(W - 8 - width, Math.max(8, W / 2 + r * Math.cos(angle) + (-50 + 50 * lean) / 100 * width))
-      const y = Y + Math.max(underPush + 26, r * Math.sin(angle)) - 9
-      el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)`
+      let y = Y + Math.max(underPush + 26, down * Math.sin(angle)) - 9
+      if (this.narrow) {
+        // A phone's tasks crowd the head of their slice: a name a task would cover steps up or down to the nearest
+        // clear line (never onto the ground's strip), so no name is ever under a task.
+        const height = el.offsetHeight || 19
+        const clear = (top: number) => ![...under, ...this.trackBoxes].some(box => x < box.left + box.width + 4 && x + width + 4 > box.left && top < box.top + box.height + 3 && top + height + 3 > box.top)
+        const steps = [0, ...Array.from({length: 24}, (_, index) => (index >> 1) * 6 + 6).map((step, index) => index % 2 === 0 ? -step : step)]
+        y += steps.find(step => y + step >= Y + underPush + 4 && clear(y + step)) ?? 0
+        this.trackBoxes.push({left: x, top: y, width, height})
+        this.nameBoxes.set(el, {left: x, top: y, width, height})
+      }
+      el.style.transform = `translate(${x.toFixed(1)}px,${y.toFixed(1)}px)${this.narrow ? ' scale(min(var(--lk,1),var(--k,1)))' : ''}`
+    }
+  }
+  /**
+   * On a phone, pulled back: how far each bubble, name and the ground's chips may grow back toward their own size
+   * (--lk, setView) before it would touch another, or the lead, the sun or its name, which do not grow. It is
+   * written as --k on each, and sunrise-css scales each by the less of the two, so the camera pulling out never
+   * crowds anything more than it is at home.
+   */
+  private roomToGrow() {
+    const {width: W, horizonY: Y} = this.stage
+    const r = this.last.sunR
+    const items: {el: HTMLElement | null, box: Box}[] = [
+      {el: null, box: {left: W / 2 - r, top: Y - r, width: 2 * r, height: r}},
+      {el: null, box: {left: W / 2 - 50, top: Y - r - 16, width: 100, height: 14}},
+    ]
+    for (const thing of this.things) {
+      thing.el.style.setProperty('--k', '1')
+      if (thing.rest === null) continue
+      // A bubble with the day that hangs under it; the lead does not grow.
+      const day = thing.item.day === '' || thing.under ? 0 : 16
+      items.push({el: thing.hook === null ? thing.el : null, box: {...thing.rest, height: thing.rest.height + day}})
+    }
+    for (const [el, box] of this.nameBoxes) if (!el.classList.contains('off')) items.push({el, box})
+    if (this.groundEl.offsetWidth > 0) items.push({el: this.groundEl, box: this.rectIn(this.groundEl)})
+    const gap = 4
+    for (const a of items) {
+      if (a.el === null) continue
+      const ax = a.box.left + a.box.width / 2, ay = a.box.top + a.box.height / 2, aw = (a.box.width + gap) / 2, ah = (a.box.height + gap) / 2
+      let k = 3
+      for (const b of items) {
+        if (b === a) continue
+        const dx = Math.abs(b.box.left + b.box.width / 2 - ax), dy = Math.abs(b.box.top + b.box.height / 2 - ay)
+        const bw = (b.box.width + gap) / 2, bh = (b.box.height + gap) / 2
+        // Two that grow share the gap between them; one that does not keeps its own size.
+        k = Math.min(k, b.el === null ? Math.max((dx - bw) / aw, (dy - bh) / ah) : Math.max(dx / (aw + bw), dy / (ah + bh)))
+      }
+      a.el.style.setProperty('--k', Math.max(1, k).toFixed(3))
     }
   }
   private enterSubject(group: string) { this.subject = group; this.closeTray(); this.solve() }
@@ -1624,10 +2010,14 @@ export class SunriseEngine {
     if (this.open !== null) {
       const opened = this.things.find(thing => thing.id === this.open)
       this.workBox = this.workRect(opened?.at === null || opened?.at === undefined ? null : this.toScreen(opened.at), this.open.startsWith('card:'))
+      this.pane.classList.toggle('full', this.narrow && !this.open.startsWith('card:'))
       this.placePane(this.workBox, true)
     }
-    this.setView(this.view.z, this.view.x, this.view.y)
-    if (this.trayKind !== null) this.closeTray()
+    // setView closes an open tray. A phone's tray is a sheet at the foot of the window, which the on-screen keyboard
+    // resizes around without moving it: there only a new width closes it.
+    const keep = this.narrow && this.trayWidth === this.stage.width
+    this.setView(this.view.z, this.view.x, this.view.y, false, keep)
+    if (!keep && this.trayKind !== null) this.closeTray()
     this.later(() => this.root.classList.remove('resizing'), 50)
   }
   private start() {

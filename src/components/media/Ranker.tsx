@@ -334,7 +334,7 @@ export function Ranker({ open, onOpenChange, data, focusId, api, onSaved }: Rank
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[94vh] w-[min(96vw,980px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[94dvh] w-[min(96vw,980px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-800">
             <div>
               <Dialog.Title className="text-lg font-semibold">
@@ -346,7 +346,7 @@ export function Ranker({ open, onOpenChange, data, focusId, api, onSaved }: Rank
                   : 'Sort each title into a tier, then head-to-head picks set the exact order.'}
               </Dialog.Description>
             </div>
-            <div className="flex items-center gap-4 text-sm">
+            <div className="ml-auto flex items-center gap-4 text-sm">
               {!focusId &&
                 (['sort', 'order', 'done'] as const).map((s, i) => (
                   <span

@@ -315,7 +315,7 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .sr-tray label.daily{display:flex;gap:8px;align-items:center;padding:5px 0;cursor:pointer}
 /* ---- The hero's own box: a tall stage in the page, the ground strip at its foot. */
 .sr-sky{position:relative;overflow:hidden;outline:none;background:#05070d;height:clamp(560px,62vw,min(860px,100svh))}
-@media (max-width:699px){.sr-sky{height:min(760px,calc(100svh - 48px))}}
+@media (max-width:699px){.sr-sky{height:min(760px,calc(100svh - var(--app-header-h,48px)))}}
 .sr-sky:focus-visible{box-shadow:inset 0 0 0 2px #ffd2a8}
 .sr-loading{position:absolute;inset:0;display:grid;place-items:center;font:13px var(--sans);color:var(--dim);z-index:2;pointer-events:none}
 .sr-day{position:absolute;inset:0;z-index:2;pointer-events:none;opacity:0;transition:opacity .8s ease;background:radial-gradient(120% 90% at 50% 100%,rgba(255,196,128,.3),rgba(120,160,215,.2) 45%,rgba(40,70,120,.08) 80%)}
@@ -340,6 +340,14 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .resizing .sr-pane{transition:none!important}
 .sr-pane-in{position:absolute;inset:0;overflow:auto;opacity:0;transition:opacity .25s ease}
 .sr-pane.risen .sr-pane-in{opacity:1;transition:opacity .4s ease .3s}
+/* A phone: a task's workspace is the whole screen, fixed to the window over the page and its bar, and exactly the
+   part of it the keyboard leaves (TaskPane sets --vvh and --vvt from the visual viewport). It slides up into place
+   instead of growing out of the task's form. The engine adds .full when a task opens on a narrow sky. */
+.narrow>.sr-pane.full{position:fixed;left:0;top:var(--vvt,0px);z-index:65;width:100%!important;height:var(--vvh,100dvh)!important;translate:none!important;transform:translateY(28px);
+  border-radius:0;box-shadow:none;background:#fff8ef;overscroll-behavior:none;transition:opacity .25s ease,transform .32s var(--ease)}
+.narrow>.sr-pane.full.risen{border-radius:0;transform:none}
+.narrow>.sr-pane.full .sr-pane-in{overflow:hidden;overscroll-behavior:none;transition:opacity .2s ease}
+.narrow>.sr-pane.full.risen .sr-pane-in{transition:opacity .25s ease .08s}
 .sr-b{border:1px solid rgba(60,30,10,.2);background:#fff;border-radius:999px;padding:5px 11px;font:500 12.5px var(--sans);cursor:pointer;color:#24140a}
 .sr-b:hover{border-color:#e07a3a}
 /* The far side: press the sun and the sky rolls over about the horizon to where the action cards are. */
@@ -359,6 +367,14 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .sr-world{position:absolute;inset:0;z-index:3;pointer-events:none;transform-origin:0 0}
 .sr-flat{transform-origin:0 0;overflow:visible}
 .sr-ground,.sr-sunbtn{pointer-events:auto}
+/* Touch: over the sky one finger moves the camera and two pinch it (engine.ts), so the browser neither scrolls nor
+   zooms there; when the camera can go no further, the engine scrolls the page itself. It is on the sky itself, a
+   still box under everything, because the drawing moves and shrinks with the camera. touch-action is the
+   intersection of an element's and its ancestors' up to the nearest scroller, so whatever scrolls in the tray, the
+   capture box or the workspace (a list, the workspace's own column) still scrolls natively, up and down. */
+.sr-sky{touch-action:none}
+.sr-tray .sr-cards{touch-action:pan-y}
+button{touch-action:manipulation}
 /* Zoomed, everything is drawn again at its new size (a kept layer would be stretched and blurry), and the words
    step back so the sky can be looked around. */
 .zoomed .thing,.zoomed .sr-glow{will-change:auto}
@@ -382,6 +398,8 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .thing.under.cleared{cursor:default}
 .thing.under.cleared .shape{--fg:rgba(255,233,210,.62);--fill:rgba(30,22,16,.62);--line:rgba(255,255,255,.18);--accent:#8fe3b0}
 .thing.under.cleared .nm{text-decoration:line-through}
+/* On a phone the things under the sun are bubbles, in the same light. */
+.narrow .thing.under:not(.hook){background:rgba(46,24,12,.8);border-color:rgba(255,190,140,.45);color:#ffe9d2}
 /* The week's streak under the sun opens the dailies. */
 .sr-streak{pointer-events:auto;cursor:pointer;border:0;background:none;padding:2px 6px;border-radius:8px}
 .sr-streak:hover,.sr-streak:focus-visible{background:rgba(255,246,236,.35);outline:none}
@@ -389,6 +407,60 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 /* The ground's chips wrap on a narrow screen. */
 .narrow .sr-ground{flex-wrap:wrap;right:12px}
 .chip.more{background:rgba(255,246,236,.3)}
+.sr-full svg{display:none}
+.sr-safe{position:absolute;left:0;top:0;width:0;height:env(safe-area-inset-bottom,0px);visibility:hidden;pointer-events:none}
+/* ---- A phone. Everything a finger presses is at least 44px to the touch, however small it is drawn. */
+/* The controls sit in the top right corner, out of the headline's first line, and stay readable over a sky that
+   has moved under them. Full page is just its icon. */
+.narrow .sr-ctl{left:auto;right:8px;top:6px;transform:none;gap:4px}
+.narrow .sr-ctl button{position:relative;height:36px;padding:0 13px;background:rgba(10,14,24,.86);border-color:rgba(255,255,255,.3);color:#f3efe7;box-shadow:0 4px 14px -6px rgba(0,0,0,.7)}
+.narrow .sr-ctl button::after{content:"";position:absolute;inset:-4px -2px}
+.narrow .sr-ctl button.on{background:#ffd2a8;border-color:#ffd2a8;color:#1b0d05}
+.narrow .sr-ctl .sr-full{width:36px;padding:0;display:grid;place-items:center}
+.narrow .sr-full span{display:none}
+.narrow .sr-full svg{display:block;width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.narrow .sr-say h1::before{content:"";float:right;width:36px;height:28px}
+.sr-say .sr-dl{pointer-events:auto;position:relative;border:0;background:none;padding:0;font:inherit;letter-spacing:inherit;color:var(--em);text-decoration:underline dotted;text-underline-offset:3px;cursor:pointer}
+.sr-say .sr-dl::after{content:"";position:absolute;inset:-15px -6px}
+.narrow .sr-back{position:relative}
+.narrow .sr-back::after{content:"";position:absolute;inset:-12px -4px}
+/* Once the camera moves, the capture box steps back with the words (unless it is being typed in). */
+.narrow .sr-cap{transition:opacity .25s ease}
+.narrow.zoomed .sr-cap:not(:focus-within){opacity:0;pointer-events:none}
+/* The lead is its name and its one button: the headline above already says what it is about. */
+.narrow :is(.thing.hook,.measure.hook) .shape.full{padding:12px 16px 14px;gap:9px}
+.narrow :is(.thing.hook,.measure.hook) .shape.full>:not(.brow,.hd,.p-actions){display:none}
+.narrow :is(.thing.hook,.measure.hook) .shape.full .hd{font-size:20px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.narrow .thing:not(.hook)::before{content:"";position:absolute;inset:-8px -2px}
+.narrow :is(.sl-track,.sl-subject)::after{content:"";position:absolute;inset:-13px -4px}
+/* The chips share their line with the chat button in the corner; the dailies open from the headline's count. The
+   arcs on the sun are drawn, not pressed: there a finger means the sun. */
+.narrow .sr-ground{right:auto;max-width:calc(100% - 84px);gap:6px}
+.narrow .chip{position:relative;padding:5px 11px;font-size:12px}
+.narrow .chip::after{content:"";position:absolute;inset:-8px -3px}
+.narrow .sr-streak{display:none}
+.narrow .arc{pointer-events:none}
+/* Pulled back, the names grow back toward their own size (--lk), each only as far as it has room to (--k): engine.ts
+   setView and roomToGrow. */
+.narrow.zoomed .thing:not(.hook),.narrow.zoomed .sr-ground{scale:min(var(--lk,1),var(--k,1))}
+/* A faint bubble a finger tapped shows its name; the next tap opens it. */
+.thing.ghost.peek{opacity:.9}
+.thing.ghost.peek .face b{opacity:1}
+/* A tray is a sheet at the foot of the window, whatever opened it: it scrolls inside, and a press outside or its
+   ✕ closes it. */
+.sr-tray .sr-x{display:none}
+.narrow .sr-tray{position:fixed;left:0!important;right:0;bottom:0!important;z-index:66;width:auto!important;max-height:min(70svh,560px);overflow:auto;overscroll-behavior:contain;touch-action:pan-y;
+  border-radius:18px 18px 0 0;padding:16px 16px calc(16px + env(safe-area-inset-bottom,0px));box-shadow:0 -14px 44px -10px rgba(0,0,0,.6);font-size:14px}
+.narrow .sr-tray .sr-x{position:sticky;top:-4px;float:right;z-index:1;display:grid;place-items:center;width:40px;height:40px;margin:-8px -6px 0 8px;border:0;border-radius:50%;background:rgba(60,30,10,.08);color:inherit;font:400 18px/1 var(--sans);cursor:pointer}
+.narrow .sr-tray .sr-cards{max-height:none!important;overflow:visible}
+.narrow .sr-tray input{font-size:16px}
+.narrow .sr-tray .letgo input{height:40px}
+/* A finger cannot hover: the sun's name is always there, small, just over it (a phone keeps its bubbles clear of it). */
+@media (pointer:coarse){
+  .sr-sunbtn .l{bottom:calc(100% + 3px);opacity:.8;font-size:9px;letter-spacing:.1em}
+  /* On the far side the sun already says TODAY. */
+  .farside .sr-sunbtn .l{display:none}
+}
 `
 
 export const SUNRISE_CSS = `
@@ -398,6 +470,8 @@ button{font:inherit;color:inherit}
 ${partsCss}
 ${rules}
 }
+/* A long press on the sky moves nothing and selects nothing. */
+@media (any-pointer:coarse){.sr-hero :is(.sr-flat,.sr-world,.sr-say,.sr-ctl){-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}}
 @keyframes sr-breathe{0%,100%{opacity:0}50%{opacity:1}}
 @keyframes sr-turn-out{to{opacity:0;transform:perspective(1400px) rotateX(-64deg)}}
 @keyframes sr-turn-in{from{opacity:0;transform:perspective(1400px) rotateX(64deg)}to{opacity:1;transform:none}}

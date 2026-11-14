@@ -57,6 +57,18 @@ export const BROWSER_SURFACE_CSS = `
 .narrow .srb-type{display:flex}
 .narrow .srb-top span.h{display:none}
 .narrow .srb-ttl{display:none}
+/* A finger on the picture is the page's: a drag scrolls it there, a tap clicks it (no pan, pinch or image menu). */
+.srb-screen img{touch-action:none;-webkit-touch-callout:none}
+/* A phone: what is typed in is 16px (iOS zooms in on anything smaller), and what is pressed is a finger wide. */
+.cols-1 .srb-addr{gap:2px;padding:2px 6px}
+.cols-1 .srb-addr button{width:38px;height:44px;font-size:18px}
+.cols-1 .srb-addr button.fit{padding:0 10px;font-size:13px}
+.cols-1 .srb-addr input{height:38px;font-size:16px}
+.cols-1 .srb-type{padding:6px 8px}
+.cols-1 .srb-type input{height:44px;font-size:16px}
+.cols-1 .srb-type button{height:44px;padding:0 14px;font-size:14px}
+.cols-1 .srb-top a{padding:12px 0;margin:-12px 0}
+.cols-1 .srb-note button{padding:10px 4px;margin:-10px -4px}
 `;
 
 /**
@@ -147,6 +159,20 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
   React.useEffect(() => { if (pageUrl) onPage({ url: pageUrl, title: pageTitle }); }, [pageUrl, pageTitle, onPage]);
   React.useEffect(() => { if (pageUrl && !editing) setAddress(pageUrl); }, [pageUrl, editing]);
 
+  // Scrolling the page there: what is asked for in a moment goes in one message, at the last point it was asked at.
+  const scrollPage = React.useCallback((deltaY: number, point: { x: number; y: number }) => {
+    const w = wheel.current;
+    w.deltaY += deltaY;
+    w.x = point.x;
+    w.y = point.y;
+    if (w.timer) return;
+    w.timer = window.setTimeout(() => {
+      void send({ type: 'scroll', x: w.x, y: w.y, deltaY: w.deltaY });
+      w.deltaY = 0;
+      w.timer = 0;
+    }, 60);
+  }, [send]);
+
   // The wheel moves the page in OpenClaw's browser, not the Journal under the pointer.
   React.useEffect(() => {
     const el = screenRef.current;
@@ -156,20 +182,64 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
       event.preventDefault();
       const point = pagePoint(el.querySelector('img'), frame, event.clientX, event.clientY);
       if (!point) return;
-      const w = wheel.current;
-      w.deltaY += event.deltaY;
-      w.x = point.x;
-      w.y = point.y;
-      if (w.timer) return;
-      w.timer = window.setTimeout(() => {
-        void send({ type: 'scroll', x: w.x, y: w.y, deltaY: w.deltaY });
-        w.deltaY = 0;
-        w.timer = 0;
-      }, 60);
+      scrollPage(event.deltaY, point);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [frame, send, zoomed]);
+  }, [frame, scrollPage, zoomed]);
+
+  // A finger does the same. Dragged on the picture, the page follows it: at full size the picture pans first and
+  // the page there scrolls once the picture is at its top or foot; fitted, the page scrolls. (The browser is only
+  // ever scrolled up and down from here.) Moved less than a few pixels it is a tap, and the tap is a click.
+  const frameRef = React.useRef(frame);
+  frameRef.current = frame;
+  const dragged = React.useRef(false);
+  React.useEffect(() => {
+    const el = screenRef.current;
+    if (!el) return;
+    let drag: { id: number; x: number; y: number; startX: number; startY: number; moved: boolean } | null = null;
+    const down = (event: PointerEvent) => {
+      dragged.current = false;
+      if (event.pointerType !== 'touch' || !event.isPrimary || !(event.target instanceof HTMLImageElement)) return;
+      drag = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, moved: false };
+    };
+    const move = (event: PointerEvent) => {
+      if (!drag || event.pointerId !== drag.id) return;
+      if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 8) return;
+      drag.moved = true;
+      dragged.current = true;
+      event.preventDefault();
+      const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+      drag.x = event.clientX;
+      drag.y = event.clientY;
+      let rest = dy;
+      if (zoomed) {
+        el.scrollLeft -= dx;
+        const top = el.scrollTop;
+        el.scrollTop -= dy;
+        rest = dy + (el.scrollTop - top);   // what the picture could not take
+      }
+      const shown = frameRef.current, image = el.querySelector('img');
+      if (Math.abs(rest) < 0.5 || !shown || !image) return;
+      const point = pagePoint(image, shown, event.clientX, event.clientY);
+      const height = image.getBoundingClientRect().height;
+      if (!point || height === 0) return;
+      const density = Math.max(1, Math.round(image.naturalWidth / shown.width));
+      const pageHeight = image.naturalHeight ? image.naturalHeight / density : shown.height;
+      scrollPage(-rest * (pageHeight / height), point);
+    };
+    const up = (event: PointerEvent) => { if (drag && event.pointerId === drag.id) drag = null; };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointermove', move, { passive: false });
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    return () => {
+      el.removeEventListener('pointerdown', down);
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+    };
+  }, [scrollPage, zoomed]);
 
   // "Fit": the page is laid out for a window the size of this space, so it reads at full size here instead of as a
   // shrunk picture of a wide window. It lasts while the workspace is open and follows the space as it changes.
@@ -294,6 +364,8 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
             draggable={false}
             style={zoomed ? { width: frame.width } : undefined}
             onClick={(event) => {
+              // The end of a drag is not a click.
+              if (dragged.current) { dragged.current = false; return; }
               screenRef.current?.focus({ preventScroll: true });
               const point = pagePoint(event.currentTarget, frame, event.clientX, event.clientY);
               if (point) void send({ type: 'click', ...point });

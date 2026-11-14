@@ -473,7 +473,7 @@ export default function FeedPage() {
                   value={link}
                   onChange={(e) => setLink(e.target.value)}
                   placeholder="Paste a YouTube, X or IMDb link"
-                  className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-white/10 dark:bg-gray-900"
+                  className="min-w-0 flex-1 rounded-xl border border-gray-200 bg-white px-3.5 py-2 text-sm max-sm:text-base outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20 dark:border-white/10 dark:bg-gray-900"
                 />
                 <button type="submit" disabled={adding || !link.trim()} className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
                   {adding ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Add
@@ -563,11 +563,11 @@ export default function FeedPage() {
         <Dialog.Root open={learnedOpen} onOpenChange={setLearnedOpen}>
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-40 bg-black/40 backdrop-blur-sm" />
-            <Dialog.Content className={`${serif.variable} fixed inset-x-0 bottom-0 z-50 max-h-[88vh] overflow-y-auto rounded-t-3xl bg-gray-50 p-4 pb-8 shadow-2xl sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:max-h-[calc(100vh-2rem)] sm:w-[380px] sm:rounded-3xl dark:bg-gray-950`}>
+            <Dialog.Content className={`${serif.variable} fixed inset-x-0 bottom-0 z-50 max-h-[88dvh] overflow-y-auto overscroll-contain rounded-t-3xl bg-gray-50 p-4 pb-[max(2rem,env(safe-area-inset-bottom))] shadow-2xl sm:inset-x-auto sm:bottom-auto sm:right-4 sm:top-4 sm:max-h-[calc(100vh-2rem)] sm:w-[380px] sm:rounded-3xl dark:bg-gray-950`}>
               <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-gray-300 sm:hidden dark:bg-gray-700" />
               <div className="mb-3 flex items-center justify-between">
                 <Dialog.Title className="text-base font-semibold">Your feed</Dialog.Title>
-                <Dialog.Close className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-200 dark:hover:bg-gray-800" aria-label="Close"><X size={16} /></Dialog.Close>
+                <Dialog.Close className="relative rounded-lg p-1.5 text-gray-500 after:absolute after:-inset-2 after:content-[''] hover:bg-gray-200 dark:hover:bg-gray-800" aria-label="Close"><X size={16} /></Dialog.Close>
               </div>
               <Dialog.Description className="sr-only">Compass, what your votes taught the feed, and OpenClaw’s last pass.</Dialog.Description>
               {panel}
@@ -576,7 +576,7 @@ export default function FeedPage() {
         </Dialog.Root>
 
         {toast && (
-          <div role="status" className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-full bg-gray-900 px-4 py-2.5 text-sm text-white shadow-xl dark:bg-white dark:text-gray-900">
+          <div role="status" className="fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))] left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-full bg-gray-900 px-4 py-2.5 text-sm text-white shadow-xl dark:bg-white dark:text-gray-900">
             {toast.text}
             {toast.undo && (
               <button

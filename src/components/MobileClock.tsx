@@ -109,11 +109,12 @@ export function MobileClock() {
 
       {open &&
         createPortal(
+          // Above the phone menu (z 10005), which is where the clock button lives on phones.
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Eastern Time clock"
-            className="fixed inset-0 z-[100] flex min-h-[100dvh] flex-col overflow-hidden bg-[#08090b] text-white sm:hidden"
+            className="fixed inset-0 z-[10008] flex min-h-[100dvh] flex-col overflow-hidden bg-[#08090b] text-white sm:hidden"
           >
             {/* Above the clock face: the face is shifted up and would otherwise lie over this row and take its taps. */}
             <div className="relative z-10 flex items-center justify-between px-4 pt-[max(1rem,env(safe-area-inset-top))]">

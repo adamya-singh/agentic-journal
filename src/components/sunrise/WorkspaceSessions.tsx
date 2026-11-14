@@ -44,6 +44,12 @@ export const SESSIONS_PANEL_CSS = `
 .srs-pick li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .srs-pick li .d{font:10.5px var(--mono);color:#8a6a52}
 .srs-err{margin:0;font-size:12.5px;color:#a3361a}
+/* A phone: what is typed in is 16px (iOS zooms in on anything smaller), and what is pressed is a finger wide. */
+.cols-1 .srs-pick input{height:44px;font-size:16px}
+.srp.cols-1 .srs-go{min-height:44px;padding:8px 14px;font-size:13.5px}
+.srp.cols-1 .srs-not{padding:12px 6px;margin:-12px -6px;font-size:13px}
+.srp.cols-1 .srs-link{min-height:44px;padding:8px 14px;font-size:13.5px}
+.cols-1 .srs-pick li button{min-height:44px}
 `;
 
 const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

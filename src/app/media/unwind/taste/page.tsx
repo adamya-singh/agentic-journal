@@ -20,7 +20,7 @@ interface TasteData {
 const card = 'rounded-2xl border border-gray-200 bg-white p-5 dark:border-white/10 dark:bg-gray-900';
 const eyebrow = 'text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-700 dark:text-violet-300';
 const input =
-  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-white/10 dark:bg-gray-950';
+  'w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm max-sm:text-base outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-500/20 dark:border-white/10 dark:bg-gray-950';
 const list = (s: string) => s.split(',').map((x) => x.trim()).filter(Boolean);
 const ANSWERS: { value: Answer; label: string }[] = [
   { value: 'loved', label: 'Loved it' },
@@ -156,11 +156,11 @@ export default function TastePage() {
               <h2 id="moods-h" className="mb-4 mt-1 text-[15px] font-semibold">Moods OpenClaw picks from</h2>
               <ul className="grid gap-2.5 sm:grid-cols-2">
                 {draft.moods.map((m, i) => (
-                  <li key={i} className="flex items-center gap-2">
+                  <li key={i} className="flex items-center gap-2 max-sm:flex-wrap">
                     <label className="sr-only" htmlFor={`mood-${i}`}>Mood</label>
-                    <input id={`mood-${i}`} value={m.name} onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={`${input} !w-48 shrink-0 font-semibold`} />
+                    <input id={`mood-${i}`} value={m.name} onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} className={`${input} !w-48 shrink-0 font-semibold max-sm:!w-auto max-sm:min-w-0 max-sm:flex-1`} />
                     <label className="sr-only" htmlFor={`mood-ex-${i}`}>Examples</label>
-                    <input id={`mood-ex-${i}`} value={m.examples} placeholder="Examples" onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, examples: e.target.value } : x)) })} className={input} />
+                    <input id={`mood-ex-${i}`} value={m.examples} placeholder="Examples" onChange={(e) => edit({ moods: draft.moods.map((x, j) => (j === i ? { ...x, examples: e.target.value } : x)) })} className={`${input} max-sm:order-last`} />
                     <button type="button" aria-label={`Remove ${m.name}`} onClick={() => edit({ moods: draft.moods.filter((_, j) => j !== i) })} className="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-white/10">
                       <X size={15} />
                     </button>
@@ -183,7 +183,7 @@ export default function TastePage() {
                       <li key={a.id} className="relative w-[84px]">
                         <PosterImg src={a.poster} title={a.title} />
                         <p className="mt-1 line-clamp-2 text-[11px] leading-tight text-gray-600 dark:text-gray-400">{a.title}</p>
-                        <button type="button" aria-label={`Remove ${a.title}`} onClick={() => edit({ anchors: draft.anchors.filter((x) => x !== a.id) })} className="absolute -right-1.5 -top-1.5 rounded-full bg-gray-900 p-1 text-white shadow">
+                        <button type="button" aria-label={`Remove ${a.title}`} onClick={() => edit({ anchors: draft.anchors.filter((x) => x !== a.id) })} className="absolute -right-1.5 -top-1.5 rounded-full bg-gray-900 p-1 text-white shadow after:absolute after:-inset-2.5 after:content-['']">
                           <X size={11} />
                         </button>
                       </li>

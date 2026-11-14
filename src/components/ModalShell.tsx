@@ -55,7 +55,7 @@ function ModalShellRoot({
         <div
           onClick={(event) => event.stopPropagation()}
           className={joinClassNames(
-            'bg-white dark:bg-gray-800 rounded-2xl w-full shadow-2xl transform transition-all max-h-[calc(100vh-2rem)] flex flex-col overflow-hidden',
+            'bg-white dark:bg-gray-800 rounded-2xl w-full shadow-2xl transform transition-all max-h-[calc(100dvh-2rem)] flex flex-col overflow-hidden',
             maxWidthClasses[maxWidth],
             panelClassName,
           )}

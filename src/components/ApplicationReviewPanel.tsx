@@ -267,7 +267,7 @@ function ReviewGroupCard({
             <span className="block truncate text-xs text-slate-500 dark:text-slate-400">{group.role}</span>
           </span>
         </button>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
           <GroupStatusChip group={group} now={now} />
           {onExtend && group.holdUntil && (
             <button

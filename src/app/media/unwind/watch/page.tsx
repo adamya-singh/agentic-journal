@@ -79,7 +79,7 @@ function NoSource({ v, onChanged }: { v: WatchView; onChanged: () => void }) {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Or paste a YouTube link"
-            className="min-w-0 flex-1 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm text-white placeholder:text-white/60 outline-none focus:border-white/60"
+            className="min-w-0 flex-1 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm max-sm:text-base text-white placeholder:text-white/60 outline-none focus:border-white/60"
           />
           <button type="submit" disabled={!!busy || !url.trim()} className="inline-flex items-center gap-1.5 rounded-full border border-white/30 px-3.5 py-2 text-sm font-semibold hover:bg-white/10 disabled:opacity-50">
             {busy === 'link' ? <Loader2 size={15} className="animate-spin" /> : <Link2 size={15} />} Use it
@@ -295,7 +295,7 @@ export default function WatchPage() {
                                     type="button"
                                     onClick={() => void markWatched(e.key, !e.watched)}
                                     aria-label={e.watched ? `Mark ${e.label} unwatched` : `Mark ${e.label} watched`}
-                                    className={`mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${e.watched ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300 text-transparent hover:text-gray-400 dark:border-white/20'}`}
+                                    className={`relative mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border after:absolute after:-inset-1.5 after:content-[''] ${e.watched ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300 text-transparent hover:text-gray-400 dark:border-white/20'}`}
                                   >
                                     <Check size={14} />
                                   </button>
