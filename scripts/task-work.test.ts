@@ -43,7 +43,9 @@ function writeTasks(): void {
   writeFileSync(path.join(tasksDir, 'have-to-do.json'), JSON.stringify({ _comment: '', tasks: [
     { id: 'boom', text: 'Get the rent credit from Boom' },
     { id: 'prof', text: 'Email the professor', dueDate: '2099-01-01' },
-    { id: 'parent', text: 'Move out', childTasks: [{ id: 'child', text: 'Book the van', parentTaskId: 'parent' }] },
+    // Subtasks are their own entries with parentTaskId, as the list files keep them (childTasks is display-only).
+    { id: 'parent', text: 'Move out' },
+    { id: 'child', text: 'Book the van', parentTaskId: 'parent' },
     { id: 'daily', text: 'Lift', isDaily: true },
   ] }));
   writeFileSync(path.join(tasksDir, 'want-to-do.json'), JSON.stringify({ _comment: '', tasks: [{ id: 'want', text: 'Find a climbing gym' }] }));
@@ -429,7 +431,7 @@ describe('waiting on a reply', () => {
     assert.equal(r.waiting!.checks, 0);
     assert.equal(Date.parse(r.waiting!.checkAfter) - Date.parse(r.waiting!.since), D);
     const view = (await json(await viewRoute.GET(new NextRequest('http://localhost/api/tasks/work?taskId=boom')))).body.data;
-    assert.match(view.summary, /^Waiting on Boom support since \w{3} \d+, looks again \w{3} \d+$/);
+    assert.match(view.summary, /^Waiting on Boom support since \w{3} \d+ · looks again \w{3} \d+$/);
 
     await post(progressRoute, { taskId: 'boom', did: 'Boom replied', waitingOn: '' });
     assert.equal(rec('boom')!.status, 'resting');
@@ -497,10 +499,10 @@ describe('answers, the switch, the views', () => {
     assert.equal(rec('boom')!.lease, undefined);
     assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'rest', why: 'x' }), /lease/);
     const view = (await json(await viewRoute.GET(new NextRequest('http://localhost/api/tasks/work?taskId=boom')))).body.data;
-    assert.equal(view.summary, 'Hands off');
+    assert.equal(view.summary, 'Hands off: OpenClaw will not work on this');
     actions.handTaskWork('boom', true);
     assert.equal(rec('boom')!.status, 'queued');
-    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Handed to OpenClaw, not started');
+    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Handed to OpenClaw · it starts on its next run');
   });
 
   test('the overview lists open items oldest first and the working run', async () => {
@@ -513,7 +515,7 @@ describe('answers, the switch, the views', () => {
     assert.deepEqual(data.needsYou.map((n: { taskId: string }) => n.taskId), ['prof', 'boom']);
     assert.equal(data.working.taskId, 'want');
     assert.equal(data.counts.pendingItems, 4);
-    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Needs you: 2 items');
+    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Needs you: 2 things below');
   });
 
   test('records of closed tasks are pruned, unless a run still holds the lease', () => {
@@ -558,5 +560,41 @@ describe('OpenClaw\'s browser is shared with the job worker', () => {
     assert.equal(await jobs.claimNextJobApplication(), null);
     actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'rest', why: 'done for now' });
     assert.equal((await jobs.claimNextJobApplication())?.listing.id, 'job1');
+  });
+});
+
+describe('subtasks are real open tasks', () => {
+  // The list files keep a subtask as its own entry with parentTaskId: progress, the switch, the claim and the views
+  // all find it the same way as a top-level task.
+  test('progress from a chat lands in the subtask\'s own notes', async () => {
+    const res = await json(await post(progressRoute, { taskId: 'child', did: 'Asked U-Haul for a quote', waitingOn: 'U-Haul' }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.listType, 'have-to-do');
+    assert.match(res.body.data.notesMarkdown, /## Progress[\s\S]*Asked U-Haul for a quote/);
+    assert.equal(rec('child')!.status, 'waiting');
+  });
+
+  test('a subtask is handed, claimed, worked on and viewed', async () => {
+    assert.equal((await json(await post(handRoute, { taskId: 'child', on: true }))).status, 200);
+    const c = actions.claimTaskWork()!;
+    assert.equal(c.taskId, 'child');
+    assert.equal(c.task.parent?.text, 'Move out');
+    const progress = await json(await post(updateRoute, { taskId: 'child', token: c.lease.token, action: 'progress', did: 'Found two van rentals' }));
+    assert.equal(progress.status, 200);
+    assert.match(progress.body.data.notesMarkdown, /Found two van rentals/);
+    await post(updateRoute, { taskId: 'child', token: c.lease.token, action: 'ask', questions: ['Which day do you move?'] });
+    const view = await json(await viewRoute.GET(new NextRequest('http://localhost/api/tasks/work?taskId=child')));
+    assert.equal(view.body.data.record.status, 'needs-you');
+    const overview = await json(await viewRoute.GET(new NextRequest('http://localhost/api/tasks/work')));
+    assert.deepEqual(overview.body.data.needsYou.map((n: { taskId: string }) => n.taskId), ['child']);
+  });
+
+  test('a nested childTasks entry is still found by progress', async () => {
+    writeFileSync(path.join(tasksDir, 'want-to-do.json'), JSON.stringify({ _comment: '', tasks: [
+      { id: 'trip', text: 'Plan the trip', childTasks: [{ id: 'hotel', text: 'Book the hotel', parentTaskId: 'trip' }] },
+    ] }));
+    const res = await json(await post(progressRoute, { taskId: 'hotel', did: 'Compared three hotels' }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.listType, 'want-to-do');
   });
 });

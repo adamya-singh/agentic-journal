@@ -50,7 +50,18 @@ export function mutateTaskWork<T>(fn: (data: TaskWorkFile) => T): T {
   return result;
 }
 
-/** A task run holds OpenClaw's browser: the job-application claim waits for it. */
+/** Whether any run claimed a task at or after `sinceMs`: the cron wake's check that its run did something. */
+export function taskWorkClaimedSince(sinceMs: number): boolean {
+  try {
+    return Object.values(readTaskWorkFile().records).some((r) =>
+      (r.lease && Date.parse(r.lease.claimedAt) >= sinceMs)
+      || r.history.some((h) => h.to === 'working' && Date.parse(h.at) >= sinceMs));
+  } catch {
+    return false;
+  }
+}
+
+/** A task run holds OpenClaw's browser: the job-application claim and the brief agent wait for it. */
 export function taskWorkLeaseLive(now = new Date()): boolean {
   try {
     return Object.values(readTaskWorkFile().records).some((r) => leaseLive(r, now));

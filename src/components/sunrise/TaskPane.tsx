@@ -29,6 +29,7 @@ import { defaultSurfaceId, deriveSurfaces, pageKey, readPastedPages, safeWebUrl,
 import { BROWSER_SURFACE_CSS, BrowserSurface, type OpenedTab } from './BrowserSurface';
 import { CHATS_CSS, ChatsPanel, MiniChat, useTaskChats } from './WorkspaceChats';
 import { SESSIONS_PANEL_CSS, TaskSessions } from './WorkspaceSessions';
+import { TASK_WORK_CSS, TaskWorkStrip, useTaskWork } from './TaskWorkStrip';
 
 const BRIEF_AND_WORK_CSS = `
 /* Daylight, tinted by what the task is: a low sun in its colour, sky above it, and the work on top. */
@@ -512,7 +513,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
-export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + BROWSER_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
+export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -1528,17 +1529,22 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     setAddBad(false);
   };
 
-  const done = async () => {
+  // The one Done: the brief's foot, the verdict's button and a yes to OpenClaw's "Looks done" all come here.
+  const done = async (): Promise<boolean> => {
     setBusy(true);
     setError(null);
     const body = { taskId, listType, date: getCurrentDateISO() };
     const json = await post('/api/tasks/today/complete', { ...body, completed: true }).catch(() => null);
     setBusy(false);
-    if (!json?.success) { setError(json?.error || 'That did not save. Try again.'); return; }
+    if (!json?.success) { setError(json?.error || 'That did not save. Try again.'); return false; }
     onClose();
     onUndo(`Done: ${short}.`, () => post('/api/tasks/today/complete', { ...body, completed: false }));
     onChanged();
+    return true;
   };
+  // OpenClaw's own work on the task: its state, the switch, and what it waits on him for.
+  const taskWork = useTaskWork(taskId, !taskId.startsWith('card:'));
+  const waitsOnYou = taskWork.pending.length;
   const setWhen = async (dueDate: string) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return;
     setError(null);
@@ -1629,6 +1635,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                     {a?.status === 'failed' && <em>couldn’t look at this{a.error ? `: ${a.error}` : ''}</em>}
                     {a && !filling && <button type="button" onClick={() => void refresh()}>{a.status === 'failed' ? 'Retry' : 'Look again'}</button>}
                   </span>
+                  {!taskId.startsWith('card:') && <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} />}
                   <h2>{headline}</h2>
                   {says && form && form.name !== headline && <p className="srp-note">{form.name}</p>}
                   {why && <p className="why">{why}</p>}
@@ -1677,7 +1684,12 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       )}
       <div className="srw-mid">
         <div className="srw-tabs">
-          {!phone && <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief"><i className="pane" aria-hidden="true" /></button>}
+          {!phone && (
+            <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief">
+              <i className="pane" aria-hidden="true" />
+              {!briefOpen && waitsOnYou > 0 && <em className="waiting" role="img" aria-label={`OpenClaw waits on you for ${waitsOnYou}`}>{waitsOnYou}</em>}
+            </button>
+          )}
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
             {surfaces.map((surface) => {
               const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work';
@@ -1788,6 +1800,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
           {PHONE_TABS.map(([id, label]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
               {label}
+              {id === 'brief' && waitsOnYou > 0 && <em role="img" aria-label={`OpenClaw waits on you for ${waitsOnYou}`}>{waitsOnYou}</em>}
               {id === 'chat' && (chats.waiting > 0
                 ? <em role="img" aria-label={`${chats.waiting} waiting on you`}>{chats.waiting}</em>
                 : chatBusy ? <i className="srw-dot working" role="img" aria-label="OpenClaw is working" /> : null)}

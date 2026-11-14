@@ -13,7 +13,8 @@ import { randomUUID } from 'node:crypto';
 import { iconForKind } from '@/lib/shapes/hook';
 import { extractJsonObject, localDateIso } from '@/lib/done-at';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
-import { jobBrowserBusy as browserBusy } from '../../jobs/application-store-utils';
+import { jobBrowserBusy } from '../../jobs/application-store-utils';
+import { taskWorkLeaseLive } from '../work/store';
 import { runOpenClawAgentTurn } from '@/lib/openclaw-agent';
 import { loadHorizon } from '../horizon/load';
 import { loadRuleBrief, openTaskRefs } from '../brief/build';
@@ -23,6 +24,9 @@ import { readHookWorkRecord } from '../hook-work/store';
 const HORIZON_DAYS = 14;
 const SCHEDULE_THROTTLE_MS = 5 * 60_000;
 const BROWSER_BUSY_RETRY_MS = 3 * 60_000;
+
+/** OpenClaw's browser is in use by a job-application run or a task-worker run: a fill waits for it. */
+const browserBusy = () => jobBrowserBusy() || taskWorkLeaseLive();
 
 const STATE = Symbol.for('agentic-journal.brief-agent-worker');
 type WorkerState = { running: boolean; lastScheduleAt: number; wake: ReturnType<typeof setTimeout> | null };

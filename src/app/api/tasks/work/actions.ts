@@ -121,8 +121,19 @@ function taskView(open: OpenTask, byId: Map<string, OpenTask>) {
     projects: task.projects ?? [],
     parent: parent ? { id: parent.id, text: parent.text, notesMarkdown: parent.notesMarkdown ?? '' }
       : task.parentTaskId ? { id: task.parentTaskId, text: task.parentTaskText ?? '', notesMarkdown: '' } : null,
-    subtasks: (task.childTasks ?? []).map((c) => ({ id: c.id, text: c.text, completed: !!c.completed, dueDate: c.dueDate ?? null })),
+    subtasks: subtasksOf(task, byId).map((c) => ({ id: c.id, text: c.text, completed: !!c.completed, dueDate: c.dueDate ?? null })),
   };
+}
+
+/**
+ * A task's subtasks. The list files keep subtasks as their own entries with `parentTaskId` (childTasks is only built
+ * for display by buildTaskHierarchy), so they are found by parent id; a nested childTasks is read too.
+ */
+function subtasksOf(task: Task, byId: Map<string, OpenTask>): Task[] {
+  const out = new Map<string, Task>();
+  for (const { task: t } of byId.values()) if (t.parentTaskId?.trim() === task.id) out.set(t.id, t);
+  for (const c of task.childTasks ?? []) if (!out.has(c.id)) out.set(c.id, c);
+  return [...out.values()];
 }
 
 function compassForAgents(): string {

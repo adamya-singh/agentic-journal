@@ -48,14 +48,18 @@ export async function register(): Promise<void> {
     wakeAssessmentPreviewsIfDue().catch((error) => console.error('OA preview wake failed:', error));
   };
   setTimeout(wakePreviews, 90_000).unref();
-  // The task worker's runs that died get recovered, and closed tasks forgotten. Nothing wakes OpenClaw yet.
+  // The task worker's runs that died get recovered and closed tasks forgotten; then OpenClaw is woken when a task is
+  // claimable (its cron otherwise only ticks every six hours). TASK_WORKER_DISABLED=1 turns both declaring and waking off.
   const { reconcileTaskWork } = await import('./app/api/tasks/work/actions');
+  const { ensureTaskWorkerCron, wakeTaskWorker } = await import('./app/api/tasks/work/cron');
+  ensureTaskWorkerCron().catch((error) => console.error('Task worker cron:', error));
   const reconcileTasks = () => {
     try {
       reconcileTaskWork();
     } catch (error) {
       console.error('Task work reconcile failed:', error);
     }
+    void wakeTaskWorker();
   };
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {

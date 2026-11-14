@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { AnswerSchema, answerTaskWork } from '../actions';
 import { taskWorkErrorResponse } from '../errors';
+import { wakeTaskWorker } from '../cron';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,7 +18,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Send { taskId, itemId, decision: approve | decline | answer, answer?, editedDetail? }.' }, { status: 400 });
   }
   try {
-    return NextResponse.json({ success: true, data: answerTaskWork(parsed.data) });
+    const data = answerTaskWork(parsed.data);
+    // His last answer sent the task back to the worker: wake it now. Never throws.
+    if (data.record.status === 'queued') void wakeTaskWorker();
+    return NextResponse.json({ success: true, data });
   } catch (error) {
     return taskWorkErrorResponse(error, 'record the answer');
   }

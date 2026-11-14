@@ -344,28 +344,32 @@ export const TASK_WORK_RULES: readonly string[] = [
 
 // ───────────── in plain words ─────────────
 
-/** One line on where the task stands, for the brief strip. */
+/** One line on where the task stands, for the brief strip. Plain words: no status names, leases or grants. */
 export function taskWorkSummary(record: TaskWork | undefined, now: Date): string {
   if (!record) return 'Not handed to OpenClaw';
-  if (record.status === 'off') return 'Hands off';
-  if (record.status === 'working') return 'OpenClaw is working on this';
+  if (record.status === 'off') return 'Hands off: OpenClaw will not work on this';
+  if (record.status === 'working') return 'OpenClaw is working on this now';
   const pending = pendingItems(record).length;
-  if (pending > 0) return `Needs you: ${pending} item${pending === 1 ? '' : 's'}`;
+  if (pending > 0) return `Needs you: ${pending === 1 ? 'one thing' : `${pending} things`} below`;
+  const later = (iso: string) => (Date.parse(iso) > now.getTime() ? shortDay(iso) : 'soon');
   if (record.status === 'waiting' && record.waiting) {
-    return `Waiting on ${record.waiting.on} since ${shortDay(record.waiting.since)}, looks again ${shortDay(record.waiting.checkAfter)}`;
+    return `Waiting on ${record.waiting.on} since ${shortDay(record.waiting.since)} · looks again ${later(record.waiting.checkAfter)}`;
   }
   if (record.status === 'queued') {
-    if (record.reason === 'answered') return 'Answered, OpenClaw picks it up next';
+    if (record.reason === 'answered') return 'You answered · OpenClaw picks it up on its next run';
     if (record.reason === 'retry') {
       return record.nextRetryAt && Date.parse(record.nextRetryAt) > now.getTime()
-        ? `OpenClaw tries again ${shortDay(record.nextRetryAt)} at ${new Date(record.nextRetryAt).toTimeString().slice(0, 5)}`
-        : 'OpenClaw takes the next step soon';
+        ? `OpenClaw tries again ${shortDay(record.nextRetryAt)} at ${new Date(record.nextRetryAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
+        : 'OpenClaw takes the next step on its next run';
     }
-    return record.lookedAt ? 'Handed to OpenClaw, next step soon' : 'Handed to OpenClaw, not started';
+    return record.lookedAt ? 'Handed to OpenClaw · it takes the next step on its next run' : 'Handed to OpenClaw · it starts on its next run';
   }
   if (record.status === 'resting') {
-    const looked = record.lookedAt ? `OpenClaw looked ${shortDay(record.lookedAt)}` : 'OpenClaw looked';
-    return record.lookAgainAfter ? `${looked}, nothing it can do now; looks again ${shortDay(record.lookAgainAfter)}` : `${looked}, nothing it can do now`;
+    const again = record.lookAgainAfter ? ` · looks again ${later(record.lookAgainAfter)}` : '';
+    const why = record.history[record.history.length - 1]?.why;
+    if (why === 'Adamya confirmed it is done') return 'You said this is done';
+    if (why === 'Adamya declined everything') return `You said no to what it asked${again}`;
+    return `OpenClaw looked and found nothing it can do for now${again}`;
   }
   return 'Needs you';
 }
