@@ -136,8 +136,12 @@ function useFit(value: string) {
   return ref;
 }
 
-type Answer = { decision: 'approve' | 'decline' | 'answer'; answer?: string; editedDetail?: NeedsYouDetail };
-type Send = (item: NeedsYouItem, answer: Answer, said: string) => Promise<string | null>;
+/** His answer to one item, as the answer route takes it. */
+export type TaskWorkAnswer = { decision: 'approve' | 'decline' | 'answer'; answer?: string; editedDetail?: NeedsYouDetail };
+/** Sends an answer and says it in words; the error to show when it was refused, null when it saved. */
+export type TaskWorkSend = (item: NeedsYouItem, answer: TaskWorkAnswer, said: string) => Promise<string | null>;
+type Answer = TaskWorkAnswer;
+type Send = TaskWorkSend;
 
 const WHO: Record<NeedsYouItem['kind'], string> = { approval: 'To approve', question: 'A question', done: 'Looks done', 'sent-check': 'Did it go out?' };
 /** The item's words without the lead-in its label already says ("Looks done:", "Did this go out?"). */
@@ -170,8 +174,12 @@ function MailEdit({ value, onChange }: { value: NeedsYouDetail; onChange: (next:
   );
 }
 
-/** One thing OpenClaw waits on him for, and the ways to answer it. */
-function Item({ item, send }: { item: NeedsYouItem; send: Send }) {
+/**
+ * One thing OpenClaw waits on him for, and the ways to answer it: the brief's strip and the home page's OpenClaw
+ * tray draw the same card. `openToMarkDone`, where the brief's own Done is not at hand (the tray), takes his yes to
+ * "Looks done" to the task's brief instead of answering it, so only that task's Done can close it.
+ */
+export function TaskWorkItem({ item, send, openToMarkDone }: { item: NeedsYouItem; send: Send; openToMarkDone?: () => void }) {
   const [phase, setPhase] = React.useState<'idle' | 'edit' | 'no'>('idle');
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -245,8 +253,9 @@ function Item({ item, send }: { item: NeedsYouItem; send: Send }) {
 
       {item.kind === 'done' && (
         <div className="srx-acts">
-          <button type="button" className="srp-btn" disabled={sending} onClick={() => void go({ decision: 'approve' }, 'Marking it done…')}>{sending ? 'Marking it done…' : 'Yes, mark done'}</button>
+          <button type="button" className="srp-btn" disabled={sending} onClick={openToMarkDone ?? (() => void go({ decision: 'approve' }, 'Marking it done…'))}>{sending ? 'Marking it done…' : 'Yes, mark done'}</button>
           <button type="button" className="srp-btn quiet" disabled={sending} onClick={() => void go({ decision: 'decline' }, 'Noted · it stays open')}>Not yet</button>
+          {openToMarkDone && <span>Opens the task: you close it there.</span>}
         </div>
       )}
 
@@ -347,7 +356,7 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
       </div>
       {said && <p className="srx-said" role="status">{said}</p>}
       {error && <p className="srx-err" role="alert">{error}</p>}
-      {pending.map((item) => <Item key={item.id} item={item} send={send} />)}
+      {pending.map((item) => <TaskWorkItem key={item.id} item={item} send={send} />)}
       {record && <Earlier items={record.items} />}
     </div>
   );

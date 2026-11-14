@@ -15,26 +15,34 @@ import {
   askWhetherSent,
   createTaskWork,
   leaseLive,
+  migrateWaitOnAdamya,
   nextWaiting,
   pendingItems,
   pickNextTaskWork,
+  quietHours,
   recordTaskWorkFailure,
   recoverExpiredLease,
   replyCheckAfter,
   requireTaskWorkLease,
   setTaskWorkStatus,
+  sortVerdict,
+  sweepCapToday,
+  sweepClaimsToday,
+  sweepOrder,
   taskWorkSummary,
   localDay,
+  waitOnAdamya,
+  waitsOnAdamya,
   TaskWorkError,
   TASK_WORK_LEASE_MS,
   TASK_WORK_REST_MS,
   TASK_WORK_RULES,
   type NeedsYouItem,
   type TaskWork,
-  type TaskWorkReason,
   type TaskWorkRef,
   type TaskWorkStatus,
 } from '@/lib/task-work';
+import { sortCounts, sortDomain } from '@/lib/task-sort';
 import { loadTaskBrief, openTaskRefs } from '../brief/build';
 import { readCurrentTaskIds } from '../current/current-store-utils';
 import { jobBrowserBusy } from '../../jobs/application-store-utils';
@@ -44,12 +52,12 @@ import { mutateTaskWork, readTaskWorkFile, type TaskWorkFile } from './store';
 const RELEASE_RETRY_MS = 30 * 60_000;
 
 export const taskWorkDisabled = () => process.env.TASK_WORKER_DISABLED === '1';
-const sweepDisabled = () => process.env.TASK_WORKER_SWEEP_DISABLED === '1';
+export const sweepDisabled = () => process.env.TASK_WORKER_SWEEP_DISABLED === '1';
 
 interface OpenTask { task: Task; listType: ListType }
 
 /** Open tasks as the claim order sees them, plus a lookup by id. */
-function openTasks(): { refs: TaskWorkRef[]; byId: Map<string, OpenTask> } {
+export function openTasks(): { refs: TaskWorkRef[]; byId: Map<string, OpenTask> } {
   const list = openTaskRefs();
   const current = new Map<string, number>();
   for (const listType of ['have-to-do', 'want-to-do'] as const) {
@@ -63,11 +71,15 @@ function openTasks(): { refs: TaskWorkRef[]; byId: Map<string, OpenTask> } {
   return { refs, byId: new Map(list.map((r) => [r.task.id, r])) };
 }
 
-/** Expired leases recovered and three-week silences turned into questions. True when anything changed. */
+/**
+ * Expired leases recovered, waits on Adamya himself (left by an earlier version) turned into a question for him, and
+ * three-week silences turned into questions. True when anything changed.
+ */
 function settle(records: Record<string, TaskWork>, now: Date): boolean {
   let changed = false;
   for (const record of Object.values(records)) {
     if (recoverExpiredLease(record, now)) changed = true;
+    if (migrateWaitOnAdamya(record, now)) changed = true;
     if (askAfterSilence(record, now)) changed = true;
   }
   return changed;
@@ -88,7 +100,7 @@ export function taskWorkClaimable(now = new Date()): boolean {
   const data = readTaskWorkFile();
   const records = structuredClone(data.records);
   settle(records, now);
-  return pickNextTaskWork(records, openTasks().refs, now, effectiveMeta(data)) !== null;
+  return pickNextTaskWork(records, openTasks().refs, now, effectiveMeta(data), data.sort) !== null;
 }
 
 // ───────────── claim ─────────────
@@ -100,7 +112,7 @@ const API_HELP = {
   actions: [
     'attempted { what, itemId }: before an outward act; itemId must be an approval item Adamya approved',
     'progress { did, next?, waitingOn?, itemId? }: records what was done in the task notes; itemId marks that approved act done',
-    'waiting { on, checkAfter? }: closes; waits on someone outside, the Journal schedules the reply checks',
+    'waiting { on, checkAfter? }: closes; waits on someone outside (a person, office, company), the Journal schedules the reply checks. Waiting on Adamya himself is not this: use ask',
     'rest { why, lookAgainAfter? }: closes; nothing to do now (looks again in 30 days unless said)',
     'continue { why? }: closes; another step is worth taking soon',
     'ask { questions }: closes; questions for Adamya',
@@ -149,7 +161,7 @@ export function claimTaskWork(now = new Date()) {
   const { refs, byId } = openTasks();
   const claimed = mutateTaskWork((data) => {
     settle(data.records, now);
-    const pick = pickNextTaskWork(data.records, refs, now, effectiveMeta(data));
+    const pick = pickNextTaskWork(data.records, refs, now, effectiveMeta(data), data.sort);
     if (!pick) return null;
     const ref = refs.find((r) => r.taskId === pick.taskId)!;
     let record = data.records[pick.taskId];
@@ -171,7 +183,9 @@ export function claimTaskWork(now = new Date()) {
       const today = localDay(now);
       data.meta.sweepClaims = { date: today, count: (data.meta.sweepClaims.date === today ? data.meta.sweepClaims.count : 0) + 1 };
     }
-    return { taskId: pick.taskId, reason: pick.reason, record: structuredClone(record) };
+    // What the batched sort said could be prepared: where a sweep run starts.
+    const sweepHint = pick.sweep ? data.sort[pick.taskId]?.why || null : null;
+    return { taskId: pick.taskId, reason: pick.reason, record: structuredClone(record), sweepHint };
   });
   if (!claimed) return null;
 
@@ -189,6 +203,7 @@ export function claimTaskWork(now = new Date()) {
     lease: { token: r.lease!.token, expiresAt: r.lease!.expiresAt },
     reason: claimed.reason,
     grant: r.grant,
+    sweepHint: claimed.sweepHint,
     task: taskView(open, byId),
     brief,
     items: r.items,
@@ -276,8 +291,13 @@ export function updateTaskWork(body: TaskWorkUpdate, now = new Date()) {
         return { record: structuredClone(record), notesMarkdown: written.notesMarkdown };
       }
       case 'waiting':
-        record.waiting = nextWaiting(record, body.on, now, body.checkAfter);
         close(record, now, task, true);
+        // Waiting on Adamya himself is a question for him, not a reply to look for.
+        if (waitsOnAdamya(body.on)) {
+          waitOnAdamya(record, body.on, now, 'worker');
+          break;
+        }
+        record.waiting = nextWaiting(record, body.on, now, body.checkAfter);
         setTaskWorkStatus(record, 'waiting', `waiting on ${body.on}`, now, 'worker');
         break;
       case 'rest':
@@ -421,27 +441,77 @@ export function taskWorkView(taskId: string, now = new Date()) {
   return { taskId, record, summary: taskWorkSummary(record ?? undefined, now) };
 }
 
+export interface SweepView {
+  enabled: boolean;
+  cap: number;                     // today's cap (2 on the day it was turned on)
+  claimsToday: number;
+  quietNow: boolean;
+  sort: { sorted: number; unsorted: number; prepare: number; nothing: number; ask: number };
+}
+
+function sweepView(data: TaskWorkFile, refs: TaskWorkRef[], now: Date): SweepView {
+  return {
+    enabled: effectiveMeta(data).sweepEnabled && !taskWorkDisabled(),
+    cap: sweepCapToday(data.meta, now),
+    claimsToday: sweepClaimsToday(data.meta, now),
+    quietNow: quietHours(now),
+    sort: sortCounts(data.records, refs, data.sort, now),
+  };
+}
+
+const WAITING_LIMIT = 20;
+const COULD_ASK_LIMIT = 30;
+
 export function taskWorkOverview(now = new Date()) {
-  const { records } = readTaskWorkFile();
-  const byId = new Map(openTaskRefs().map((r) => [r.task.id, r]));
+  const data = readTaskWorkFile();
+  const { records } = data;
+  const { refs, byId } = openTasks();
   const counts: Record<TaskWorkStatus, number> & { pendingItems: number } = {
     queued: 0, working: 0, waiting: 0, 'needs-you': 0, resting: 0, off: 0, pendingItems: 0,
   };
   const needsYou: { taskId: string; taskText: string; listType: ListType; items: NeedsYouItem[] }[] = [];
-  let working: { taskId: string; taskText: string; reason: TaskWorkReason; claimedAt: string; expiresAt: string } | null = null;
+  const waiting: { taskId: string; taskText: string; listType: ListType; on: string; since: string; checkAfter: string }[] = [];
+  let working: { taskId: string; taskText: string; since: string } | null = null;
   for (const [taskId, record] of Object.entries(records)) {
     const open = byId.get(taskId);
     if (!open) continue;
     counts[record.status] += 1;
-    const items = pendingItems(record);
+    const items = pendingItems(record).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     counts.pendingItems += items.length;
     if (items.length) needsYou.push({ taskId, taskText: open.task.text, listType: open.listType, items });
-    if (leaseLive(record, now)) {
-      working = { taskId, taskText: open.task.text, reason: record.reason, claimedAt: record.lease!.claimedAt, expiresAt: record.lease!.expiresAt };
+    if (record.status === 'waiting' && record.waiting) {
+      const { on, since, checkAfter } = record.waiting;
+      waiting.push({ taskId, taskText: open.task.text, listType: open.listType, on, since, checkAfter });
     }
+    if (leaseLive(record, now)) working = { taskId, taskText: open.task.text, since: record.lease!.claimedAt };
   }
   needsYou.sort((a, b) => a.items[0].createdAt.localeCompare(b.items[0].createdAt));
-  return { needsYou, working, counts };
+  waiting.sort((a, b) => a.checkAfter.localeCompare(b.checkAfter));
+  // Tasks the sort said one answer would unlock: a quiet list, Current queue first. Never items of their own.
+  const couldAsk = sweepOrder(sortDomain(records, refs), now)
+    .filter((ref) => sortVerdict(data.sort[ref.taskId], ref.fingerprint, now) === 'ask')
+    .slice(0, COULD_ASK_LIMIT)
+    .map((ref) => {
+      const open = byId.get(ref.taskId)!;
+      const entry = data.sort[ref.taskId];
+      return { taskId: ref.taskId, taskText: open.task.text, listType: open.listType, q: entry.q ?? '', why: entry.why };
+    });
+  return { needsYou, working, counts, sweep: sweepView(data, refs, now), waiting: waiting.slice(0, WAITING_LIMIT), couldAsk };
+}
+
+// ───────────── the sweep switch ─────────────
+
+/**
+ * Adamya turns the sweep on or off. Turning it on from off makes today its first day (a cap of 2). Turning it off
+ * stops new sweep claims and sorting; records are never touched.
+ */
+export function setSweepEnabled(enabled: boolean, now = new Date()): SweepView {
+  const data = mutateTaskWork((d) => {
+    if (enabled && !d.meta.sweepEnabled) d.meta.sweepFirstDay = localDay(now);
+    d.meta.sweepEnabled = enabled;
+    return structuredClone(d);
+  });
+  return sweepView(data, openTasks().refs, now);
 }
 
 // ───────────── chats, and the five-minute reconcile ─────────────
@@ -462,6 +532,16 @@ export function noteChatProgress(taskId: string, waitingOn: string | undefined, 
   mutateTaskWork((data) => {
     let record = data.records[taskId];
     if (record?.status === 'off' || record?.status === 'working') return;
+    if (on && waitsOnAdamya(on)) {
+      // Waiting on Adamya himself: nobody outside to look for a reply from, so he is asked instead.
+      if (!record) {
+        record = data.records[taskId] = createTaskWork('needs-you', { reason: 'handed', grant: 'act-with-approval', why: `a chat said it waits on Adamya`, now });
+        record.handedAt = at;
+      }
+      waitOnAdamya(record, on, now);
+      record.fingerprint = taskFingerprint(task);
+      return;
+    }
     if (!on) {
       if (record?.status !== 'waiting') return;
       delete record.waiting;
@@ -483,17 +563,27 @@ export function noteChatProgress(taskId: string, waitingOn: string | undefined, 
   });
 }
 
-/** Recovers runs whose lease ran out, asks after long silences, and forgets tasks that are no longer open. */
+/**
+ * Recovers runs whose lease ran out, asks after long silences, turns waits on Adamya into questions, and forgets
+ * tasks that are no longer open (their records and sort verdicts).
+ */
 export function reconcileTaskWork(now = new Date()): { changed: boolean; pruned: string[] } {
   const open = new Set(openTaskRefs().map((r) => r.task.id));
   // A record with a live lease stays until its run reports, so the browser stays marked as taken.
   const gone = (records: Record<string, TaskWork>) => Object.keys(records).filter((id) => !open.has(id) && !leaseLive(records[id], now));
-  const probe = structuredClone(readTaskWorkFile().records);
-  if (!settle(probe, now) && gone(probe).length === 0) return { changed: false, pruned: [] };
+  const goneSorts = (d: Pick<TaskWorkFile, 'sort' | 'sortFailures'>) =>
+    [...new Set([...Object.keys(d.sort), ...Object.keys(d.sortFailures)])].filter((id) => !open.has(id));
+  const file = readTaskWorkFile();
+  const probe = structuredClone(file.records);
+  if (!settle(probe, now) && gone(probe).length === 0 && goneSorts(file).length === 0) return { changed: false, pruned: [] };
   return mutateTaskWork((data) => {
     settle(data.records, now);
     const pruned = gone(data.records);
     for (const id of pruned) delete data.records[id];
+    for (const id of goneSorts(data)) {
+      delete data.sort[id];
+      delete data.sortFailures[id];
+    }
     return { changed: true, pruned };
   });
 }

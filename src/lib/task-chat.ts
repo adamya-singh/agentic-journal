@@ -301,12 +301,13 @@ function surfaceContext(about: ChatSurfaceRef | null | undefined): string {
  * and the next session know it. (POST /api/tasks/progress, src/lib/task-progress.ts.)
  */
 function progressRule(taskId: string): string[] {
-  const body = JSON.stringify({ taskId, did: '<what you did, one line>', next: '<what comes next>', waitingOn: '<who or what it waits on, and since when>' });
+  const body = JSON.stringify({ taskId, did: '<what you did, one line>', next: '<what comes next>', waitingOn: '<who outside it waits on, and since when>' });
   return [
     'The one exception, which needs no asking: keep the task up to date with what happens in this chat. Each time you do something for the task (send an email, submit or book something, find out a fact that changes what comes next) or he tells you something happened, record it before you answer, for the whole life of this chat:',
     `curl -s -X POST http://127.0.0.1:3000/api/tasks/progress -H 'Content-Type: application/json' -d '${body}'`,
     '"did" names the specifics (who, which address, the subject, the amount). "next" and "waitingOn" are optional and replace the last ones; send "" to clear one. This only adds to the task’s notes under "## Progress".',
-    'You are not running between his messages, so never say you will watch, monitor or check back later. When the next step is waiting for something (a reply, a decision, a date), say so in "waitingOn" and tell him the task now records it.',
+    'You are not running between his messages, so never say you will watch, monitor or check back later. When the next step is waiting for someone outside (a person, an office, a company: a reply, their decision, a date), say so in "waitingOn" and tell him the task now records it; the Journal then looks for their reply.',
+    '"waitingOn" is only for someone outside. When it is Adamya you are waiting on (his approval, answer or decision), say so in "next" instead ("Next: Adamya confirms the 3 lenses") and leave "waitingOn" out.',
   ];
 }
 

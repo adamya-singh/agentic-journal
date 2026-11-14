@@ -7,7 +7,10 @@ export const dynamic = 'force-dynamic';
 
 /**
  * GET /api/tasks/work?taskId=<id> → { taskId, record | null, summary }   one task, with its state in plain words
- * GET /api/tasks/work               → { needsYou, working, counts }       open items across tasks, oldest first
+ * GET /api/tasks/work               → { needsYou, working, counts, sweep, waiting, couldAsk }
+ *     needsYou: open items across tasks, oldest first; working: { taskId, taskText, since } | null;
+ *     sweep: { enabled, cap, claimsToday, quietNow, sort: { sorted, unsorted, prepare, nothing, ask } };
+ *     waiting: reply checks, soonest first (20); couldAsk: tasks one answer would unlock, Current queue first (30)
  */
 export async function GET(request: NextRequest) {
   try {

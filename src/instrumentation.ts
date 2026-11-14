@@ -52,6 +52,10 @@ export async function register(): Promise<void> {
   // claimable (its cron otherwise only ticks every six hours). TASK_WORKER_DISABLED=1 turns both declaring and waking off.
   const { reconcileTaskWork } = await import('./app/api/tasks/work/actions');
   const { ensureTaskWorkerCron, wakeTaskWorker } = await import('./app/api/tasks/work/cron');
+  // While the sweep is on, tasks nobody handed over are sorted 30 to an OpenClaw turn (no tools) before the sweep may
+  // claim one; and once a day, from 09:00, one Telegram message says what is waiting on Adamya. Neither throws.
+  const { runTaskSortIfDue } = await import('./app/api/tasks/work/sort');
+  const { notifyNeedsYou } = await import('./app/api/tasks/work/notify');
   ensureTaskWorkerCron().catch((error) => console.error('Task worker cron:', error));
   const reconcileTasks = () => {
     try {
@@ -60,6 +64,8 @@ export async function register(): Promise<void> {
       console.error('Task work reconcile failed:', error);
     }
     void wakeTaskWorker();
+    void runTaskSortIfDue().then((result) => { if (result.decision === 'sorted') void wakeTaskWorker(); });
+    void notifyNeedsYou();
   };
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {

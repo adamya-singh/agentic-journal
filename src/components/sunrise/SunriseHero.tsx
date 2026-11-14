@@ -29,6 +29,7 @@ import type { CardThing, SunriseEngine, TrayKind } from './engine';
 import { SUNRISE_CSS } from './sunrise-css';
 import { GLANCE_CSS } from './glance-css';
 import { PANE_CSS, TaskPane } from './TaskPane';
+import { OPENCLAW_TRAY_CSS, OpenClawTray, useWorkerOverview, workerChip } from './OpenClawTray';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
 
@@ -281,6 +282,13 @@ export function SunriseHero() {
     return () => window.clearInterval(timer);
   }, []);
 
+  // OpenClaw's work across tasks: the ground's chip and its tray. Read with the rest, every minute, and every 10 s
+  // while the tray is open.
+  const worker = useWorkerOverview(tray === 'openclaw', `${taskRefreshCounter}:${tick}`);
+  const chip = workerChip(worker.view);
+  const chipCount = chip?.count ?? null;
+  React.useEffect(() => { engine?.setWorker(chipCount === null ? null : { count: chipCount }); }, [engine, chipCount]);
+
   // The action cards: things OpenClaw noticed and posts he saved. They live on the far side of the sky (press
   // the sun), on rings by when they fit and in one slice per bet, as on Dawn.
   const loadCards = React.useCallback(() => {
@@ -465,10 +473,25 @@ export function SunriseHero() {
 
   const horizon = data?.horizon ?? null;
   const openTask = (id: string) => engineRef.current?.openTask(id);
+  // Opens a task on one tab (a phone's Brief, a wide screen's brief column), and the address says so.
+  const openTaskOn = (id: string, tab: TaskTab) => {
+    const made = engineRef.current;
+    if (!made) return;
+    const u = urlState.current;
+    const shown = parseTaskSearch(window.location.search).task;
+    u.fromUrl = true;
+    startTab.current = tab;
+    try { made.openTask(id); } finally { u.fromUrl = false; }
+    if (engineOpen.current !== id) return;
+    if (shown !== null) writeUrl(id, tab, false);
+    else { writeUrl(id, tab, true); u.pushed = true; }
+  };
   const section = tray === 'track' ? horizon?.wantTracks.find((t) => t.name === trayTrack) : undefined;
   const sectionWants = section ? horizon?.wantsBySection[section.name] ?? [] : [];
 
-  const trayBody = !horizon || !data || !tray ? null : tray === 'holds' ? (
+  const trayBody = !horizon || !data || !tray ? null : tray === 'openclaw' ? (
+    <OpenClawTray worker={worker} onOpenTask={(id) => openTaskOn(id, 'brief')} />
+  ) : tray === 'holds' ? (
     <>
       <p className="sr-t">Overdue</p>
       <p className="sr-s">Done, but when? Or let it go.</p>
@@ -570,7 +593,7 @@ export function SunriseHero() {
 
   return (
     <section className={`sr-hero ${serif.variable}`} aria-label="Sunrise: your tasks by how soon they are due">
-      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + GLANCE_CSS + SPACE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + HERO_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + GLANCE_CSS + SPACE_CSS + DONE_CSS + BRIEF_CSS + CHAT_CSS + CARD_CSS + PANE_CSS + OPENCLAW_TRAY_CSS + HERO_CSS }} />
       <div
         ref={skyRef}
         className="sr-sky"

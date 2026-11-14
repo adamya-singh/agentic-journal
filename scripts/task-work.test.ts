@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
-import type { TaskWork, TaskWorkMeta, TaskWorkRef, TaskWorkStatus } from '../src/lib/task-work';
+import type { TaskSortEntry, TaskSortVerdict, TaskWork, TaskWorkMeta, TaskWorkRef, TaskWorkStatus } from '../src/lib/task-work';
 
 // The task worker's record and rules (docs/task-worker-design.md, stage 1): nothing here calls OpenClaw.
 const root = mkdtempSync(path.join(tmpdir(), 'agentic-journal-task-work-'));
@@ -36,6 +36,10 @@ const json = async (res: Response) => ({ status: res.status, body: await res.jso
 const rec = (id: string) => store.readTaskWorkRecord(id);
 const put = (id: string, record: TaskWork) => store.mutateTaskWork((d) => { d.records[id] = record; });
 const later = (from: Date, ms: number) => new Date(from.getTime() + ms);
+/** Every open task sorted with this verdict, as the batched sort would store it. */
+const sortAll = (v: TaskSortVerdict, at = new Date()) => store.mutateTaskWork((d) => {
+  for (const ref of actions.openTasks().refs) d.sort[ref.taskId] = { v, why: `sorted ${v}`, ...(v === 'ask' ? { q: 'Which one?' } : {}), fingerprint: ref.fingerprint, at: at.toISOString() };
+});
 const H = 3600_000, D = 864e5;
 
 function writeTasks(): void {
@@ -78,12 +82,12 @@ beforeEach(() => {
 describe('transitions', () => {
   const ALL: TaskWorkStatus[] = ['queued', 'working', 'waiting', 'needs-you', 'resting', 'off'];
   const allowed: Record<string, TaskWorkStatus[]> = {
-    none: ['queued', 'waiting', 'off'],
-    queued: ['working', 'waiting', 'off'],
+    none: ['queued', 'waiting', 'needs-you', 'off'],
+    queued: ['working', 'waiting', 'needs-you', 'off'],
     working: ['waiting', 'needs-you', 'resting', 'queued', 'off'],
     waiting: ['queued', 'needs-you', 'resting', 'off'],
     'needs-you': ['queued', 'resting', 'waiting', 'off'],
-    resting: ['queued', 'waiting', 'off'],
+    resting: ['queued', 'waiting', 'needs-you', 'off'],
     off: ['queued'],
   };
 
@@ -133,6 +137,9 @@ describe('claim order', () => {
   const ref = (taskId: string, over: Partial<TaskWorkRef> = {}): TaskWorkRef =>
     ({ taskId, listType: 'have-to-do', listIndex: 0, currentRank: null, fingerprint: 'f', ...over });
   const on: TaskWorkMeta = { sweepEnabled: true, sweepCap: 8, sweepClaims: { date: '', count: 0 } };
+  // The batched sort said every one of these has something to prepare.
+  const prep = (...ids: string[]): Record<string, TaskSortEntry> =>
+    Object.fromEntries(ids.map((id) => [id, { v: 'prepare' as const, why: 'draft it', fingerprint: 'f', at: noon.toISOString() }]));
 
   test('handed or answered, then due reply checks, then due retries, then the sweep', () => {
     const iso = (ms: number) => new Date(noon.getTime() + ms).toISOString();
@@ -180,9 +187,10 @@ describe('claim order', () => {
       ref('cur1', { listIndex: 8, currentRank: 1 }),
       ref('cur0', { listIndex: 9, currentRank: 0 }),
     ];
+    const sort = prep(...refs.map((r) => r.taskId));
     const order: string[] = [];
     for (;;) {
-      const pick = lib.pickNextTaskWork(records, refs, noon, on);
+      const pick = lib.pickNextTaskWork(records, refs, noon, on, sort);
       if (!pick) break;
       order.push(pick.taskId);
       records[pick.taskId] = record({ status: 'off' });
@@ -193,17 +201,20 @@ describe('claim order', () => {
   test('the sweep keeps quiet 23:00–08:00 and stops at the daily cap; handed work does not', () => {
     const refs = [ref('fresh'), ref('handed')];
     const handed = { handed: record() };
+    const sort = prep('fresh');
     for (const at of [new Date(2026, 10, 14, 23, 30), new Date(2026, 10, 15, 7, 59)]) {
-      assert.equal(lib.pickNextTaskWork({}, refs, at, on), null);
-      assert.equal(lib.pickNextTaskWork(handed, refs, at, on)?.taskId, 'handed');
+      assert.equal(lib.pickNextTaskWork({}, refs, at, on, sort), null);
+      assert.equal(lib.pickNextTaskWork(handed, refs, at, on, sort)?.taskId, 'handed');
     }
-    assert.equal(lib.pickNextTaskWork({}, refs, new Date(2026, 10, 15, 8, 0), on)?.taskId, 'fresh');
+    assert.equal(lib.pickNextTaskWork({}, refs, new Date(2026, 10, 15, 8, 0), on, sort)?.taskId, 'fresh');
     const full = { ...on, sweepClaims: { date: '2026-11-14', count: 8 } };
-    assert.equal(lib.pickNextTaskWork({}, refs, noon, full), null);
-    assert.equal(lib.pickNextTaskWork(handed, refs, noon, full)?.taskId, 'handed');
-    assert.equal(lib.pickNextTaskWork({}, refs, noon, { ...full, sweepClaims: { date: '2026-11-13', count: 8 } })?.taskId, 'fresh');
+    assert.equal(lib.pickNextTaskWork({}, refs, noon, full, sort), null);
+    assert.equal(lib.pickNextTaskWork(handed, refs, noon, full, sort)?.taskId, 'handed');
+    assert.equal(lib.pickNextTaskWork({}, refs, noon, { ...full, sweepClaims: { date: '2026-11-13', count: 8 } }, sort)?.taskId, 'fresh');
     const firstDay = { ...on, sweepFirstDay: '2026-11-14', sweepClaims: { date: '2026-11-14', count: 2 } };
-    assert.equal(lib.pickNextTaskWork({}, refs, noon, firstDay), null);
+    assert.equal(lib.pickNextTaskWork({}, refs, noon, firstDay, sort), null);
+    assert.equal(lib.sweepCapToday(firstDay, noon), 2);
+    assert.equal(lib.sweepCapToday(firstDay, new Date(2026, 10, 15, 12, 0)), 8);
   });
 
   test('one live lease across all tasks', () => {
@@ -214,8 +225,26 @@ describe('claim order', () => {
     assert.equal(lib.pickNextTaskWork(records, [ref('busy'), ref('handed')], noon, on), null);
   });
 
+  test('only a current `prepare` verdict makes an unhandled task a sweep candidate', () => {
+    const refs = [ref('a'), ref('b'), ref('c'), ref('d'), ref('e')];
+    const at = noon.toISOString();
+    const sort: Record<string, TaskSortEntry> = {
+      a: { v: 'nothing', why: 'a class', fingerprint: 'f', at },
+      b: { v: 'ask', why: 'which unit', q: 'Which unit?', fingerprint: 'f', at },
+      c: { v: 'prepare', why: 'find the form', fingerprint: 'old', at },                      // changed since: re-sort first
+      d: { v: 'prepare', why: 'find the form', fingerprint: 'f', at: new Date(noon.getTime() - 31 * D).toISOString() },   // aged out
+      e: { v: 'prepare', why: 'draft the email', fingerprint: 'f', at },
+    };
+    assert.deepEqual(lib.pickNextTaskWork({}, refs, noon, on, sort), { taskId: 'e', reason: 'sweep', sweep: true });
+    delete sort.e;
+    assert.equal(lib.pickNextTaskWork({}, refs, noon, on, sort), null);
+    // A task a run already rested is looked at again as before, without a verdict.
+    assert.equal(lib.pickNextTaskWork({ a: record({ status: 'resting', fingerprint: 'old' }) }, refs, noon, on, sort)?.taskId, 'a');
+  });
+
   test('claims count against the cap and the env switches stop them', () => {
     store.mutateTaskWork((d) => { d.meta.sweepEnabled = true; });
+    sortAll('prepare');
     const at = new Date(2026, 10, 14, 12, 0);
     const first = actions.claimTaskWork(at);
     assert.equal(first?.reason, 'sweep');
@@ -596,5 +625,153 @@ describe('subtasks are real open tasks', () => {
     const res = await json(await post(progressRoute, { taskId: 'hotel', did: 'Compared three hotels' }));
     assert.equal(res.status, 200);
     assert.equal(res.body.data.listType, 'want-to-do');
+  });
+});
+
+describe('a wait on Adamya himself is a question, not a reply check', () => {
+  test('waitsOnAdamya: clear cases are him; anyone outside is not', () => {
+    for (const yes of [
+      'Adamya\'s approval of the 3 lenses (since Nov 14)', 'you to confirm', 'your decision', 'Adamya',
+      'Adamya’s OK on the draft', 'approval from Adamya', 'Adamya to pick a date', 'the user', 'my answer', 'You',
+    ]) assert.equal(lib.waitsOnAdamya(yes), true, yes);
+    for (const no of [
+      'SoCam and Boom, since Nov 13', 'Prof. Yu\'s reply', 'the registrar', 'Adamya\'s landlord', 'your landlord',
+      'Boom support (since Nov 13)', '', 'the review of your essay by the TA',
+    ]) assert.equal(lib.waitsOnAdamya(no), false, no);
+    assert.equal(lib.withoutSince('Adamya\'s approval of the 3 lenses (since Nov 14)'), 'Adamya\'s approval of the 3 lenses');
+    assert.equal(lib.withoutSince('SoCam and Boom, since Nov 13'), 'SoCam and Boom');
+  });
+
+  test('a chat that says it waits on Adamya asks him instead of scheduling a reply check', async () => {
+    await post(progressRoute, { taskId: 'boom', did: 'Drafted three lenses', waitingOn: 'Adamya\'s approval of the 3 lenses (since Nov 14)' });
+    let r = rec('boom')!;
+    assert.equal(r.status, 'needs-you');
+    assert.equal(r.waiting, undefined);
+    assert.deepEqual(lib.pendingItems(r).map((i) => [i.kind, i.text]), [['question', 'OpenClaw is waiting on you: Adamya\'s approval of the 3 lenses']]);
+    // Said again: still one question.
+    await post(progressRoute, { taskId: 'boom', did: 'Reminded him', waitingOn: 'Adamya\'s approval of the 3 lenses' });
+    assert.equal(lib.pendingItems(rec('boom')).length, 1);
+    // His answer goes to the worker like any other.
+    actions.answerTaskWork({ taskId: 'boom', itemId: lib.pendingItems(rec('boom'))[0].id, decision: 'answer', answer: 'Lens 2' });
+    assert.equal(rec('boom')!.status, 'queued');
+    assert.equal(rec('boom')!.reason, 'answered');
+
+    // From waiting on someone outside, and from resting.
+    await post(progressRoute, { taskId: 'prof', did: 'Emailed', waitingOn: 'the professor' });
+    assert.equal(rec('prof')!.status, 'waiting');
+    await post(progressRoute, { taskId: 'prof', did: 'Drafted the reply', waitingOn: 'you to confirm' });
+    r = rec('prof')!;
+    assert.equal(r.status, 'needs-you');
+    assert.equal(r.waiting, undefined);
+    put('want', record({ status: 'resting' }));
+    await post(progressRoute, { taskId: 'want', did: 'Compared gyms', waitingOn: 'your decision' });
+    assert.equal(rec('want')!.status, 'needs-you');
+  });
+
+  test('the worker\'s own `waiting` on Adamya closes as a question', () => {
+    actions.handTaskWork('boom', true);
+    const c = actions.claimTaskWork()!;
+    actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'waiting', on: 'Adamya' });
+    const r = rec('boom')!;
+    assert.equal(r.status, 'needs-you');
+    assert.equal(r.waiting, undefined);
+    assert.equal(r.lease, undefined);
+    assert.equal(lib.pendingItems(r)[0].text, 'OpenClaw is waiting on you: Adamya');
+  });
+
+  test('reconcile turns an existing waiting-on-Adamya record into a question', () => {
+    // The record production had on Nov 14, as a fixture.
+    put('boom', record({
+      status: 'waiting', reason: 'handed',
+      waiting: { on: 'Adamya\'s approval of the 3 lenses (since Nov 14)', since: '2026-11-14T22:27:27.137Z', checks: 0, checkAfter: '2026-11-15T22:27:27.137Z' },
+    }));
+    put('prof', record({ status: 'waiting', waiting: { on: 'SoCam and Boom, since Nov 13', since: '2026-11-13T15:00:00.000Z', checks: 0, checkAfter: '2099-01-01T00:00:00.000Z' } }));
+    assert.equal(actions.reconcileTaskWork().changed, true);
+    const r = rec('boom')!;
+    assert.equal(r.status, 'needs-you');
+    assert.equal(r.waiting, undefined);
+    assert.equal(lib.pendingItems(r)[0].text, 'OpenClaw is waiting on you: Adamya\'s approval of the 3 lenses');
+    assert.equal(rec('prof')!.status, 'waiting');
+    assert.equal(actions.reconcileTaskWork().changed, false);
+  });
+});
+
+describe('the sweep switch and the overview', () => {
+  const sweepRoute = () => import('../src/app/api/tasks/work/sweep/route');
+
+  test('turning it on makes today the first day (cap 2); off leaves records alone', async () => {
+    const route = await sweepRoute();
+    assert.equal((await json(await post(route, { enabled: 'yes' }))).status, 400);
+    put('boom', record({ status: 'resting' }));
+    const on = await json(await post(route, { enabled: true }));
+    assert.equal(on.status, 200);
+    assert.deepEqual(on.body.data, {
+      enabled: true, cap: 2, claimsToday: 0, quietNow: lib.quietHours(new Date()),
+      sort: { sorted: 0, unsorted: 4, prepare: 0, nothing: 0, ask: 0 },
+    });
+    assert.equal(store.readTaskWorkFile().meta.sweepFirstDay, lib.localDay(new Date()));
+    // Already on: the first day stays where it was.
+    store.mutateTaskWork((d) => { d.meta.sweepFirstDay = '2026-11-01'; });
+    actions.setSweepEnabled(true);
+    assert.equal(store.readTaskWorkFile().meta.sweepFirstDay, '2026-11-01');
+    assert.equal(actions.setSweepEnabled(true).cap, 8);
+    const before = structuredClone(store.readTaskWorkFile().records);
+    const off = await json(await post(route, { enabled: false }));
+    assert.equal(off.body.data.enabled, false);
+    assert.deepEqual(store.readTaskWorkFile().records, before);
+    // Off again then on again: a new first day.
+    actions.setSweepEnabled(true);
+    assert.equal(store.readTaskWorkFile().meta.sweepFirstDay, lib.localDay(new Date()));
+    process.env.TASK_WORKER_SWEEP_DISABLED = '1';
+    assert.equal(actions.setSweepEnabled(true).enabled, false);
+  });
+
+  test('a first day claims two sweep tasks, then stops', () => {
+    actions.setSweepEnabled(true);
+    sortAll('prepare');
+    const noon = new Date(); noon.setHours(12, 0, 0, 0);
+    for (let n = 0; n < 2; n++) {
+      const c = actions.claimTaskWork(noon)!;
+      assert.equal(c.reason, 'sweep');
+      assert.equal(c.sweepHint, 'sorted prepare');
+      actions.updateTaskWork({ taskId: c.taskId, token: c.lease.token, action: 'rest', why: 'nothing yet' }, noon);
+    }
+    assert.equal(actions.claimTaskWork(noon), null);
+    assert.equal(actions.taskWorkClaimable(noon), false);
+    assert.equal(actions.taskWorkOverview(noon).sweep.claimsToday, 2);
+  });
+
+  test('GET: needsYou, working, counts, sweep, waiting soonest first, couldAsk Current queue first', async () => {
+    const at = '2026-11-13T10:00:00.000Z';
+    put('boom', record({ status: 'needs-you', items: [
+      { id: 'q2', kind: 'question', text: 'Later', createdAt: '2026-11-13T12:00:00.000Z', status: 'pending' },
+      { id: 'q1', kind: 'question', text: 'Earlier', createdAt: at, status: 'pending' },
+      { id: 'q0', kind: 'question', text: 'Answered', createdAt: at, status: 'answered' },
+    ] }));
+    put('prof', record({ status: 'waiting', waiting: { on: 'the professor', since: at, checks: 0, checkAfter: '2026-11-20T10:00:00.000Z' } }));
+    put('parent', record({ status: 'waiting', waiting: { on: 'U-Haul', since: at, checks: 0, checkAfter: '2026-11-16T10:00:00.000Z' } }));
+    sortAll('ask');
+    mkdirSync(path.join(tasksDir, 'current'), { recursive: true });
+    writeFileSync(path.join(tasksDir, 'current', 'want-to-do.json'), JSON.stringify({ taskIds: ['want'] }));
+    const data = (await json(await viewRoute.GET(new NextRequest('http://localhost/api/tasks/work')))).body.data;
+    assert.deepEqual(Object.keys(data).sort(), ['couldAsk', 'counts', 'needsYou', 'sweep', 'waiting', 'working']);
+    assert.deepEqual(data.needsYou, [{ taskId: 'boom', taskText: 'Get the rent credit from Boom', listType: 'have-to-do', items: [
+      { id: 'q1', kind: 'question', text: 'Earlier', createdAt: at, status: 'pending' },
+      { id: 'q2', kind: 'question', text: 'Later', createdAt: '2026-11-13T12:00:00.000Z', status: 'pending' },
+    ] }]);
+    assert.equal(data.working, null);
+    assert.deepEqual(data.waiting.map((w: { taskId: string }) => w.taskId), ['parent', 'prof']);
+    assert.deepEqual(data.waiting[1], { taskId: 'prof', taskText: 'Email the professor', listType: 'have-to-do', on: 'the professor', since: at, checkAfter: '2026-11-20T10:00:00.000Z' });
+    assert.deepEqual(Object.keys(data.sweep).sort(), ['cap', 'claimsToday', 'enabled', 'quietNow', 'sort']);
+    assert.deepEqual(data.sweep.sort, { sorted: 2, unsorted: 0, prepare: 0, nothing: 0, ask: 2 });
+    // want is on the Current queue, so it leads although its list comes second.
+    assert.deepEqual(data.couldAsk.map((c: { taskId: string }) => c.taskId), ['want', 'child']);
+    assert.deepEqual(data.couldAsk.find((c: { taskId: string }) => c.taskId === 'child'), { taskId: 'child', taskText: 'Book the van', listType: 'have-to-do', q: 'Which one?', why: 'sorted ask' });
+
+    actions.handTaskWork('want', true);
+    assert.equal(actions.claimTaskWork()?.taskId, 'want');
+    const after = actions.taskWorkOverview();
+    assert.deepEqual(after.working, { taskId: 'want', taskText: 'Find a climbing gym', since: rec('want')!.lease!.claimedAt });
+    assert.equal(after.couldAsk.some((x) => x.taskId === 'want'), false);
   });
 });

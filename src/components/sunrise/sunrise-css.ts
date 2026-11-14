@@ -104,6 +104,13 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .chip.hold{background:#2a1408;color:#ffe2c4;border-color:#2a1408}
 .chip:hover{background:#fff6ec}
 .chip.hold:hover{background:#3a1d0b}
+/* OpenClaw's chip: what it waits on him for, across tasks. With nothing waiting it stays, quiet, while it works. */
+.chip.claw{display:inline-flex;align-items:center;gap:6px;background:rgba(232,255,250,.62);border-color:rgba(20,110,98,.45)}
+.chip.claw::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;background:#14806f;box-shadow:0 0 0 3px rgba(20,128,111,.18)}
+.chip.claw b{color:#0d5c50}
+.chip.claw:hover{background:#effffb}
+.chip.claw.quiet{background:rgba(255,246,236,.28);border-color:rgba(60,30,10,.2);color:rgba(42,20,8,.78)}
+.chip.claw.quiet::before{background:transparent;box-shadow:none;border:1.5px solid rgba(20,110,98,.6);width:6px;height:6px}
 .sr-streak{position:absolute;z-index:8;display:grid;justify-items:center;gap:3px;pointer-events:none}
 .sr-streak span{display:flex;gap:3px;align-items:flex-end;height:20px}
 .sr-streak i{width:7px;border-radius:2px;background:rgba(42,20,8,.35)}
@@ -436,6 +443,15 @@ button{touch-action:manipulation}
 /* The chips share their line with the chat button in the corner; the dailies open from the headline's count. The
    arcs on the sun are drawn, not pressed: there a finger means the sun. */
 .narrow .sr-ground{right:auto;max-width:calc(100% - 84px);gap:6px}
+/* The ground's strip under the horizon has room for one line of chips: on a phone they stay on it and slide
+   sideways when there are more than fit, fading out at the edge that has more. The padding keeps each chip's
+   finger-wide target inside the strip's scroll box. */
+.narrow .sr-ground{flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;touch-action:pan-x;scrollbar-width:none;margin:-8px 0 0 -4px;padding:8px 4px}
+.narrow .sr-ground::-webkit-scrollbar{display:none}
+.narrow .sr-ground .chip{flex:none}
+.narrow .sr-ground.more-right{-webkit-mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,#000 calc(100% - 28px),transparent)}
+.narrow .sr-ground.more-left{-webkit-mask-image:linear-gradient(90deg,transparent,#000 28px);mask-image:linear-gradient(90deg,transparent,#000 28px)}
+.narrow .sr-ground.more-left.more-right{-webkit-mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent);mask-image:linear-gradient(90deg,transparent,#000 28px,#000 calc(100% - 28px),transparent)}
 .narrow .chip{position:relative;padding:5px 11px;font-size:12px}
 .narrow .chip::after{content:"";position:absolute;inset:-8px -3px}
 .narrow .sr-streak{display:none}

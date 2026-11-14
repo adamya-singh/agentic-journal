@@ -4,13 +4,17 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { tasksDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
-import { emptyTaskWorkMeta, leaseLive, type TaskWork, type TaskWorkMeta } from '@/lib/task-work';
+import { emptyTaskWorkMeta, leaseLive, type TaskSortEntry, type TaskWork, type TaskWorkMeta } from '@/lib/task-work';
 
 export interface TaskWorkFile {
   _comment: string;
   version: 1;
   meta: TaskWorkMeta;
   records: Record<string, TaskWork>;
+  /** The batched sort's verdicts for tasks no run has looked at (src/lib/task-sort.ts). Missing in older files. */
+  sort: Record<string, TaskSortEntry>;
+  /** Batches in a row that left a task unsorted; the third rests it as `nothing` for a day. */
+  sortFailures: Record<string, number>;
 }
 
 export function taskWorkFilePath(): string {
@@ -23,6 +27,8 @@ function emptyFile(): TaskWorkFile {
     version: 1,
     meta: emptyTaskWorkMeta(),
     records: {},
+    sort: {},
+    sortFailures: {},
   };
 }
 
@@ -33,7 +39,8 @@ export function readTaskWorkFile(): TaskWorkFile {
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as Partial<TaskWorkFile>;
     const meta = { ...empty.meta, ...(data.meta && typeof data.meta === 'object' ? data.meta : {}) };
-    return { ...empty, meta, records: data.records && typeof data.records === 'object' ? data.records : {} };
+    const obj = <T>(value: T | undefined): T => (value && typeof value === 'object' && !Array.isArray(value) ? value : ({} as T));
+    return { ...empty, meta, records: obj(data.records), sort: obj(data.sort), sortFailures: obj(data.sortFailures) };
   } catch {
     return empty;
   }

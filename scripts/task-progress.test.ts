@@ -51,6 +51,8 @@ test('a chat is told to record what it does for the task, and not to promise to 
   assert.match(first, /api\/tasks\/progress/);
   assert.match(first, /"taskId":"boom"/);
   assert.match(first, /never say you will watch/);
+  // waitingOn is for someone outside; waiting on Adamya goes in "next".
+  assert.match(first, /"waitingOn" is only for someone outside\. When it is Adamya you are waiting on .*say so in "next" instead \("Next: Adamya confirms the 3 lenses"\)/);
   assert.equal(typedTextOf(first), 'Send both emails');
   assert.doesNotMatch(buildChatTurnMessage({ brief: null, text: 'Hi', first: true }), /api\/tasks\/progress/);
 });

@@ -22,7 +22,9 @@ import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms
 import {glanceWidth} from './glance'
 
 export type Box = {left: number, top: number, width: number, height: number}
-export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers' | 'track'
+export type TrayKind = 'holds' | 'nodate' | 'today' | 'dailies' | 'cards' | 'answers' | 'track' | 'openclaw'
+/** OpenClaw's chip on the ground: how many things wait on him across tasks (0 draws it quiet). */
+export type WorkerChip = {count: number}
 /**
  * An action card on the far side: its form, how much it matters now (0 to 1), the ring it sits on (0 fits now,
  * 1 this period, 2 after, 3 someday), the bet whose slice it is in, and how it is marked.
@@ -176,6 +178,8 @@ export class SunriseEngine {
   private data: SunriseData | null = null
   private cards: CardThing[] = []
   private answers = 0 // answers given to cards so far: the far side's ground offers them
+  private worker: WorkerChip | null = null // OpenClaw's chip, when it is doing anything or may look on its own
+  private groundTight = '' // the stage width and full-worded chips last found too wide for a wide screen's ground
   private things: Thing[] = []
   private source: HorizonItem[] = [] // what the rings hold: today's tasks, or on the far side the cards
   private outerR = 0 // how far out the outer rings reach, in px from the sun; 0 when nothing is out there
@@ -321,6 +325,7 @@ export class SunriseEngine {
       window.clearTimeout(this.hotTimer)
       if (to === null) this.hotTimer = window.setTimeout(() => this.setHot(null), 110)
     }, {signal})
+    this.groundEl.addEventListener('scroll', () => this.groundEdges(), {signal, passive: true})
     this.groundEl.addEventListener('click', event => {
       const back = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-side]') : null
       if (back !== null) { event.stopPropagation(); this.turn(false); return }
@@ -411,7 +416,7 @@ export class SunriseEngine {
       if (this.touch === null) {
         const target = event.target instanceof Element ? event.target : null
         const off = this.open !== null || this.root.classList.contains('hz-live') || target === null || !overSky(target)
-          || target.closest('input, textarea, select, [contenteditable], .sr-ground button') !== null
+          || target.closest('input, textarea, select, [contenteditable], .sr-ground') !== null
         this.touch = {fingers: new Map(), start: {x: event.clientX, y: event.clientY}, gesture: null, box: {x: 0, y: 0}, off, paged: []}
         // The page still gliding from the last pull stops under the finger, as the page's own scrolling does.
         if (!off && performance.now() < this.flingUntil) window.scrollTo({left: window.scrollX, top: window.scrollY, behavior: 'instant'})
@@ -669,6 +674,13 @@ export class SunriseEngine {
     if (this.pane.classList.contains('full')) this.later(() => { if (this.open === null) this.pane.classList.remove('full') }, 340)
     this.host.onOpen(null)
     if (!this.destroyed) this.solve()
+  }
+
+  /** OpenClaw's chip on the near side's ground, or none (null): what waits on him across tasks. */
+  setWorker(worker: WorkerChip | null) {
+    if (this.destroyed || (worker?.count ?? -1) === (this.worker?.count ?? -1)) return
+    this.worker = worker
+    if (this.ready && this.data !== null) this.renderGround()
   }
 
   closeTray() {
@@ -1775,7 +1787,7 @@ export class SunriseEngine {
     const r = dailyRadius * this.last.ss
     return {x: W / 2 + r * Math.cos(angle), y: Y - r * Math.sin(angle) - 6}
   }
-  private renderGround() {
+  private renderGround(short = this.narrow) {
     const data = this.data!
     const {width: W, horizonY: Y} = this.stage
     const horizon = data.horizon
@@ -1788,19 +1800,34 @@ export class SunriseEngine {
       const left = ringOverflow(this.source).length + this.things.filter(thing => !thing.shown).length
       if (left > 0) html += `<button type="button" class="chip cards" data-tray="cards" title="Every card, including the ones the rings have no room for"><b>+${left}</b> more cards</button>`
     } else {
-      // A phone's chips share one line with the chat button in the corner: they say less.
+      // A phone's chips share one line with the chat button in the corner: they say less. So do a wide screen's
+      // when the full words would run past the chat button (below).
       const [onlyHold] = horizon.holds
-      if (horizon.holds.length === 1 && onlyHold !== undefined && !this.narrow) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
+      if (horizon.holds.length === 1 && onlyHold !== undefined && !short) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
       else if (horizon.holds.length > 0) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
-      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> ${this.narrow ? 'no date' : 'with no date'}</button>`
+      // What OpenClaw waits on him for, across tasks; quiet when nothing does but it is still at work.
+      if (this.worker !== null) {
+        const n = this.worker.count
+        html += `<button type="button" class="chip claw${n > 0 ? '' : ' quiet'}" data-tray="openclaw" aria-label="${n > 0 ? `OpenClaw: ${n} ${n === 1 ? 'thing needs' : 'things need'} you` : 'OpenClaw: what it is working on'}">OpenClaw${n > 0 ? ` <b>${n}</b>` : ''}</button>`
+      }
+      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> ${short ? 'no date' : 'with no date'}</button>`
       if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
       // What today's rings have no room for is counted, never dropped: it is further out, and the camera goes there.
       const beyond = horizon.further.length + ringOverflow(horizon.items).length
       if (beyond > 0) html += `<button type="button" class="chip more" data-far="1" title="Later tasks sit on the rings further out. Pinch out, or press this, to see them."><b>+${beyond}</b> further ›</button>`
     }
+    const tight = `${W}|${html}`
+    if (!short && this.groundTight === tight) { this.renderGround(true); return }
     if (this.groundEl.dataset['html'] !== html) { this.groundEl.innerHTML = html; this.groundEl.dataset['html'] = html }
     this.groundEl.style.left = this.narrow ? '12px' : `${Math.round(W / 2 + this.last.sunR + 30)}px`
     this.groundEl.style.top = `${Y + (this.narrow ? 10 : 12)}px`
+    // The page's chat button holds the bottom right corner (about 180px of it).
+    if (!short && this.groundEl.offsetLeft + this.groundEl.offsetWidth > W - 180) { this.groundTight = tight; this.renderGround(true); return }
+    // Still too long in few words: the chips start nearer the sun, as far as the week's streak under it.
+    if (!this.narrow && !this.farSide && this.groundEl.offsetLeft + this.groundEl.offsetWidth > W - 180) {
+      this.groundEl.style.left = `${Math.round(Math.max(W / 2 + 50, W - 180 - this.groundEl.offsetWidth))}px`
+    }
+    this.groundEdges()
     // The streak: dailies checked off on each of the last seven days, today last.
     this.streakEl.hidden = dailies.length === 0 || this.farSide
     if (dailies.length > 0) {
@@ -1829,6 +1856,13 @@ export class SunriseEngine {
       el.style.transform = `translate(${(at.x - 13).toFixed(1)}px,${(at.y - 7).toFixed(1)}px)`
       el.classList.toggle('did', daily.done)
     })
+  }
+  /** A phone's chips slide sideways on one line (sunrise-css): the edge with more beyond it fades. */
+  private groundEdges() {
+    const el = this.groundEl
+    const more = this.narrow && el.scrollWidth > el.clientWidth + 1
+    el.classList.toggle('more-left', more && el.scrollLeft > 1)
+    el.classList.toggle('more-right', more && el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
   }
   private toggleDaily(daily: HorizonDaily) {
     const done = !(this.dailyDone.get(daily.id) ?? daily.done)

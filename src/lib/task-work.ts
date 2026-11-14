@@ -27,6 +27,7 @@ export interface NeedsYouItem {
   editedDetail?: NeedsYouDetail;    // his edit of an approval; the act uses it instead of `detail`
   answeredAt?: string;
   consumedAt?: string;              // an approved act was tried: it is never tried again
+  notifiedAt?: string;              // told about in the day's Telegram message
 }
 
 export interface TaskWorkLease { token: string; claimedAt: string; expiresAt: string }
@@ -57,7 +58,27 @@ export interface TaskWorkMeta {
   sweepCap: number;
   sweepClaims: { date: string; count: number };    // sweep claims on that local day
   sweepFirstDay?: string;                          // the day the sweep was turned on: a smaller cap
-  lastNotifiedAt?: string;
+  lastNotifiedAt?: string;                         // the last Telegram message about pending items
+  notifyTries?: { date: string; count: number };   // sends tried on that local day (a failed one is retried)
+  sortRuns?: { date: string; count: number; lastAt?: string };   // sorting batches started on that local day
+}
+
+// ───────────── sorting (task-sort.ts asks OpenClaw; the verdicts steer the sweep) ─────────────
+
+/**
+ * What a batched look at the task's text said. nothing: only Adamya can do it, or there is no first step to prepare.
+ * prepare: a concrete first step OpenClaw could prepare (the only verdict the sweep claims). ask: one answer from
+ * Adamya would unlock it (kept as a quiet list; never claimed by the sweep).
+ */
+export type TaskSortVerdict = 'nothing' | 'prepare' | 'ask';
+
+export interface TaskSortEntry {
+  v: TaskSortVerdict;
+  why: string;
+  q?: string;                       // the one question, for ask
+  fingerprint: string;              // the brief agent's task fingerprint when it was sorted
+  at: string;
+  again?: string;                   // sort it again from then (default: 30 days after `at`)
 }
 
 export const TASK_WORK_LEASE_MS = 30 * 60_000;
@@ -68,6 +89,7 @@ export const TASK_WORK_SILENCE_LIMIT_MS = 21 * 864e5;
 export const SWEEP_CAP_DEFAULT = 8;
 export const SWEEP_FIRST_DAY_CAP = 2;
 export const SWEEP_DUE_DAYS = 14;
+export const SORT_FRESH_MS = 30 * 864e5;
 const QUIET_FROM_HOUR = 23;
 const QUIET_UNTIL_HOUR = 8;
 const HISTORY_LIMIT = 30;
@@ -89,16 +111,16 @@ export function emptyTaskWorkMeta(): TaskWorkMeta {
 
 // ───────────── transitions ─────────────
 
-// The design's table, plus four moves it left out: a chat's progress with waitingOn starts waiting from any
-// idle state, a chat that clears waitingOn rests it, three weeks of silence asks Adamya, and every item
-// declined rests the task.
+// The design's table, plus five moves it left out: a chat's progress with waitingOn starts waiting from any
+// idle state, a chat that clears waitingOn rests it, a chat that says it waits on Adamya himself asks him (from
+// any idle state), three weeks of silence asks Adamya, and every item declined rests the task.
 const ALLOWED: Record<TaskWorkStatus | 'none', readonly TaskWorkStatus[]> = {
-  none: ['queued', 'waiting', 'off'],
-  queued: ['working', 'waiting', 'off'],
+  none: ['queued', 'waiting', 'needs-you', 'off'],
+  queued: ['working', 'waiting', 'needs-you', 'off'],
   working: ['waiting', 'needs-you', 'resting', 'queued', 'off'],
   waiting: ['queued', 'needs-you', 'resting', 'off'],
   'needs-you': ['queued', 'resting', 'waiting', 'off'],
-  resting: ['queued', 'waiting', 'off'],
+  resting: ['queued', 'waiting', 'needs-you', 'off'],
   off: ['queued'],
 };
 
@@ -237,8 +259,57 @@ export function askAfterSilence(record: TaskWork, now: Date): boolean {
   return true;
 }
 
+// ───────────── waiting on Adamya is not waiting on a reply ─────────────
+
+const DECISION = "(?:approval|ok|okay|go-?ahead|answer|decision|confirmation|review|reply|response|sign-?off|input|choice|pick|feedback|say-?so|permission|green light|consent|call|word|thoughts|preference)";
+const VERB = '(?:to\\b|confirm|decid|approv|review|answer|choos|pick|repl|respond|sign|say|okay|ok\\b|let)';
+const HIM = '(?:adamya(?: singh)?|the user)';
+const WAITS_ON_HIM: readonly RegExp[] = [
+  new RegExp(`^(?:${HIM}|you)$`),                                       // "Adamya", "you"
+  new RegExp(`^${HIM}'s ${DECISION}s?\\b`),                              // "Adamya's approval of the 3 lenses"
+  new RegExp(`^(?:your|my) ${DECISION}s?\\b`),                           // "your decision", "my approval"
+  new RegExp(`^(?:${HIM}|you|me) ${VERB}`),                             // "you to confirm", "Adamya decides"
+  new RegExp(`^(?:an? |the |his )?${DECISION}s? (?:from|by) (?:${HIM}|you)\\b`),   // "approval from Adamya"
+];
+
+/** The party without a trailing "(since Nov 14)" or ", since Nov 13". */
+export function withoutSince(text: string): string {
+  return text.replace(/\s*(?:\(\s*since\b[^)]*\)?|[,;–—-]\s*since\b.*)\s*$/i, '').trim();
+}
+
+/**
+ * Whether a "waiting on" names Adamya himself (his approval, answer, decision) rather than someone outside. Only
+ * clear cases count: "Adamya's landlord" is someone outside.
+ */
+export function waitsOnAdamya(text: string): boolean {
+  const t = withoutSince(text).toLowerCase().replace(/[’‘`]/g, "'").replace(/\s+/g, ' ').replace(/[.!]+$/, '').trim();
+  return t !== '' && WAITS_ON_HIM.some((re) => re.test(t));
+}
+
+/**
+ * The task waits on Adamya, not on a reply: no reply check, a question for him instead (one per wording), and the
+ * task goes to needs-you. His answer queues it for the worker like any other.
+ */
+export function waitOnAdamya(record: TaskWork, on: string, now: Date, by: TaskWorkActor = 'journal'): void {
+  const what = withoutSince(on) || on.trim();
+  const text = `OpenClaw is waiting on you: ${what}`;
+  delete record.waiting;
+  if (!pendingItems(record).some((i) => i.text.toLowerCase() === text.toLowerCase())) addItem(record, 'question', text, now);
+  if (record.status !== 'needs-you') setTaskWorkStatus(record, 'needs-you', `it waits on Adamya: ${what}`, now, by);
+  record.updatedAt = now.toISOString();
+}
+
+/** A record left waiting on Adamya by an earlier version: asked instead. True when it changed. */
+export function migrateWaitOnAdamya(record: TaskWork, now: Date): boolean {
+  if (record.status !== 'waiting' || !record.waiting || !waitsOnAdamya(record.waiting.on)) return false;
+  waitOnAdamya(record, record.waiting.on, now);
+  return true;
+}
+
 /** The waiting state for `on`: the same party keeps its clock and check count, a new one starts both. */
-export function nextWaiting(record: TaskWork, on: string, now: Date, checkAfter?: string): NonNullable<TaskWork['waiting']> {
+export function nextWaiting(record: TaskWork, said: string, now: Date, checkAfter?: string): NonNullable<TaskWork['waiting']> {
+  // The record keeps its own date, so "SoCam (since Nov 13)" is stored as "SoCam": the strip would say it twice.
+  const on = said.replace(/[\s,;:]*\(?\bsince\b[^()]*\)?\s*$/i, '').trim() || said.trim();
   const same = record.waiting && record.waiting.on.trim().toLowerCase() === on.trim().toLowerCase();
   const since = same ? record.waiting!.since : now.toISOString();
   const checks = same ? record.waiting!.checks : 0;
@@ -270,23 +341,51 @@ export function quietHours(now: Date): boolean {
   return h >= QUIET_FROM_HOUR || h < QUIET_UNTIL_HOUR;
 }
 
+/** Today's cap on sweep claims: smaller on the day the sweep was turned on. */
+export function sweepCapToday(meta: TaskWorkMeta, now: Date): number {
+  return meta.sweepFirstDay === localDay(now) ? Math.min(meta.sweepCap, SWEEP_FIRST_DAY_CAP) : meta.sweepCap;
+}
+
+/** Sweep claims made today (local day). */
+export function sweepClaimsToday(meta: TaskWorkMeta, now: Date): number {
+  return meta.sweepClaims.date === localDay(now) ? meta.sweepClaims.count : 0;
+}
+
 /** Sweep claims left today (local day), after the cap. */
 export function sweepRoom(meta: TaskWorkMeta, now: Date): number {
-  const today = localDay(now);
-  const cap = meta.sweepFirstDay === today ? Math.min(meta.sweepCap, SWEEP_FIRST_DAY_CAP) : meta.sweepCap;
-  return cap - (meta.sweepClaims.date === today ? meta.sweepClaims.count : 0);
+  return sweepCapToday(meta, now) - sweepClaimsToday(meta, now);
+}
+
+/** The verdict that still holds for a task, or null when it was never sorted, changed since, or the verdict aged out. */
+export function sortVerdict(entry: TaskSortEntry | undefined, fingerprint: string, now: Date): TaskSortVerdict | null {
+  if (!entry || entry.fingerprint !== fingerprint) return null;
+  const until = entry.again ? Date.parse(entry.again) : Date.parse(entry.at) + SORT_FRESH_MS;
+  return now.getTime() < until ? entry.v : null;
+}
+
+/** The sweep's order: Current queue first, then due within two weeks (soonest first), then list order. */
+export function sweepOrder<T extends TaskWorkRef>(refs: T[], now: Date): T[] {
+  const horizon = localDay(new Date(now.getTime() + SWEEP_DUE_DAYS * DAY));
+  const tier = (r: TaskWorkRef) => (r.currentRank !== null ? 0 : r.dueDate && r.dueDate <= horizon ? 1 : 2);
+  const listOrder = (r: TaskWorkRef) => (r.listType === 'have-to-do' ? 0 : 1e6) + r.listIndex;
+  return [...refs].sort((a, b) => tier(a) - tier(b)
+    || (tier(a) === 0 ? a.currentRank! - b.currentRank! : 0)
+    || (tier(a) === 1 ? a.dueDate!.localeCompare(b.dueDate!) : 0)
+    || listOrder(a) - listOrder(b));
 }
 
 /**
  * The next task to work on, without changing anything. In order: handed or answered; a reply check that is due;
  * a retry that is due; then the sweep over the rest (Current queue first, then due within two weeks, then list
- * order), which has a daily cap and keeps quiet at night. Null while any run holds a lease.
+ * order), which has a daily cap and keeps quiet at night. A task nobody handed over is swept only when its sort
+ * verdict (still current) is `prepare`. Null while any run holds a lease.
  */
 export function pickNextTaskWork(
   records: Record<string, TaskWork>,
   refs: TaskWorkRef[],
   now: Date,
-  meta: TaskWorkMeta
+  meta: TaskWorkMeta,
+  sort: Record<string, TaskSortEntry> = {}
 ): TaskWorkPick | null {
   if (Object.values(records).some((r) => leaseLive(r, now))) return null;
   const open = new Map(refs.map((r) => [r.taskId, r]));
@@ -311,21 +410,15 @@ export function pickNextTaskWork(
   if (retry) return { taskId: retry[0], reason: retry[1].reason, sweep: false };
 
   if (!meta.sweepEnabled || quietHours(now) || sweepRoom(meta, now) <= 0) return null;
-  const horizon = localDay(new Date(t + SWEEP_DUE_DAYS * DAY));
-  const tier = (r: TaskWorkRef) => (r.currentRank !== null ? 0 : r.dueDate && r.dueDate <= horizon ? 1 : 2);
-  const listOrder = (r: TaskWorkRef) => (r.listType === 'have-to-do' ? 0 : 1e6) + r.listIndex;
-  const sweep = refs
-    .filter((ref) => {
-      if (ref.isDaily) return false;
-      if (ref.parentTaskId && records[ref.parentTaskId]?.status === 'off') return false;
-      const r = records[ref.taskId];
-      if (!r) return true;
-      return r.status === 'resting' && (r.fingerprint !== ref.fingerprint || (!!r.lookAgainAfter && at(r.lookAgainAfter) <= t));
-    })
-    .sort((a, b) => tier(a) - tier(b)
-      || (tier(a) === 0 ? a.currentRank! - b.currentRank! : 0)
-      || (tier(a) === 1 ? a.dueDate!.localeCompare(b.dueDate!) : 0)
-      || listOrder(a) - listOrder(b))[0];
+  const sweep = sweepOrder(refs.filter((ref) => {
+    if (ref.isDaily) return false;
+    if (ref.parentTaskId && records[ref.parentTaskId]?.status === 'off') return false;
+    const r = records[ref.taskId];
+    // Never looked at by a run: only what the batched sort said can be prepared.
+    if (!r) return sortVerdict(sort[ref.taskId], ref.fingerprint, now) === 'prepare';
+    // A run already looked and rested it: looked at again when it changed or its rest is over.
+    return r.status === 'resting' && (r.fingerprint !== ref.fingerprint || (!!r.lookAgainAfter && at(r.lookAgainAfter) <= t));
+  }), now)[0];
   return sweep ? { taskId: sweep.taskId, reason: 'sweep', sweep: true } : null;
 }
 
