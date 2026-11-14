@@ -13,7 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { iconForKind } from '@/lib/shapes/hook';
 import { extractJsonObject, localDateIso } from '@/lib/done-at';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
-import { readJobApplicationsStore } from '../../jobs/application-store-utils';
+import { jobBrowserBusy as browserBusy } from '../../jobs/application-store-utils';
 import { runOpenClawAgentTurn } from '@/lib/openclaw-agent';
 import { loadHorizon } from '../horizon/load';
 import { loadRuleBrief, openTaskRefs } from '../brief/build';
@@ -99,19 +99,6 @@ function nextQueued(records: Record<string, StoredAgentRecord>, now: Date): Stor
     if (r.status === 'running' && now.getTime() - Date.parse(r.startedAt ?? r.queuedAt) > RUNNING_TIMEOUT_MS) r.status = 'queued';
   }
   return Object.values(records).filter((r) => r.status === 'queued').sort((a, b) => a.rank - b.rank)[0] ?? null;
-}
-
-/**
- * The job-application worker drives the same browser. Its cron wakes every minute just to check its queue,
- * so "running" says little; a live lease on an application (or its Simplify sync) means the browser is in use.
- */
-function browserBusy(now = Date.now()): boolean {
-  try {
-    const live = (lease?: { expiresAt: string } | null) => !!lease && Date.parse(lease.expiresAt) > now;
-    return Object.values(readJobApplicationsStore().applications).some((a) => live(a.lease) || live(a.simplifySync?.lease));
-  } catch {
-    return false;
-  }
 }
 
 async function runWorker(): Promise<void> {

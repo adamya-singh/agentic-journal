@@ -48,11 +48,21 @@ export async function register(): Promise<void> {
     wakeAssessmentPreviewsIfDue().catch((error) => console.error('OA preview wake failed:', error));
   };
   setTimeout(wakePreviews, 90_000).unref();
+  // The task worker's runs that died get recovered, and closed tasks forgotten. Nothing wakes OpenClaw yet.
+  const { reconcileTaskWork } = await import('./app/api/tasks/work/actions');
+  const reconcileTasks = () => {
+    try {
+      reconcileTaskWork();
+    } catch (error) {
+      console.error('Task work reconcile failed:', error);
+    }
+  };
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {
       console.error('Scheduled job application reconcile failed:', error);
     });
     wakePreviews();
+    reconcileTasks();
   }, RECONCILE_INTERVAL_MS);
   interval.unref();
 

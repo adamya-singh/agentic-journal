@@ -39,6 +39,7 @@ import type {
 } from '@/lib/types';
 import { readJobListings, writeJobListings } from './job-store-utils';
 import { isManualBrowserSessionActive } from '@/lib/openclaw-browser';
+import { taskWorkLeaseLive } from '../tasks/work/store';
 import {
   getEmptyEmailUpdatesState,
   isJobEmployerStage,
@@ -367,6 +368,10 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
     if (isManualBrowserSessionActive()) {
       return null;
     }
+    // A task-worker run holds the same browser.
+    if (taskWorkLeaseLive()) {
+      return null;
+    }
 
     const now = new Date();
     const activeLease = Object.values(store.applications).some(
@@ -440,6 +445,19 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
       answerBank: store.answerBank,
     };
   });
+}
+
+/**
+ * The job-application worker's cron wakes every minute just to check its queue, so "running" says little; a live
+ * lease on an application (or its Simplify sync) means OpenClaw's browser is in use.
+ */
+export function jobBrowserBusy(now = Date.now()): boolean {
+  try {
+    const live = (lease?: { expiresAt: string } | null) => !!lease && Date.parse(lease.expiresAt) > now;
+    return Object.values(readJobApplicationsStore().applications).some((a) => live(a.lease) || live(a.simplifySync?.lease));
+  } catch {
+    return false;
+  }
 }
 
 export interface StaleLeaseReconcileResult {
