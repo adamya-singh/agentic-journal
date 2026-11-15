@@ -93,6 +93,20 @@ button.srk-about:hover{border-color:var(--a)}
 .srk-orb.working{animation:srp-breathe 1.1s ease-in-out infinite}
 .srk-orb em{position:absolute;right:-4px;top:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:#22130a;color:#fff6ec;font:600 10px/16px var(--mono);font-style:normal;text-align:center}
 .srk-orb.waiting em{background:var(--a)}
+/* A wide screen: the chats are a pane of their own beside the work, read like a page. What OpenClaw says runs the
+   pane's width with no bubble around it; the composer is one box, with what the message is about under the words. */
+.wide .srk{font-size:14.5px;line-height:1.55}
+.wide .srk-log{gap:10px;padding:16px 20px 18px}
+.wide .srk-m.you{max-width:84%;padding:10px 14px}
+.wide .srk-m.openclaw{max-width:100%;padding:0;border:0;border-radius:0;background:none}
+.wide .srk-m.openclaw p,.wide .srk-m.openclaw ul,.wide .srk-m.openclaw ol{margin:8px 0}
+.wide .srk-m.openclaw code{font-size:12.5px}
+.wide .srk-foot{margin:0 14px 14px;padding:10px 10px 10px 14px;border:1px solid rgba(40,22,10,.22);border-radius:16px;background:#fffdfa;box-shadow:0 8px 20px -16px rgba(60,30,10,.5)}
+.wide .srk-foot:focus-within{border-color:var(--a);box-shadow:0 0 0 3px color-mix(in srgb,var(--a) 20%,transparent)}
+.wide .srk-foot .srk-box{order:1}
+.wide .srk-foot .srk-on{order:2}
+.wide .srk-foot .srk-box textarea{min-height:46px;max-height:220px;padding:3px 0;border:0;border-radius:0;background:none;box-shadow:none;font-size:15px}
+.wide .srk-foot .srk-box textarea:focus{box-shadow:none}
 /* A phone: the chats are the whole Chat tab. What is typed in is 16px (iOS zooms in on anything smaller), and what
    is pressed is a finger wide. */
 .cols-1 .srk-box textarea{font-size:16px;max-height:160px}

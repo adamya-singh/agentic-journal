@@ -2079,14 +2079,17 @@ export class SunriseEngine {
   private workRect(from: Box | null, card = false): Box {
     const {width: W, height: H} = this.stage
     if (this.narrow) return {left: 8, top: 8, width: W - 16, height: H - 16}
-    // A card to decide is one column; a task opens to most of the screen: its brief, its work or a page, its chats.
-    const width = Math.min(card ? 500 : 1480, W - 32)
+    // A card to decide is one column; a task opens to the whole window, less a rim of sky: the work and OpenClaw
+    // side by side, and its brief when there is room (TaskPane's paneWidthFor says the same width).
+    const rim = card ? 16 : 12
+    const width = card ? Math.min(500, W - 32) : W - 2 * rim
     // A task's workspace ends where the window does: under the page's bar the sky can reach below what is in view.
     const seen = card ? H : Math.max(480, Math.min(H, window.innerHeight - Math.max(0, this.root.getBoundingClientRect().top)))
-    const height = card ? Math.min(680, H - 28) : seen - 28
+    const edge = card ? 14 : rim
+    const height = card ? Math.min(680, H - 28) : seen - 2 * edge
     const centre = from ?? this.toScreen(this.sunCircle())
-    const left = Math.max(16, Math.min(W - 16 - width, centre.left + centre.width / 2 - width / 2))
-    const top = Math.max(14, Math.min(seen - 14 - height, centre.top + centre.height / 2 - height / 2))
+    const left = Math.max(rim, Math.min(W - rim - width, centre.left + centre.width / 2 - width / 2))
+    const top = Math.max(edge, Math.min(seen - edge - height, centre.top + centre.height / 2 - height / 2))
     return {left: Math.round(left), top: Math.round(top), width, height}
   }
 

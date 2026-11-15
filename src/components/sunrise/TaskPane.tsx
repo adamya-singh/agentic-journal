@@ -1,17 +1,19 @@
 'use client';
 
-// What a task opens to in Sunrise: its workspace, most of the screen, in three parts.
-// - Left, the brief: OpenClaw speaks first (what to do now and why it is easy, what it already did), then the facts
-//   of the task in one strip, what OpenClaw wants him to know, and everything else the Journal knows, folded. Done
-//   and Let go sit at its foot. It folds away.
+// What a task opens to in Sunrise: its workspace, the whole window less a rim of sky.
+// - Across the top, a bar: what the task is and when, Let go and Done, and the switches that fold the sides.
+// - Left, the brief, folded away unless the screen is very wide: what OpenClaw says about the task (why it is easy,
+//   what it already did), the facts of the task in one strip, what OpenClaw wants him to know, and everything else
+//   the Journal knows, folded.
 // - Middle, the surfaces, one tab each. "Work" is what OpenClaw started, each block drawn as the thing it is (a
 //   letter on paper, a slide lit on a stage, a page with a margin, a list to tick), saving itself as he works; with
 //   nothing started it offers to have OpenClaw start it, or to start it himself. Every real link the task has is a
 //   web tab, shown live in OpenClaw's own browser (BrowserSurface); he can paste an address for another.
-// - Right, his chats with OpenClaw about the task (WorkspaceChats). Folded away, their composer stays in one line
-//   under the surface.
-// On a phone it is the whole screen, one part at a time: Brief, Work (the surfaces' tabs across its top) and Chat,
-// chosen at the foot, and as tall as the keyboard leaves room for. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
+// - Right, OpenClaw's pane, about a third of the width: what it waits on him for (TaskWorkStrip), then his chats
+//   with it about the task (WorkspaceChats). Folded away, the chats' composer stays in one line under the surface.
+//   The sides are dragged wider or narrower by the grips between the panes.
+// On a phone it is the whole screen, one part at a time: Brief (with Done and Let go at its foot), Work (the
+// surfaces' tabs across its top) and Chat, chosen at the foot, and as tall as the keyboard leaves room for. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
 // The engine grows the pane out of the task's form; this fills it.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -62,6 +64,7 @@ const BRIEF_AND_WORK_CSS = `
 .srp-scroll{min-height:0;overflow:auto;overscroll-behavior:contain;padding:10px 26px 104px}
 .srp-col{max-width:760px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:20px}
 .scene-deck .srp-col,.scene-pick .srp-col,.srp.desk .srp-col{max-width:900px}
+.wide.scene-deck .srp-col{max-width:1120px}
 .scene-letter:not(.desk) .srp-col,.scene-verdict .srp-col{max-width:680px}
 
 /* OpenClaw speaks first. */
@@ -393,12 +396,36 @@ const BRIEF_AND_WORK_CSS = `
 
 
 const WORKSPACE_CSS = `
-/* The workspace: the brief, the surfaces, the chats, side by side. */
-.srp.ws{display:flex;flex-direction:row}
-.srw-brief{flex:none;width:clamp(350px,31%,450px);min-height:0;display:flex;flex-direction:column;border-right:1px solid rgba(60,30,10,.1)}
+/* The workspace. A bar across the top (what the task is, Done, the ways to fold the sides), and under it the work
+   and OpenClaw side by side, each a pane of its own; the brief is a third, narrower pane that folds away. The
+   sides are dragged wider or narrower by the grips between them. */
+.srp.ws{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto auto;grid-template-rows:auto minmax(0,1fr)}
+.ws>.srw-bar{grid-column:1/-1;grid-row:1}
+.ws>.srw-brief{grid-column:1;grid-row:2}
+.ws>.srw-grip.b{grid-column:2;grid-row:2}
+.ws>.srw-mid{grid-column:3;grid-row:2}
+.ws>.srw-grip.c{grid-column:4;grid-row:2}
+.ws>.srw-chats{grid-column:5;grid-row:2}
+.srw-bar{display:flex;align-items:center;gap:12px;min-width:0;padding:9px 12px 9px 14px;border-bottom:1px solid rgba(60,30,10,.12);background:rgba(255,255,255,.55)}
+.srp .srw-bar .srw-ico{margin-bottom:0;height:36px;min-width:36px;padding:0 11px}
+.srw-name{flex:0 1 auto;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:1px}
+.srw-name h1{margin:0;font:400 26px/1.1 var(--serif);letter-spacing:-.005em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srw-bar .srp-due{flex:none}
+.srw-bar .srp-where{flex:0 20 auto;white-space:nowrap}
+.srw-bar .sp{flex:1 1 0;min-width:0}
+.srw-bar .srp-err{flex:0 1 auto;min-width:0;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.srw-bar .rule{flex:none;width:1px;height:26px;background:rgba(60,30,10,.16)}
+.srw-bar .srw-dot{margin:0 -1px 0 1px}
+@media (max-width:1080px){.srw-bar .srp-where,.srw-bar .lbl{display:none}}
+.srw-grip{position:relative;width:12px;cursor:col-resize;touch-action:none}
+.srw-grip::before{content:"";position:absolute;left:50%;top:12px;bottom:14px;width:1px;background:rgba(60,30,10,.12)}
+.srw-grip::after{content:"";position:absolute;left:50%;top:50%;width:4px;height:44px;margin:-22px 0 0 -2px;border-radius:999px;background:rgba(60,30,10,.3);opacity:0;transition:opacity .15s ease}
+.srw-grip:hover::after,.srw-grip.on::after{opacity:1}
+.srw-grip.c::before{display:none}
+.srw-brief{width:290px;min-height:0;display:flex;flex-direction:column}
 .srw-brief .srp-bar{flex:none;padding:16px 18px 0 20px}
 .srw-brief .srp-eyebrow{flex-wrap:wrap;row-gap:5px;overflow:visible}
-.srw-brief .srp-scroll{flex:1;padding:8px 20px 18px}
+.srw-brief .srp-scroll{flex:1;padding:14px 10px 18px 18px}
 .srp .srw-brief .srp-col{max-width:none;gap:16px}
 .srw-brief .srp-say{grid-template-columns:minmax(0,1fr);padding-top:4px}
 .srw-brief .srp-orb{display:none}
@@ -408,12 +435,16 @@ const WORKSPACE_CSS = `
 .srw-brief .srp-ribbon div{flex-basis:120px;padding:0 12px}
 .srw-brief .srp-more .in{grid-template-columns:minmax(0,1fr)}
 .srw-foot{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;padding:10px 16px 14px;border-top:1px solid rgba(60,30,10,.1)}
-.srw-mid{position:relative;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:10px 12px 12px}
+.srw-mid{position:relative;min-width:0;min-height:0;display:flex;flex-direction:column;padding:8px 0 12px}
+.ws.wide:not(.brief-on)>.srw-mid{padding-left:12px}
+.ws.wide:not(.chats-on)>.srw-mid{padding-right:12px}
 .srw-tabs{flex:none;display:flex;align-items:flex-end;gap:6px;min-width:0}
 .srw-tablist{position:relative;flex:1 1 128px;min-width:56px;display:flex;align-items:flex-end;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
 .srw-tablist::-webkit-scrollbar{display:none}
 .srw-tabwrap{flex:none;max-width:min(168px,100%);position:relative;display:inline-flex;align-items:flex-end}
 .srw-tabwrap:has(>[aria-selected=true]){max-width:min(240px,100%)}
+.wide .srw-tabwrap{max-width:min(210px,100%)}
+.wide .srw-tabwrap:has(>[aria-selected=true]){max-width:min(460px,100%)}
 .srp .srw-tab{flex:0 1 auto;min-width:0;max-width:100%;display:inline-flex;align-items:center;gap:7px;padding:9px 13px 10px;border:0;border-radius:13px 13px 0 0;background:transparent;color:#6a4a32;font:500 13.5px var(--sans);cursor:pointer;white-space:nowrap}
 .srw-tab small{flex:none;font:500 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:999px;background:rgba(34,19,10,.1);color:#5b4230}
 .srw-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis}
@@ -453,10 +484,14 @@ const WORKSPACE_CSS = `
 .srw-paste input{flex:1;min-width:0;height:36px;padding:0 14px;border-radius:999px;border:1px solid rgba(40,22,10,.2);background:#fff;font:13px var(--mono);color:#22130a;outline:0}
 .srw-paste input:focus{border-color:var(--a)}
 .srw-paste p{margin:0;font-size:12.5px;color:#7a5a42}
-.srw-chats{flex:none;width:clamp(320px,27%,390px);min-height:0;border-left:1px solid rgba(60,30,10,.1);background:rgba(255,255,255,.42)}
-/* Two parts fit, not three: the brief or the chats beside the surface, one at a time. */
-.srp.cols-2 .srw-brief{width:clamp(320px,40%,400px)}
-.srp.cols-2 .srw-chats{width:clamp(300px,38%,360px)}
+/* OpenClaw's pane: what it waits on him for, then the chats, in one card framed like the surface. */
+.srw-chats{min-height:0}
+.wide>.srw-chats{display:flex;flex-direction:column;padding:10px 12px 12px 0}
+.srw-claw{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;border-radius:14px;background:rgba(255,255,255,.84);border:1px solid rgba(255,255,255,.95);box-shadow:inset 0 1px 0 #fff,0 18px 44px -30px rgba(120,60,10,.55)}
+.wide .srw-claw .srk{flex:1;height:auto}
+.srw-needs{flex:none;max-height:45%;overflow:auto;overscroll-behavior:contain;padding:12px 16px;border-bottom:1px solid color-mix(in srgb,var(--a) 22%,transparent);background:color-mix(in srgb,var(--a) 6%,#fff)}
+.srw-needs:empty{display:none}
+.srw-needs .srx{margin:0;animation:none}
 /* A phone: the task is the whole screen (sunrise-css .sr-pane.full). A bar on top (back, its name), one part at a
    time (Brief, Work or Chat), and the tabs between them at the foot, put away while the keyboard is up. The three
    parts share one cell and stay drawn, so each keeps its scroll and its state; only the chosen one is seen. */
@@ -483,7 +518,8 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-add{flex:1 1 60%;margin-bottom:2px}
 .cols-1 .srw-add input{height:44px}
 .cols-1 .srw-work{padding:14px 12px 24px}
-.cols-1>.srw-chats{width:auto;border-left:0;background:rgba(255,255,255,.5)}
+.cols-1>.srw-chats{width:auto;background:rgba(255,255,255,.5)}
+.cols-1 .srw-claw{display:contents}
 .srp.cols-1>.srw-live{grid-row:3;margin:0 8px 6px;min-height:44px}
 .cols-1>.srw-phone{grid-row:4;display:flex;padding:0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);border-top:1px solid rgba(60,30,10,.14);background:rgba(255,250,244,.96);touch-action:none}
 .srp .srw-phone button{position:relative;flex:1 1 0;min-width:0;min-height:52px;display:inline-flex;align-items:center;justify-content:center;gap:7px;padding:0 6px;border:0;background:none;color:#6a4a32;font:500 15px var(--sans);cursor:pointer}
@@ -510,7 +546,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srp-oc.guess::after{content:" · may be wrong"}
 .cols-1 .srk-mini{margin:0 -8px;padding:8px 10px 10px}
 .srk-mini .srk-box .srk-box{flex:1;min-width:0}
-.srw-mid>.srk-mini{margin:8px -12px -12px;border-radius:0}
+.srw-mid>.srk-mini{margin:8px 0 0;border-radius:12px;border:1px solid rgba(60,30,10,.1)}
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
@@ -1244,9 +1280,40 @@ const SCENES: Record<WorkBlock['kind'], string> = {
 const WORK_TAGS: Record<WorkBlock['kind'], string> = {
   doc: 'doc', checklist: 'list', letter: 'mail', problem: 'work', fields: 'form', choices: 'pick', slides: 'slides', timer: 'timer', reading: 'read', part: 'work',
 };
-// How wide the opened pane is for a sky this wide (engine.ts workRect), and how many of the three parts fit.
-const paneWidthFor = (sky: number) => (sky < 700 ? sky - 16 : Math.min(1480, sky - 32));
-const colsFor = (sky: number): 1 | 2 | 3 => (sky < 700 ? 1 : paneWidthFor(sky) >= 1180 ? 3 : 2);
+// How wide the opened pane is for a sky this wide (engine.ts workRect), and how many of the three parts fit: a
+// phone shows one at a time; a wide screen shows the work and OpenClaw, and the brief too when all three fit.
+const paneWidthFor = (sky: number) => (sky < 700 ? sky - 16 : sky - 24);
+const colsFor = (sky: number): 1 | 2 | 3 => (sky < 700 ? 1 : paneWidthFor(sky) >= 1500 ? 3 : 2);
+
+// Which sides are open and how wide he dragged them, kept in this browser for every task.
+interface LayoutPrefs { brief?: boolean | undefined; chats?: boolean | undefined; briefW?: number | undefined; chatW?: number | undefined }
+const LAYOUT_KEY = 'sr-ws-layout';
+const BRIEF_W = { start: 290, min: 240, max: 440 } as const;
+const CHAT_W = { min: 360, max: 820 } as const;
+const within = (value: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, value)));
+function readLayout(): LayoutPrefs {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(LAYOUT_KEY) ?? '{}');
+    if (typeof stored !== 'object' || stored === null) return {};
+    const { brief, chats, briefW, chatW } = stored as Record<string, unknown>;
+    return {
+      ...(typeof brief === 'boolean' ? { brief } : {}), ...(typeof chats === 'boolean' ? { chats } : {}),
+      ...(typeof briefW === 'number' && Number.isFinite(briefW) ? { briefW: within(briefW, BRIEF_W.min, BRIEF_W.max) } : {}),
+      ...(typeof chatW === 'number' && Number.isFinite(chatW) ? { chatW: within(chatW, CHAT_W.min, CHAT_W.max) } : {}),
+    };
+  } catch { return {}; }
+}
+function keepLayout(patch: LayoutPrefs) {
+  try { window.localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...readLayout(), ...patch })); } catch { /* it still holds for this visit */ }
+}
+/** The sides a task opens with: OpenClaw beside the work when there is room for a chat, the brief on a very wide screen; what he last chose wins. */
+function opensFor(sky: number, prefs: LayoutPrefs): { brief: boolean; chats: boolean } {
+  const pane = paneWidthFor(sky);
+  if (sky < 700) return { brief: false, chats: false };
+  const chats = prefs.chats ?? pane >= 1000;
+  const brief = (prefs.brief ?? pane >= 2000) && (colsFor(sky) === 3 || !chats);
+  return { brief, chats };
+}
 // A phone shows one part of the workspace at a time; these are the tabs at its foot.
 const PHONE_TABS = [['brief', 'Brief'], ['work', 'Work'], ['chat', 'Chat']] as const;
 
@@ -1274,23 +1341,27 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const root = React.useRef<HTMLDivElement>(null);
   const surfaceBox = React.useRef<HTMLDivElement>(null);
 
-  // How much room there is: three parts side by side, two, or one column on a phone. It follows the sky's width,
-  // not the pane's own, which is still growing out of the task's form when this first draws.
-  const [cols, setCols] = React.useState<1 | 2 | 3>(() => (typeof window === 'undefined' ? 3 : colsFor(window.innerWidth)));
-  const [briefOpen, setBriefOpen] = React.useState(() => cols >= 2);
-  const [chatsOpen, setChatsOpen] = React.useState(() => cols === 3);
+  // How much room there is: the work and OpenClaw side by side with the brief too (3), the brief and OpenClaw
+  // taking turns beside the work (2), or one column on a phone (1). It follows the sky's width, not the pane's
+  // own, which is still growing out of the task's form when this first draws.
+  const [sky, setSky] = React.useState(() => (typeof window === 'undefined' ? 1800 : window.innerWidth));
+  const cols = colsFor(sky);
+  const [prefs, setPrefs] = React.useState<LayoutPrefs>(() => (typeof window === 'undefined' ? {} : readLayout()));
+  const [briefOpen, setBriefOpen] = React.useState(() => opensFor(sky, prefs).brief);
+  const [chatsOpen, setChatsOpen] = React.useState(() => opensFor(sky, prefs).chats);
   const [surfaceWidth, setSurfaceWidth] = React.useState(0);
   React.useLayoutEffect(() => {
-    const sky = root.current?.closest<HTMLElement>('.sr-sky');
-    if (!sky) return;
-    const first = colsFor(sky.clientWidth);
-    setCols(first);
-    setBriefOpen(first >= 2);
-    setChatsOpen(first === 3);
-    if (first >= 2 && startTab === 'chat') { setChatsOpen(true); if (first === 2) setBriefOpen(false); }
+    const el = root.current?.closest<HTMLElement>('.sr-sky');
+    if (!el) return;
+    const first = el.clientWidth;
+    const opens = opensFor(first, prefs);
+    setSky(first);
+    setBriefOpen(opens.brief);
+    setChatsOpen(opens.chats);
+    if (colsFor(first) >= 2 && startTab === 'chat') { setChatsOpen(true); if (colsFor(first) === 2) setBriefOpen(false); }
     if (typeof ResizeObserver === 'undefined') return;
-    const watch = new ResizeObserver(() => setCols(colsFor(sky.clientWidth)));
-    watch.observe(sky);
+    const watch = new ResizeObserver(() => setSky(el.clientWidth));
+    watch.observe(el);
     return () => watch.disconnect();
   }, []);
   React.useEffect(() => {
@@ -1336,12 +1407,53 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       setKeyboard(false);
     };
   }, [phone]);
-  // With room for two, the brief and the chats take turns beside the surface. On a phone each is a tab.
-  const showBrief = (on: boolean) => { if (phone) { setTab(on ? 'brief' : 'work'); return; } setBriefOpen(on); if (on && cols === 2) setChatsOpen(false); };
-  const showChats = (on: boolean) => { if (phone) { setTab(on ? 'chat' : 'work'); return; } setChatsOpen(on); if (on && cols === 2) setBriefOpen(false); };
+  // Without room for all three, the brief and OpenClaw take turns beside the work. On a phone each is a tab. What
+  // he opens or folds is how the next task opens too.
+  const keep = (patch: LayoutPrefs) => { setPrefs((was) => ({ ...was, ...patch })); keepLayout(patch); };
+  const showBrief = (on: boolean) => { if (phone) { setTab(on ? 'brief' : 'work'); return; } setBriefOpen(on); keep({ brief: on }); if (on && cols === 2) setChatsOpen(false); };
+  const showChats = (on: boolean) => { if (phone) { setTab(on ? 'chat' : 'work'); return; } setChatsOpen(on); keep({ chats: on }); if (on && cols === 2) setBriefOpen(false); };
   const briefShown = briefOpen || phone;
   const chatsShown = chatsOpen || phone;
-  React.useEffect(() => { if (cols === 2 && briefOpen && chatsOpen) setChatsOpen(false); }, [cols, briefOpen, chatsOpen]);
+  React.useEffect(() => { if (cols === 2 && briefOpen && chatsOpen) setBriefOpen(false); }, [cols, briefOpen, chatsOpen]);
+  // "Work only" folds both sides for now, and gives them back as they were; it is not how the next task opens.
+  const workOnly = !phone && !briefOpen && !chatsOpen;
+  const sidesBefore = React.useRef({ brief: false, chats: true });
+  const toggleWorkOnly = () => {
+    if (workOnly) { setBriefOpen(sidesBefore.current.brief); setChatsOpen(sidesBefore.current.chats || !sidesBefore.current.brief); return; }
+    sidesBefore.current = { brief: briefOpen, chats: chatsOpen };
+    setBriefOpen(false);
+    setChatsOpen(false);
+  };
+  // How wide the sides are: where he dragged them, else the brief narrow and OpenClaw about a third. The work
+  // always keeps room of its own.
+  const pane = paneWidthFor(sky);
+  const briefW = Math.min(prefs.briefW ?? BRIEF_W.start, Math.max(BRIEF_W.min, pane - 520 - (chatsOpen ? CHAT_W.min : 0)));
+  const chatW = Math.min(prefs.chatW ?? within(pane * 0.31, 400, 600), Math.max(320, pane - 520 - (briefOpen ? briefW : 0)));
+  const drag = (side: 'brief' | 'chats') => (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const grip = event.currentTarget;
+    const from = event.clientX;
+    const start = side === 'brief' ? briefW : chatW;
+    let now = start;
+    const move = (e: PointerEvent) => {
+      now = side === 'brief' ? within(start + e.clientX - from, BRIEF_W.min, BRIEF_W.max) : within(start - (e.clientX - from), CHAT_W.min, CHAT_W.max);
+      setPrefs((was) => (side === 'brief' ? { ...was, briefW: now } : { ...was, chatW: now }));
+    };
+    const end = () => {
+      grip.classList.remove('on');
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', end);
+      grip.removeEventListener('pointercancel', end);
+      if (now !== start) keepLayout(side === 'brief' ? { briefW: now } : { chatW: now });
+    };
+    grip.classList.add('on');
+    try { grip.setPointerCapture(event.pointerId); } catch { /* the drag still follows while the pointer is over the grip */ }
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', end);
+    grip.addEventListener('pointercancel', end);
+  };
+  const [needsFolded, setNeedsFolded] = React.useState(false);
 
   const loadBrief = React.useCallback(() => {
     fetch(`/api/tasks/brief?id=${encodeURIComponent(taskId)}`)
@@ -1433,7 +1545,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const svg = iconOf(icon);
     host.prepend(svg);
     return () => svg.remove();
-  }, [icon, briefShown]);
+  }, [icon, briefShown, phone]);
 
   // ---- The surfaces: the work, and one page per real link. Which is showing, and which pages he has opened.
   const [pasted, setPasted] = React.useState<string[]>([]);
@@ -1698,22 +1810,54 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const chatBusy = chats.working > 0 || !!chats.thread?.pending;
 
   return (
-    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ''}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
+    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ` wide${briefOpen ? ' brief-on' : ''}${chatsOpen ? ' chats-on' : ''}`}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
       {phone && (
         <header className="srw-top">
           <button type="button" className="srw-back" onClick={onClose} aria-label="Close the task, back to Sunrise">‹</button>
           <b>{title || short}</b>
         </header>
       )}
+      {!phone && (
+        <header className="srw-bar">
+          <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} title="The brief: what the Journal and OpenClaw know about this task">
+            <i className="pane" aria-hidden="true" /><span className="lbl">Brief</span>
+          </button>
+          <div className="srw-name">
+            <span className="srp-eyebrow" ref={eyebrow}><span>{form?.kind}</span></span>
+            <h1 title={headline}>{headline}</h1>
+          </div>
+          {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
+          {when?.where && <span className="srp-where">{when.where}</span>}
+          <span className="sp" />
+          {error && <p className="srp-err" role="alert">{error}</p>}
+          <span className="srp-acts">
+            <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
+              title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
+            <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
+          </span>
+          <i className="rule" aria-hidden="true" />
+          <button type="button" className="srw-ico" aria-pressed={workOnly} onClick={toggleWorkOnly} title={workOnly ? 'Bring the sides back' : 'Fold the brief and OpenClaw away: the work alone'}>
+            <span className="lbl">Work only</span><span aria-hidden="true">⤢</span>
+          </button>
+          <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="OpenClaw: what it waits on you for, and your chats about this task">
+            {waitsOnYou + chats.waiting > 0 ? <i className="srw-dot" aria-hidden="true" /> : chatBusy ? <i className="srw-dot working" aria-hidden="true" /> : null}
+            OpenClaw
+            {waitsOnYou + chats.waiting > 0 && <em className="waiting" role="img" aria-label={`${waitsOnYou + chats.waiting} waiting on you`}>{waitsOnYou + chats.waiting}</em>}
+          </button>
+          <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
+        </header>
+      )}
       {briefShown && (
-        <aside className="srw-brief" aria-label="The brief">
-          <header className="srp-bar">
-            <span className="srp-eyebrow" ref={eyebrow}>
-              <span>{form?.kind}</span>
-              {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
-              {when?.where && <span className="srp-where">{when.where}</span>}
-            </span>
-          </header>
+        <aside className="srw-brief" aria-label="The brief" style={phone ? undefined : { width: briefW }}>
+          {phone && (
+            <header className="srp-bar">
+              <span className="srp-eyebrow" ref={eyebrow}>
+                <span>{form?.kind}</span>
+                {due && <span className={`srp-due${zone === 'hold' ? ' over' : zone === 'ignition' ? ' soon' : ''}`}>{due}</span>}
+                {when?.where && <span className="srp-where">{when.where}</span>}
+              </span>
+            </header>
+          )}
           <div className="srp-scroll">
             <div className="srp-col">
               <section className="srp-say">
@@ -1726,8 +1870,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                     {a?.status === 'failed' && <em>couldn’t look at this{a.error ? `: ${a.error}` : ''}</em>}
                     {a && !filling && <button type="button" onClick={() => void refresh()}>{a.status === 'failed' ? 'Retry' : 'Look again'}</button>}
                   </span>
-                  {!taskId.startsWith('card:') && <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} />}
-                  <h2>{headline}</h2>
+                  {phone && !taskId.startsWith('card:') && <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} />}
+                  {phone && <h2>{headline}</h2>}
                   {says && form && form.name !== headline && <p className="srp-note">{form.name}</p>}
                   {why && <p className="why">{why}</p>}
                   {form && form.did.length > 0 && (
@@ -1764,23 +1908,23 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                 : <p className="srp-note">{brief === undefined ? 'Gathering what the Journal knows…' : 'Could not load what the Journal knows about this task.'}</p>}
             </div>
           </div>
-          <footer className="srw-foot srp-acts">
-            {error && <p className="srp-err" role="alert" style={{ margin: '0 auto 0 0' }}>{error}</p>}
-            <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
-              title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
-            <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
-            {phone && <p className="srw-hint">Let go: no longer worth doing. It leaves your lists without counting as done.</p>}
-          </footer>
+          {phone && (
+            <footer className="srw-foot srp-acts">
+              {error && <p className="srp-err" role="alert" style={{ margin: '0 auto 0 0' }}>{error}</p>}
+              <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
+                title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
+              <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
+              <p className="srw-hint">Let go: no longer worth doing. It leaves your lists without counting as done.</p>
+            </footer>
+          )}
         </aside>
+      )}
+      {!phone && briefOpen && (
+        <div className="srw-grip b" role="separator" aria-orientation="vertical" aria-label="Drag to make the brief wider or narrower. Double-click for its usual width."
+          onPointerDown={drag('brief')} onDoubleClick={() => keep({ briefW: undefined })} />
       )}
       <div className="srw-mid">
         <div className="srw-tabs">
-          {!phone && (
-            <button type="button" className="srw-ico" aria-pressed={briefOpen} onClick={() => showBrief(!briefOpen)} aria-label={briefOpen ? 'Fold the brief away' : 'Show the brief'} title="The brief">
-              <i className="pane" aria-hidden="true" />
-              {!briefOpen && waitsOnYou > 0 && <em className="waiting" role="img" aria-label={`OpenClaw waits on you for ${waitsOnYou}`}>{waitsOnYou}</em>}
-            </button>
-          )}
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
             {surfaces.map((surface) => {
               const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work';
@@ -1809,14 +1953,6 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             </form>
           ) : (
             <button type="button" className="srw-ico" onClick={() => setAdding(true)} aria-label="Open another page in OpenClaw’s browser" title="Open a page in OpenClaw’s browser">+</button>
-          )}
-          {!phone && (
-            <>
-              <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="Chats with OpenClaw about this task">
-                Chats{chats.threads.length > 0 && <em className={chats.waiting > 0 ? 'waiting' : undefined}>{chats.threads.length}</em>}
-              </button>
-              <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
-            </>
           )}
         </div>
         <div ref={surfaceBox} className="srw-surface" role="tabpanel" aria-label={selected?.label}>
@@ -1873,7 +2009,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                     <span>It leaves your list and counts as cleared. You can undo it right after.</span>
                   </div>
                 )}
-                {(phone ? tab === 'work' : !briefOpen) && error && <p className="srp-err" role="alert">{error}</p>}
+                {phone && tab === 'work' && error && <p className="srp-err" role="alert">{error}</p>}
               </div>
             </div>
           )}
@@ -1881,10 +2017,26 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
         {!phone && live}
         {!phone && !chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
       </div>
+      {!phone && chatsOpen && (
+        <div className="srw-grip c" role="separator" aria-orientation="vertical" aria-label="Drag to make OpenClaw’s side wider or narrower. Double-click for its usual width."
+          onPointerDown={drag('chats')} onDoubleClick={() => keep({ chatW: undefined })} />
+      )}
       {chatsShown && (
-        <aside className="srw-chats">
-          <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} phone={phone} onShowSurface={showSurface} onClose={phone ? undefined : () => setChatsOpen(false)}
-            below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded} />} />
+        <aside className="srw-chats" style={phone ? undefined : { width: chatW }} aria-label="OpenClaw: what it waits on you for, and your chats">
+          <div className="srw-claw">
+            {!phone && !taskId.startsWith('card:') && (
+              <div className="srw-needs">
+                <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} folded={needsFolded}
+                  extra={waitsOnYou > 0 && (
+                    <button type="button" className="srp-chip" aria-expanded={!needsFolded} onClick={() => setNeedsFolded(!needsFolded)}>
+                      {needsFolded ? `Show ${waitsOnYou}` : 'Fold'}
+                    </button>
+                  )} />
+              </div>
+            )}
+            <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} phone={phone} onShowSurface={showSurface} onClose={phone ? undefined : () => showChats(false)}
+              below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded} />} />
+          </div>
         </aside>
       )}
       {phone && tab !== 'chat' && live}

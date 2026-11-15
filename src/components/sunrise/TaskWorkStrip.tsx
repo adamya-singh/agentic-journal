@@ -327,7 +327,13 @@ function Earlier({ items }: { items: NeedsYouItem[] }) {
  * The strip at the top of the brief. With no record it is only the switch and a line on what handing over means.
  * `onMarkDone` is the brief's own Done (it journals, closes the pane and offers the undo); true when it saved.
  */
-export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; work: TaskWorkState; onMarkDone: () => Promise<boolean> }) {
+export function TaskWorkStrip({ taskId, work, onMarkDone, folded, extra }: {
+  taskId: string; work: TaskWorkState; onMarkDone: () => Promise<boolean>;
+  /** Only its first line: what waits on him is put away until he asks for it (OpenClaw's pane on a wide screen). */
+  folded?: boolean;
+  /** What else sits at the end of its first line (the button that folds it). */
+  extra?: React.ReactNode;
+}) {
   const { view, pending, load } = work;
   const [switching, setSwitching] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -399,6 +405,7 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
           <button type="button" className="srp-chip" disabled={switching} onClick={() => void startNow()} title="Starts OpenClaw’s run now instead of at its next check">Start now</button>
         )}
         {!record && <span className="srx-hint">OpenClaw takes the next step it can and asks before it sends anything.</span>}
+        {extra}
       </div>
       {record?.handedFor && active && <p className="srx-note">From a card you agreed to: {cardAgreed(record.handedFor.text)}</p>}
       {record?.standing && (
@@ -409,8 +416,8 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
       )}
       {said && <p className="srx-said" role="status">{said}</p>}
       {error && <p className="srx-err" role="alert">{error}</p>}
-      {pending.map((item) => <TaskWorkItem key={item.id} item={item} send={send} />)}
-      {record && <Earlier items={record.items} />}
+      {!folded && pending.map((item) => <TaskWorkItem key={item.id} item={item} send={send} />)}
+      {!folded && record && <Earlier items={record.items} />}
     </div>
   );
 }
