@@ -13,6 +13,38 @@ const rules = String.raw`
 .sr-threads line.lead{stroke-width:2}
 .sr-labels{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;transition:opacity .5s ease}
 .ready .sr-labels{opacity:1}
+/* Motes: every open task with no form of its own, as a small light with its name beside it (lib/sunrise/motes.ts). */
+.sr-motes{position:absolute;inset:0;z-index:3;pointer-events:none;opacity:0;transition:opacity .5s ease}
+.ready .sr-motes{opacity:1}
+.sr-motes[hidden],.mote[hidden]{display:none}
+.working .sr-motes{opacity:.28}
+.hz-on3d .sr-motes,.hz-live .sr-motes{display:none}
+.mote{position:absolute;left:0;top:0;width:0;height:0;margin:0;padding:0;border:0;background:none;pointer-events:auto;cursor:pointer;color:rgba(226,234,252,.78);font:500 11px var(--sans);text-align:left;transition:transform .5s cubic-bezier(.2,.8,.2,1),color .15s ease}
+.mote::before{content:"";position:absolute;left:-9px;top:-9px;width:18px;height:18px;border-radius:50%;transform:scale(var(--mz,1))}
+.mote i{position:absolute;left:-3px;top:-3px;width:6px;height:6px;border-radius:50%;background:currentColor;transform:scale(var(--mz,1));transition:transform .15s ease}
+.mote span{position:absolute;left:9px;top:-8px;height:16px;line-height:16px;max-width:128px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;transition:opacity .2s ease}
+.mote.nodate i{box-shadow:0 0 6px 1px rgba(190,210,255,.7)}
+.mote.far{color:#cfc0ff}
+.mote.far i{box-shadow:0 0 6px 1px rgba(190,160,255,.6)}
+.mote.want{color:rgba(240,214,178,.82)}
+.mote.want i{box-shadow:0 0 5px rgba(255,190,120,.5)}
+.mote.late{color:#ff8a66}
+.mote.late i{box-shadow:0 0 7px 2px rgba(255,90,50,.7)}
+.mote.late.recent i{left:-4px;top:-4px;width:8px;height:8px;background:#ff5a36;box-shadow:0 0 10px 3px rgba(255,80,40,.85)}
+.mote.late span{display:none}
+/* A group: one project's long run of tasks as one light, with how many it holds. Pressed, they lay out after it. */
+.mote.bundle{color:#ffe3c0;font-weight:600}
+.mote.bundle i{left:-5px;top:-5px;width:10px;height:10px;background:#ffcf96;box-shadow:0 0 0 3px rgba(255,200,140,.22),0 0 12px 3px rgba(255,180,110,.6)}
+.mote.bundle span{left:13px;max-width:272px}
+.mote.bundle span::after{content:" ▸";opacity:.7}
+.mote.bundle.open i{background:transparent;box-shadow:inset 0 0 0 2px #ffcf96}
+.mote.bundle.open span::after{content:" ▾"}
+.mote.member{color:rgba(255,222,186,.9)}
+.mote-far .mote span{opacity:0}
+.mote-far .mote.bundle span{opacity:1;max-width:none;transform:scale(var(--mz,1));transform-origin:0 50%}
+.mote:hover,.mote:focus-visible{z-index:2;outline:none;color:#fff}
+.mote:hover i,.mote:focus-visible i{transform:scale(calc(var(--mz,1) * 1.7))}
+.mote:hover span,.mote:focus-visible span{display:block;opacity:1;max-width:none;overflow:visible;left:12px;top:-11px;height:auto;line-height:18px;padding:1px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(10,14,24,.94);color:#fff;transform:scale(var(--mz,1));transform-origin:0 50%}
 /* One element per thing: pill, teaser, hook or lead, and it grows between them. */
 .thing{position:absolute;left:0;top:0;pointer-events:auto;cursor:pointer;border-radius:14px;border:1px solid transparent;overflow:hidden;
   transition:translate var(--t) var(--ease),width var(--t) var(--ease),height var(--t) var(--ease),border-radius var(--t) var(--ease),background-color .6s ease,color .6s ease,border-color .6s ease,box-shadow .6s ease,opacity .6s ease,scale .3s ease;will-change:translate,width,height}

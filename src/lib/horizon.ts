@@ -27,6 +27,7 @@ export interface HorizonUndated {
   short: string;
   title: string;
   label: string;
+  group: string;          // its subject, as a dated task's: the slice its star stands over
 }
 
 // A want-to-do task under the sun: it has no date, so it sits in its section by how high it is in his queue.
@@ -36,6 +37,7 @@ export interface HorizonWant {
   title: string;
   label: string;
   track: string;          // the section it sits in: Recharge, Level Up, his own label, or Life
+  project?: string;       // the first project it is filed under: a long series of one project's tasks is shown as one group
 }
 
 // One section under the sun. The permanent ones are listed even with nothing in them.
@@ -316,14 +318,14 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     const t = byId.get(id);
     if (!t || !pending(t) || datedIds.has(id) || t.dueDate) continue;
     const { short, label } = shortenTask(t.text);
-    undated.push({ id, short, title: t.text, label });
+    undated.push({ id, short, title: t.text, label, group: groupFor(t.text, label, 'have-to-do') });
   }
   const undatedRest: HorizonUndated[] = undated.splice(UNDATED_MAX);
   const queued = new Set(input.currentHaveToDoIds);
   flatten(input.haveToDo).filter(pending).forEach((t) => {
     if (queued.has(t.id) || datedIds.has(t.id) || t.dueDate) return;
     const { short, label } = shortenTask(t.text);
-    undatedRest.push({ id: t.id, short, title: t.text, label });
+    undatedRest.push({ id: t.id, short, title: t.text, label, group: groupFor(t.text, label, 'have-to-do') });
   });
 
   // Under the sun: want-to-do tasks with no date, by section. Each section shows the top of his queue (then the
@@ -337,7 +339,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     .forEach(({ t }) => {
       const { short, label } = shortenTask(t.text);
       const track = trackFor(t, label, tracks);
-      bySection.set(track, [...(bySection.get(track) ?? []), { id: t.id, short, title: t.text, label, track }]);
+      bySection.set(track, [...(bySection.get(track) ?? []), { id: t.id, short, title: t.text, label, track, ...(t.projects?.[0] ? { project: t.projects[0] } : {}) }]);
     });
   const sections = trackOrder(bySection.keys(), tracks).filter((name) => tracks.some((track) => track.name === name) || bySection.has(name)).slice(0, WANT_TRACKS_MAX);
   const wants: HorizonWant[] = [];

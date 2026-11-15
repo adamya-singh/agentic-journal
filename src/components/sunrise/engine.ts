@@ -11,11 +11,12 @@
 import {GROUP_OTHER, type HorizonDaily, type HorizonItem} from '@/lib/horizon'
 import {createAttention, salienceSteps, thingCount} from '@/lib/sunrise/attention'
 import type {SunriseData} from '@/lib/sunrise/data'
-import {dailyRadius, rings} from '@/lib/sunrise/geometry'
+import {coreWithDailies, coreWithoutDailies, dailyRadius, rings} from '@/lib/sunrise/geometry'
 import type {GrowBox, GrowInput} from '@/lib/sunrise/grow-layout-reference'
 import {createGrowLayout} from '@/lib/sunrise/grow-layout'
 import {groupsOf, ringItems, ringOverflow, toInput} from '@/lib/sunrise/intent'
 import {createDawnLayout} from '@/lib/sunrise/layout'
+import {type MoteItem, type MoteKind, placeMotes} from '@/lib/sunrise/motes'
 import {salienceOf} from '@/lib/sunrise/salience'
 import {type Point, type Tap, type TouchGesture, isDoubleTap, isTap, needsRestart, touchGesture, touchView} from '@/lib/sunrise/touch-camera'
 import {type FormThing, formHeight, formSize, fullForm, smallForm} from './forms'
@@ -116,6 +117,13 @@ const cardOut = (card: CardThing) => 1 - Math.max(0, Math.min(1, card.salience *
 // How far the things under the sun are pushed down past the ground's own strip (its names and chips), in px.
 const underPush = 64
 const monthDay = (date: Date) => date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
+// A long run of one project's tasks (a course's whole plan) is one light in the sky until he opens it.
+const bundleFrom = 10
+const bundlesKey = 'sr-open-bundles'
+// A project's name from its id: "stanford-cs336-summer" reads "Stanford CS336 Summer".
+const projectName = (id: string) => id.split(/[-_]+/).filter(Boolean)
+  .map(word => /^[a-z]{1,5}\d+[a-z]?$/i.test(word) ? word.toUpperCase() : word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+type SkyMote = MoteItem & {bundle?: {count: number, open: boolean}, member?: boolean}
 
 export class SunriseEngine {
   /** Where React draws: the workspace, the open tray, and the capture box in the top right corner. */
@@ -140,6 +148,14 @@ export class SunriseEngine {
   private spaceLayout: SpaceLayout = {spots: [], sectors: []}
   private readonly threads: SVGSVGElement
   private readonly labels: HTMLElement
+  // Every open task with no form of its own (overdue, no date, further down a section): a small light in the sky.
+  private readonly motesEl: HTMLElement
+  private readonly motes = new Map<string, {el: HTMLButtonElement, kind: MoteKind, at: Box | null}>()
+  private moteReach: {left: number, top: number, right: number, bottom: number} | null = null
+  private moteKey = ''
+  private readonly openBundles = new Set<string>() // the groups he has laid out, kept in this browser
+  private motePlaces = new Map<string, {x: number, y: number}>()
+  private readonly allButton: HTMLButtonElement
   private readonly say: HTMLElement
   private readonly backButton: HTMLButtonElement
   private readonly pane: HTMLElement
@@ -173,7 +189,7 @@ export class SunriseEngine {
   private readonly zoneEls: HTMLElement[]
   private readonly subjectEls = new Map<string, HTMLButtonElement>()
   private readonly trackEls = new Map<string, HTMLElement>()
-  private trackSectors: {name: string, mid: number}[] = [] // the sections under the sun that have a slice, and its middle in degrees
+  private trackSectors: {name: string, mid: number, a0: number, a1: number}[] = [] // the sections under the sun that have a slice: its middle and edges in degrees
   private trackBoxes: Box[] = [] // on a phone, where their names were put, so no task covers one
   private readonly nameBoxes = new Map<HTMLElement, Box>() // on a phone, where every name at the rim is, for roomToGrow
   private smallHost: HTMLElement | null = null
@@ -240,9 +256,10 @@ export class SunriseEngine {
     this.threads.setAttribute('class', 'sr-threads')
     this.threads.setAttribute('aria-hidden', 'true')
     this.labels = div('sr-labels')
+    this.motesEl = div('sr-motes')
     this.glowEl = div('sr-glow')
     this.labels.append(this.glowEl)
-    this.zoneEls = [...ringZones, ...ringZones].map(() => {
+    this.zoneEls = [...ringZones, ...ringZones, 'nodate'].map(() => {
       const zone = div('zl')
       this.labels.append(zone)
       return zone
@@ -278,14 +295,16 @@ export class SunriseEngine {
     // the sky itself (the 3D world needs it there) and is moved with the same transform. The words, the capture
     // box, the workspace and the trays stay put on the screen.
     this.world = div('sr-world')
-    this.world.append(this.threads, this.labels, this.arcsEl, this.sunButton, this.groundEl, this.streakEl)
+    this.world.append(this.threads, this.motesEl, this.labels, this.arcsEl, this.sunButton, this.groundEl, this.streakEl)
     const control = (className: string) => { const button = document.createElement('button'); button.type = 'button'; button.className = className; return button }
     this.viewButton = control('sr-view')
     this.viewButton.hidden = true
     this.lockButton = control('sr-lock')
     this.fullButton = control('sr-full')
+    this.allButton = control('sr-all')
+    this.allButton.hidden = true
     const controls = div('sr-ctl')
-    controls.append(this.viewButton, this.lockButton, this.fullButton)
+    controls.append(this.viewButton, this.allButton, this.lockButton, this.fullButton)
     this.safeEl = div('sr-safe')
     root.append(this.flat, div('sr-day'), this.world, this.pane, this.say, cap, controls, this.tray, this.toastEl, this.safeEl)
     this.lockButton.addEventListener('click', event => { event.stopPropagation(); this.setLocked(!this.locked) }, {signal})
@@ -301,6 +320,24 @@ export class SunriseEngine {
     this.paintControls()
     this.slots = {pane: paneIn, tray: this.tray, cap}
     this.viewButton.addEventListener('click', event => { event.stopPropagation(); this.resetView() }, {signal})
+    this.allButton.addEventListener('click', event => { event.stopPropagation(); this.showAll() }, {signal})
+    // Press a mote to open its task where it is.
+    this.motesEl.addEventListener('click', event => {
+      const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.mote') : null
+      const id = el?.dataset['id']
+      if (id === undefined || !this.motes.has(id)) return
+      event.stopPropagation()
+      if (!id.startsWith('bundle:')) { this.openTask(id); return }
+      // A group: lay its tasks out, or gather them into one again.
+      if (!this.openBundles.delete(id)) this.openBundles.add(id)
+      try { window.localStorage.setItem(bundlesKey, JSON.stringify([...this.openBundles])) } catch { /* it still opens for now */ }
+      this.renderMotes()
+      if (this.narrow) this.measureReach()
+    }, {signal})
+    try {
+      const kept: unknown = JSON.parse(window.localStorage.getItem(bundlesKey) ?? '[]')
+      if (Array.isArray(kept)) for (const id of kept) if (typeof id === 'string') this.openBundles.add(id)
+    } catch { /* none kept */ }
 
     // Press a task to open it where it is.
     this.labels.addEventListener('click', event => {
@@ -627,7 +664,8 @@ export class SunriseEngine {
     if (this.destroyed || this.data === null) return
     if (this.open !== null) this.open = null
     const thing = this.things.find(candidate => candidate.id === taskId)
-    const from = thing?.at === null || thing?.at === undefined ? null : this.toScreen(thing.at)
+    const at = thing?.at ?? this.motes.get(taskId)?.at ?? null
+    const from = at === null ? null : this.toScreen(at)
     this.open = taskId
     if (!taskId.startsWith('card:')) this.startedHere.add(taskId)
     this.closeTray()
@@ -670,6 +708,142 @@ export class SunriseEngine {
     }
     const z = Math.max(0.4, Math.min(1, (W / 2 - 24) / this.outerR, (this.stage.horizonY - 24) / this.outerR))
     this.setView(z, W / 2 * (1 - z), H * (1 - z), true)
+  }
+
+  /** Moves the camera back until every task is in view: the rings, the stars past them and what is under the sun. */
+  showAll() {
+    const {width: W, height: H, horizonY: Y} = this.stage
+    const all = {left: 0, top: 0, right: W, bottom: Y + 60}
+    const take = (box: Box | null) => {
+      if (box === null) return
+      all.left = Math.min(all.left, box.left)
+      all.right = Math.max(all.right, box.left + box.width)
+      all.top = Math.min(all.top, box.top)
+      all.bottom = Math.max(all.bottom, box.top + box.height)
+    }
+    for (const thing of this.things) take(thing.rest)
+    if (this.moteReach !== null) take({left: this.moteReach.left, top: this.moteReach.top, width: this.moteReach.right - this.moteReach.left, height: this.moteReach.bottom - this.moteReach.top})
+    if (this.outerR > 0) take({left: W / 2 - this.outerR, top: Y - this.outerR, width: 2 * this.outerR, height: this.outerR})
+    const pad = 28
+    const z = this.zoomLimit(Math.min(1, (W - 2 * pad) / (all.right - all.left), (H - 2 * pad) / (all.bottom - all.top)))
+    this.setView(z, W / 2 - (all.left + all.right) / 2 * z, H / 2 - (all.top + all.bottom) / 2 * z, true)
+  }
+
+  // ---- Motes: every open task that has no form (lib/sunrise/motes.ts says where each goes).
+  private moteItems(data: SunriseData): SkyMote[] {
+    const horizon = data.horizon
+    const formed = new Set(this.things.filter(thing => thing.shown).map(thing => thing.id))
+    const out: SkyMote[] = []
+    const seen = new Set<string>()
+    const add = (item: SkyMote) => {
+      if (formed.has(item.id) || seen.has(item.id)) return
+      seen.add(item.id)
+      out.push(item)
+    }
+    for (const item of [...horizon.holds, ...horizon.stale]) {
+      add({id: item.id, kind: 'late', name: trimDots(item.short), title: `${item.title} · ${item.left || 'overdue'}`, group: item.group, hours: Math.min(0, item.hours)})
+    }
+    // A dated task the rings and the outer rings had no room for.
+    for (const item of [...horizon.items, ...horizon.further]) {
+      if (item.zone === 'hold') continue
+      add({id: item.id, kind: 'far', name: trimDots(item.short), title: `${item.title} · ${item.day}`, group: item.group, hours: Math.max(0, item.hours)})
+    }
+    for (const undated of [...horizon.undated, ...horizon.undatedRest]) {
+      add({id: undated.id, kind: 'nodate', name: trimDots(undated.short), title: `${undated.title} · no date`, group: undated.group ?? GROUP_OTHER, hours: 0})
+    }
+    for (const [track, wants] of Object.entries(horizon.wantsBySection)) {
+      const loose = wants.filter(want => !formed.has(want.id) && !seen.has(want.id))
+      const byProject = new Map<string, typeof loose>()
+      for (const want of loose) if (want.project !== undefined) byProject.set(want.project, [...byProject.get(want.project) ?? [], want])
+      const bundled = new Set<string>()
+      for (const want of loose) {
+        const members = want.project === undefined ? undefined : byProject.get(want.project)
+        if (want.project === undefined || members === undefined || members.length < bundleFrom) {
+          add({id: want.id, kind: 'want', name: trimDots(want.short), title: `${want.title} · ${track}`, group: track, hours: 0})
+          continue
+        }
+        if (bundled.has(want.project)) continue
+        bundled.add(want.project)
+        // The group sits where its first task would, and its tasks follow it when it is open.
+        const id = `bundle:${track}:${want.project}`
+        const open = this.openBundles.has(id)
+        const name = projectName(want.project)
+        out.push({
+          id, kind: 'want', name: `${name} · ${members.length}`, group: track, hours: 0, wide: true, bundle: {count: members.length, open},
+          title: open ? `${name}: ${members.length} tasks, laid out. Press to gather them into one again` : `${name}: ${members.length} tasks in one. Press to lay them all out`,
+        })
+        if (open) for (const member of members) add({id: member.id, kind: 'want', name: trimDots(member.short), title: `${member.title} · ${name}`, group: track, hours: 0, member: true})
+      }
+    }
+    return out
+  }
+  private renderMotes() {
+    const data = this.data
+    // The far side holds the cards, and inside a subject only its own tasks are drawn.
+    const off = data === null || this.farSide || this.subject !== null
+    this.motesEl.hidden = off
+    const items = off ? [] : this.moteItems(data)
+    const {width: W, horizonY: Y} = this.stage
+    const {kx, ky} = this.last
+    const moteStage = {
+      cx: W / 2, cy: Y, kx, ky, core: (data !== null && data.horizon.dailies.length > 0 ? coreWithDailies : coreWithoutDailies) * this.last.ss,
+      outerR: this.outerR, outerRy: this.narrow ? rings[4] * ky + 40 + (rings[4] - rings[0]) * this.outerKy : this.outerR,
+      underK: this.underK, underKy: this.underKy, underPush,
+      sectors: this.spaceLayout.sectors.map(sector => ({name: sector.group, a0: sector.a0, a1: sector.a1})),
+      tracks: this.trackSectors.map(sector => ({name: sector.name, a0: sector.a0, a1: sector.a1})),
+    }
+    // The sky is laid out again on every hover; the motes only move when the stage or the tasks do.
+    const moteKey = off ? '' : JSON.stringify([moteStage, items.map(item => [item.id, item.kind, item.group, Math.round(item.hours / 6)])])
+    if (moteKey !== this.moteKey) {
+      this.moteKey = moteKey
+      this.motePlaces = off ? new Map() : placeMotes(items, moteStage)
+    }
+    let tasks = this.things.filter(thing => thing.shown).length
+    const places = this.motePlaces
+    const keep = new Set(items.map(item => item.id))
+    for (const [id, mote] of this.motes) {
+      if (keep.has(id)) continue
+      mote.el.remove()
+      this.motes.delete(id)
+    }
+    let reach: {left: number, top: number, right: number, bottom: number} | null = null
+    for (const item of items) {
+      let mote = this.motes.get(item.id)
+      if (mote === undefined) {
+        const el = document.createElement('button')
+        el.type = 'button'
+        el.dataset['id'] = item.id
+        el.append(document.createElement('i'), document.createElement('span'))
+        this.motesEl.append(el)
+        mote = {el, kind: item.kind, at: null}
+        this.motes.set(item.id, mote)
+      }
+      mote.kind = item.kind
+      const recent = item.kind === 'late' && item.hours > -7 * 24
+      const className = `mote ${item.kind}${recent ? ' recent' : ''}${item.bundle === undefined ? '' : ` bundle${item.bundle.open ? ' open' : ''}`}${item.member === true ? ' member' : ''}`
+      if (item.bundle !== undefined) mote.el.setAttribute('aria-expanded', String(item.bundle.open))
+      if (mote.el.className !== className) mote.el.className = className
+      if (mote.el.title !== item.title) { mote.el.title = item.title; mote.el.setAttribute('aria-label', item.title) }
+      const name = mote.el.lastElementChild!
+      if (name.textContent !== item.name) name.textContent = item.name
+      const place = places.get(item.id)
+      mote.el.hidden = place === undefined
+      mote.at = place === undefined ? null : {left: place.x - 6, top: place.y - 6, width: 12, height: 12}
+      if (place === undefined) continue
+      // A group counts for the tasks in it while it is gathered; laid out, they count themselves.
+      tasks += item.bundle === undefined ? 1 : item.bundle.open ? 0 : item.bundle.count
+      mote.el.style.transform = `translate(${place.x.toFixed(1)}px,${place.y.toFixed(1)}px)`
+      // A name runs to the right of its light.
+      const right = place.x + (item.kind === 'late' ? 8 : item.wide === true ? 290 : 140)
+      reach = reach === null
+        ? {left: place.x - 10, top: place.y - 12, right, bottom: place.y + 12}
+        : {left: Math.min(reach.left, place.x - 10), top: Math.min(reach.top, place.y - 12), right: Math.max(reach.right, right), bottom: Math.max(reach.bottom, place.y + 12)}
+    }
+    this.moteReach = reach
+    // One press shows the whole sky, with how many tasks are in it.
+    this.allButton.hidden = off || reach === null
+    this.allButton.textContent = this.narrow ? `All ${tasks}` : `Whole sky · ${tasks} tasks`
+    this.allButton.title = 'Pull back until every open task is in view'
   }
 
   /**
@@ -992,7 +1166,7 @@ export class SunriseEngine {
   private isHome() { return this.view.z === 1 && this.view.x === 0 && this.view.y === 0 }
   private zoomLimit(to: number) {
     // Close to life size snaps to it, so home is easy to come back to.
-    const z = Math.max(this.narrow ? this.minZoom : 0.4, Math.min(3, to))
+    const z = Math.max(this.narrow ? this.minZoom : 0.3, Math.min(3, to))
     return Math.abs(z - 1) < 0.04 ? 1 : z
   }
   private zoomAt(px: number, py: number, to: number) {
@@ -1012,7 +1186,13 @@ export class SunriseEngine {
       const held = (at: number, size: number, low: number, high: number) => (high - low) * z <= size ? (size - (low + high) * z) / 2 : keep(at, size, low, high)
       return {z, x: held(x, W, left, right), y: held(y, H, top, bottom)}
     }
-    return {z, x: keep(x, W, -1.5 * W, 2.5 * W), y: keep(y, H, -1.6 * H, 2.25 * H)}
+    // And as far as the motes go: the stars past the last ring, the wants deepest under the sun.
+    const motes = this.moteReach
+    return {
+      z,
+      x: keep(x, W, Math.min(-1.5 * W, (motes?.left ?? 0) - 80), Math.max(2.5 * W, (motes?.right ?? 0) + 80)),
+      y: keep(y, H, Math.min(-1.6 * H, (motes?.top ?? 0) - 80), Math.max(2.25 * H, (motes?.bottom ?? 0) + 80)),
+    }
   }
   /** On a phone: how far what is drawn reaches, in world px, and so the least zoom that shows all of it. */
   private measureReach() {
@@ -1030,6 +1210,12 @@ export class SunriseEngine {
       right = Math.max(right, box.left + box.width)
       top = Math.min(top, box.top)
       bottom = Math.max(bottom, box.top + box.height + 16) // a pill's day hangs under it
+    }
+    if (this.moteReach !== null && !this.motesEl.hidden) {
+      left = Math.min(left, this.moteReach.left)
+      right = Math.max(right, this.moteReach.right)
+      top = Math.min(top, this.moteReach.top)
+      bottom = Math.max(bottom, this.moteReach.bottom)
     }
     // A margin past whatever reaches out of the stage; what is inside it moves nothing.
     this.reach = {left: Math.min(0, left - 16), top: Math.min(0, top - 24), right: Math.max(W, right + 16), bottom: Math.max(H, bottom + 24)}
@@ -1055,6 +1241,9 @@ export class SunriseEngine {
     // Pulled back on a phone, the names grow back toward their own size (sunrise-css --lk), as far as they have
     // room to (roomToGrow).
     if (this.narrow) this.root.style.setProperty('--lk', this.view.z >= 0.85 ? '1' : Math.min(2.2, 0.85 / this.view.z).toFixed(3))
+    // Pulled back, a mote's light keeps a size the eye can find; its name is there once it can be read.
+    this.root.style.setProperty('--mz', Math.max(1, Math.min(2.6, 0.85 / this.view.z)).toFixed(3))
+    this.root.classList.toggle('mote-far', this.view.z < 0.7)
     this.root.classList.toggle('zoomed', !home)
     this.viewButton.hidden = home
     // A phone has no room for the long label beside the chips that pass under it: one word there.
@@ -1477,7 +1666,7 @@ export class SunriseEngine {
         }))
         this.underK = under.kx * S
         this.underKy = under.ky * S
-        this.trackSectors = tracks.flatMap((track, index) => { const sector = under.sectors[index]; return sector === undefined || !sector.shown ? [] : [{name: track.name, mid: sector.mid}] })
+        this.trackSectors = tracks.flatMap((track, index) => { const sector = under.sectors[index]; return sector === undefined || !sector.shown ? [] : [{name: track.name, mid: sector.mid, a0: sector.a0, a1: sector.a1}] })
         underThings.forEach((thing, index) => {
           const pill = under.pills[index]!
           if (!pill.visible || !pill.free) return
@@ -1555,6 +1744,7 @@ export class SunriseEngine {
     }
     this.commit()
     this.drawFlat()
+    this.renderMotes()
     this.writeHeadline(order)
     if (narrow) {
       // What is drawn changed: the camera stays inside it (without closing a tray it has not moved for).
@@ -1673,17 +1863,21 @@ export class SunriseEngine {
         : [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']],
       ['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`],
       ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later'],
+      ['No date', 'whenever'],
     ]
+    const stars = [...this.motes.values()].some(mote => mote.kind === 'nodate' && mote.at !== null)
     const outerK = this.outerR > 0 ? (this.outerR - rings[4] * kx - 40) / (rings[4] - rings[0]) : 0
     this.zoneEls.forEach((zone, index) => {
       const html = `<b>${names[index]![0]}</b><small>${names[index]![1]!.toUpperCase()}</small>`
       if (zone.dataset['html'] !== html) { zone.innerHTML = html; zone.dataset['html'] = html }
       const outer = index >= 4
-      const mid = outer
+      const mid = index === 8
+        ? this.outerR + 76
+        : outer
         ? rings[4] * kx + 40 + ((rings[index - 4]! + rings[index - 3]!) / 2 - rings[0]) * outerK
         : (rings[index]! + rings[index + 1]!) / 2 * kx
       zone.style.transform = `translate(${(W / 2 - mid).toFixed(1)}px,${(Y + 30).toFixed(1)}px) translate(-50%,-62%) scale(${Math.min(1, kx).toFixed(3)})`
-      zone.style.opacity = kx < 0.6 || (outer && this.outerR <= 0) ? '0' : '1'
+      zone.style.opacity = kx < 0.6 || (outer && this.outerR <= 0) || (index === 8 && !stars) ? '0' : '1'
     })
   }
   // A form under the pointer opens around its own centre, kept on the stage.
