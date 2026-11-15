@@ -5,7 +5,10 @@
 // tries a day. Sent through the OpenClaw CLI (`openclaw message send --channel telegram`), to
 // TASK_WORKER_TELEGRAM_TARGET or else the chat OpenClaw's own announce crons deliver to. TASK_WORKER_NOTIFY_DISABLED=1
 // turns it off, as does TASK_WORKER_DISABLED.
-import { isOpenClawCliAvailable, parseJsonObjectOutput, runOpenClawCli } from '@/lib/openclaw-cron';
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { parseJsonObjectOutput, runOpenClawCli } from '@/lib/openclaw-cron';
 import { taskLink } from '@/lib/task-link';
 import { localDay, pendingItems, quietHours, type NeedsYouItem, type TaskWork, type TaskWorkMeta } from '@/lib/task-work';
 import { openTaskRefs } from '../brief/build';
@@ -128,14 +131,49 @@ async function cliTarget(): Promise<string | null> {
   return s.target;
 }
 
-async function cliSend(args: string[]): Promise<string> {
-  const out = await runOpenClawCli(args, 60_000);
-  const parsed = parseJsonObjectOutput(out);
-  if (parsed && (parsed.ok === false || parsed.error)) throw new Error(`message send failed: ${String(parsed.error ?? 'not ok')}`);
-  return out;
+/** The bot's token: TASK_WORKER_TELEGRAM_BOT_TOKEN, or the one OpenClaw's own Telegram channel uses. Never logged. */
+function botToken(): string | null {
+  const fromEnv = process.env.TASK_WORKER_TELEGRAM_BOT_TOKEN?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    const config = JSON.parse(readFileSync(join(homedir(), '.openclaw', 'openclaw.json'), 'utf8')) as { channels?: { telegram?: { botToken?: unknown } } };
+    const token = config.channels?.telegram?.botToken;
+    return typeof token === 'string' && token.trim() ? token.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
-const cliDeps: NotifyDeps = { available: isOpenClawCliAvailable, target: cliTarget, send: cliSend, origin: journalOrigin };
+const argAfter = (args: string[], flag: string) => { const i = args.indexOf(flag); return i >= 0 ? args[i + 1] : undefined; };
+
+/**
+ * Straight to Telegram's bot API. `openclaw message send` delivers the message and then never exits
+ * (2026-11-14: three tries, each killed at its timeout, each one delivered), so every retry sent it again.
+ * Here the answer comes back in a second or two and says whether it went.
+ */
+async function telegramSend(args: string[]): Promise<string> {
+  const token = botToken();
+  const chat = argAfter(args, '--target');
+  const text = argAfter(args, '--message');
+  if (!token || !chat || !text) throw new Error('no Telegram bot token, chat or text');
+  let response: Response;
+  try {
+    response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text, link_preview_options: { is_disabled: true } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (error) {
+    // The error of a failed fetch can carry the address, and the address carries the token.
+    throw new Error(`Telegram could not be reached (${error instanceof Error ? error.name : 'error'})`);
+  }
+  const body = await response.json().catch(() => null) as { ok?: boolean; description?: string } | null;
+  if (!response.ok || !body?.ok) throw new Error(`Telegram refused the message: ${body?.description ?? response.status}`);
+  return 'sent';
+}
+
+const cliDeps: NotifyDeps = { available: () => botToken() !== null, target: cliTarget, send: telegramSend, origin: journalOrigin };
 
 export interface NotifyResult { decision: NotifyDecision | 'no-cli' | 'no-target' | 'sent' | 'failed' | 'busy'; tasks?: number; message?: string; error?: string }
 
