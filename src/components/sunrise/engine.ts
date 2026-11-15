@@ -387,6 +387,26 @@ export class SunriseEngine {
       const onTrack = event.target instanceof Element && event.target.closest('.sl-track, .sr-dl') !== null
       if (!this.tray.contains(event.target) && !this.groundEl.contains(event.target) && event.target !== this.sunButton && !this.streakEl.contains(event.target) && !onTrack) this.closeTray()
     }, {signal})
+    // A press on the open sky beside the workspace, or on the page around the sky, closes it, as its ✕ does. A press on another task, a chip, a
+    // button or a tray is that thing's own, and the click a drag ends with is not a press.
+    document.addEventListener('click', event => {
+      if (this.open === null || event.defaultPrevented || event.button !== 0 || performance.now() <= this.swallowUntil) return
+      const target = event.target
+      if (!(target instanceof Element) || !target.isConnected) return
+      // Off the sky, the page's own bar and background count as outside; anything floating over the page (a
+      // dialog, a drawer, a chat) is its own.
+      for (let el: Element | null = target; el !== null && el !== root && el !== document.body; el = el.parentElement) {
+        if (el.matches('header, nav')) break
+        const position = getComputedStyle(el).position
+        if (position === 'fixed' || position === 'sticky') return
+      }
+      const path = event.composedPath()
+      if (path.includes(this.pane) || path.includes(this.tray) || path.includes(this.groundEl) || path.includes(this.slots.cap)) return
+      if (target.closest('.thing, button, a, input, textarea, select, label, [role=dialog], [role=menu], [role=status], .sr-menu, .sr-pane, .sr-tray') !== null) return
+      const selection = window.getSelection()
+      if (selection !== null && !selection.isCollapsed) return
+      this.closeTask()
+    }, {signal})
     window.addEventListener('keydown', event => {
       // Inside the 3D world Escape is the world's (it asks the host first).
       if (event.key !== 'Escape' || event.defaultPrevented || this.root.classList.contains('hz-live')) return
