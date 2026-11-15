@@ -342,7 +342,7 @@ ${input.previousHook ? `
 The hook from your last look (keep its name, kind and shape unless the task changed; move the work forward):
 ${JSON.stringify(input.previousHook)}
 ` : ''}${input.userWork?.trim() ? `
-He has already worked in what you started. These are the blocks as he left them. Keep what he wrote; start from it and make next the step after it:
+The work in the task's workspace has moved on from what you started: he worked in the blocks, or you wrote them for him from a chat there. These are the blocks as they stand, and they are the ones that count. Return them as "work" with their ids and text kept (tick what is done, add what is true and new), and make next the step after them:
 ${input.userWork.trim().slice(0, 6000)}
 ` : ''}
 Reply with ONLY one JSON object, no prose, no code fence:

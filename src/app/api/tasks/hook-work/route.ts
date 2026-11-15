@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { nextWorkRecord, resolveWork, WORK_BODY_MAX } from '@/lib/hook-work';
+import { mergeWork, nextWorkRecord, readBlocks, resolveWork, WORK_BODY_MAX } from '@/lib/hook-work';
 import { parseBlocks } from '@/lib/shapes/work';
 import { loadTaskBrief, openTaskRefs } from '../brief/build';
 import { mutateHookWorkRecords, readHookWorkRecord } from './store';
@@ -29,13 +29,16 @@ export async function GET(request: NextRequest) {
 /**
  * POST /api/tasks/hook-work
  * Body: { taskId, action: 'open' }                      he opened the task: it is marked started
- *       { taskId, action: 'save', blocks, baseHash? }   his version of the work's blocks
+ *       { taskId, action: 'save', blocks, baseHash?, seen?, changed? }   his version of the work's blocks
  *       { taskId, action: 'reset' }                     drop his text and take OpenClaw's version
+ * `seen` is the version (rev) his blocks started from and `changed` the ids of the blocks he changed since. When
+ * the workspace was written after `seen` (by OpenClaw, from a chat), only those blocks are laid over it; the
+ * answer is the work as saved, which the page then shows.
  * Everything stays in the journal: nothing is sent or created anywhere else.
  */
 export async function POST(request: NextRequest) {
   try {
-    const { taskId, action, blocks, baseHash } = await request.json();
+    const { taskId, action, blocks, baseHash, seen, changed } = await request.json();
     if (!taskId || typeof taskId !== 'string') return NextResponse.json({ success: false, error: 'taskId is required' }, { status: 400 });
     if (action !== 'open' && action !== 'save' && action !== 'reset') {
       return NextResponse.json({ success: false, error: 'action must be "open", "save" or "reset"' }, { status: 400 });
@@ -46,14 +49,21 @@ export async function POST(request: NextRequest) {
     const ref = openTaskRefs().find((r) => r.task.id === taskId);
     if (!ref) return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
 
+    let merged = false;
     mutateHookWorkRecords((records) => {
-      records[taskId] = nextWorkRecord(
-        records[taskId],
-        { taskId, ...(action === 'save' ? { blocks: parseBlocks(blocks).blocks, baseHash: typeof baseHash === 'string' ? baseHash : null } : {}), reset: action === 'reset' },
-        new Date()
-      );
+      const record = records[taskId];
+      let mine = action === 'save' ? parseBlocks(blocks).blocks : undefined;
+      let base = typeof baseHash === 'string' ? baseHash : null;
+      const theirs = readBlocks(record?.body);
+      if (mine && theirs && typeof seen === 'number' && (record?.rev ?? 0) !== seen) {
+        // Written since the version he was typing in: his changed blocks go over it, the rest stays.
+        mine = parseBlocks(mergeWork(theirs, mine, Array.isArray(changed) ? changed.filter((id): id is string => typeof id === 'string') : [])).blocks;
+        base = record?.baseHash ?? base;
+        merged = true;
+      }
+      records[taskId] = nextWorkRecord(record, { taskId, ...(mine ? { blocks: mine, baseHash: base } : {}), reset: action === 'reset' }, new Date());
     });
-    return NextResponse.json({ success: true, data: resolved(taskId, ref.task.text) });
+    return NextResponse.json({ success: true, data: resolved(taskId, ref.task.text), ...(merged ? { merged: true } : {}) });
   } catch (error) {
     console.error('Error saving hook work:', error);
     return NextResponse.json({ success: false, error: 'Failed to save the work' }, { status: 500 });

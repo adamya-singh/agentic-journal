@@ -35,6 +35,7 @@ export interface TaskChatThread {
   unread?: boolean;              // he marked it unread: it waits on him again until he opens it or writes in it
   touchedAt: string;             // when he last did something in it (started it, wrote in it); a reply does not count
   outsideRunAt?: string | null;  // when OpenClaw's own history last said a run is in flight that the Journal did not start
+  workSeen?: string;             // the workspace as this chat last knew it (workspaceSignature); absent until it has been told of the workspace
   about: ChatSurfaceRef | null;  // the surface it was started from
 }
 
@@ -264,6 +265,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     // Before this was recorded: the last thing he wrote, or the moment he opened it.
     touchedAt: iso(r.touchedAt) ?? asked?.at ?? born,
     ...(iso(r.outsideRunAt) ? { outsideRunAt: iso(r.outsideRunAt) } : {}),
+    ...(typeof r.workSeen === 'string' && r.workSeen ? { workSeen: r.workSeen } : {}),
     about: parseSurfaceRef(r.about),
   };
 }
@@ -339,29 +341,41 @@ function progressRule(taskId: string): string[] {
   return [
     'The one exception, which needs no asking: keep the task up to date with what happens in this chat. Each time you do something for the task (send an email, submit or book something, find out a fact that changes what comes next) or he tells you something happened, record it before you answer, for the whole life of this chat:',
     `curl -s -X POST http://127.0.0.1:3000/api/tasks/progress -H 'Content-Type: application/json' -d '${body}'`,
-    '"did" names the specifics (who, which address, the subject, the amount). "next" and "waitingOn" are optional and replace the last ones; send "" to clear one. This only adds to the task’s notes under "## Progress".',
+    '"did" names the specifics (who, which address, the subject, the amount; for a file you made, its full path). "next" and "waitingOn" are optional and replace the last ones; send "" to clear one. This only adds to the task’s notes under "## Progress".',
     'You are not running between his messages, so never say you will watch, monitor or check back later. When the next step is waiting for someone outside (a person, an office, a company: a reply, their decision, a date), say so in "waitingOn" and tell him the task now records it; the Journal then looks for their reply.',
     '"waitingOn" is only for someone outside. When it is Adamya you are waiting on (his approval, answer or decision), say so in "next" instead ("Next: Adamya confirms the 3 lenses") and leave "waitingOn" out.',
   ];
 }
 
+const TYPED_MARK = '\nAdamya’s message:\n';
+
 /**
- * What goes to OpenClaw for one turn. Only the first turn of a thread carries the brief; a turn sent while he is
- * on a web page in OpenClaw's browser also says which page.
+ * What goes to OpenClaw for one turn. Only the first turn of a thread carries the brief. `workspace` is what the
+ * turn says about the task's workspace (lib/task-workspace.ts workspaceBrief): how it works and how it stands the
+ * first time, how it stands when it has changed, the page he is on otherwise; it says which tab he is on, so the
+ * page line is left out when it is given. Without it, a turn sent from a web page in OpenClaw's browser still
+ * says which page.
  */
-export function buildChatTurnMessage(input: { brief: TaskBrief | null; text: string; first: boolean; about?: ChatSurfaceRef | null }): string {
-  const page = surfaceContext(input.about);
-  if (!input.first) return page ? `${page}\n\n${input.text}` : input.text;
+export function buildChatTurnMessage(input: { brief: TaskBrief | null; text: string; first: boolean; about?: ChatSurfaceRef | null; workspace?: string | null }): string {
+  const workspace = input.workspace?.trim() ?? '';
+  const page = workspace ? '' : surfaceContext(input.about);
+  if (!input.first) {
+    if (workspace) return `${workspace}\n${TYPED_MARK}${input.text}`;
+    return page ? `${page}\n\n${input.text}` : input.text;
+  }
   const context = input.brief ? briefContext(input.brief) : 'The task could not be loaded.';
   return [
     'Adamya is asking about one of the tasks in the Agentic Journal, from the chat in the task’s workspace.',
     'Keep answers short: a few sentences or a short list (markdown is fine). Look things up (Canvas, email, the journal, the web) when that helps.',
-    'Do not change the task, the journal or anything else unless Adamya asks you to.',
+    workspace
+      ? 'Do not change the task, the journal or anything else unless Adamya asks you to. The two exceptions are below: the task’s Progress, and the task’s workspace when he asks you for work.'
+      : 'Do not change the task, the journal or anything else unless Adamya asks you to.',
     ...(input.brief ? progressRule(input.brief.id) : []),
     '',
     '--- The task, as the Journal knows it ---',
     context,
     '---',
+    ...(workspace ? ['', workspace] : []),
     ...(page ? ['', page] : []),
     '',
     'Adamya’s message:',
@@ -424,12 +438,13 @@ export function readChatHistory(raw: unknown): ChatHistory | null {
 
 /**
  * What he typed, out of what the Journal sent for it: the first turn of a thread carries the brief in front of his
- * message, and a turn sent from a web tab says which page first (buildChatTurnMessage).
+ * message, a turn may say how the task's workspace stands first, and one sent from a web tab says which page
+ * (buildChatTurnMessage).
  */
 export function typedTextOf(sent: string): string {
-  const mark = '\nAdamya’s message:\n';
+  const mark = TYPED_MARK;
   const at = sent.lastIndexOf(mark);
-  if (at >= 0 && sent.startsWith('Adamya is asking about one of the tasks in the Agentic Journal')) return sent.slice(at + mark.length);
+  if (at >= 0 && (sent.startsWith('Adamya is asking about one of the tasks in the Agentic Journal') || sent.startsWith('[Workspace of this task'))) return sent.slice(at + mark.length);
   const page = /^\[Adamya has this page open in your browser[\s\S]*?use your browser tool on it\.\]\n\n/.exec(sent);
   return page ? sent.slice(page[0].length) : sent;
 }

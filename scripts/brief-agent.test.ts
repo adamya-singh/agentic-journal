@@ -213,7 +213,7 @@ test('the prompt asks for the hook, keeps OpenClaw read only outside the journal
   });
   assert.match(again, /The hook from your last look/);
   assert.match(again, /Write the Fair Face reflection/);
-  assert.match(again, /He has already worked in what you started/);
+  assert.match(again, /The work in the task's workspace has moved on from what you started/);
   assert.match(again, /that matters because/);
 });
 function good() {
@@ -228,7 +228,7 @@ test('his version of the started work wins, and OpenClaw’s newer one is offere
   assert.equal(resolveWork(null, undefined, 'Task'), null);
   // Untouched: OpenClaw's blocks, and the hash to send back with the first save.
   assert.deepEqual(resolveWork(work, undefined, 'Task'), {
-    title: 'Reply', href: null, blocks: work.blocks, edited: false, baseHash: workHash(work.blocks), newer: null, startedAt: null,
+    title: 'Reply', href: null, blocks: work.blocks, edited: false, baseHash: workHash(work.blocks), newer: null, startedAt: null, rev: 0, by: null,
   });
   // Opening the task marks it started without making the work his.
   const opened = nextWorkRecord(undefined, { taskId: 'ff' }, now);

@@ -128,6 +128,7 @@ const BRIEF_AND_WORK_CSS = `
 /* The work. Each block is an object he already knows how to use: a mail draft, a notes page, a list of
    reminders, a slide presenter, a form, a book. Its title bar says what it is and how it stands. */
 .srp-work{display:grid;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start;animation:srp-rise .65s .28s both}
+.srp-work.again{animation:srp-up .22s both}
 .srp-work.desk{grid-template-columns:minmax(0,1.75fr) minmax(0,1fr)}
 .srp-work.desk.listfirst{grid-template-columns:minmax(0,1fr) minmax(0,1.75fr)}
 .srp-work.desk>.srp-jumprow,.srp-work.desk>.srp-foot{grid-column:1/-1}
@@ -943,9 +944,12 @@ function BlockView({ block, title, href, lead, status, focusJump, onChange }: {
   }
 }
 
+/** What the pane and the work card share about the work on file: its version, and whether he has unsaved typing. */
+interface WorkSync { rev: number; busy: boolean }
+
 /** The started work: the step to take now, then its blocks, which save themselves as he works in them. */
-function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
-  taskId: string; work: ResolvedWork; next: string; focusJump: boolean; narrow: boolean; quiet: boolean; onWork: (work: ResolvedWork | null) => void;
+function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, onWork }: {
+  taskId: string; work: ResolvedWork; next: string; focusJump: boolean; narrow: boolean; quiet: boolean; again: boolean; sync: React.RefObject<WorkSync>; onWork: (work: ResolvedWork | null) => void;
 }) {
   const [blocks, setBlocks] = React.useState(work.blocks);
   const [state, setState] = React.useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
@@ -953,6 +957,10 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
   const timer = React.useRef<number | null>(null);
   const latest = React.useRef(blocks);
   latest.current = blocks;
+  // The version on file his blocks started from, and the blocks he has changed since: OpenClaw may write the
+  // work from a chat while he is in it, and a save then lays only his changed blocks over what it wrote.
+  const rev = React.useRef(work.rev);
+  const dirty = React.useRef(new Set<string>());
 
   // One save is out at a time, and the next one sent is always the newest text. Two out together
   // could arrive in either order: an older text could land last, on the page ("Saved") and in the
@@ -961,33 +969,51 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
   const waiting = React.useRef<WorkBlock[] | null>(null);
   const save = React.useCallback(async (next: WorkBlock[]) => {
     if (sending.current) { waiting.current = next; return; }
-    if (next === saved.current) return;
+    if (next === saved.current) { sync.current.busy = false; return; }
     sending.current = true;
     setState('saving');
+    const changed = [...dirty.current];
+    dirty.current = new Set();
     let ok = false;
+    let merged: ResolvedWork | null = null;
     try {
-      const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks: next, baseHash: work.baseHash });
+      const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks: next, baseHash: work.baseHash, seen: rev.current, changed });
       ok = !!json?.success;
+      const now = json?.data as ResolvedWork | null | undefined;
+      // A merged answer is shown below, and brings its own version with it. Until then his next save still
+      // counts from the version he was typing in, so it is laid over OpenClaw's blocks the same way.
+      if (ok && now && json.merged === true) merged = now;
+      else if (ok && now) rev.current = sync.current.rev = now.rev;
     } catch { /* reported below */ }
     sending.current = false;
     if (ok) saved.current = next;
+    else for (const id of changed) dirty.current.add(id);
     const queued = waiting.current;
     waiting.current = null;
     if (queued && queued !== saved.current) { void save(queued); return; }
+    sync.current.busy = false;
     setState(ok ? 'saved' : 'failed');
-  }, [taskId, work.baseHash]);
+    // OpenClaw wrote the work while he was typing: what is on file now is its blocks with his changed ones over them.
+    if (merged) { saved.current = latest.current; onWork(merged); }
+  }, [taskId, work.baseHash, sync, onWork]);
   const change = (block: WorkBlock) => {
     const next = latest.current.map((b) => (b.id === block.id ? block : b));
+    dirty.current.add(block.id);
+    sync.current.busy = true;
     setBlocks(next);
     setState('idle');
     if (timer.current) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => void save(next), 800);
   };
   // Leaving the task saves what is still unsaved.
-  React.useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current);
-    if (latest.current !== saved.current) void post('/api/tasks/hook-work', { taskId, action: 'save', blocks: latest.current, baseHash: work.baseHash }).catch(() => {});
-  }, [taskId, work.baseHash]);
+  React.useEffect(() => {
+    const shared = sync.current;
+    return () => {
+      if (timer.current) window.clearTimeout(timer.current);
+      shared.busy = false;
+      if (latest.current !== saved.current) void post('/api/tasks/hook-work', { taskId, action: 'save', blocks: latest.current, baseHash: work.baseHash, seen: rev.current, changed: [...dirty.current] }).catch(() => {});
+    };
+  }, [taskId, work.baseHash, sync]);
 
   const takeTheirs = async () => {
     if (timer.current) window.clearTimeout(timer.current);
@@ -1006,7 +1032,7 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
   const status = (
     <>
       <i className={`led${state === 'saving' ? ' busy' : state === 'failed' ? ' bad' : ''}`} aria-hidden="true" />
-      <span role="status">{state === 'saving' ? 'Saving…' : state === 'failed' ? 'Not saved. Keep typing to retry' : state === 'saved' || edited ? 'Saved' : 'Started by OpenClaw'}</span>
+      <span role="status">{state === 'saving' ? 'Saving…' : state === 'failed' ? 'Not saved. Keep typing to retry' : state === 'idle' && blocks === work.blocks && work.by === 'openclaw' ? 'Written by OpenClaw in chat' : state === 'saved' || edited ? 'Saved' : 'Started by OpenClaw'}</span>
     </>
   );
   // The block to jump into is the first one he acts in; what comes before it is context.
@@ -1025,7 +1051,7 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, onWork }: {
   };
 
   return (
-    <section ref={host} className={`srp-work${desk ? ` desk${listAt === 0 ? ' listfirst' : ''}` : ''}`} aria-label="The work, started">
+    <section ref={host} className={`srp-work${again ? ' again' : ''}${desk ? ` desk${listAt === 0 ? ' listfirst' : ''}` : ''}`} aria-label="The work, started">
       {!quiet && (
         <div className="srp-jumprow">
           <button type="button" className="srp-jump" onClick={jump}><i className="play" aria-hidden="true">▶</i><span>{next || work.title}</span></button>
@@ -1354,6 +1380,41 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       .catch(() => {});
   }, [brief, hookBody, taskId]);
 
+  // OpenClaw writes the workspace from a chat (its Work tab, its added pages): the page checks every few seconds
+  // and shows what changed. His own unsaved typing is never replaced: while a save is due the check waits, and
+  // the save itself lays his changed blocks over what OpenClaw wrote.
+  const workSync = React.useRef<WorkSync>({ rev: 0, busy: false });
+  React.useEffect(() => { if (work) workSync.current.rev = work.rev; }, [work]);
+  // The work as it was when he opened the task. A later version (OpenClaw wrote it, or he took a version back)
+  // is shown in place: it does not rise in again, and it does not take the caret from where he is typing.
+  const workOpened = React.useRef<{ taskId: string; rev: number } | null>(null);
+  if (work && workOpened.current?.taskId !== taskId) workOpened.current = { taskId, rev: work.rev };
+  const workAgain = !!work && workOpened.current?.taskId === taskId && workOpened.current.rev !== work.rev;
+  const tabsTouched = React.useRef(0);
+  const pastedNow = React.useRef<string[]>([]);
+  const workLoaded = work !== undefined;
+  React.useEffect(() => {
+    if (!workLoaded) return;
+    let cancelled = false;
+    const check = async () => {
+      if (document.visibilityState !== 'visible') return;
+      try {
+        const peek = (await (await fetch(`/api/tasks/workspace?id=${encodeURIComponent(taskId)}&peek=1`)).json())?.data as { rev?: unknown; tabs?: unknown } | undefined;
+        if (cancelled || !peek) return;
+        if (typeof peek.tabs === 'string' && Date.now() - tabsTouched.current > 5000) {
+          const stored = readPastedPages(peek.tabs.split('\n'));
+          if (stored.join('\n') !== pastedNow.current.join('\n')) setPasted(stored);
+        }
+        if (typeof peek.rev !== 'number' || peek.rev === workSync.current.rev || workSync.current.busy) return;
+        const json = await (await fetch(`/api/tasks/hook-work?id=${encodeURIComponent(taskId)}`)).json();
+        if (cancelled || !json?.success || workSync.current.busy) return;
+        setWork(json.data as ResolvedWork | null);
+      } catch { /* the next check tries again */ }
+    };
+    const timer = window.setInterval(() => void check(), 4000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [taskId, workLoaded]);
+
   const form = data.forms[taskId];
   const item = [...data.horizon.items, ...data.horizon.holds, ...data.horizon.further, ...data.horizon.stale].find((i) => i.id === taskId);
   const listType = brief?.listType ?? form?.listType ?? item?.listType ?? 'have-to-do';
@@ -1376,6 +1437,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
 
   // ---- The surfaces: the work, and one page per real link. Which is showing, and which pages he has opened.
   const [pasted, setPasted] = React.useState<string[]>([]);
+  pastedNow.current = pasted;
   // The pages he pasted here before are tabs again.
   React.useEffect(() => {
     let cancelled = false;
@@ -1468,6 +1530,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const id = surfaces.find((surface) => surface.kind === 'web' && pageKey(surface.url) === key)?.id ?? live ?? surfaceId(url);
     if (!surfaces.some((surface) => surface.id === id) && !closed.includes(key)) {
       setPasted((was) => [...was, url]);
+      tabsTouched.current = Date.now();
       void post('/api/tasks/workspace-tabs', { taskId, action: 'add', url }).catch(() => {});
     }
     choose(id);
@@ -1522,6 +1585,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const closeTab = (surface: WebSurface) => {
     if (surface.pasted) {
       setPasted((was) => withoutPastedPage(was, surface.url));
+      tabsTouched.current = Date.now();
       void post('/api/tasks/workspace-tabs', { taskId, action: 'remove', url: surface.url }).catch(() => {});
     } else if (!closed.includes(pageKey(surface.url))) keepClosed([...closed, pageKey(surface.url)]);
     const tab = opened[surface.id];
@@ -1593,7 +1657,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     ];
     const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks }).catch(() => null);
     if (json?.success) {
-      setWork((json.data as ResolvedWork | null) ?? { title: short, href: null, blocks, edited: true, baseHash: null, newer: null, startedAt: null });
+      setWork((json.data as ResolvedWork | null) ?? { title: short, href: null, blocks, edited: true, baseHash: null, newer: null, startedAt: null, rev: 1, by: 'you' });
       setPicked('work');
     }
   };
@@ -1776,7 +1840,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <div className="srw-work">
               <div className="srp-col">
                 {work ? (
-                  <WorkCard key={`${work.baseHash}|${work.edited}`} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict} narrow={surfaceWidth < 820} quiet={verdict} onWork={setWork} />
+                  <WorkCard key={`${work.baseHash}|${work.edited}|${work.rev}`} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict && !workAgain} narrow={surfaceWidth < 820} quiet={verdict} again={workAgain} sync={workSync} onWork={setWork} />
                 ) : (
                   <section className="srp-work srp-empty" aria-label="The work">
                     {work === undefined ? <p>Opening…</p> : filling ? (

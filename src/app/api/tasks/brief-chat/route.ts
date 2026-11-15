@@ -19,7 +19,9 @@ import {
   MAX_CHAT_MESSAGE,
   type TaskChatThread,
 } from '@/lib/task-chat';
+import { workspaceBrief, workspaceSignature } from '@/lib/task-workspace';
 import { loadTaskBrief } from '../brief/build';
+import { loadWorkspace } from '../workspace/load';
 import { mutateChatThreads, readChatThreads, settleStaleChatTurns } from './store';
 import { chatSyncFailed, syncChatThread, syncChatThreadsSoon } from './sync';
 
@@ -76,7 +78,8 @@ export async function GET(request: NextRequest) {
  * { action: 'send', taskId, text, threadId?, fresh?, about? }
  *     Send a message; OpenClaw's answer lands in the thread (poll GET). With threadId it goes to that chat; with
  *     fresh it starts a new one; with neither it goes to the task's most recent chat, or starts the first.
- *     `about` is the surface he was on ({ kind: 'work' | 'web', label, url? }); a web page is told to OpenClaw.
+ *     `about` is the surface he was on ({ kind: 'work' | 'web', label, url? }). OpenClaw is told of the task's
+ *     workspace with the turn: how it works the first time, how it stands whenever it changed, and the tab he is on.
  * { action: 'new', taskId, about? }      a new, empty chat in a fresh OpenClaw session; the others are kept
  * { action: 'seen', taskId, threadId }   he has this chat open: it no longer waits on him
  * { action: 'unread', taskId, threadId } he marks it unread: it waits on him again until he opens it
@@ -149,7 +152,17 @@ export async function POST(request: NextRequest) {
     if (turn.first) {
       try { brief = loadTaskBrief(body.taskId); } catch (error) { console.error('brief chat: could not load the brief:', error); }
     }
-    void answer(body.taskId, turn.thread.id, turn.thread.sessionKey, turn.thread.pendingSince, buildChatTurnMessage({ brief, text: body.text, first: turn.first, about }));
+    // The workspace as it stands goes with the turn: in full the first time this chat hears of it (a chat begun
+    // before chats knew the workspace is told on its next turn), and again whenever it changed since.
+    let workspace: string | null = null;
+    try {
+      const loaded = loadWorkspace(body.taskId);
+      if (loaded) {
+        const told = turn.thread.workSeen;
+        workspace = workspaceBrief(loaded.view, told === undefined ? 'rules' : told !== workspaceSignature(loaded.view) ? 'state' : 'where', about);
+      }
+    } catch (error) { console.error('brief chat: could not load the workspace:', error); }
+    void answer(body.taskId, turn.thread.id, turn.thread.sessionKey, turn.thread.pendingSince, buildChatTurnMessage({ brief, text: body.text, first: turn.first, about, workspace }), workspace !== null);
     return NextResponse.json({ success: true, data: chatView(turn.thread) });
   } catch (error) {
     console.error('Error handling brief-chat request:', error);
@@ -158,7 +171,7 @@ export async function POST(request: NextRequest) {
 }
 
 /** Runs the turn after the response is sent; the reply (or the failure) lands in the thread. */
-async function answer(taskId: string, threadId: string, sessionKey: string, sentAt: string | null, message: string): Promise<void> {
+async function answer(taskId: string, threadId: string, sessionKey: string, sentAt: string | null, message: string, toldWorkspace = false): Promise<void> {
   let reply: string | null = null;
   let error: string | null = null;
   try {
@@ -167,10 +180,16 @@ async function answer(taskId: string, threadId: string, sessionKey: string, sent
     console.error(`brief chat ${taskId}: OpenClaw turn failed:`, err);
     error = 'OpenClaw couldn’t answer. Try again, or continue in OpenClaw.';
   }
+  // What the workspace holds now that the turn is over is what this chat knows: its own changes are not news to it.
+  let workSeen: string | null = null;
+  if (toldWorkspace && !error) {
+    try { const loaded = loadWorkspace(taskId); if (loaded) workSeen = workspaceSignature(loaded.view); } catch { /* it is told again next turn */ }
+  }
   mutateChatThreads((all) => {
     const t = (all[taskId] ?? []).find((candidate) => candidate.id === threadId);
     if (!t || t.sessionKey !== sessionKey) return;
     const at = new Date().toISOString();
+    if (workSeen) t.workSeen = workSeen;
     // `pendingSince` names the turn that is out. If it is no longer this one, the turn was given
     // up on or a newer one is out: its answer is still recorded, but it settles nothing.
     if (t.pendingSince === sentAt) {
