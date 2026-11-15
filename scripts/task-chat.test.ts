@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildTaskBrief, type BriefTaskRef } from '../src/lib/task-brief';
 import {
-  buildChatTurnMessage, chatSessionKey, chatsGlance, chatState, chatSummary, chatTitle, latestChat, listChats, markChatSeen, migrateChatThreads,
+  buildChatTurnMessage, chatSessionKey, chatsGlance, chatState, chatSummary, chatTitle, chatsTalk, latestChat, listChats, markChatSeen, markChatUnread, migrateChatThreads,
   newChatThread, parseSurfaceRef, settleStalePending, CHAT_SCHEMA_VERSION, CHAT_TURN_TIMEOUT_MS, type TaskChatThread,
 } from '../src/lib/task-chat';
 import { defaultSurfaceId, deriveSurfaces, pageKey, safeWebUrl } from '../src/lib/task-surfaces';
@@ -123,6 +123,51 @@ test('a chat is working, waiting on him, or idle', () => {
   thread.seenAt = null;
   assert.equal(chatState(thread), 'waiting');
   assert.deepEqual(chatsGlance(undefined), { count: 0, waiting: 0, working: 0 });
+});
+
+test('he can mark a chat unread; opening it or writing in it reads it again', () => {
+  const thread = newChatThread('ff', at(0));
+  assert.equal(markChatUnread(thread), false);            // nothing in it to come back to
+  said(thread, 'you', 'Hello', at(0));
+  said(thread, 'openclaw', 'Hi.', at(1));
+  assert.equal(markChatUnread(thread), false);            // it waits on him already
+  markChatSeen(thread, at(2));
+  assert.equal(markChatUnread(thread), true);
+  assert.equal(chatState(thread), 'waiting');
+  // It survives a round trip through the stored file.
+  const stored = migrateChatThreads({ schemaVersion: CHAT_SCHEMA_VERSION, threads: { ff: [JSON.parse(JSON.stringify(thread))] } }).threads['ff']![0]!;
+  assert.equal(chatState(stored), 'waiting');
+  assert.equal(markChatSeen(thread, at(3)), true);
+  assert.equal(thread.unread, undefined);
+  assert.equal(chatState(thread), 'idle');
+  // His own last word can be marked too, and a turn that is out still reads as working.
+  said(thread, 'you', 'One more thing', at(4));
+  assert.equal(markChatUnread(thread), true);
+  thread.pendingSince = at(5).toISOString();
+  assert.equal(chatState(thread), 'working');
+});
+
+test('the sky gets the chat that waits on him, with what OpenClaw last said', () => {
+  assert.equal(chatsTalk(undefined), null);
+  const old = newChatThread('ff', at(0));
+  said(old, 'you', 'First', at(0));
+  said(old, 'openclaw', 'Older answer.', at(1));
+  old.updatedAt = at(1).toISOString();
+  const recent = newChatThread('ff', at(2));
+  recent.id = 'recent';
+  said(recent, 'you', 'Second', at(2));
+  said(recent, 'openclaw', 'I drafted **three lenses**:\n\n- one\n- two', at(3));
+  recent.updatedAt = at(3).toISOString();
+  const talk = chatsTalk([old, recent, newChatThread('ff', at(4))])!;
+  assert.equal(talk.waiting!.threadId, 'recent');
+  assert.equal(talk.waiting!.more, 1);
+  assert.equal(talk.waiting!.text, 'I drafted three lenses:\n\n- one\n- two');
+  assert.deepEqual(talk.threads.map((t) => [t.id, t.waiting]), [['recent', true], [old.id, true]]);   // the empty chat is not listed
+  markChatSeen(old, at(5));
+  markChatSeen(recent, at(5));
+  const read = chatsTalk([old, recent])!;
+  assert.equal(read.waiting, null);
+  assert.equal(read.threads.length, 2);
 });
 
 test('a message sent from a web page tells OpenClaw which page', () => {

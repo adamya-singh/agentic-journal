@@ -530,13 +530,13 @@ export function taskWorkSummary(record: TaskWork | undefined, now: Date): string
     return `Waiting on ${record.waiting.on} since ${shortDay(record.waiting.since)} · looks again ${later(record.waiting.checkAfter)}`;
   }
   if (record.status === 'queued') {
-    if (record.reason === 'answered') return 'You answered · OpenClaw picks it up on its next run';
+    if (record.reason === 'answered') return 'You answered · OpenClaw picks it up shortly';
     if (record.reason === 'retry') {
       return record.nextRetryAt && Date.parse(record.nextRetryAt) > now.getTime()
         ? `OpenClaw tries again ${shortDay(record.nextRetryAt)} at ${new Date(record.nextRetryAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
         : 'OpenClaw takes the next step on its next run';
     }
-    return record.lookedAt ? 'Handed to OpenClaw · it takes the next step on its next run' : 'Handed to OpenClaw · it starts on its next run';
+    return record.lookedAt ? 'Handed to OpenClaw · it takes the next step shortly' : 'Handed to OpenClaw · it starts shortly';
   }
   if (record.status === 'resting') {
     const again = record.lookAgainAfter ? ` · looks again ${later(record.lookAgainAfter)}` : '';

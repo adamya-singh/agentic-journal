@@ -32,6 +32,7 @@ export interface TaskChatThread {
   createdAt: string;
   updatedAt: string;
   seenAt: string | null;         // when he last had this chat open
+  unread?: boolean;              // he marked it unread: it waits on him again until he opens it or writes in it
   touchedAt: string;             // when he last did something in it (started it, wrote in it); a reply does not count
   outsideRunAt?: string | null;  // when OpenClaw's own history last said a run is in flight that the Journal did not start
   about: ChatSurfaceRef | null;  // the surface it was started from
@@ -64,6 +65,14 @@ export interface ChatThreadView extends Omit<ChatThreadSummary, 'last' | 'lastRo
 
 /** What a task's form says about its chats: how many there are and whether one waits on him. */
 export interface ChatsGlance { count: number; waiting: number; working: number }
+
+/** What the sky shows of a task's chats: the one that waits on him, with what OpenClaw last said, and the list to mark unread from. */
+export interface ChatsTalk {
+  waiting: { threadId: string; title: string; text: string; at: string; more: number } | null;   // more: other chats that also wait
+  threads: { id: string; title: string; waiting: boolean }[];                                     // most recent first, capped
+}
+const TALK_TEXT_MAX = 700;
+const TALK_THREADS_MAX = 8;
 
 export const CHAT_SCHEMA_VERSION = 2;
 export const MAX_CHAT_MESSAGE = 4000;
@@ -123,6 +132,7 @@ export function outsideRunning(thread: Pick<TaskChatThread, 'outsideRunAt'>, now
 export function chatState(thread: TaskChatThread, now = Date.now()): ChatState {
   if (thread.pendingSince || outsideRunning(thread, now)) return 'working';
   const last = thread.messages[thread.messages.length - 1];
+  if (thread.unread && last) return 'waiting';
   if (last?.role === 'openclaw' && (!thread.seenAt || Date.parse(thread.seenAt) < Date.parse(last.at))) return 'waiting';
   return 'idle';
 }
@@ -188,7 +198,30 @@ export function chatsGlance(threads: TaskChatThread[] | undefined): ChatsGlance 
 export function markChatSeen(thread: TaskChatThread, now: Date): boolean {
   if (chatState(thread) !== 'waiting') return false;
   thread.seenAt = now.toISOString();
+  delete thread.unread;
   return true;
+}
+
+/** He marks a chat unread: it waits on him again, as if OpenClaw had just answered. True when that changed something. */
+export function markChatUnread(thread: TaskChatThread): boolean {
+  if (thread.messages.length === 0 || chatState(thread) !== 'idle') return false;
+  thread.unread = true;
+  return true;
+}
+
+/** Plain words from a chat message: the markdown marks taken out, the lines kept. */
+const plain = (text: string) => text.replace(/```[\s\S]*?```/g, ' [code] ').replace(/[*_`#>]+/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+
+export function chatsTalk(threads: TaskChatThread[] | undefined): ChatsTalk | null {
+  const listed = listChats(threads);
+  if (listed.length === 0) return null;
+  const waiting = listed.filter((t) => chatState(t) === 'waiting');
+  const first = waiting[0];
+  const said = first?.messages.findLast((m) => m.role === 'openclaw') ?? first?.messages[first.messages.length - 1];
+  return {
+    waiting: first && said ? { threadId: first.id, title: first.title, text: plain(said.text).length > TALK_TEXT_MAX ? `${plain(said.text).slice(0, TALK_TEXT_MAX - 1).trimEnd()}…` : plain(said.text), at: said.at, more: waiting.length - 1 } : null,
+    threads: listed.slice(0, TALK_THREADS_MAX).map((t) => ({ id: t.id, title: t.title, waiting: chatState(t) === 'waiting' })),
+  };
 }
 
 function iso(value: unknown): string | null {
@@ -227,6 +260,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     updatedAt,
     // Version 1 never recorded a look: what was already there when the chats became a list counts as read.
     seenAt: 'seenAt' in r ? iso(r.seenAt) : updatedAt,
+    ...(r.unread === true ? { unread: true as const } : {}),
     // Before this was recorded: the last thing he wrote, or the moment he opened it.
     touchedAt: iso(r.touchedAt) ?? asked?.at ?? born,
     ...(iso(r.outsideRunAt) ? { outsideRunAt: iso(r.outsideRunAt) } : {}),

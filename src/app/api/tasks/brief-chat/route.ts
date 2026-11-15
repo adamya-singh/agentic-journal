@@ -10,6 +10,7 @@ import {
   latestChat,
   listChats,
   markChatSeen,
+  markChatUnread,
   newChatThread,
   parseSurfaceRef,
   recordChatReply,
@@ -35,6 +36,7 @@ const BodySchema = z.discriminatedUnion('action', [
   }),
   z.object({ action: z.literal('new'), taskId: z.string().min(1), about: z.unknown().optional() }),
   z.object({ action: z.literal('seen'), taskId: z.string().min(1), threadId: z.string().min(1) }),
+  z.object({ action: z.literal('unread'), taskId: z.string().min(1), threadId: z.string().min(1) }),
 ]);
 
 /**
@@ -77,6 +79,7 @@ export async function GET(request: NextRequest) {
  *     `about` is the surface he was on ({ kind: 'work' | 'web', label, url? }); a web page is told to OpenClaw.
  * { action: 'new', taskId, about? }      a new, empty chat in a fresh OpenClaw session; the others are kept
  * { action: 'seen', taskId, threadId }   he has this chat open: it no longer waits on him
+ * { action: 'unread', taskId, threadId } he marks it unread: it waits on him again until he opens it
  */
 export async function POST(request: NextRequest) {
   try {
@@ -85,10 +88,11 @@ export async function POST(request: NextRequest) {
     const body = parsed.data;
     const now = new Date();
 
-    if (body.action === 'seen') {
+    if (body.action === 'seen' || body.action === 'unread') {
       const thread = mutateChatThreads((all) => {
         const t = (all[body.taskId] ?? []).find((candidate) => candidate.id === body.threadId);
-        if (t) markChatSeen(t, now);
+        if (t && body.action === 'seen') markChatSeen(t, now);
+        else if (t) markChatUnread(t);
         return t;
       });
       if (!thread) return NextResponse.json({ success: false, error: 'That chat is gone.' }, { status: 404 });
@@ -133,6 +137,7 @@ export async function POST(request: NextRequest) {
       thread.pendingSince = now.toISOString();
       thread.updatedAt = now.toISOString();
       thread.seenAt = now.toISOString();
+      delete thread.unread;
       thread.touchedAt = now.toISOString();
       thread.error = null;
       return { thread: structuredClone(thread), first };

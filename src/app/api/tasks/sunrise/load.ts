@@ -9,7 +9,7 @@ import { computeTodayTasksByList } from '../today/staged-sync-utils';
 import { readHookWorkRecords } from '../hook-work/store';
 import { readAllChatThreads, settleStaleChatTurns } from '../brief-chat/store';
 import { syncChatThreadsSoon } from '../brief-chat/sync';
-import { chatsGlance } from '@/lib/task-chat';
+import { chatsGlance, chatsTalk } from '@/lib/task-chat';
 
 export type { SunriseData };
 
@@ -26,7 +26,8 @@ export function loadSunrise(now = new Date()): SunriseData {
   for (const taskId of ids) if (chats[taskId]) syncChatThreadsSoon(chats[taskId]);
   for (const [taskId, brief] of loadTaskBriefs(ids, now)) {
     const glance = chatsGlance(chats[taskId]);
-    forms[taskId] = { ...formSpecFor(brief), ...(glance.count > 0 ? { chats: glance } : {}) };
+    const talk = chatsTalk(chats[taskId]);
+    forms[taskId] = { ...formSpecFor(brief), ...(glance.count > 0 ? { chats: glance } : {}), ...(talk ? { talk } : {}) };
   }
 
   const todayByList = computeTodayTasksByList(localDateIso(now));

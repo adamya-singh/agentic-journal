@@ -6,7 +6,7 @@ import type {TaskBrief, BriefKind} from '@/lib/task-brief'
 import {GROUP_OTHER} from '@/lib/horizon'
 import {type IconName, type Part, type ShapeId, isEmptyPart} from '@/lib/shapes/catalog'
 import {iconForKind} from '@/lib/shapes/hook'
-import type {ChatsGlance} from '@/lib/task-chat'
+import type {ChatsGlance, ChatsTalk} from '@/lib/task-chat'
 
 /**
  * The brief a form opens to under the pointer: enough to know the task at a glance, and nothing he has to read.
@@ -38,6 +38,7 @@ export type FormSpec = {
   filling: boolean // OpenClaw is working on it right now, or it is queued
   glance?: FormGlance // tasks only; an action card opens to its own parts
   chats?: ChatsGlance // his chats with OpenClaw about it, when it has any (the route adds this from the chat store)
+  talk?: ChatsTalk // the chat that waits on him, with what OpenClaw last said, and the chats he can mark unread
 }
 
 const kindWords: Record<BriefKind, string> = {

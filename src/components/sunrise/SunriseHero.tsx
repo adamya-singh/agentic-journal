@@ -37,6 +37,19 @@ const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], sub
 const HERO_CSS = `
 /* While a task's workspace is open, the page's floating Cedar button is not drawn over its chat composer. */
 html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!important}
+/* The small menu a task's ⋯ opens: its chats, to mark one unread. */
+.sr-menu{position:fixed;z-index:80;width:260px;max-width:calc(100vw - 16px);display:grid;gap:2px;padding:8px;border-radius:14px;background:linear-gradient(180deg,#fffdf9,#fbf3e7);border:1px solid rgba(255,255,255,.9);box-shadow:0 22px 44px -18px rgba(20,10,0,.8),0 0 0 1px rgba(40,22,10,.12);color:#22130a;font:13.5px/1.35 var(--hz-sans)}
+.sr-menu-h{padding:4px 8px 6px;font:500 9.5px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:#8a6a52}
+.sr-menu button{display:flex;align-items:center;gap:8px;min-height:34px;padding:6px 8px;border:0;border-radius:9px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.sr-menu button:hover:not(:disabled),.sr-menu button:focus-visible{background:rgba(34,19,10,.08);outline:0}
+.sr-menu button:disabled{cursor:default;color:#8a6a52}
+.sr-menu button i{flex:none;width:7px;height:7px;border-radius:50%;border:1.5px solid rgba(34,19,10,.3);box-sizing:border-box}
+.sr-menu button i.on{border:0;background:#e2572b}
+.sr-menu button span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sr-menu button em{flex:none;font:500 9.5px var(--hz-mono);font-style:normal;color:#e2572b}
+.sr-menu button.open{margin-top:4px;border-top:1px solid rgba(34,19,10,.1);border-radius:0 0 9px 9px;font-weight:500;color:#7a4a1c}
+.sr-menu p{margin:2px 8px;font-size:12.5px;color:#a3361a}
+@media (max-width:699px){.sr-menu button{min-height:44px;font-size:15px}}
 /* On a phone the workspace is the whole screen (sunrise-css .sr-pane.full): the page under it is held still. */
 @media (max-width:699px){html[data-sr-workspace],html[data-sr-workspace] body{overflow:hidden;overscroll-behavior:none}}
 .sr-hero{--hz-ink:#f3efe7;--hz-dim:#a9b4c4;--hz-em:#ffd2a8;--hz-serif:var(--font-instrument-serif),'Instrument Serif',serif;--hz-sans:var(--font-geist-sans),Geist,sans-serif;--hz-mono:var(--font-geist-mono),'Geist Mono',monospace}
@@ -147,6 +160,9 @@ export function SunriseHero() {
   const [tray, setTray] = React.useState<TrayKind | null>(null);
   const [trayError, setTrayError] = React.useState<string | null>(null);
   const [trayTrack, setTrayTrack] = React.useState<string | null>(null);
+  // The small menu a task's ⋯ opens: its chats, to mark one unread.
+  const [taskMenu, setTaskMenu] = React.useState<{ taskId: string; x: number; y: number; error?: string } | null>(null);
+  const startThread = React.useRef<string | null>(null);   // the chat the opening task was asked to show
   const [proposals, setProposals] = React.useState<DoneProposalRecord[]>([]);
   const [undo, setUndo] = React.useState<{ text: string; run: () => Promise<unknown> } | null>(null);
   const undoTimer = React.useRef<number | null>(null);
@@ -183,7 +199,7 @@ export function SunriseHero() {
   const followOpen = React.useCallback((id: string | null) => {
     engineOpen.current = id;
     const u = urlState.current;
-    if (!u.fromUrl) startTab.current = null;
+    if (!u.fromUrl) { startTab.current = null; startThread.current = null; }
     if (u.fromUrl || u.backing) return;   // the address says so already, or a back is on its way (popstate settles)
     const shown = parseTaskSearch(window.location.search).task;
     if ((id === null ? null : urlTaskId(id)) === shown) return;
@@ -347,6 +363,7 @@ export function SunriseHero() {
   }, []);
   const hostRef = React.useRef({ toggleDaily, feedSpace });
   hostRef.current = { toggleDaily, feedSpace };
+  const chatRef = React.useRef<(taskId: string, threadId: string) => void>(() => {});
 
   const stepInside = React.useCallback(async () => {
     const sky = skyRef.current, made = engineRef.current;
@@ -387,6 +404,8 @@ export function SunriseHero() {
         onTray: (kind, track) => { setTray(kind); setTrayTrack(track ?? null); setTrayError(null); },
         onToggleDaily: (daily) => void hostRef.current.toggleDaily(daily),
         onLayout: () => hostRef.current.feedSpace(),
+        onChat: (taskId, threadId) => chatRef.current(taskId, threadId),
+        onTaskMenu: (taskId, at) => setTaskMenu({ taskId, x: at.right, y: at.bottom }),
       });
       engineRef.current = made;
       setEngine(made);
@@ -486,6 +505,34 @@ export function SunriseHero() {
     if (shown !== null) writeUrl(id, tab, false);
     else { writeUrl(id, tab, true); u.pushed = true; }
   };
+  // The bubble under a task: its workspace opens on the chat that waits on him.
+  const openChat = (id: string, threadId: string) => {
+    startThread.current = threadId;
+    openTaskOn(id, 'chat');
+    if (engineOpen.current !== id) startThread.current = null;
+  };
+  chatRef.current = openChat;
+  const markUnread = async (taskId: string, threadId: string) => {
+    const json = await post('/api/tasks/brief-chat', { action: 'unread', taskId, threadId }).catch(() => null);
+    if (!json?.success) { setTaskMenu((was) => (was ? { ...was, error: json?.error || 'That did not save. Try again.' } : was)); return; }
+    setTaskMenu(null);
+    refreshTasks();
+  };
+  // The menu closes on Escape, on a press anywhere else, and when the sky moves under it.
+  React.useEffect(() => {
+    if (!taskMenu) return;
+    const away = (event: Event) => { if (!(event.target instanceof Element && event.target.closest('.sr-menu'))) setTaskMenu(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setTaskMenu(null); } };
+    window.addEventListener('pointerdown', away, true);
+    window.addEventListener('wheel', away, { passive: true });
+    window.addEventListener('keydown', key, true);
+    return () => {
+      window.removeEventListener('pointerdown', away, true);
+      window.removeEventListener('wheel', away);
+      window.removeEventListener('keydown', key, true);
+    };
+  }, [taskMenu]);
+  const menuTalk = taskMenu && data ? data.forms[taskMenu.taskId]?.talk ?? null : null;
   const section = tray === 'track' ? horizon?.wantTracks.find((t) => t.name === trayTrack) : undefined;
   const sectionWants = section ? horizon?.wantsBySection[section.name] ?? [] : [];
 
@@ -600,6 +647,20 @@ export function SunriseHero() {
         tabIndex={0}
         aria-label="Your tasks on rings by how soon they are due. Press a task to open it. Escape closes."
       />
+      {taskMenu && menuTalk && (
+        <div className="sr-menu" role="menu" aria-label="Chats about this task"
+          style={{ left: Math.max(8, Math.min(taskMenu.x - 12, (typeof window === 'undefined' ? 0 : window.innerWidth) - 268)), top: taskMenu.y + 6 }}>
+          <div className="sr-menu-h">Mark unread</div>
+          {menuTalk.threads.map((t) => (
+            <button key={t.id} type="button" role="menuitem" disabled={t.waiting} onClick={() => void markUnread(taskMenu.taskId, t.id)}
+              title={t.waiting ? 'This chat already waits on you' : 'It waits on you again until you open it'}>
+              <i className={t.waiting ? 'on' : undefined} aria-hidden="true" /><span>{t.title}</span>{t.waiting && <em>unread</em>}
+            </button>
+          ))}
+          {taskMenu.error && <p role="alert">{taskMenu.error}</p>}
+          <button type="button" role="menuitem" className="open" onClick={() => { const id = taskMenu.taskId; setTaskMenu(null); openTaskOn(id, 'chat'); }}>Open its chats ›</button>
+        </div>
+      )}
       {!engine && <div className="sr-loading">{error || 'Loading your horizon…'}</div>}
       {engine && error && !data && <div className="sr-loading">{error}</div>}
       {engine && createPortal(<div onClick={(e) => e.stopPropagation()}><QuickCaptureInput variant="inline" /></div>, engine.slots.cap)}
@@ -635,6 +696,7 @@ export function SunriseHero() {
           onLetGo={(target) => setLetGoAsk(target)}
           onUndo={offerUndo}
           startTab={startTab.current ?? undefined}
+          startThread={startThread.current ?? undefined}
           onTab={followTab}
         />,
         engine.slots.pane,

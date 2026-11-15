@@ -362,6 +362,15 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
     await load();
     setSwitching(false);
   };
+  const startNow = async () => {
+    setSwitching(true);
+    setError(null);
+    const json = await post('/api/tasks/work/wake', {}).catch(() => null);
+    if (!json?.success) setError(json?.error || 'OpenClaw could not be started. Try again.');
+    else setSaid(json.data?.said ?? 'OpenClaw is starting now');
+    await load();
+    setSwitching(false);
+  };
   const send: Send = async (item, answer, words) => {
     const json = await post('/api/tasks/work/answer', { taskId, itemId: item.id, ...answer }).catch(() => null);
     if (!json?.success) {
@@ -386,6 +395,9 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
           title={active ? 'OpenClaw stops working on this task until you hand it back' : 'OpenClaw takes the next step it can, and asks before it sends anything'}>
           {switching ? 'Saving…' : active ? 'Hands off' : 'Hand to OpenClaw'}
         </button>
+        {status === 'queued' && (
+          <button type="button" className="srp-chip" disabled={switching} onClick={() => void startNow()} title="Starts OpenClaw’s run now instead of at its next check">Start now</button>
+        )}
         {!record && <span className="srx-hint">OpenClaw takes the next step it can and asks before it sends anything.</span>}
       </div>
       {record?.handedFor && active && <p className="srx-note">From a card you agreed to: {cardAgreed(record.handedFor.text)}</p>}

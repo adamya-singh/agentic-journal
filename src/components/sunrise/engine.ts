@@ -39,6 +39,10 @@ export type EngineHost = {
   onToggleDaily(daily: HorizonDaily): void
   /** The sky was laid out again (new data, a new size, time passing). */
   onLayout?(): void
+  /** The bubble under a task was pressed: open that chat in the task's workspace. */
+  onChat?(taskId: string, threadId: string): void
+  /** The menu button on a task was pressed; `at` is the button, in window coordinates. */
+  onTaskMenu?(taskId: string, at: {left: number, top: number, right: number, bottom: number}): void
 }
 /** Where the rings put a task and the slices, in Horizon Dawn's own units (dawn-svg.ts's 1200 × 630 drawing). */
 export type SpaceLayout = {spots: {item: HorizonItem, x: number, y: number}[], sectors: {group: string, a0: number, a1: number, mid: number}[]}
@@ -81,6 +85,7 @@ function starField(left: number, top: number, width: number, height: number, cou
 type Thing = {
   id: string, item: HorizonItem, salience: number | null, outer: boolean, under: boolean, inert: boolean, form: FormThing, signature: string
   el: HTMLElement, face: HTMLElement, body: HTMLElement, day: HTMLElement, seat: HTMLElement
+  talk: HTMLElement // its chats with OpenClaw: the menu button, and the bubble with what waits on him
   level: number, hook: Box | null, shown: boolean, lifted: boolean, from: {x: number, y: number} | null
   lastBox: Box | null
   at: Box | null, rest: Box | null // where it's drawn now, and where it rests when nothing hovers it
@@ -302,6 +307,15 @@ export class SunriseEngine {
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
       if (thing === undefined) return
+      // Its chats: the bubble opens the chat that waits on him, the button opens the menu. Neither opens the task itself.
+      const chat = event.target instanceof Element ? event.target.closest<HTMLElement>('.tk-msg, .tk-more') : null
+      if (chat !== null) {
+        event.stopPropagation()
+        if (!thing.shown || thing.inert) return
+        if (chat.classList.contains('tk-more')) this.host.onTaskMenu?.(thing.id, chat.getBoundingClientRect())
+        else if (chat.dataset['thread']) this.host.onChat?.(thing.id, chat.dataset['thread'])
+        return
+      }
       // A faint bubble shows its name only under a mouse. A finger's first tap shows it; the next opens it.
       if (el!.classList.contains('ghost') && this.lastPointer !== 'mouse' && !el!.classList.contains('peek')) {
         for (const other of this.things) other.el.classList.remove('peek')
@@ -313,6 +327,12 @@ export class SunriseEngine {
     // A form under the pointer opens a little and the others step back, for as long as the pointer stays.
     this.labels.addEventListener('pointerover', event => {
       if (this.narrow || this.open !== null || event.pointerType === 'touch') return
+      // Over the bubble under a task the task does not grow: the bubble would move from under the pointer.
+      if (event.target instanceof Element && event.target.closest('.tk-msg') !== null) {
+        window.clearTimeout(this.hotTimer)
+        if (this.hot !== null) this.hotTimer = window.setTimeout(() => this.setHot(null), 110)
+        return
+      }
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing.form, .thing.hook') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
       if (thing === undefined || thing.inert) return
@@ -564,6 +584,7 @@ export class SunriseEngine {
       if (thing.signature !== signature) {
         thing.form = each.form
         thing.signature = signature
+        this.paintTalk(thing)
         this.forget(thing.id)
         thing.body.dataset['key'] = ''
         thing.face.dataset['key'] = ''
@@ -820,13 +841,52 @@ export class SunriseEngine {
     const day = document.createElement('span')
     day.className = 'd'
     day.textContent = item.day
-    el.append(face, body, day)
+    const talk = document.createElement('div')
+    talk.className = 'talk'
+    el.append(face, body, day, talk)
     const seat = document.createElement('div')
     seat.className = 'seat'
     this.labels.append(seat, el)
-    const thing: Thing = {id, item, salience, outer, under, inert, form, signature, el, face, body, day, seat, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null, look: item.zone}
+    const thing: Thing = {id, item, salience, outer, under, inert, form, signature, el, face, body, day, seat, talk, level: 0, hook: null, shown: false, lifted: false, from: null, lastBox: null, at: null, rest: null, look: item.zone}
+    this.paintTalk(thing)
     this.things.push(thing)
     return thing
+  }
+  /**
+   * A task's chats with OpenClaw, on its box: a small button for the menu (mark a chat unread), and, when a chat
+   * waits on him, a bubble under the box with what OpenClaw last said. All text goes in through textContent.
+   */
+  private paintTalk(thing: Thing) {
+    const talk = thing.form.spec.talk
+    thing.talk.replaceChildren()
+    // A data attribute, not a class: the engine rewrites className as a task changes level.
+    if (talk !== undefined && talk.waiting !== null) thing.el.dataset['talks'] = '1'
+    else delete thing.el.dataset['talks']
+    if (talk === undefined) return
+    const more = document.createElement('button')
+    more.type = 'button'
+    more.className = 'tk-more'
+    more.textContent = '⋯'
+    more.setAttribute('aria-label', `Chats about ${thing.item.short}: mark one unread`)
+    more.title = 'Chats: mark one unread'
+    thing.talk.append(more)
+    if (talk.waiting === null) return
+    const msg = document.createElement('button')
+    msg.type = 'button'
+    msg.className = 'tk-msg'
+    msg.dataset['thread'] = talk.waiting.threadId
+    msg.setAttribute('aria-label', `OpenClaw is waiting on you in ${talk.waiting.title}. Open the chat`)
+    const dot = document.createElement('i')
+    const said = document.createElement('span')
+    said.textContent = talk.waiting.text
+    msg.append(dot, said)
+    if (talk.waiting.more > 0) {
+      const extra = document.createElement('em')
+      extra.textContent = `+${talk.waiting.more}`
+      extra.title = `${talk.waiting.more} more waiting on you`
+      msg.append(extra)
+    }
+    thing.talk.append(msg)
   }
   // Finished, let go or moved off the rings: it sinks toward the sun and is gone.
   private removeThing(thing: Thing) {
@@ -2011,7 +2071,7 @@ export class SunriseEngine {
       thing.el.style.setProperty('--k', '1')
       if (thing.rest === null) continue
       // A bubble with the day that hangs under it; the lead does not grow.
-      const day = thing.item.day === '' || thing.under ? 0 : 16
+      const day = (thing.item.day === '' || thing.under ? 0 : 16) + (thing.el.dataset['talks'] === '1' ? 28 : 0)
       items.push({el: thing.hook === null ? thing.el : null, box: {...thing.rest, height: thing.rest.height + day}})
     }
     for (const [el, box] of this.nameBoxes) if (!el.classList.contains('off')) items.push({el, box})

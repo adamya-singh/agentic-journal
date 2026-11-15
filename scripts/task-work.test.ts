@@ -531,7 +531,7 @@ describe('answers, the switch, the views', () => {
     assert.equal(view.summary, 'Hands off: OpenClaw will not work on this');
     actions.handTaskWork('boom', true);
     assert.equal(rec('boom')!.status, 'queued');
-    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Handed to OpenClaw · it starts on its next run');
+    assert.equal(lib.taskWorkSummary(rec('boom'), new Date()), 'Handed to OpenClaw · it starts shortly');
   });
 
   test('the overview lists open items oldest first and the working run', async () => {

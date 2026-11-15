@@ -27,6 +27,26 @@ const rules = String.raw`
 .thing.hook{overflow:hidden}
 .thing.hook .d{display:none}
 .thing.gone{opacity:0;pointer-events:none}
+/* A task's chats with OpenClaw. The button (top right) opens the menu; the bubble under the box holds what OpenClaw
+   last said in a chat that waits on him: one line at rest, the whole message under the pointer, a press opens it. */
+.thing .talk{position:absolute;inset:0;pointer-events:none}
+.thing.hook:has(.tk-more){overflow:visible}
+.thing.ghost .talk,.thing.daily .talk,.thing.in-sun .talk,.thing.leaving .talk{display:none}
+.tk-more{position:absolute;right:-7px;top:-9px;width:22px;height:22px;display:grid;place-items:center;padding:0;border:1px solid rgba(40,22,10,.18);border-radius:50%;background:#fffaf3;color:#3d2a1c;font:600 13px/1 var(--sans);cursor:pointer;pointer-events:auto;opacity:0;box-shadow:0 4px 10px -4px rgba(20,10,0,.5);transition:opacity .18s ease,scale .18s ease;z-index:3}
+.thing:hover .tk-more,.tk-more:focus-visible,.narrow .tk-more,.thing[data-talks] .tk-more{opacity:.92}
+.tk-more:hover{opacity:1;scale:1.12}
+.tk-msg{position:absolute;left:50%;top:calc(100% + 19px);translate:-50% 0;box-sizing:border-box;max-width:max(100%,200px);min-width:92px;display:flex;align-items:flex-start;gap:6px;padding:4px 10px 5px 8px;border:1px solid rgba(255,255,255,.9);border-radius:4px 13px 13px 13px;background:linear-gradient(180deg,#fffdf9,#fbf1e3);color:#22130a;font:500 11.5px/1.35 var(--sans);text-align:left;cursor:pointer;pointer-events:auto;box-shadow:0 8px 18px -10px rgba(20,10,0,.75);z-index:2}
+.thing.form .tk-msg,.thing.hook .tk-msg{top:calc(100% + 5px)}
+.thing.under .tk-msg{top:calc(100% + 4px)}
+.tk-msg i{flex:none;width:7px;height:7px;margin-top:4px;border-radius:50%;background:#e2572b;box-shadow:0 0 0 3px rgba(226,87,43,.18)}
+.tk-msg span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tk-msg em{flex:none;font:500 9.5px var(--mono);font-style:normal;padding:1px 5px;border-radius:999px;background:rgba(34,19,10,.1)}
+.tk-msg:hover,.tk-msg:focus-visible{z-index:9;width:min(320px,80vw);max-width:none;outline:0;border-color:#fff;box-shadow:0 18px 34px -14px rgba(20,10,0,.85),0 0 0 2px rgba(226,87,43,.35)}
+.tk-msg:hover span,.tk-msg:focus-visible span{white-space:pre-wrap;overflow:auto;max-height:230px;overflow-wrap:anywhere}
+.thing:has(.tk-msg:hover),.thing:has(.tk-msg:focus-visible){z-index:40}
+.hovering .thing:not(.hot) .tk-msg{opacity:.35}
+.narrow .tk-more{width:26px;height:26px;right:-13px;top:-15px}
+.narrow .tk-msg{font-size:12.5px;padding:6px 11px 7px 9px}
 .thing.in-sun{opacity:0;pointer-events:none;border-radius:50%}
 /* Zones, as Dawn's pills. */
 .thing.ignition{background:var(--cream);color:var(--deep);box-shadow:0 0 18px 4px rgba(255,179,122,.32)}
