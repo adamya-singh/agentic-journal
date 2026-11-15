@@ -64,6 +64,14 @@ html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!
 .sr-tray label.daily{display:flex;gap:8px;align-items:center;padding:5px 0;cursor:pointer}
 .sr-tray label.daily.did span{color:#9a8676}
 .sr-tray .sr-err{margin:8px 0 0;color:#a3361a}
+.sr-tray[data-kind=holds],.sr-tray[data-kind=nodate]{max-height:min(660px,var(--room,560px));overflow:auto;overscroll-behavior:contain;touch-action:pan-y}
+.sr-tray[data-kind=nodate]{width:min(580px,calc(100% - 20px))}
+.sr-tray .sr-sub{margin:14px 0 2px;font:600 11px/1.2 var(--sans);letter-spacing:.06em;text-transform:uppercase;color:#9a8676}
+.sr-tray .sr-old{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid rgba(255,255,255,.12)}
+.sr-tray .sr-old .sr-oldt{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border:0;background:none;color:inherit;cursor:pointer;padding:0;font:inherit}
+.sr-tray .sr-old .sr-oldt:hover{color:#ffd2a8}
+.sr-tray .sr-old small{color:#c9b8a6;white-space:nowrap}
+.sr-tray .sr-old .sr-b{background:transparent;color:#ffd2a8;border-color:rgba(255,210,168,.5);padding:2px 9px;font-size:11.5px}
 .sr-tray .sr-hold{display:grid;gap:6px;padding:8px 0;border-top:1px solid #efe5d9}
 .sr-tray .sr-hold:first-of-type{border-top:0}
 .sr-tray .sr-hold .sr-open{justify-self:start}
@@ -223,7 +231,7 @@ export function SunriseHero() {
     const listed = id.startsWith('card:')
       ? cardsRef.current.some((card) => `card:${card.id}` === id)
       : !!d && (id in d.forms || d.today.some((t) => t.id === id && !t.completed)
-        || [d.horizon.items, d.horizon.further, d.horizon.holds, d.horizon.undated, d.horizon.wants, ...Object.values(d.horizon.wantsBySection)]
+        || [d.horizon.items, d.horizon.further, d.horizon.holds, d.horizon.stale, d.horizon.undated, d.horizon.undatedRest, d.horizon.wants, ...Object.values(d.horizon.wantsBySection)]
           .some((list) => list.some((t) => t.id === id)));
     // A task further down a list than the sky shows: the brief knows every open task (and 404s the rest).
     const ok = listed || (!id.startsWith('card:') && await fetch(`/api/tasks/brief?id=${encodeURIComponent(id)}`)
@@ -536,6 +544,16 @@ export function SunriseHero() {
   const section = tray === 'track' ? horizon?.wantTracks.find((t) => t.name === trayTrack) : undefined;
   const sectionWants = section ? horizon?.wantsBySection[section.name] ?? [] : [];
 
+  const undatedRow = (u: { id: string; short: string; title: string }) => (
+    <div key={u.id} className="sr-u">
+      <span title={u.title}>{u.short}</span>
+      <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(0))}>Today</button>
+      <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(1))}>Tomorrow</button>
+      <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(7))}>Next week</button>
+      <input type="date" aria-label={`A date for ${u.short}`} min={dayFrom(0)} onChange={(e) => void setWhen(u.id, u.short, e.target.value)} />
+      <button type="button" className="sr-b" onClick={() => openTask(u.id)}>Open</button>
+    </div>
+  );
   const trayBody = !horizon || !data || !tray ? null : tray === 'openclaw' ? (
     <OpenClawTray worker={worker} onOpenTask={(id) => openTaskOn(id, 'brief')} />
   ) : tray === 'holds' ? (
@@ -554,21 +572,30 @@ export function SunriseHero() {
           <button type="button" className="sr-b sr-open" onClick={() => openTask(h.id)}>Open it</button>
         </div>
       ))}
+      {horizon.stale.length > 0 && (
+        <>
+          <p className="sr-sub">Overdue longer{horizon.holds.length > 0 ? '' : ', nothing recent'} · {horizon.stale.length}</p>
+          {horizon.stale.map((h) => (
+            <div key={h.id} className="sr-old">
+              <button type="button" className="sr-oldt" title={h.title} onClick={() => openTask(h.id)}>{h.short}</button>
+              <small>{h.left}</small>
+              <button type="button" className="sr-b" onClick={() => setLetGoAsk({ id: h.id, listType: h.listType, short: h.short, title: h.title })}>Let go</button>
+            </div>
+          ))}
+        </>
+      )}
     </>
   ) : tray === 'nodate' ? (
     <>
       <p className="sr-t">No date yet</p>
       <p className="sr-s">Give one a When and it launches onto its ring.</p>
-      {horizon.undated.map((u) => (
-        <div key={u.id} className="sr-u">
-          <span title={u.title}>{u.short}</span>
-          <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(0))}>Today</button>
-          <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(1))}>Tomorrow</button>
-          <button type="button" className="sr-b" onClick={() => void setWhen(u.id, u.short, dayFrom(7))}>Next week</button>
-          <input type="date" aria-label={`A date for ${u.short}`} min={dayFrom(0)} onChange={(e) => void setWhen(u.id, u.short, e.target.value)} />
-          <button type="button" className="sr-b" onClick={() => openTask(u.id)}>Open</button>
-        </div>
-      ))}
+      {horizon.undated.map(undatedRow)}
+      {horizon.undatedRest.length > 0 && (
+        <>
+          <p className="sr-sub">Not in your Current queue · {horizon.undatedRest.length}</p>
+          {horizon.undatedRest.map(undatedRow)}
+        </>
+      )}
       {trayError && <p className="sr-err" role="alert">{trayError}</p>}
     </>
   ) : tray === 'track' ? (

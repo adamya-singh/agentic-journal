@@ -48,3 +48,23 @@ describe('Horizon dailies', () => {
     assert.equal(fmtMinutes(40), '40m');
   });
 });
+
+test('no open task is dropped: old overdue ones and unqueued undated ones are still listed', async () => {
+  const { buildHorizon } = await import('../src/lib/horizon');
+  const now = new Date(2026, 10, 14, 12, 0);
+  const haveToDo = [
+    { id: 'recent', text: 'Essay', dueDate: '2026-11-12' },
+    { id: 'old', text: 'Old reading', dueDate: '2026-09-01' },
+    { id: 'queued', text: 'Queued, no date' },
+    ...Array.from({ length: 12 }, (_, i) => ({ id: `loose${i}`, text: `Loose ${i}` })),
+    { id: 'done', text: 'Done', completed: true },
+  ];
+  const data = buildHorizon({ haveToDo, wantToDo: [], currentHaveToDoIds: ['queued'], completed: [], now });
+  assert.deepEqual(data.holds.map((h) => h.id), ['recent']);
+  assert.deepEqual(data.stale.map((h) => [h.id, h.zone]), [['old', 'hold']]);
+  assert.equal(data.hiddenStale, 1);
+  assert.deepEqual(data.undated.map((u) => u.id), ['queued']);
+  assert.deepEqual(data.undatedRest.map((u) => u.id), Array.from({ length: 12 }, (_, i) => `loose${i}`));
+  const listed = [...data.items, ...data.further, ...data.holds, ...data.stale, ...data.undated, ...data.undatedRest].map((t) => t.id);
+  assert.equal(new Set(listed).size, 15);
+});

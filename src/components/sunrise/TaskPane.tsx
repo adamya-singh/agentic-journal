@@ -1355,7 +1355,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   }, [brief, hookBody, taskId]);
 
   const form = data.forms[taskId];
-  const item = [...data.horizon.items, ...data.horizon.holds, ...data.horizon.further].find((i) => i.id === taskId);
+  const item = [...data.horizon.items, ...data.horizon.holds, ...data.horizon.further, ...data.horizon.stale].find((i) => i.id === taskId);
   const listType = brief?.listType ?? form?.listType ?? item?.listType ?? 'have-to-do';
   const title = brief?.title ?? item?.title ?? form?.name ?? '';
   const short = (brief?.short ?? item?.short ?? form?.name ?? 'the task').replace(/[.…]+$/, '');

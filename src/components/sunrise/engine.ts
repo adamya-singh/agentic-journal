@@ -1862,15 +1862,18 @@ export class SunriseEngine {
     } else {
       // A phone's chips share one line with the chat button in the corner: they say less. So do a wide screen's
       // when the full words would run past the chat button (below).
+      // The chips count every open task of their kind, not only the ones led with.
       const [onlyHold] = horizon.holds
-      if (horizon.holds.length === 1 && onlyHold !== undefined && !short) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
-      else if (horizon.holds.length > 0) html += `<button type="button" class="chip hold" data-tray="holds"><b>${horizon.holds.length}</b> overdue</button>`
+      const overdue = horizon.holds.length + horizon.stale.length
+      const noDate = horizon.undated.length + horizon.undatedRest.length
+      if (overdue === 1 && onlyHold !== undefined && !short) html += `<button type="button" class="chip hold" data-tray="holds"><b>${escapeText(trimDots(onlyHold.short))}</b> overdue</button>`
+      else if (overdue > 0) html += `<button type="button" class="chip hold" data-tray="holds"><b>${overdue}</b> overdue</button>`
       // What OpenClaw waits on him for, across tasks; quiet when nothing does but it is still at work.
       if (this.worker !== null) {
         const n = this.worker.count
         html += `<button type="button" class="chip claw${n > 0 ? '' : ' quiet'}" data-tray="openclaw" aria-label="${n > 0 ? `OpenClaw: ${n} ${n === 1 ? 'thing needs' : 'things need'} you` : 'OpenClaw: what it is working on'}">OpenClaw${n > 0 ? ` <b>${n}</b>` : ''}</button>`
       }
-      if (horizon.undated.length > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${horizon.undated.length}</b> ${short ? 'no date' : 'with no date'}</button>`
+      if (noDate > 0) html += `<button type="button" class="chip nodate" data-tray="nodate"><b>${noDate}</b> ${short ? 'no date' : 'with no date'}</button>`
       if (data.today.length > 0) html += `<button type="button" class="chip today" data-tray="today">Today <b>${data.today.filter(row => row.completed).length} of ${data.today.length}</b></button>`
       // What today's rings have no room for is counted, never dropped: it is further out, and the camera goes there.
       const beyond = horizon.further.length + ringOverflow(horizon.items).length
@@ -1943,6 +1946,7 @@ export class SunriseEngine {
     this.trayTrack = track ?? null
     this.tray.hidden = false
     this.tray.dataset['kind'] = kind
+    this.tray.scrollTop = 0   // a long list starts at its top, not where the last tray was left
     this.trayWidth = this.stage.width
     this.host.onTray(kind, track)
     // A phone's tray is a sheet at the foot of the window (sunrise-css): it is not placed by what opened it.

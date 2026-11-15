@@ -67,10 +67,12 @@ export interface HorizonData {
   items: HorizonItem[];
   further: HorizonItem[];   // later tasks the outer ring has no room for; the pulled-back view shows them
   holds: HorizonItem[];
+  stale: HorizonItem[];     // overdue too long (or too many) to lead with; still listed under Overdue, most recent first
   undated: HorizonUndated[];
+  undatedRest: HorizonUndated[];    // have-to-do tasks with no date that are not in his Current queue, in the list's order
   wants: HorizonWant[];             // want-to-do tasks with no date, the top of each section
   wantTracks: HorizonWantTrack[];   // the sections under the sun, in the order drawn
-  wantsBySection: Record<string, HorizonWant[]>;  // every section's open tasks in queue order, for its tray (capped)
+  wantsBySection: Record<string, HorizonWant[]>;  // every section's open tasks in queue order, for its tray
   cleared: HorizonCleared[];
   dailies: HorizonDaily[];
   dailyWeek: number[];    // dailies checked off on each of the last 7 days, oldest first, today last
@@ -79,13 +81,12 @@ export interface HorizonData {
   bounds: { climb: number; altitude: number };   // hours from now to next Monday and the Monday after
 }
 
-const HOLD_WINDOW_DAYS = 7;       // overdue longer than this is treated as stale and left off the horizon
+const HOLD_WINDOW_DAYS = 7;       // overdue longer than this is stale: listed under Overdue, but not led with
 const HOLDS_MAX = 4;
 const ORBIT_MAX = 6;              // keep the outer ring readable
 const UNDATED_MAX = 8;
 const WANTS_MAX = 12;             // under the sun, across every section
 const WANT_TRACKS_MAX = 6;
-const WANTS_BY_SECTION_MAX = 60;  // a section's tray; its track's open still counts them all
 const OA_ASSUMED_WINDOW_DAYS = 3;
 
 const DAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -243,7 +244,7 @@ export interface HorizonInputs {
 export function buildHorizon(input: HorizonInputs): HorizonData {
   const now = input.now ?? new Date();
   const items: HorizonItem[] = [];
-  let hiddenStale = 0;
+  const stale: HorizonItem[] = [];
   const pending = (t: Task) => !t.completed && !t.isDaily;
 
   const add = (task: Task, listType: HorizonItem['listType']) => {
@@ -257,11 +258,10 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     const hours = (due.getTime() - now.getTime()) / 36e5;
     const weight = weightFor(task.text, listType);
     // A missed class attendance can't be cleared; old overdue items are stale unless they're high stakes.
-    const stale = hours < -30 * 24 ||
+    const old = hours < -30 * 24 ||
       (hours < 0 && !implied && (/\battendance\b/i.test(task.text) || (hours < -HOLD_WINDOW_DAYS * 24 && weight < 5)));
-    if (stale) { hiddenStale += 1; return; }
     const { short, label } = shortenTask(task.text);
-    items.push({
+    (old ? stale : items).push({
       id: task.id,
       listType,
       title: task.text,
@@ -289,10 +289,14 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
   });
 
   items.sort((a, b) => a.hours - b.hours);
-  const holds = items
+  const overdue = items
     .filter((i) => i.zone === 'hold')
-    .sort((a, b) => b.weight - a.weight || b.hours - a.hours)
-    .slice(0, HOLDS_MAX);
+    .sort((a, b) => b.weight - a.weight || b.hours - a.hours);
+  const holds = overdue.slice(0, HOLDS_MAX);
+  // Nothing open is dropped: what the lead leaves out is still listed, the most recently due first.
+  stale.push(...overdue.slice(HOLDS_MAX));
+  stale.forEach((i) => { i.zone = 'hold'; });
+  stale.sort((a, b) => b.hours - a.hours);
   let orbitCount = 0;
   const further: HorizonItem[] = [];
   const ringItems = items.filter((i) => {
@@ -305,7 +309,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
   });
 
   // Undated: whatever is queued in Current with no due date, in the order ranked there.
-  const datedIds = new Set(items.map((i) => i.id));
+  const datedIds = new Set([...items, ...stale].map((i) => i.id));
   const byId = new Map(flatten(input.haveToDo).map((t) => [t.id, t]));
   const undated: HorizonUndated[] = [];
   for (const id of input.currentHaveToDoIds) {
@@ -313,8 +317,14 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     if (!t || !pending(t) || datedIds.has(id) || t.dueDate) continue;
     const { short, label } = shortenTask(t.text);
     undated.push({ id, short, title: t.text, label });
-    if (undated.length >= UNDATED_MAX) break;
   }
+  const undatedRest: HorizonUndated[] = undated.splice(UNDATED_MAX);
+  const queued = new Set(input.currentHaveToDoIds);
+  flatten(input.haveToDo).filter(pending).forEach((t) => {
+    if (queued.has(t.id) || datedIds.has(t.id) || t.dueDate) return;
+    const { short, label } = shortenTask(t.text);
+    undatedRest.push({ id: t.id, short, title: t.text, label });
+  });
 
   // Under the sun: want-to-do tasks with no date, by section. Each section shows the top of his queue (then the
   // list's own order), one from each section in turn until the room is used, so no section crowds out another.
@@ -341,7 +351,7 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     const track = tracks.find((candidate) => candidate.name === name);
     return { name, about: track?.about ?? '', open: bySection.get(name)?.length ?? 0, permanent: !!track };
   });
-  const wantsBySection: Record<string, HorizonWant[]> = Object.fromEntries(sections.map((name) => [name, (bySection.get(name) ?? []).slice(0, WANTS_BY_SECTION_MAX)]));
+  const wantsBySection: Record<string, HorizonWant[]> = Object.fromEntries(sections.map((name) => [name, bySection.get(name) ?? []]));
 
   const weekAgo = now.getTime() - 7 * 864e5;
   const cleared: HorizonCleared[] = input.completed
@@ -366,9 +376,9 @@ export function buildHorizon(input: HorizonInputs): HorizonData {
     altitude: (nextMonday.getTime() + 7 * 864e5 - now.getTime()) / 36e5,
   };
   return {
-    now: now.toISOString(), items: ringItems, further, holds, undated, wants, wantTracks, wantsBySection, cleared,
+    now: now.toISOString(), items: ringItems, further, holds, stale, undated, undatedRest, wants, wantTracks, wantsBySection, cleared,
     dailies, dailyWeek: doneByDay.map((ids) => ids.length),
-    hiddenStale, letGoThisWeek: input.letGoThisWeek ?? 0, bounds,
+    hiddenStale: stale.length, letGoThisWeek: input.letGoThisWeek ?? 0, bounds,
   };
 }
 

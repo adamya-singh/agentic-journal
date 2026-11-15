@@ -44,11 +44,11 @@ test('under the sun: undated want-to-do tasks by section, the top of his queue f
   assert.deepEqual(data.wantsBySection['Life']!.map((w) => w.id), ['poster']);
 });
 
-test("a section's tray list is capped, and its count is still every open task", () => {
+test("a section's tray lists every open task in it", () => {
   const wantToDo: Task[] = Array.from({ length: 75 }, (_, i) => ({ id: `lu${i}`, text: `[Level Up] Paper ${i}` }));
   const data = buildHorizon({ haveToDo: [], wantToDo, currentHaveToDoIds: [], currentWantToDoIds: ['lu70', 'lu3'], wantTracks: tracks, completed: [], now });
   assert.equal(data.wantTracks.find((t) => t.name === 'Level Up')?.open, 75);
-  assert.equal(data.wantsBySection['Level Up']!.length, 60);
+  assert.equal(data.wantsBySection['Level Up']!.length, 75);
   assert.deepEqual(data.wantsBySection['Level Up']!.slice(0, 3).map((w) => w.id), ['lu70', 'lu3', 'lu0']);
 });
 
