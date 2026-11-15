@@ -33,7 +33,24 @@ export function chatsLine(chats: FormSpec['chats']): {count: string, state: stri
   return {count, state: '', waiting: false}
 }
 
-export function glanceForm({spec}: FormThing): HTMLElement {
+/** Done and Let go for an overdue task's opened form. The engine reads the press from `data-act`. */
+export function lateActions(name: string): HTMLElement {
+  const row = document.createElement('div')
+  row.className = 'late-acts'
+  for (const [act, label, title] of [['done', 'Done', 'It is done: say when'], ['letgo', 'Let go', 'No longer worth doing. Takes it off your lists without counting it as done']] as const) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `tk-act ${act}`
+    button.dataset['act'] = act
+    button.textContent = label
+    button.title = title
+    button.setAttribute('aria-label', `${label}: ${name}`)
+    row.append(button)
+  }
+  return row
+}
+
+export function glanceForm({spec, late}: FormThing): HTMLElement {
   const glance = spec.glance!
   const root = el('div', 'shape full gl')
   const brow = el('div', 'brow')
@@ -59,6 +76,8 @@ export function glanceForm({spec}: FormThing): HTMLElement {
     for (const fact of glance.facts) facts.append(el('dt', '', fact.key), el('dd', '', fact.value))
     root.append(facts)
   }
+  // Overdue: it is settled from here, done (and when) or let go.
+  if (late === true) root.append(lateActions(spec.name))
   const foot = el('div', 'gl-foot')
   const chats = chatsLine(spec.chats)
   if (chats !== null) {

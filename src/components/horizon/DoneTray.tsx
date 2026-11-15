@@ -175,7 +175,7 @@ function Conversation({ record, onChanged, onDone }: {
   );
 }
 
-export function DoneTray({ target, record, onLetGo, letGoBusy, onDone, onChanged }: {
+export function DoneTray({ target, record, onLetGo, letGoBusy, onDone, onChanged, startOpen }: {
   target: DoneTarget;
   record: DoneProposalRecord | null;
   /** Present for pad holds; a proposal whose task left the pad shows without Let go. */
@@ -183,8 +183,10 @@ export function DoneTray({ target, record, onLetGo, letGoBusy, onDone, onChanged
   letGoBusy?: boolean;
   onDone: (receipt: DoneReceipt, label: string) => void;
   onChanged: () => void;
+  /** Opens on "Finished when?" straight away: Done was already pressed, on the task's form in the sky. */
+  startOpen?: boolean;
 }) {
-  const [open, setOpen] = React.useState(false);
+  const [open, setOpen] = React.useState(startOpen === true);
   const [other, setOther] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);

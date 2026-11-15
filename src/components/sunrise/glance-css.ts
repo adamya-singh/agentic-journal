@@ -17,6 +17,11 @@ export const GLANCE_CSS = String.raw`
 .gl-facts{flex:0 1 auto;min-height:0;overflow:hidden;margin:1px 0 0;display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr);gap:3px 12px;font-size:12px;line-height:1.35}
 .gl-facts dt{color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px}
 .gl-facts dd{margin:0;color:var(--fg);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.late-acts{flex:none;display:flex;align-items:center;gap:6px}
+.late-acts::before{content:"Overdue";margin-right:2px;font:500 9px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:#c8321a}
+.tk-act{height:26px;padding:0 13px;border:1px solid rgba(143,29,8,.35);border-radius:999px;background:#fff;color:#8f1d08;font:600 12px/1 var(--sans);cursor:pointer;transition:background .12s ease,color .12s ease}
+.tk-act.done{background:#d2361a;border-color:#d2361a;color:#fff}
+.tk-act:hover,.tk-act:focus-visible{background:#8f1d08;border-color:#8f1d08;color:#fff;outline:0}
 .gl-foot{flex:none;margin:auto -14px 0;display:flex;align-items:center;gap:8px;padding:8px 14px 9px;border-top:1px solid rgba(27,13,5,.09);font:11.5px var(--sans);color:var(--sub);white-space:nowrap}
 .gl-chats{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .gl-chats i{flex:none;width:9px;height:9px;border-radius:50%;background:radial-gradient(circle at 34% 30%,#fff,var(--accent))}

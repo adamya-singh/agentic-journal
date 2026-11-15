@@ -15,6 +15,7 @@ import {coreWithDailies, coreWithoutDailies, dailyRadius, rings} from '@/lib/sun
 import type {GrowBox, GrowInput} from '@/lib/sunrise/grow-layout-reference'
 import {createGrowLayout} from '@/lib/sunrise/grow-layout'
 import {groupsOf, ringItems, ringOverflow, toInput} from '@/lib/sunrise/intent'
+import {placeLate} from '@/lib/sunrise/late'
 import {createDawnLayout} from '@/lib/sunrise/layout'
 import {type MoteItem, type MoteKind, placeMotes} from '@/lib/sunrise/motes'
 import {salienceOf} from '@/lib/sunrise/salience'
@@ -44,6 +45,8 @@ export type EngineHost = {
   onChat?(taskId: string, threadId: string): void
   /** The menu button on a task was pressed; `at` is the button, in window coordinates. */
   onTaskMenu?(taskId: string, at: {left: number, top: number, right: number, bottom: number}): void
+  /** Done or Let go was pressed on an overdue task's opened form; `at` is the button, in window coordinates. */
+  onLate?(taskId: string, act: 'done' | 'letgo', at: {left: number, top: number, right: number, bottom: number}): void
 }
 /** Where the rings put a task and the slices, in Horizon Dawn's own units (dawn-svg.ts's 1200 × 630 drawing). */
 export type SpaceLayout = {spots: {item: HorizonItem, x: number, y: number}[], sectors: {group: string, a0: number, a1: number, mid: number}[]}
@@ -119,6 +122,8 @@ const underPush = 64
 const monthDay = (date: Date) => date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'})
 // A long run of one project's tasks (a course's whole plan) is one light in the sky until he opens it.
 const bundleFrom = 10
+// An overdue task's form is a teaser at most (attention-reference.ts: a hook starts at 22 of 64).
+const lateSalience = 20 / 64
 const bundlesKey = 'sr-open-bundles'
 // A project's name from its id: "stanford-cs336-summer" reads "Stanford CS336 Summer".
 const projectName = (id: string) => id.split(/[-_]+/).filter(Boolean)
@@ -197,6 +202,9 @@ export class SunriseEngine {
   private readonly measureContext = document.createElement('canvas').getContext('2d')
 
   private data: SunriseData | null = null
+  // The overdue tasks that keep a form (the horizon's holds). They are on no ring: each takes the nearest free place
+  // by the sun, on its subject's side, lit red, and opened it offers Done and Let go.
+  private lateIds = new Set<string>()
   private cards: CardThing[] = []
   private answers = 0 // answers given to cards so far: the far side's ground offers them
   private worker: WorkerChip | null = null // OpenClaw's chip, when it is doing anything or may look on its own
@@ -344,12 +352,14 @@ export class SunriseEngine {
       const el = event.target instanceof Element ? event.target.closest<HTMLElement>('.thing') : null
       const thing = el === null ? undefined : this.things.find(candidate => candidate.el === el)
       if (thing === undefined) return
-      // Its chats: the bubble opens the chat that waits on him, the button opens the menu. Neither opens the task itself.
-      const chat = event.target instanceof Element ? event.target.closest<HTMLElement>('.tk-msg, .tk-more') : null
+      // Its chats: the bubble opens the chat that waits on him, the button opens the menu. What is overdue: Done and
+      // Let go, on its opened form. None of them opens the task itself.
+      const chat = event.target instanceof Element ? event.target.closest<HTMLElement>('.tk-msg, .tk-more, .tk-act') : null
       if (chat !== null) {
         event.stopPropagation()
         if (!thing.shown || thing.inert) return
-        if (chat.classList.contains('tk-more')) this.host.onTaskMenu?.(thing.id, chat.getBoundingClientRect())
+        if (chat.classList.contains('tk-act')) this.host.onLate?.(thing.id, chat.dataset['act'] === 'letgo' ? 'letgo' : 'done', chat.getBoundingClientRect())
+        else if (chat.classList.contains('tk-more')) this.host.onTaskMenu?.(thing.id, chat.getBoundingClientRect())
         else if (chat.dataset['thread']) this.host.onChat?.(thing.id, chat.dataset['thread'])
         return
       }
@@ -593,6 +603,7 @@ export class SunriseEngine {
     this.cards = cards
     this.answers = answers
     for (const daily of data.horizon.dailies) if (this.dailyDone.get(daily.id) === daily.done) this.dailyDone.delete(daily.id)
+    this.lateIds = new Set(this.farSide ? [] : data.horizon.holds.map(hold => hold.id))
     this.source = this.farSide ? cards.map(card => this.cardItem(card)) : data.horizon.items
     const items = ringItems(this.source)
     const cardOf = new Map(cards.map(card => [card.id, card]))
@@ -600,6 +611,12 @@ export class SunriseEngine {
       ...items.map(item => {
         const card = this.farSide ? cardOf.get(item.id) : undefined
         return {id: item.id, item, salience: card?.salience ?? null, outer: false, form: card?.form ?? this.formOf(item)}
+      }),
+      // What is overdue and still led with keeps a form by the sun. It says how long it has been, where another
+      // form says its day, and to the ring program's readers it is a task of the ring nearest the sun.
+      ...(this.farSide ? [] : data.horizon.holds).map(hold => {
+        const item = {...hold, zone: 'ignition' as const, day: hold.left === '' ? hold.day : hold.left}
+        return {id: item.id, item, salience: null as number | null, outer: false, form: {...this.formOf(item), late: true}}
       }),
       // What today's rings have no room for sits further out in the same sky, on rings by the month and season.
       ...(this.farSide ? [] : this.outerItems(data)).map(item => ({id: item.id, item, salience: 0 as number | null, outer: true, form: this.formOf(item)})),
@@ -834,7 +851,7 @@ export class SunriseEngine {
       tasks += item.bundle === undefined ? 1 : item.bundle.open ? 0 : item.bundle.count
       mote.el.style.transform = `translate(${place.x.toFixed(1)}px,${place.y.toFixed(1)}px)`
       // A name runs to the right of its light.
-      const right = place.x + (item.kind === 'late' ? 8 : item.wide === true ? 290 : 140)
+      const right = place.x + (item.kind === 'late' ? 8 : item.wide === true ? 590 : 140)
       reach = reach === null
         ? {left: place.x - 10, top: place.y - 12, right, bottom: place.y + 12}
         : {left: Math.min(reach.left, place.x - 10), top: Math.min(reach.top, place.y - 12), right: Math.max(reach.right, right), bottom: Math.max(reach.bottom, place.y + 12)}
@@ -1349,13 +1366,16 @@ export class SunriseEngine {
   private salience(thing: Thing, elapsed: number, todayOpen: Set<string>) {
     const data = this.data!
     if (thing.outer || thing.under) return 0
+    if (this.lateIds.has(thing.id) && this.subject !== null && thing.item.group !== this.subject) return 0
     // A card's salience is its own; a task's follows the clock and the lists.
     const value = thing.salience ?? salienceOf({
       hours: thing.item.hours - elapsed, weight: thing.item.weight, today: todayOpen.has(thing.id),
       currentRank: data.current[thing.id] ?? null, ready: thing.form.spec.ready,
     })
-    if (this.subject !== null) return thing.item.group === this.subject ? Math.min(1, value + 0.25) : 0
-    return value
+    // What is overdue stays small by the sun: it is never lifted into the sky as the lead, which is what to start next.
+    const most = this.lateIds.has(thing.id) ? lateSalience : 1
+    if (this.subject !== null) return thing.item.group === this.subject ? Math.min(most, value + 0.25) : 0
+    return Math.min(most, value)
   }
 
   private solve() {
@@ -1390,7 +1410,8 @@ export class SunriseEngine {
     if (shelf) corners.topLeft.height += this.fullBox(lead, 3, true).height + 30
 
     // 2. The rings. Gone into a subject, its slice opens to the whole fan and the others fold away.
-    const ringThings = things.filter(thing => !thing.outer && !thing.under)
+    const lateThings = things.filter(thing => this.lateIds.has(thing.id))
+    const ringThings = things.filter(thing => !thing.outer && !thing.under && !this.lateIds.has(thing.id))
     const outerThings = things.filter(thing => thing.outer)
     const underThings = things.filter(thing => thing.under)
     const items = ringThings.map(thing => thing.item)
@@ -1569,6 +1590,24 @@ export class SunriseEngine {
           obstacles,
         }
         return grow.run(growInput)
+      }
+      // What is overdue is on no ring: its time has come. Each takes the free place nearest the sun, on its
+      // subject's side (straight above for a subject with no slice today), and stays there while that place is free.
+      const lateStage = {cx: W / 2, cy: Y, sunR: this.last.sunR, bounds: {...growBounds, top: boxed ? growBounds.top : corners.topLeft.height + 4}, gap: narrow ? 8 : 12}
+      const lateTaken = [...cornerBoxes, ...[...pillBoxes].filter(([other]) => other.level !== 3 && !other.outer && !other.under).map(([, box]) => growBox(box))]
+      for (const thing of lateThings) {
+        thing.look = 'ignition late'
+        if (this.subject !== null && thing.item.group !== this.subject) continue
+        const sector = ring.sectors[groups.indexOf(thing.item.group)]
+        const size = boxed ? this.formBox(thing, rowSize[1]) : {width: this.pillWidth(thing), height: 28}
+        // A phone's bubble has its day under it.
+        const found = placeLate({width: size.width, height: size.height + (boxed ? 0 : 18)}, sector === undefined || !sector.shown ? 90 : sector.mid, lateStage, lateTaken,
+          thing.lastBox === null ? null : {...thing.lastBox, height: thing.lastBox.height + (boxed ? 0 : 18)})
+        // With no free place it has no form now: it is a red light on the horizon instead (renderMotes).
+        if (found === null) continue
+        const box = {left: found.left, top: found.top, width: found.width, height: found.height - (boxed ? 0 : 18)}
+        pillBoxes.set(thing, box)
+        lateTaken.push(growBox(box))
       }
       // The lead rises out of its slice: its anchor is where its ray leaves the outer ring, so it opens into the
       // sky above its own subject. On a phone it takes the shelf instead.

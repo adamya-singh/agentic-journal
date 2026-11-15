@@ -6,10 +6,13 @@
 import {type Level, type Part, type PartOf, type ShapeId, type Thing, shapes, visibleParts} from '@/lib/shapes/catalog'
 import {iconOf, renderPart} from '@/lib/shapes/render'
 import type {FormSpec} from '@/lib/sunrise/form-spec'
-import {glanceForm} from './glance'
+import {glanceForm, lateActions} from './glance'
 
-/** A form and the date it carries ("Thu", "Oct 26"). */
-export type FormThing = {spec: FormSpec, when: string}
+/**
+ * A form and the date it carries ("Thu", "Oct 26"). `late` is an overdue task that keeps its form by the sun: its
+ * date is how long it has been ("2d over"), and opened it offers Done and Let go.
+ */
+export type FormThing = {spec: FormSpec, when: string, late?: boolean}
 
 // A small form's height before the screen's scale, and the narrowest and widest it gets. Its width is as wide as
 // what it says, so nothing in it is cut off.
@@ -189,5 +192,6 @@ export function fullForm(form: FormThing, level: Level, compact = false): HTMLEl
   const button = el('button', 'go', step !== '' ? step : spec.hasWork ? 'Jump in' : 'Open')
   button.type = 'button'
   root.append(group('p-actions', button))
+  if (form.late === true) root.append(lateActions(spec.name))
   return root
 }

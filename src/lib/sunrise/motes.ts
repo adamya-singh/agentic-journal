@@ -19,7 +19,7 @@ export interface MoteItem {
   title: string // in full, with why it is where it is, for the tooltip
   group: string // its subject (a slice above the horizon) or its section (a slice under the sun)
   hours: number // until due; negative when overdue; 0 for what has no date
-  wide?: boolean // its name needs two cells: a group of tasks, named with how many it holds
+  wide?: boolean // a group of tasks, named with how many it holds: its name needs a run of cells (wideCells)
 }
 export interface Slice { name: string, a0: number, a1: number } // degrees, a0 the left edge (the larger angle)
 export interface MoteStage {
@@ -35,6 +35,9 @@ export interface MoteStage {
 export interface MotePoint { x: number, y: number }
 
 export const moteCell = {width: 150, row: 22} as const // a cell holds a light and its name
+// A group's name stays readable pulled far back, where it is drawn up to 2.6 times its size: it has this many cells
+// of its row to itself, and the engine's styles cut the name to fit them.
+export const wideCells = 4
 const fanLeft = 174, fanRight = 6
 const radians = Math.PI / 180
 
@@ -76,16 +79,26 @@ class Grid {
   /**
    * The free cell that costs least for a mote that belongs between `a0` and `a1` (degrees): the nearest to the
    * rings inside its slice, filling from the left, then the nearest outside it. x runs right and y away from the
-   * horizon, both from the sun. A wide mote takes the cell to its right as well, for its longer name.
+   * horizon, both from the sun. A wide mote takes the cells to its right as well (wideCells in all), for its name.
    */
   take(a0: number, a1: number, wide = false): {x: number, y: number} | null {
     let best: {cell: Grid['cells'][number], cost: number} | null = null
-    const beside = (cell: Grid['cells'][number]) => { const [row, column] = cell.key.split(':'); return this.byKey.get(`${row}:${Number(column) + 1}`) }
+    // The cells a wide mote's name runs over, to the right of its own; null when one is missing (the rings are there) or taken.
+    const run = (cell: Grid['cells'][number]) => {
+      const [row, column] = cell.key.split(':')
+      const cells: Grid['cells'][number][] = []
+      for (let step = 1; step < wideCells; step++) {
+        const next = this.byKey.get(`${row}:${Number(column) + step}`)
+        if (next === undefined || next.taken) return null
+        cells.push(next)
+      }
+      return cells
+    }
     for (const cell of this.cells) {
       const base = (cell.r - this.from) * 3
       if (best !== null && base >= best.cost) break // sorted by radius: nothing further out can cost less
       if (cell.taken) continue
-      if (wide) { const next = beside(cell); if (next === undefined || next.taken) continue }
+      if (wide && run(cell) === null) continue
       const outside = cell.angle > a0 ? cell.angle - a0 : cell.angle < a1 ? a1 - cell.angle : 0
       // Outside its slice costs four times the way along the arc; inside, a little for each cell from the left.
       const cost = base + outside * radians * cell.r * 4 + (outside > 0 ? 0 : (a0 - cell.angle) * radians * cell.r * 0.02)
@@ -94,12 +107,12 @@ class Grid {
     if (best === null) return wide ? this.take(a0, a1) : null
     best.cell.taken = true
     if (wide) {
-      beside(best.cell)!.taken = true
+      for (const cell of run(best.cell)!) cell.taken = true
       // Pulled far back a group's name is drawn larger than its row: the free cells right above and below it stay empty.
       const [row, column] = best.cell.key.split(':').map(Number) as [number, number]
-      for (const dr of [-1, 1]) for (const dc of [-1, 0, 1, 2]) {
+      for (const dr of [-1, 1]) for (let dc = -1; dc <= wideCells; dc++) {
         const near = this.byKey.get(`${row + dr}:${column + dc}`)
-        if (near !== undefined && near.x > best.cell.x - moteCell.width && near.x < best.cell.x + 2 * moteCell.width) near.taken = true
+        if (near !== undefined && near.x > best.cell.x - moteCell.width && near.x < best.cell.x + wideCells * moteCell.width) near.taken = true
       }
     }
     return {x: best.cell.x, y: best.cell.y}

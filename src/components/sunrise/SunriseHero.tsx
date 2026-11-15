@@ -39,6 +39,7 @@ const HERO_CSS = `
 html[data-sr-workspace] [aria-label="Open Cedar chat (collapsed)"]{display:none!important}
 /* The small menu a task's ⋯ opens: its chats, to mark one unread. */
 .sr-menu{position:fixed;z-index:80;width:260px;max-width:calc(100vw - 16px);display:grid;gap:2px;padding:8px;border-radius:14px;background:linear-gradient(180deg,#fffdf9,#fbf3e7);border:1px solid rgba(255,255,255,.9);box-shadow:0 22px 44px -18px rgba(20,10,0,.8),0 0 0 1px rgba(40,22,10,.12);color:#22130a;font:13.5px/1.35 var(--hz-sans)}
+.sr-late{position:fixed;z-index:80;width:max-content;max-width:min(460px,calc(100vw - 16px));box-sizing:border-box;padding:12px 14px;border-radius:16px;background:#17120f;color:#f3efe7;border:1px solid rgba(255,90,54,.55);box-shadow:0 24px 48px -18px rgba(20,6,0,.9),0 0 26px 2px rgba(255,70,40,.22)}
 .sr-menu-h{padding:4px 8px 6px;font:500 9.5px var(--hz-mono);letter-spacing:.14em;text-transform:uppercase;color:#8a6a52}
 .sr-menu button{display:flex;align-items:center;gap:8px;min-height:34px;padding:6px 8px;border:0;border-radius:9px;background:none;color:inherit;font:inherit;text-align:left;cursor:pointer}
 .sr-menu button:hover:not(:disabled),.sr-menu button:focus-visible{background:rgba(34,19,10,.08);outline:0}
@@ -170,6 +171,8 @@ export function SunriseHero() {
   const [trayTrack, setTrayTrack] = React.useState<string | null>(null);
   // The small menu a task's ⋯ opens: its chats, to mark one unread.
   const [taskMenu, setTaskMenu] = React.useState<{ taskId: string; x: number; y: number; error?: string } | null>(null);
+  // Done was pressed on an overdue task's form in the sky: "Finished when?" opens beside it.
+  const [lateMenu, setLateMenu] = React.useState<{ taskId: string; x: number; y: number } | null>(null);
   const startThread = React.useRef<string | null>(null);   // the chat the opening task was asked to show
   const [proposals, setProposals] = React.useState<DoneProposalRecord[]>([]);
   const [undo, setUndo] = React.useState<{ text: string; run: () => Promise<unknown> } | null>(null);
@@ -372,6 +375,7 @@ export function SunriseHero() {
   const hostRef = React.useRef({ toggleDaily, feedSpace });
   hostRef.current = { toggleDaily, feedSpace };
   const chatRef = React.useRef<(taskId: string, threadId: string) => void>(() => {});
+  const lateRef = React.useRef<(taskId: string, act: 'done' | 'letgo', at: { left: number; bottom: number }) => void>(() => {});
 
   const stepInside = React.useCallback(async () => {
     const sky = skyRef.current, made = engineRef.current;
@@ -414,6 +418,7 @@ export function SunriseHero() {
         onLayout: () => hostRef.current.feedSpace(),
         onChat: (taskId, threadId) => chatRef.current(taskId, threadId),
         onTaskMenu: (taskId, at) => setTaskMenu({ taskId, x: at.right, y: at.bottom }),
+        onLate: (taskId, act, at) => lateRef.current(taskId, act, at),
       });
       engineRef.current = made;
       setEngine(made);
@@ -520,6 +525,14 @@ export function SunriseHero() {
     if (engineOpen.current !== id) startThread.current = null;
   };
   chatRef.current = openChat;
+  // An overdue task's form in the sky: Let go asks why, Done asks when (the same two the Overdue list offers).
+  lateRef.current = (taskId, act, at) => {
+    const hold = horizon?.holds.find((h) => h.id === taskId);
+    if (!hold) return;
+    setTaskMenu(null);
+    if (act === 'letgo') { setLateMenu(null); setLetGoAsk({ id: hold.id, listType: hold.listType, short: hold.short, title: hold.title }); return; }
+    setLateMenu({ taskId, x: at.left, y: at.bottom });
+  };
   const markUnread = async (taskId: string, threadId: string) => {
     const json = await post('/api/tasks/brief-chat', { action: 'unread', taskId, threadId }).catch(() => null);
     if (!json?.success) { setTaskMenu((was) => (was ? { ...was, error: json?.error || 'That did not save. Try again.' } : was)); return; }
@@ -540,6 +553,18 @@ export function SunriseHero() {
       window.removeEventListener('keydown', key, true);
     };
   }, [taskMenu]);
+  React.useEffect(() => {
+    if (!lateMenu) return;
+    const away = (event: Event) => { if (!(event.target instanceof Element && event.target.closest('.sr-late'))) setLateMenu(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setLateMenu(null); } };
+    window.addEventListener('pointerdown', away, true);
+    window.addEventListener('keydown', key, true);
+    return () => {
+      window.removeEventListener('pointerdown', away, true);
+      window.removeEventListener('keydown', key, true);
+    };
+  }, [lateMenu]);
+  const lateHold = lateMenu && horizon ? horizon.holds.find((h) => h.id === lateMenu.taskId) ?? null : null;
   const menuTalk = taskMenu && data ? data.forms[taskMenu.taskId]?.talk ?? null : null;
   const section = tray === 'track' ? horizon?.wantTracks.find((t) => t.name === trayTrack) : undefined;
   const sectionWants = section ? horizon?.wantsBySection[section.name] ?? [] : [];
@@ -686,6 +711,20 @@ export function SunriseHero() {
           ))}
           {taskMenu.error && <p role="alert">{taskMenu.error}</p>}
           <button type="button" role="menuitem" className="open" onClick={() => { const id = taskMenu.taskId; setTaskMenu(null); openTaskOn(id, 'chat'); }}>Open its chats ›</button>
+        </div>
+      )}
+      {lateMenu && lateHold && (
+        <div className="sr-late" role="dialog" aria-label={`Done: ${lateHold.short}`}
+          style={{ left: Math.max(8, Math.min(lateMenu.x - 14, (typeof window === 'undefined' ? 0 : window.innerWidth) - 468)), top: lateMenu.y + 8 }}>
+          <DoneTray
+            key={lateHold.id}
+            startOpen
+            target={{ id: lateHold.id, listType: lateHold.listType, short: lateHold.short, title: lateHold.title, due: lateHold.due, implied: lateHold.implied, left: lateHold.left }}
+            record={proposals.find((p) => p.taskId === lateHold.id) ?? null}
+            onLetGo={() => { setLateMenu(null); setLetGoAsk({ id: lateHold.id, listType: lateHold.listType, short: lateHold.short, title: lateHold.title }); }}
+            onDone={(receipt, label) => { setLateMenu(null); onDone(lateHold.short)(receipt, label); }}
+            onChanged={loadProposals}
+          />
         </div>
       )}
       {!engine && <div className="sr-loading">{error || 'Loading your horizon…'}</div>}

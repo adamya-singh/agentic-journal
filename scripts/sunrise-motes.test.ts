@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHorizon } from '../src/lib/horizon';
 import { rings } from '../src/lib/sunrise/geometry';
-import { lateThrough, moteCell, placeMotes, type MoteItem, type MoteStage } from '../src/lib/sunrise/motes';
+import { lateThrough, moteCell, placeMotes, wideCells, type MoteItem, type MoteStage } from '../src/lib/sunrise/motes';
 
 const stage: MoteStage = {
   cx: 700, cy: 800, kx: 1.1, ky: 1.1, core: 80,
@@ -100,7 +100,7 @@ test('an undated task carries its subject, so its star has a slice to stand over
   assert.deepEqual(data.undatedRest.map((u) => [u.id, u.group]), [['b', 'Other']]);
 });
 
-test('a group of tasks takes two cells, so its longer name is clear of the next light', () => {
+test('a group of tasks has a run of cells to itself, so its name is clear of the next light even drawn large', () => {
   const items = [
     { ...mote('group', 'want', 'Level Up'), wide: true },
     ...Array.from({ length: 60 }, (_, i) => mote(`w${i}`, 'want', 'Level Up')),
@@ -110,8 +110,12 @@ test('a group of tasks takes two cells, so its longer name is clear of the next 
   const group = at.get('group')!;
   for (const [id, p] of at) {
     if (id === 'group' || Math.abs(p.y - group.y) > 1e-6) continue
-    assert.ok(p.x < group.x - moteCell.width + 1e-6 || p.x >= group.x + 2 * moteCell.width - 1e-6, `${id} sits in the group's name`);
+    assert.ok(p.x < group.x - moteCell.width + 1e-6 || p.x >= group.x + wideCells * moteCell.width - 1e-6, `${id} sits in the group's name`);
   }
+  // Two groups in one section do not run into each other: on one row they are a whole run apart, or rows apart.
+  const two = placeMotes([{ ...mote('g1', 'want', 'Level Up'), wide: true }, { ...mote('g2', 'want', 'Level Up'), wide: true }, ...Array.from({ length: 30 }, (_, i) => mote(`w${i}`, 'want', 'Level Up'))], stage);
+  const g1 = two.get('g1')!, g2 = two.get('g2')!;
+  assert.ok(Math.abs(g1.y - g2.y) >= 2 * moteCell.row - 1e-6 || Math.abs(g1.x - g2.x) >= wideCells * moteCell.width - 1e-6, 'the two groups overlap');
   // It is where the section's first task would be: nearest the forms.
   assert.ok(radiusOf(group) <= Math.min(...[...at].filter(([id]) => id !== 'group').map(([, p]) => radiusOf(p))) + moteCell.width);
 });

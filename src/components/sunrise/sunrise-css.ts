@@ -41,7 +41,7 @@ const rules = String.raw`
 .mote.bundle.open span::after{content:" ▾"}
 .mote.member{color:rgba(255,222,186,.9)}
 .mote-far .mote span{opacity:0}
-.mote-far .mote.bundle span{opacity:1;max-width:none;transform:scale(var(--mz,1));transform-origin:0 50%}
+.mote-far .mote.bundle span{opacity:1;max-width:calc(580px / var(--mz,1));transform:scale(var(--mz,1));transform-origin:0 50%}
 .mote:hover,.mote:focus-visible{z-index:2;outline:none;color:#fff}
 .mote:hover i,.mote:focus-visible i{transform:scale(calc(var(--mz,1) * 1.7))}
 .mote:hover span,.mote:focus-visible span{display:block;opacity:1;max-width:none;overflow:visible;left:12px;top:-11px;height:auto;line-height:18px;padding:1px 9px;border-radius:999px;border:1px solid rgba(255,255,255,.28);background:rgba(10,14,24,.94);color:#fff;transform:scale(var(--mz,1));transform-origin:0 50%}
@@ -82,6 +82,9 @@ const rules = String.raw`
 .thing.in-sun{opacity:0;pointer-events:none;border-radius:50%}
 /* Zones, as Dawn's pills. */
 .thing.ignition{background:var(--cream);color:var(--deep);box-shadow:0 0 18px 4px rgba(255,179,122,.32)}
+/* Overdue, and still by the sun: lit red until it is done or let go. */
+.thing.late{background:#fff0ea;color:#7a1505;border-color:#ff5a36;box-shadow:0 0 0 1px rgba(255,90,54,.85),0 0 18px 4px rgba(255,70,40,.5)}
+.thing.late .d{color:#ffb39e;opacity:1}
 .thing.climb{background:rgba(255,255,255,.88);color:#10213a}
 .thing.altitude{background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.6);color:#eef2f8;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
 .thing.orbit{background:rgba(5,7,13,.2);border-color:rgba(255,255,255,.28);color:rgba(238,242,248,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
@@ -190,6 +193,11 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .thing.orbit .shape{--fg:rgba(238,242,248,.9);--line:rgba(255,255,255,.28);--fill:rgba(12,20,40,.6)}
 .thing.daily .shape{--accent:#ffc48f;--line:rgba(255,226,196,.55);--fill:rgba(66,42,30,.66)}
 .thing.form.lead .shape,.thing.form.hot .shape,.thing.hook .shape,.measure .shape{--fg:#1b0d05;--sub:rgba(27,13,5,.62);--accent:#b4521a;--line:rgba(255,255,255,.9);--fill:#fff3e2;--soft:rgba(27,13,5,.1);--hot:#d2451a;--good:#1f7a4a;--good-soft:rgba(31,122,74,.13)}
+.thing.late .shape,.thing.late.form.hot .shape{--line:#ff5a36;--accent:#c8321a;--hot:#c8321a;--fill:#fff1ea}
+.thing.late.form .shape.sm{box-shadow:0 0 0 1.5px rgba(255,90,54,.9),0 0 22px 5px rgba(255,70,40,.5)}
+.thing.late.form.hot .shape.full{box-shadow:0 0 0 1.5px rgba(255,90,54,.9),0 0 30px 6px rgba(255,70,40,.4),0 20px 50px -20px rgba(0,0,0,.6)}
+.thing.late .brow .wh{color:#c8321a;font-weight:700}
+.thing.late .gl-left.hold{background:#d2361a;color:#fff}
 /* The element itself has no frame: the form inside draws its own outline. */
 .shapes .thing.form{background:none;border:0;box-shadow:none;border-radius:0;overflow:visible;backdrop-filter:none;-webkit-backdrop-filter:none}
 .thing.form>.face,.thing.form>.d,.shapes .thing.hook>.face{display:none}
