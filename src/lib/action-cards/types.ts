@@ -19,6 +19,7 @@ export interface CardOutcome {
   detail?: string;          // "Wed Oct 21", "draft waits in Gmail for you"
   due?: string;             // YYYY-MM-DD, for a task
   listType?: 'have-to-do' | 'want-to-do';
+  taskId?: string;          // for a hand-off: the open task OpenClaw would work on (else agreeing makes one)
 }
 
 export interface CardPost {
@@ -43,6 +44,7 @@ export interface CardDecision {
   at: string;
   taskId?: string;
   taskListType?: 'have-to-do' | 'want-to-do';
+  handedTaskId?: string;    // a hand-off: the task OpenClaw's worker was given (taskId too when agreeing made it)
   snoozeUntil?: string;     // YYYY-MM-DD
   undone?: string;          // when it was taken back
 }

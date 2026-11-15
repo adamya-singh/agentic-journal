@@ -465,9 +465,9 @@ export function SunriseHero() {
     // A card that became a task rises on today's rings: the sky turns back to show it.
     if (d.verdict === 'agree' && d.outcome === 'task') engineRef.current?.turn(false);
     const said = d.verdict === 'agree'
-      ? d.outcome === 'task' ? `Agreed. ${card.short} is a task now.` : d.outcome === 'hand' ? 'Agreed. OpenClaw is on it.' : `Agreed. ${decided.outcome?.label ?? ''}`
+      ? d.outcome === 'task' ? `Agreed. ${card.short} is a task now.` : d.outcome === 'hand' ? 'Agreed. OpenClaw works on it as a task.' : `Agreed. ${decided.outcome?.label ?? ''}`
       : d.snooze ? 'Dismissed for now; it comes back later.' : 'Dismissed. OpenClaw keeps your reason.';
-    offerUndo(said, async () => { await undoCard(card.id); loadCards(); });
+    offerUndo(said, async () => { await undoCard(card.id); loadCards(); refreshTasks(); });
   }, [loadCards, offerUndo, refreshTasks]);
   const openCard = open?.startsWith('card:') ? cards.find((card) => `card:${card.id}` === open) ?? null : null;
 

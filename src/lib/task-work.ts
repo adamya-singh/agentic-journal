@@ -28,6 +28,21 @@ export interface NeedsYouItem {
   answeredAt?: string;
   consumedAt?: string;              // an approved act was tried: it is never tried again
   notifiedAt?: string;              // told about in the day's Telegram message
+  standing?: boolean;               // a follow-up sent under his standing permission, not approved one by one
+}
+
+/**
+ * His standing permission on one task: follow-ups to one recipient, in the thread of an email he approved, go out
+ * without a new approval. Given when he approves that email, taken back by him at any time or by Hands off.
+ */
+export interface TaskWorkStanding {
+  to: string;                       // the approved email's recipient: follow-ups go there and nowhere else
+  subject?: string;
+  channel?: string;
+  itemId: string;                   // the approval it came with; nothing goes out before that one did
+  grantedAt: string;
+  used: number;                     // follow-ups sent under it
+  lastAt?: string;                  // when the latest one was started
 }
 
 export interface TaskWorkLease { token: string; claimedAt: string; expiresAt: string }
@@ -49,6 +64,8 @@ export interface TaskWork {
   lookAgainAfter?: string;
   fingerprint?: string;             // the brief agent's task fingerprint at the last look
   handedAt?: string;
+  handedFor?: { text: string; cardId?: string; at: string };   // what he agreed to on an action card
+  standing?: TaskWorkStanding;
   updatedAt: string;
   history: TaskWorkHistoryEntry[];
 }
@@ -86,6 +103,8 @@ export const TASK_WORK_RETRY_DELAYS_MS = [30 * 60_000, 2 * 3600_000, 864e5] as c
 export const TASK_WORK_FAILURE_LIMIT = 3;
 export const TASK_WORK_REST_MS = 30 * 864e5;
 export const TASK_WORK_SILENCE_LIMIT_MS = 21 * 864e5;
+export const STANDING_FOLLOW_UP_LIMIT = 3;
+export const STANDING_FOLLOW_UP_GAP_MS = 3 * 864e5;
 export const SWEEP_CAP_DEFAULT = 8;
 export const SWEEP_FIRST_DAY_CAP = 2;
 export const SWEEP_DUE_DAYS = 14;
@@ -179,6 +198,59 @@ export function approvedItem(record: TaskWork, itemId: string | undefined): Need
   if (!item || item.kind !== 'approval') throw new TaskWorkError('An outward act needs an approval item Adamya approved; propose one first');
   if (item.status !== 'approved') throw new TaskWorkError('That approval item is not approved');
   if (item.consumedAt) throw new TaskWorkError('That approved item was already acted on; it is never acted on twice');
+  return item;
+}
+
+// ───────────── standing permission for follow-ups ─────────────
+
+/** The addresses in a recipient line, lowercased; the whole line when it holds none (a form, a person's name). */
+function addresses(to: string): string[] {
+  const found = to.toLowerCase().match(/[^\s<>,;()"']+@[^\s<>,;()"']+/g);
+  return found ? [...new Set(found)].sort() : [to.trim().toLowerCase()];
+}
+
+/** Whether two recipient lines name the same people. */
+export function sameRecipient(a: string, b: string): boolean {
+  const x = addresses(a), y = addresses(b);
+  return x.length > 0 && x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/** His yes to an email, with "and follow-ups in this thread": the permission, scoped to that email's recipient. */
+export function grantStanding(record: TaskWork, item: NeedsYouItem, now: Date): void {
+  const detail = item.editedDetail ?? item.detail;
+  if (item.kind !== 'approval' || !detail?.to?.trim()) throw new TaskWorkError('Follow-ups need an email with a recipient to follow up on', 400);
+  record.standing = {
+    to: detail.to.trim(), ...(detail.subject ? { subject: detail.subject } : {}), ...(detail.channel ? { channel: detail.channel } : {}),
+    itemId: item.id, grantedAt: now.toISOString(), used: 0,
+  };
+}
+
+export function standingLeft(record: TaskWork): number {
+  return record.standing ? Math.max(0, STANDING_FOLLOW_UP_LIMIT - record.standing.used) : 0;
+}
+
+/**
+ * A follow-up under the standing permission: allowed only on a reply check, to the same recipient, after the email
+ * he approved went out, a few days after the last send, and a few times in all. Recorded as an item approved by
+ * that permission, so it goes through the same attempted, sent and "did this go out?" path as any approved email.
+ */
+export function standingFollowUp(record: TaskWork, detail: NeedsYouDetail, now: Date): NeedsYouItem {
+  const standing = record.standing;
+  if (!standing) throw new TaskWorkError('Adamya gave no standing permission on this task: propose the follow-up instead');
+  if (record.reason !== 'reply-check') throw new TaskWorkError('A standing follow-up goes out only on a reply check that found no reply');
+  if (!detail.to?.trim() || !detail.body?.trim()) throw new TaskWorkError('A follow-up needs its exact recipient and words', 400);
+  if (!sameRecipient(detail.to, standing.to)) throw new TaskWorkError(`The standing permission covers ${standing.to} only: propose anything to someone else`);
+  const first = record.items.find((i) => i.id === standing.itemId);
+  if (first && !first.consumedAt) throw new TaskWorkError('The email Adamya approved has not gone out yet: send that first');
+  if (standing.used >= STANDING_FOLLOW_UP_LIMIT) throw new TaskWorkError(`All ${STANDING_FOLLOW_UP_LIMIT} follow-ups Adamya allowed were sent: ask him what to do next`);
+  const last = Date.parse(standing.lastAt ?? first?.consumedAt ?? standing.grantedAt);
+  if (now.getTime() - last < STANDING_FOLLOW_UP_GAP_MS) throw new TaskWorkError('The last message in this thread went out less than three days ago: wait');
+  const item = addItem(record, 'approval', `Follow-up ${standing.used + 1} to ${standing.to} (your standing permission)`, now, {
+    ...detail, to: detail.to.trim(), ...(detail.channel ?? standing.channel ? { channel: detail.channel ?? standing.channel } : {}),
+  });
+  Object.assign(item, { status: 'approved', answeredAt: now.toISOString(), standing: true });
+  standing.used += 1;
+  standing.lastAt = now.toISOString();
   return item;
 }
 
@@ -423,6 +495,15 @@ export function pickNextTaskWork(
 }
 
 // ───────────── what a run may do ─────────────
+
+/** The extra rule a run gets when the task carries his standing permission. */
+export function standingRule(record: TaskWork): string | null {
+  const s = record.standing;
+  if (!s) return null;
+  const left = standingLeft(record);
+  if (left === 0) return `Standing permission: all ${STANDING_FOLLOW_UP_LIMIT} follow-ups to ${s.to} were sent. Send nothing more there; ask Adamya what to do next.`;
+  return `Standing permission: Adamya allowed follow-ups to ${s.to} in the thread of the email he approved, without asking again (${left} left). Use it only on a reply check that found no reply, at most once per run and not within three days of the last message: post \`attempted\` with followUp { to, subject, body } and no itemId, send exactly those words as a reply in that thread, then post \`progress\`. A short, polite nudge in his voice that adds nothing new. Anything else (a new recipient, a new request, an offer, a deadline) still needs \`propose\`.`;
+}
 
 /** Handed to the run verbatim with every claim. */
 export const TASK_WORK_RULES: readonly string[] = [

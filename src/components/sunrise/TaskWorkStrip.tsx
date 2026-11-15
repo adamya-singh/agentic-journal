@@ -5,7 +5,7 @@
 // oldest first: an email to approve (its exact recipient and words, which he can edit), a question, "Looks done",
 // "Did this go out?". His yes to "Looks done" closes the task through the brief's own Done.
 import React from 'react';
-import type { NeedsYouDetail, NeedsYouItem, TaskWork, TaskWorkStatus } from '@/lib/task-work';
+import { STANDING_FOLLOW_UP_LIMIT, type NeedsYouDetail, type NeedsYouItem, type TaskWork, type TaskWorkStatus } from '@/lib/task-work';
 
 export const TASK_WORK_CSS = `
 /* OpenClaw's own work on the task: a line under who speaks, the switch, and what waits on him. */
@@ -42,6 +42,16 @@ export const TASK_WORK_CSS = `
 .srx-acts .srp-btn{padding:7px 15px}
 .srx-acts .srp-btn:disabled{opacity:.55;cursor:default}
 .srx-acts span{font:12.5px var(--sans);color:#7a5a42}
+/* "And follow-ups": his standing permission, given with the approval and shown while it holds. */
+.srx-also{display:flex;align-items:flex-start;gap:8px;font:13px/1.4 var(--sans);color:#5b4230;cursor:pointer}
+.srx-also input{flex:none;width:16px;height:16px;margin:1px 0 0;accent-color:var(--a)}
+.srx-note{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;margin:-2px 0 0;font:12.5px/1.4 var(--sans);color:#5b4230}
+.srx-note button{border:0;background:none;padding:0;color:var(--a);font:500 12.5px var(--sans);cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.srx-note button:disabled{opacity:.55;cursor:default}
+.cols-1 .srx-also{font-size:14.5px;min-height:44px;align-items:center}
+.cols-1 .srx-also input{width:20px;height:20px;margin:0}
+.cols-1 .srx-note{font-size:13.5px}
+.cols-1 .srx-note button{min-height:44px;font-size:13.5px}
 /* What was settled before, folded. */
 .srx-earlier>summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;font:500 12.5px var(--sans);color:#7a5a42}
 .srx-earlier>summary::-webkit-details-marker{display:none}
@@ -137,7 +147,7 @@ function useFit(value: string) {
 }
 
 /** His answer to one item, as the answer route takes it. */
-export type TaskWorkAnswer = { decision: 'approve' | 'decline' | 'answer'; answer?: string; editedDetail?: NeedsYouDetail };
+export type TaskWorkAnswer = { decision: 'approve' | 'decline' | 'answer'; answer?: string; editedDetail?: NeedsYouDetail; alsoFollowUps?: boolean };
 /** Sends an answer and says it in words; the error to show when it was refused, null when it saved. */
 export type TaskWorkSend = (item: NeedsYouItem, answer: TaskWorkAnswer, said: string) => Promise<string | null>;
 type Answer = TaskWorkAnswer;
@@ -186,6 +196,7 @@ export function TaskWorkItem({ item, send, openToMarkDone }: { item: NeedsYouIte
   const [text, setText] = React.useState('');
   const [why, setWhy] = React.useState('');
   const [edited, setEdited] = React.useState<NeedsYouDetail>(() => ({ ...item.detail }));
+  const [also, setAlso] = React.useState(false);
   const answerBox = useFit(text);
 
   const go = async (answer: Answer, said: string) => {
@@ -195,13 +206,17 @@ export function TaskWorkItem({ item, send, openToMarkDone }: { item: NeedsYouIte
     // On success the item leaves the list; only a refusal comes back here.
     if (failed) { setError(failed); setSending(false); }
   };
+  // Follow-ups can only be allowed on something with a recipient to follow up with.
+  const canFollow = item.kind === 'approval' && !!(phase === 'edit' ? edited.to : item.detail?.to)?.trim();
+  const follow = also && canFollow ? { alsoFollowUps: true } : {};
+  const followSaid = also && canFollow ? ', and may follow up in that thread' : '';
   const approveEdited = () => {
     const was = item.detail ?? {};
     const pick = (k: 'to' | 'subject' | 'body') => (edited[k]?.trim() ? { [k]: k === 'body' ? edited[k] : edited[k]!.trim() } : {});
     const detail: NeedsYouDetail = { ...(was.channel ? { channel: was.channel } : {}), ...pick('to'), ...pick('subject'), ...pick('body') };
     const same = (['to', 'subject', 'body'] as const).every((k) => (detail[k] ?? '') === (was[k] ?? ''));
-    void go(same ? { decision: 'approve' } : { decision: 'approve', editedDetail: detail },
-      same ? 'Approved · OpenClaw sends it on its next run' : 'Approved with your edits · OpenClaw sends your version on its next run');
+    void go({ decision: 'approve', ...(same ? {} : { editedDetail: detail }), ...follow },
+      (same ? 'Approved · OpenClaw sends it on its next run' : 'Approved with your edits · OpenClaw sends your version on its next run') + followSaid);
   };
 
   const mail = item.detail && (item.detail.to || item.detail.subject || item.detail.body) ? item.detail : null;
@@ -217,10 +232,16 @@ export function TaskWorkItem({ item, send, openToMarkDone }: { item: NeedsYouIte
             <input className="why" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Why not? (optional, OpenClaw reads it)" aria-label="Why not, in a line (optional)"
               maxLength={400} autoFocus onKeyDown={(e) => { if (e.key === 'Enter') void go({ decision: 'decline', ...(why.trim() ? { answer: why.trim() } : {}) }, 'Not sent · OpenClaw will not send it'); }} />
           )}
+          {phase !== 'no' && canFollow && (
+            <label className="srx-also">
+              <input type="checkbox" checked={also} disabled={sending} onChange={(e) => setAlso(e.target.checked)} />
+              <span>Also let OpenClaw follow up in this thread without asking, if there is no reply (up to {STANDING_FOLLOW_UP_LIMIT} short nudges, days apart)</span>
+            </label>
+          )}
           <div className="srx-acts">
             {phase === 'idle' && (
               <>
-                <button type="button" className="srp-btn" disabled={sending} onClick={() => void go({ decision: 'approve' }, 'Approved · OpenClaw sends it on its next run')}>{sending ? 'Saving…' : 'Approve'}</button>
+                <button type="button" className="srp-btn" disabled={sending} onClick={() => void go({ decision: 'approve', ...follow }, `Approved · OpenClaw sends it on its next run${followSaid}`)}>{sending ? 'Saving…' : 'Approve'}</button>
                 <button type="button" className="srp-btn quiet" disabled={sending} onClick={() => { setEdited({ ...item.detail }); setPhase('edit'); setError(null); }}>Edit</button>
                 <button type="button" className="srp-btn quiet" disabled={sending} onClick={() => { setPhase('no'); setError(null); }}>No</button>
               </>
@@ -273,6 +294,9 @@ export function TaskWorkItem({ item, send, openToMarkDone }: { item: NeedsYouIte
   );
 }
 
+/** What he agreed to on the card, from the note the worker is given ("Adamya agreed on an action card: X."). */
+const cardAgreed = (text: string) => (text.split('\n')[0].replace(/^Adamya agreed on an action card:\s*/, '').replace(/\.$/, '') || 'a hand-off');
+
 const SETTLED: Record<NeedsYouItem['status'], string> = { approved: 'Approved', declined: 'Declined', answered: 'Answered', pending: '' };
 
 /** What was settled lately, folded: what he approved or turned down, and when. */
@@ -283,7 +307,8 @@ function Earlier({ items }: { items: NeedsYouItem[] }) {
   if (settled.length === 0) return null;
   const word = (i: NeedsYouItem) => (i.kind === 'done' ? (i.status === 'approved' ? 'Done' : 'Not yet')
     : i.kind === 'question' && i.status === 'declined' ? 'Skipped'
-      : i.kind === 'approval' && i.status === 'approved' && i.editedDetail ? 'Approved, edited' : SETTLED[i.status]);
+      : i.standing ? (i.consumedAt ? 'Sent' : 'Sending')
+        : i.kind === 'approval' && i.status === 'approved' && i.editedDetail ? 'Approved, edited' : SETTLED[i.status]);
   return (
     <details className="srx-earlier">
       <summary>Earlier</summary>
@@ -328,6 +353,15 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
     await load();
     setSwitching(false);
   };
+  const stopFollowUps = async () => {
+    setSwitching(true);
+    setError(null);
+    const json = await post('/api/tasks/work/standing', { taskId, on: false }).catch(() => null);
+    if (!json?.success) setError(json?.error || 'That did not save. Try again.');
+    else setSaid('OpenClaw asks again before every message');
+    await load();
+    setSwitching(false);
+  };
   const send: Send = async (item, answer, words) => {
     const json = await post('/api/tasks/work/answer', { taskId, itemId: item.id, ...answer }).catch(() => null);
     if (!json?.success) {
@@ -354,6 +388,13 @@ export function TaskWorkStrip({ taskId, work, onMarkDone }: { taskId: string; wo
         </button>
         {!record && <span className="srx-hint">OpenClaw takes the next step it can and asks before it sends anything.</span>}
       </div>
+      {record?.handedFor && active && <p className="srx-note">From a card you agreed to: {cardAgreed(record.handedFor.text)}</p>}
+      {record?.standing && (
+        <p className="srx-note">
+          <span>OpenClaw may follow up with {record.standing.to} without asking · {record.standing.used} of {STANDING_FOLLOW_UP_LIMIT} sent</span>
+          <button type="button" disabled={switching} onClick={() => void stopFollowUps()}>Stop follow-ups</button>
+        </p>
+      )}
       {said && <p className="srx-said" role="status">{said}</p>}
       {error && <p className="srx-err" role="alert">{error}</p>}
       {pending.map((item) => <TaskWorkItem key={item.id} item={item} send={send} />)}

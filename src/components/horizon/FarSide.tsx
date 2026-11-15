@@ -386,7 +386,9 @@ export function FarSide({ skyRef, svgRef, spots, sectors, data, space, groundSlo
       return;
     }
     load();
-    if (d.verdict === 'agree') say(d.outcome === 'hand' ? `Agreed. OpenClaw is on it. Reason kept: ${q}` : `Agreed. ${esc(o?.label ?? '')}. Reason kept: ${q}`, () => void undo(card.id));
+    // A hand-off is a task OpenClaw works on: the lists may have a new one.
+    if (d.verdict === 'agree' && d.outcome === 'hand') onTasksChanged();
+    if (d.verdict === 'agree') say(d.outcome === 'hand' ? `Agreed. OpenClaw works on it as a task and asks before it sends anything. Reason kept: ${q}` : `Agreed. ${esc(o?.label ?? '')}. Reason kept: ${q}`, () => void undo(card.id));
     else say(d.snooze ? `Dismissed for now; it comes back later. Reason kept: ${q}` : `Dismissed. OpenClaw keeps your reason and writes fewer cards like it: ${q}`, () => void undo(card.id));
   }, [load, onTasksChanged, rollTo, say, tick, undo]);
 

@@ -94,6 +94,7 @@ const outcome = z.object({
   detail: z.string().trim().max(160).optional(),
   due: day.optional(),
   listType: z.enum(['have-to-do', 'want-to-do']).optional(),
+  taskId: z.string().trim().min(1).max(80).optional(),
 }).strict();
 
 // What a writer (OpenClaw, the CLI) sends. Status and decisions are the Journal's, never the writer's.
@@ -241,6 +242,7 @@ export const decisionInput = z.object({
   taskId: z.string().max(80).optional(),
   taskListType: z.enum(['have-to-do', 'want-to-do']).optional(),
   snooze: z.boolean().optional(),
+  handedTaskId: z.string().max(80).optional(),
 }).strict();
 
 const addDays = (d: Date, n: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
@@ -264,6 +266,7 @@ export function decide(value: unknown, now = new Date()): ActionCard {
     at: now.toISOString(),
     ...(d.verdict === 'agree' ? { outcome: d.outcome } : {}),
     ...(d.taskId ? { taskId: d.taskId, taskListType: d.taskListType ?? 'want-to-do' } : {}),
+    ...(d.verdict === 'agree' && d.outcome === 'hand' && d.handedTaskId ? { handedTaskId: d.handedTaskId } : {}),
     ...(d.verdict === 'dismiss' && d.snooze ? { snoozeUntil: card.snoozeUntil ?? ymd(addDays(now, DEFAULT_SNOOZE_DAYS)) } : {}),
   };
   const status = d.verdict === 'agree' ? (d.outcome === 'hand' ? 'handed' : 'agreed') : d.snooze ? 'snoozed' : 'dismissed';
@@ -274,7 +277,7 @@ export function decide(value: unknown, now = new Date()): ActionCard {
 }
 
 /** Take the last answer back. Returns the card and the task to remove, if agreeing made one. */
-export function undo(id: string, now = new Date()): { card: ActionCard; removeTask?: { id: string; listType: 'have-to-do' | 'want-to-do' } } {
+export function undo(id: string, now = new Date()): { card: ActionCard; removeTask?: { id: string; listType: 'have-to-do' | 'want-to-do' }; handedTaskId?: string } {
   return locked(() => {
   const cards = readCards();
   const i = findIndex(cards, id);
@@ -288,6 +291,7 @@ export function undo(id: string, now = new Date()): { card: ActionCard; removeTa
   return {
     card: cards[i],
     ...(decision.taskId ? { removeTask: { id: decision.taskId, listType: decision.taskListType ?? 'want-to-do' } } : {}),
+    ...(decision.handedTaskId ? { handedTaskId: decision.handedTaskId } : {}),
   };
   });
 }

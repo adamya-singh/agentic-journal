@@ -164,6 +164,18 @@ The worker writes through `/api/tasks/work/*` and `/api/tasks/progress` only. It
 3. **The sweep.** Batched sorting, the daily cap, prepare-level work on tasks nobody handed over, the home tray.
 4. **Action-card hand-offs** and standing grants on a task ("you may send follow-ups in this thread").
 
+Stage 4 as built (2026-11-14):
+
+- **Action cards.** Agreeing to a `hand` outcome gives a task to the worker with reason `handed`: the open task
+  the outcome names (`taskId`), else a task made from the card. The record keeps what he agreed to (`handedFor`),
+  and the claim hands it to the run as the job. Undo removes a task the card made, and takes back a hand-off on an
+  existing task only while nothing has come of it.
+- **Standing permission.** When he approves an email he can tick "also follow up in this thread". That stores
+  `standing` on the record: follow-ups to that one recipient, only on a reply check, at least three days after the
+  last message, three in all. The run posts `attempted` with `followUp {to, subject, body}`; the Journal records
+  it as an approved item, so an interrupted follow-up is asked about and never repeated. He takes it back with
+  "Stop follow-ups", and Hands off removes it. Without it, decision 1 below holds unchanged.
+
 Stage 2 is useful on its own and is the place to stop and look at what the runs actually do before stage 3.
 
 ## Decided by Adamya (2026-11-13)

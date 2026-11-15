@@ -1,6 +1,7 @@
 // Answering an action card, shared by Horizon Dawn's far side and Sunrise. Agree with "task" makes the task first,
 // so a failed answer can take it back; undo removes the task an agreed card made.
 import type { ActionCard, CardOutcome } from '@/lib/action-cards/types';
+import { cardHandTask } from '@/lib/action-cards/hand';
 import { SRC_NAME, type CardDecisionInput } from './ActionCardView';
 
 // Always answers: a request that never got through, or an answer that is not JSON, reads as a failure.
@@ -22,7 +23,18 @@ export async function decideCard(card: ActionCard, d: CardDecisionInput): Promis
     if (!t.success) return { ok: false, error: t.error || 'Could not make the task.' };
     taskId = t.taskId;
   }
-  const r = await post('/api/action-cards/decide', { id: card.id, verdict: d.verdict, reason: d.reason, ...(d.outcome ? { outcome: d.outcome } : {}), ...(taskId ? { taskId, taskListType } : {}), ...(d.snooze ? { snooze: true } : {}) });
+  const send = () => post('/api/action-cards/decide', { id: card.id, verdict: d.verdict, reason: d.reason, ...(d.outcome ? { outcome: d.outcome } : {}), ...(taskId ? { taskId, taskListType } : {}), ...(d.snooze ? { snooze: true } : {}) });
+  // A hand-off gives OpenClaw's task worker a task: the open one the card names, else one made here from the card.
+  const handing = d.verdict === 'agree' && d.outcome === 'hand';
+  let r = handing && !o?.taskId ? { success: false, needsTask: true } as Awaited<ReturnType<typeof post>> : await send();
+  if (handing && !r.success && r.needsTask) {
+    const made = cardHandTask(card, d.reason);
+    const t = await post('/api/tasks/add', { task: made.task, listType: made.listType, notesMarkdown: made.notesMarkdown });
+    if (!t.success) return { ok: false, error: t.error || 'Could not make the task for OpenClaw.' };
+    taskId = t.taskId;
+    taskListType = made.listType;
+    r = await send();
+  }
   if (!r.success) {
     if (taskId) await post('/api/tasks/remove', { taskId, listType: taskListType });
     return { ok: false, error: r.error || 'Could not save that answer.' };

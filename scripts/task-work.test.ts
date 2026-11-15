@@ -775,3 +775,194 @@ describe('the sweep switch and the overview', () => {
     assert.equal(after.couldAsk.some((x) => x.taskId === 'want'), false);
   });
 });
+
+describe('standing permission for follow-ups', () => {
+  const mail = { to: 'SoCam <socam290@peakmade.com>', subject: 'Rent credit', body: 'Hello, please apply the $18 credit.' };
+  const nudge = { to: 'socam290@peakmade.com', subject: 'Re: Rent credit', body: 'Hello, following up on my note below.' };
+
+  /** Handed, proposed, approved (with follow-ups when asked), sent, waiting. Returns when the email went out. */
+  async function sentAndWaiting(alsoFollowUps: boolean, t0 = new Date('2026-11-02T15:00:00Z')) {
+    actions.handTaskWork('boom', true, t0);
+    const c1 = actions.claimTaskWork(t0)!;
+    actions.updateTaskWork({ taskId: 'boom', token: c1.lease.token, action: 'propose', approvals: [{ text: 'Email SoCam', detail: mail }] }, t0);
+    const item = rec('boom')!.items[0];
+    actions.answerTaskWork({ taskId: 'boom', itemId: item.id, decision: 'approve', ...(alsoFollowUps ? { alsoFollowUps: true } : {}) }, t0);
+    const c2 = actions.claimTaskWork(later(t0, H))!;
+    actions.updateTaskWork({ taskId: 'boom', token: c2.lease.token, action: 'attempted', what: 'Sending it', itemId: item.id }, later(t0, H));
+    actions.updateTaskWork({ taskId: 'boom', token: c2.lease.token, action: 'progress', did: 'Emailed SoCam' }, later(t0, H));
+    actions.updateTaskWork({ taskId: 'boom', token: c2.lease.token, action: 'waiting', on: 'SoCam' }, later(t0, H));
+    return later(t0, H);
+  }
+
+  test('sameRecipient compares addresses, not display names', () => {
+    assert.equal(lib.sameRecipient('SoCam <socam290@peakmade.com>', 'SOCAM290@peakmade.com'), true);
+    assert.equal(lib.sameRecipient('a@x.com, b@x.com', 'b@x.com; a@x.com'), true);
+    assert.equal(lib.sameRecipient('a@x.com', 'a@x.com, boss@x.com'), false);
+    assert.equal(lib.sameRecipient('socam290@peakmade.com', 'socam291@peakmade.com'), false);
+  });
+
+  test('it is given only with the approval of an email that has a recipient', async () => {
+    const t0 = new Date('2026-11-02T15:00:00Z');
+    actions.handTaskWork('boom', true, t0);
+    const c = actions.claimTaskWork(t0)!;
+    actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'propose', approvals: [{ text: 'Email SoCam', detail: mail }, { text: 'Submit the form', detail: { body: 'x' } }] }, t0);
+    const [withTo, noTo] = rec('boom')!.items;
+    assert.equal((await json(await post(answerRoute, { taskId: 'boom', itemId: withTo.id, decision: 'decline', alsoFollowUps: true }))).status, 400);
+    assert.equal((await json(await post(answerRoute, { taskId: 'boom', itemId: noTo.id, decision: 'approve', alsoFollowUps: true }))).status, 400);
+    assert.equal(rec('boom')!.standing, undefined);
+    assert.equal(rec('boom')!.items.every((i) => i.status === 'pending'), true, 'a refused answer changes nothing');
+    assert.equal((await json(await post(answerRoute, { taskId: 'boom', itemId: withTo.id, decision: 'approve', alsoFollowUps: true }))).status, 200);
+    assert.equal(rec('boom')!.standing!.to, mail.to);
+    assert.equal(rec('boom')!.standing!.used, 0);
+  });
+
+  test('without it, a follow-up with no approved item is refused', async () => {
+    const sent = await sentAndWaiting(false);
+    const c = actions.claimTaskWork(later(sent, 2 * D))!;
+    assert.equal(c.reason, 'reply-check');
+    assert.equal(c.standing, null);
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: 'Nudging', followUp: nudge }, later(sent, 2 * D)), /no standing permission/);
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: 'Nudging' }, later(sent, 2 * D)), /approval item/);
+  });
+
+  test('with it, a reply check may send a follow-up to that recipient, days apart, three times in all', async () => {
+    const sent = await sentAndWaiting(true);
+    // Too soon after the email itself.
+    const early = actions.claimTaskWork(later(sent, 1.5 * D))!;
+    assert.equal(early.reason, 'reply-check');
+    assert.deepEqual(early.standing, { to: mail.to, subject: mail.subject, left: 3 });
+    assert.match(early.rules[early.rules.length - 1], /Standing permission/);
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: early.lease.token, action: 'attempted', what: 'Nudging', followUp: nudge }, later(sent, 1.5 * D)), /less than three days/);
+    // Someone else is never covered.
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: early.lease.token, action: 'attempted', what: 'Nudging', followUp: { ...nudge, to: 'manager@peakmade.com' } }, later(sent, 1.5 * D)), /covers .* only/);
+    actions.updateTaskWork({ taskId: 'boom', token: early.lease.token, action: 'waiting', on: 'SoCam' }, later(sent, 1.5 * D));
+
+    let at = sent;
+    for (let n = 1; n <= 3; n += 1) {
+      at = later(at, 8 * D);
+      const c = actions.claimTaskWork(at)!;
+      assert.equal(c.reason, 'reply-check', `check ${n}`);
+      const out = actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: `Follow-up ${n}`, followUp: nudge }, at) as { item: { id: string; standing?: boolean; status: string } };
+      assert.equal(out.item.standing, true);
+      assert.equal(out.item.status, 'approved');
+      assert.equal(rec('boom')!.attempted!.itemId, out.item.id);
+      // One per run.
+      assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: 'Again', followUp: nudge }, at), /still unreported/);
+      actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'progress', did: `Followed up with SoCam (${n})` }, at);
+      assert.ok(rec('boom')!.items.find((i) => i.id === out.item.id)!.consumedAt);
+      actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'waiting', on: 'SoCam' }, at);
+      assert.equal(rec('boom')!.standing!.used, n);
+    }
+    at = later(at, 8 * D);
+    const last = actions.claimTaskWork(at)!;
+    assert.equal(last.standing!.left, 0);
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: last.lease.token, action: 'attempted', what: 'A fourth', followUp: nudge }, at), /All 3 follow-ups/);
+  });
+
+  test('a run that dies mid follow-up asks whether it went out and never sends it again', async () => {
+    const sent = await sentAndWaiting(true);
+    const at = later(sent, 5 * D);
+    const c = actions.claimTaskWork(at)!;
+    actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: 'Follow-up', followUp: nudge }, at);
+    actions.reconcileTaskWork(later(at, H));
+    const r = rec('boom')!;
+    assert.equal(r.status, 'needs-you');
+    assert.equal(r.items.some((i) => i.kind === 'sent-check' && i.status === 'pending'), true);
+    assert.equal(r.standing!.used, 1, 'the try counts');
+  });
+
+  test('only a reply check may use it; he takes it back, and Hands off takes it too', async () => {
+    const sent = await sentAndWaiting(true);
+    actions.handTaskWork('boom', true, later(sent, 5 * D));
+    const c = actions.claimTaskWork(later(sent, 5 * D))!;
+    assert.equal(c.reason, 'handed');
+    assert.throws(() => actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'attempted', what: 'Nudging', followUp: nudge }, later(sent, 5 * D)), /only on a reply check/);
+    assert.equal(rec('boom')!.standing!.used, 0);
+    actions.revokeStanding('boom');
+    assert.equal(rec('boom')!.standing, undefined);
+
+    actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'rest', why: 'nothing' }, later(sent, 5 * D));
+    store.mutateTaskWork((d) => { d.records.boom.standing = { to: mail.to, itemId: 'x', grantedAt: sent.toISOString(), used: 0 }; });
+    actions.handTaskWork('boom', false);
+    assert.equal(rec('boom')!.standing, undefined);
+  });
+});
+
+describe('an action card handed to OpenClaw', () => {
+  let cards: typeof import('../src/lib/action-cards/store');
+  let decideRoute: typeof import('../src/app/api/action-cards/decide/route');
+  const decidePost = (body: unknown) => decideRoute.POST(new NextRequest('http://127.0.0.1:3000/api/action-cards/decide', {
+    method: 'POST', headers: { origin: 'http://127.0.0.1:3000', host: '127.0.0.1:3000' }, body: JSON.stringify(body),
+  }));
+  const input = (taskId?: string) => ({
+    key: `tasks:boom-${taskId ?? 'none'}`, source: 'tasks', evidence: [{ source: 'tasks', text: 'The credit is still missing.' }],
+    kind: 'Follow up', short: 'Boom credit', title: 'Chase the Boom rent credit', what: 'SoCam has not applied the $18 credit.',
+    why: { tone: 'park', label: 'Life', text: 'Money owed.' }, next: 'Draft the email to SoCam', estimate: '≈ 10 min',
+    bet: 'life', betLabel: 'Life', when: 'now', weight: 0.6, reasons: { agree: ['Yes, chase it'], dismiss: ['Not worth it'] },
+    outcomes: [{ kind: 'hand', label: 'OpenClaw drafts the email', detail: 'you approve before it goes', ...(taskId ? { taskId } : {}) }],
+  });
+
+  before(async () => {
+    cards = await import('../src/lib/action-cards/store');
+    decideRoute = await import('../src/app/api/action-cards/decide/route');
+  });
+
+  test('naming an open task hands that task over, with what he agreed to', async () => {
+    const card = cards.upsertCard(input('boom'));
+    const res = await json(await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes, chase it', outcome: 'hand' }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.data.card.status, 'handed');
+    assert.equal(res.body.data.card.decision.handedTaskId, 'boom');
+    const r = rec('boom')!;
+    assert.equal(r.status, 'queued');
+    assert.equal(r.reason, 'handed');
+    assert.equal(r.grant, 'act-with-approval');
+    assert.equal(r.handedFor!.cardId, card.id);
+    const c = actions.claimTaskWork()!;
+    assert.equal(c.taskId, 'boom');
+    assert.match(c.handedFor!, /OpenClaw drafts the email \(you approve before it goes\)/);
+    assert.match(c.handedFor!, /His reason: Yes, chase it/);
+  });
+
+  test('undo takes back a hand-off nothing has come of, and leaves one that was worked on', async () => {
+    const card = cards.upsertCard(input('boom'));
+    await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes', outcome: 'hand' });
+    const undone = await json(await decidePost({ id: card.id, undo: true }));
+    assert.equal(undone.body.data.card.status, 'open');
+    assert.equal(undone.body.data.removeTask, undefined);
+    assert.equal(rec('boom'), undefined);
+
+    await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes', outcome: 'hand' });
+    const c = actions.claimTaskWork()!;
+    actions.updateTaskWork({ taskId: 'boom', token: c.lease.token, action: 'ask', questions: ['Which month?'] });
+    await decidePost({ id: card.id, undo: true });
+    assert.equal(rec('boom')!.status, 'needs-you');
+    assert.equal(rec('boom')!.handedFor, undefined);
+  });
+
+  test('with no task to name it asks for one and saves nothing; a task made for it is handed and removed on undo', async () => {
+    for (const named of [undefined, 'long-gone']) {
+      const card = cards.upsertCard(input(named));
+      const refused = await json(await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes', outcome: 'hand' }));
+      assert.equal(refused.status, 409);
+      assert.equal(refused.body.needsTask, true);
+      assert.equal(cards.getCard(card.id).status, 'open');
+
+      const ok = await json(await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes', outcome: 'hand', taskId: 'want', taskListType: 'want-to-do' }));
+      assert.equal(ok.status, 200);
+      assert.equal(rec('want')!.status, 'queued');
+      const undone = await json(await decidePost({ id: card.id, undo: true }));
+      assert.deepEqual(undone.body.data.removeTask, { id: 'want', listType: 'want-to-do' });
+      store.mutateTaskWork((d) => { delete d.records.want; });
+    }
+    assert.equal((await json(await decidePost({ id: cards.upsertCard(input()).id, verdict: 'agree', reason: 'Yes', outcome: 'hand', taskId: 'no-such-task' }))).status, 409);
+  });
+
+  test('agreeing on a card hands back a task he had turned off', async () => {
+    actions.handTaskWork('boom', false);
+    const card = cards.upsertCard(input('boom'));
+    const res = await json(await decidePost({ id: card.id, verdict: 'agree', reason: 'Yes', outcome: 'hand' }));
+    assert.equal(res.status, 200, 'his agreeing on a card is his word: it hands the task back');
+    assert.equal(rec('boom')!.status, 'queued');
+  });
+});

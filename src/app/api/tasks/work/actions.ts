@@ -41,6 +41,7 @@ import {
   type TaskWork,
   type TaskWorkRef,
   type TaskWorkStatus,
+  grantStanding, standingFollowUp, standingLeft, standingRule,
 } from '@/lib/task-work';
 import { sortCounts, sortDomain } from '@/lib/task-sort';
 import { loadTaskBrief, openTaskRefs } from '../brief/build';
@@ -111,6 +112,7 @@ const API_HELP = {
   update: 'POST /api/tasks/work/update { taskId, token, action, ... }; every action needs the lease token',
   actions: [
     'attempted { what, itemId }: before an outward act; itemId must be an approval item Adamya approved',
+    'attempted { what, followUp: { to, subject?, body } }: a follow-up under Adamya\'s standing permission (only when the claim carries `standing`); the answer returns the item it recorded',
     'progress { did, next?, waitingOn?, itemId? }: records what was done in the task notes; itemId marks that approved act done',
     'waiting { on, checkAfter? }: closes; waits on someone outside (a person, office, company), the Journal schedules the reply checks. Waiting on Adamya himself is not this: use ask',
     'rest { why, lookAgainAfter? }: closes; nothing to do now (looks again in 30 days unless said)',
@@ -210,7 +212,9 @@ export function claimTaskWork(now = new Date()) {
     waiting: r.waiting ?? null,
     failures: r.failures,
     lastError: r.lastError ?? null,
-    rules: TASK_WORK_RULES,
+    rules: [...TASK_WORK_RULES, ...(standingRule(r) ? [standingRule(r)!] : [])],
+    handedFor: r.handedFor?.text ?? null,
+    standing: r.standing ? { to: r.standing.to, subject: r.standing.subject ?? null, left: standingLeft(r) } : null,
     compassForAgents: compassForAgents(),
     mark: TASK_MARK(claimed.taskId),
     api: API_HELP,
@@ -228,7 +232,7 @@ const detail = z.object({
 const base = { taskId: z.string().min(1).max(200), token: z.string().min(1) };
 
 export const UpdateSchema = z.discriminatedUnion('action', [
-  z.object({ ...base, action: z.literal('attempted'), what: line, itemId: z.string().min(1).optional() }),
+  z.object({ ...base, action: z.literal('attempted'), what: line, itemId: z.string().min(1).optional(), followUp: detail.optional() }),
   z.object({
     ...base, action: z.literal('progress'), did: line,
     next: z.string().trim().max(PROGRESS_LINE_MAX).optional(), waitingOn: z.string().trim().max(PROGRESS_LINE_MAX).optional(),
@@ -269,9 +273,11 @@ export function updateTaskWork(body: TaskWorkUpdate, now = new Date()) {
     switch (body.action) {
       case 'attempted': {
         if (record.attempted) throw new TaskWorkError('Another outward act is still unreported: post its progress first');
-        const item = approvedItem(record, body.itemId);
+        if (body.itemId && body.followUp) throw new TaskWorkError('Send either an approved item or a standing follow-up, not both', 400);
+        // No item: a follow-up under his standing permission, which records its own approved item.
+        const item = body.followUp ? standingFollowUp(record, body.followUp, now) : approvedItem(record, body.itemId);
         record.attempted = { what: body.what, at: now.toISOString(), itemId: item.id };
-        break;
+        return { record: structuredClone(record), item: structuredClone(item) };
       }
       case 'progress': {
         const ids = [...new Set([body.itemId, record.attempted?.itemId].filter((id): id is string => !!id))];
@@ -350,7 +356,7 @@ export function updateTaskWork(body: TaskWorkUpdate, now = new Date()) {
 
 // ───────────── Adamya's switch and answers ─────────────
 
-export function handTaskWork(taskId: string, on: boolean, now = new Date()) {
+export function handTaskWork(taskId: string, on: boolean, now = new Date(), from?: { text: string; cardId?: string }) {
   const task = openTaskRefs().find((r) => r.task.id === taskId)?.task;
   if (!task) throw new TaskWorkError(`No open task has the id ${taskId}`, 404);
   return mutateTaskWork((data) => {
@@ -362,6 +368,8 @@ export function handTaskWork(taskId: string, on: boolean, now = new Date()) {
         if (record.attempted) askWhetherSent(record, now, { keepStatus: true });
         delete record.lease;
         delete record.nextRetryAt;
+        // Hands off takes the standing permission with it: handing back starts from asking again.
+        delete record.standing;
         setTaskWorkStatus(record, 'off', 'Adamya: hands off', now, 'adamya');
       }
       return structuredClone(record);
@@ -382,6 +390,33 @@ export function handTaskWork(taskId: string, on: boolean, now = new Date()) {
     }
     record.handedAt = at;
     record.updatedAt = at;
+    if (from) record.handedFor = { text: from.text, ...(from.cardId ? { cardId: from.cardId } : {}), at };
+    return structuredClone(record);
+  });
+}
+
+/**
+ * Undo of an action card's hand-off on a task that already existed. Only a hand-off nothing has come of is taken
+ * back (still in line, never looked at, nothing asked); true when it was.
+ */
+export function unhandFromCard(taskId: string, cardId: string): boolean {
+  return mutateTaskWork((data) => {
+    const record = data.records[taskId];
+    if (!record || record.handedFor?.cardId !== cardId) return false;
+    delete record.handedFor;
+    const untouched = record.status === 'queued' && record.reason === 'handed' && !record.lookedAt && record.items.length === 0 && !record.waiting;
+    if (untouched) delete data.records[taskId];
+    return untouched;
+  });
+}
+
+/** Adamya takes his standing permission for follow-ups back. */
+export function revokeStanding(taskId: string, now = new Date()) {
+  return mutateTaskWork((data) => {
+    const record = data.records[taskId];
+    if (!record) throw new TaskWorkError('OpenClaw has no record of that task', 404);
+    delete record.standing;
+    record.updatedAt = now.toISOString();
     return structuredClone(record);
   });
 }
@@ -392,6 +427,7 @@ export const AnswerSchema = z.object({
   decision: z.enum(['approve', 'decline', 'answer']),
   answer: z.string().trim().max(4000).optional(),
   editedDetail: detail.optional(),
+  alsoFollowUps: z.boolean().optional(),
 });
 export type TaskWorkAnswer = z.infer<typeof AnswerSchema>;
 
@@ -412,6 +448,10 @@ export function answerTaskWork(body: TaskWorkAnswer, now = new Date()) {
       status: DECIDED[body.decision], answeredAt: at,
       ...(body.answer ? { answer: body.answer } : {}), ...(body.editedDetail ? { editedDetail: body.editedDetail } : {}),
     });
+    if (body.alsoFollowUps) {
+      if (body.decision !== 'approve') throw new TaskWorkError('Follow-ups are allowed together with approving the email', 400);
+      grantStanding(record, item, now);
+    }
     record.updatedAt = at;
     // His yes to "Looks done" goes through the existing complete flow (the UI stage); here it is only recorded.
     const completeRequested = item.kind === 'done' && body.decision === 'approve';
