@@ -478,7 +478,10 @@ export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onCl
                 <span className="t"><b>{t.title}</b><i className={`srk-pill ${t.state}`} style={{ fontStyle: 'normal' }}>{STATE_WORDS[t.state]}</i></span>
                 {t.last && <span className="l">{t.lastRole === 'openclaw' ? 'OpenClaw: ' : 'You: '}{t.last}</span>}
               </button>
-              <span className="srk-meta">{chatWhen(t.updatedAt)}{t.about && <AboutChip about={t.about} onShow={onShowSurface} />}</span>
+              <span className="srk-meta">
+                {chatWhen(t.updatedAt)}{t.about && <AboutChip about={t.about} onShow={onShowSurface} />}
+                {t.mergedFrom && <span title={`This chat was in “${t.mergedFrom}” before that task was merged into this one`}>from “{t.mergedFrom.length > 44 ? `${t.mergedFrom.slice(0, 43)}…` : t.mergedFrom}”</span>}
+              </span>
             </div>
           ))}
           {chats.loaded && chats.threads.length === 0 && (

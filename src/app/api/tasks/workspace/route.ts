@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { WORK_BODY_MAX } from '@/lib/hook-work';
 import { applyWorkspaceOp } from '@/lib/task-workspace';
+import { mergedInto } from '../merge/store';
 import { changePastedTabs } from '../workspace-tabs/store';
 import { loadWorkspace, peekWorkspace, writeWorkspaceBlocks } from './load';
 
@@ -27,8 +28,10 @@ const HOW = 'Send { taskId, action: "write", blocks } | { taskId, action: "block
  * GET /api/tasks/workspace?id=<taskId>&peek=1   { rev, tabs }: enough for the open page to know it was changed
  */
 export async function GET(request: NextRequest) {
-  const id = request.nextUrl.searchParams.get('id');
-  if (!id) return NextResponse.json({ success: false, error: 'Missing id' }, { status: 400 });
+  const asked = request.nextUrl.searchParams.get('id');
+  if (!asked) return NextResponse.json({ success: false, error: 'Missing id' }, { status: 400 });
+  // A chat begun in a task that was since merged into another still names the old task: it leads to the merged one.
+  const id = mergedInto(asked);
   try {
     if (request.nextUrl.searchParams.has('peek')) return NextResponse.json({ success: true, data: peekWorkspace(id) }, { headers: { 'Cache-Control': 'no-store' } });
     const loaded = loadWorkspace(id);
@@ -48,7 +51,7 @@ export async function POST(request: NextRequest) {
   try { json = JSON.parse(raw); } catch { return NextResponse.json({ success: false, error: `The body is not JSON. ${HOW}` }, { status: 400 }); }
   const parsed = BodySchema.safeParse(json);
   if (!parsed.success) return NextResponse.json({ success: false, error: HOW }, { status: 400 });
-  const body = parsed.data;
+  const body = { ...parsed.data, taskId: mergedInto(parsed.data.taskId) };
   try {
     const loaded = loadWorkspace(body.taskId);
     if (!loaded) return NextResponse.json({ success: false, error: `No open task has the id ${body.taskId}.` }, { status: 404 });

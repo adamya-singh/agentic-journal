@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { handleDueDateSetup } from '../due-date-utils';
-import { TasksData } from '@/lib/types';
+import type { TasksData } from '@/lib/types';
 import { normalizeProjectList } from '@/lib/projects';
 import { validateDueTimeRange } from '@/lib/due-time';
 import { validateParentTaskAssignment } from '@/lib/tasks';

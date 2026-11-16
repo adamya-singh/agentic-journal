@@ -47,6 +47,8 @@ export type EngineHost = {
   onTaskMenu?(taskId: string, at: {left: number, top: number, right: number, bottom: number}): void
   /** Done or Let go was pressed on an overdue task's opened form; `at` is the button, in window coordinates. */
   onLate?(taskId: string, act: 'done' | 'letgo', at: {left: number, top: number, right: number, bottom: number}): void
+  /** One task was dragged onto another and let go there: he may want the two merged. `at` is where, in window coordinates. */
+  onMerge?(fromId: string, intoId: string, at: {x: number, y: number}): void
 }
 /** Where the rings put a task and the slices, in Horizon Dawn's own units (dawn-svg.ts's 1200 × 630 drawing). */
 export type SpaceLayout = {spots: {item: HorizonItem, x: number, y: number}[], sectors: {group: string, a0: number, a1: number, mid: number}[]}
@@ -248,6 +250,9 @@ export class SunriseEngine {
   private hotTimer = 0
   private settleTimer = 0
   private saidSize = ''
+  // A task picked up with the mouse to drop on another: where it was pressed, the chip that follows the pointer
+  // once it has moved (null while it is still only a press), and the task it is over.
+  private drag: {id: string, name: string, el: HTMLElement, start: {x: number, y: number}, chip: HTMLElement | null, over: {id: string, name: string, el: HTMLElement} | null} | null = null
 
   constructor(root: HTMLElement, programs: Programs, host: EngineHost) {
     this.root = root
@@ -371,9 +376,65 @@ export class SunriseEngine {
       }
       if (thing.shown && !thing.inert) this.openTask(thing.id)
     }, {signal})
+    // Drag one task onto another (with a mouse or a pen; a finger moves the sky) and he is asked whether to merge
+    // them. A press that does not move is still a click, and opens the task.
+    const taskAt = (target: EventTarget | null) => {
+      const el = target instanceof Element ? target.closest<HTMLElement>('.thing, .mote') : null
+      const id = el?.dataset['id']
+      if (el === null || id === undefined || id.startsWith('card:') || id.startsWith('bundle:')) return null
+      if (el.classList.contains('mote')) return this.motes.has(id) ? {id, el, name: trimDots(el.title)} : null
+      const thing = this.things.find(candidate => candidate.el === el)
+      return thing === undefined || !thing.shown || thing.inert ? null : {id, el, name: trimDots(thing.item.short || thing.item.title)}
+    }
+    root.addEventListener('pointerdown', event => {
+      this.endDrag()
+      if (event.pointerType === 'touch' || event.button !== 0 || this.open !== null || this.farSide || this.root.classList.contains('hz-live')) return
+      if (event.target instanceof Element && event.target.closest('.tk-msg, .tk-more, .tk-act') !== null) return
+      const task = taskAt(event.target)
+      if (task !== null) this.drag = {...task, start: {x: event.clientX, y: event.clientY}, chip: null, over: null}
+    }, {signal})
+    window.addEventListener('pointermove', event => {
+      const drag = this.drag
+      if (drag === null) return
+      if (drag.chip === null) {
+        if (Math.hypot(event.clientX - drag.start.x, event.clientY - drag.start.y) < 7) return
+        // It has moved: it is being carried. The forms stop growing under the pointer while it is.
+        window.clearTimeout(this.hotTimer)
+        this.setHot(null)
+        window.getSelection()?.removeAllRanges()
+        drag.chip = document.createElement('div')
+        drag.chip.className = 'sr-merge-chip'
+        this.root.append(drag.chip)
+        this.root.classList.add('merging')
+        drag.el.classList.add('mrg-from')
+      }
+      event.preventDefault()
+      const under = taskAt(document.elementFromPoint(event.clientX, event.clientY))
+      const over = under !== null && under.id !== drag.id ? under : null
+      if (over?.el !== drag.over?.el) {
+        drag.over?.el.classList.remove('mrg-over')
+        over?.el.classList.add('mrg-over')
+        drag.over = over
+      }
+      drag.chip.classList.toggle('ok', over !== null)
+      drag.chip.textContent = over === null ? `${drag.name} · drop it on a task to merge them` : `Merge into “${over.name}”`
+      drag.chip.style.translate = `${event.clientX + 14}px ${event.clientY + 16}px`
+    }, {signal})
+    const drop = (event: PointerEvent) => {
+      const drag = this.drag
+      if (drag === null) return
+      const carried = drag.chip !== null, over = drag.over
+      this.endDrag()
+      if (!carried) return
+      // The click that ends a drag opens nothing.
+      this.swallowUntil = performance.now() + 400
+      if (over !== null && event.type === 'pointerup') this.host.onMerge?.(drag.id, over.id, {x: event.clientX, y: event.clientY})
+    }
+    window.addEventListener('pointerup', drop, {signal})
+    window.addEventListener('pointercancel', drop, {signal})
     // A form under the pointer opens a little and the others step back, for as long as the pointer stays.
     this.labels.addEventListener('pointerover', event => {
-      if (this.narrow || this.open !== null || event.pointerType === 'touch') return
+      if (this.narrow || this.open !== null || event.pointerType === 'touch' || this.drag?.chip) return
       // Over the bubble under a task the task does not grow: the bubble would move from under the pointer.
       if (event.target instanceof Element && event.target.closest('.tk-msg') !== null) {
         window.clearTimeout(this.hotTimer)
@@ -460,6 +521,8 @@ export class SunriseEngine {
       // Typing somewhere (the chat, the work, a reason): Escape is that field's.
       const target = event.target
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable)) return
+      // A task being dragged is put back.
+      if (this.drag?.chip) { this.endDrag(); return }
       if (this.trayKind !== null) this.closeTray()
       else if (this.open !== null) this.closeTask()
       else if (!this.isHome()) this.resetView()
@@ -975,6 +1038,7 @@ export class SunriseEngine {
 
   destroy() {
     this.destroyed = true
+    this.endDrag()
     this.abort.abort()
     this.observer.disconnect()
     for (const timer of this.timers) { window.clearTimeout(timer); window.clearInterval(timer) }
@@ -1931,6 +1995,16 @@ export class SunriseEngine {
       left: Math.max(8, Math.min(this.stage.width - 8 - open.width, left)),
       top: Math.max(8, Math.min(this.stage.horizonY - 6 - open.height, top)), ...open,
     }
+  }
+  /** Puts down a task that was being dragged, without merging anything. */
+  private endDrag() {
+    const drag = this.drag
+    if (drag === null) return
+    this.drag = null
+    drag.chip?.remove()
+    drag.el.classList.remove('mrg-from')
+    drag.over?.el.classList.remove('mrg-over')
+    this.root.classList.remove('merging')
   }
   private setHot(thing: Thing | null) {
     if (this.hot === thing) return

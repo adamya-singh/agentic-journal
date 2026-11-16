@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { PROGRESS_LINE_MAX } from '@/lib/task-progress';
+import { mergedInto } from '../merge/store';
 import { recordTaskProgress } from './record';
 import { noteChatProgress } from '../work/actions';
 
@@ -19,7 +20,9 @@ const BodySchema = z.object({ taskId: z.string().min(1).max(200), did: line.min(
 export async function POST(request: NextRequest) {
   const parsed = BodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ success: false, error: 'Send { taskId, did, next?, waitingOn? }, each one line.' }, { status: 400 });
-  const { taskId, did, next, waitingOn } = parsed.data;
+  const { did, next, waitingOn } = parsed.data;
+  // A chat begun in a task that was since merged into another still names the old task: it leads to the merged one.
+  const taskId = mergedInto(parsed.data.taskId);
   const written = recordTaskProgress(taskId, { did, next, waitingOn });
   if (!written) return NextResponse.json({ success: false, error: `No open task has the id ${taskId}.` }, { status: 404 });
   try {

@@ -41,6 +41,7 @@ export interface TaskChatThread {
   workSeen?: string;             // the workspace as this chat last knew it (workspaceSignature); absent until it has been told of the workspace
   modelSet?: string;             // the model the Journal last picked on this chat's OpenClaw session; absent when it picked none
   thinkingSet?: string;          // the thinking effort it last picked there; absent when it picked none
+  mergedFrom?: string;           // the title of the task this chat was in, before that task was merged into this one
   about: ChatSurfaceRef | null;  // the surface it was started from
 }
 
@@ -60,6 +61,7 @@ export interface ChatThreadSummary {
   sessionKey: string;
   createdAt: string;
   updatedAt: string;
+  mergedFrom?: string;           // the task this chat was in before that task was merged into this one
 }
 
 export interface ChatThreadView extends Omit<ChatThreadSummary, 'last' | 'lastRole' | 'count' | 'ask' | 'askAbout'> {
@@ -154,6 +156,7 @@ export function chatSummary(thread: TaskChatThread): ChatThreadSummary {
     id: thread.id, title: thread.title, last: last ? clip(last.text.replace(/[*_`#>]+/g, ''), LAST_MAX) : '', lastRole: last?.role ?? null,
     count: thread.messages.length, state: chatState(thread), about: thread.about,
     ask: asked ? clip(asked.text, ASK_MAX) : '', askAbout: asked?.about ?? null, sessionKey: thread.sessionKey,
+    ...(thread.mergedFrom ? { mergedFrom: thread.mergedFrom } : {}),
     createdAt: thread.createdAt, updatedAt: thread.updatedAt,
   };
 }
@@ -277,6 +280,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     ...(typeof r.workSeen === 'string' && r.workSeen ? { workSeen: r.workSeen } : {}),
     ...(isModelKey(r.modelSet) ? { modelSet: r.modelSet } : {}),
     ...(isThinkingLevel(r.thinkingSet) ? { thinkingSet: r.thinkingSet } : {}),
+    ...(typeof r.mergedFrom === 'string' && r.mergedFrom.trim() ? { mergedFrom: r.mergedFrom.slice(0, 300) } : {}),
     about: parseSurfaceRef(r.about),
   };
 }

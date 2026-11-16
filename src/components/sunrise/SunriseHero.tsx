@@ -9,6 +9,7 @@ import { createPortal } from 'react-dom';
 import { Instrument_Serif } from 'next/font/google';
 import { QuickCaptureInput } from '@/components/quick-capture/QuickCaptureInput';
 import { LetGoReasonModal } from '@/components/LetGoReasonModal';
+import { MergeTasksModal, type MergeSide } from '@/components/MergeTasksModal';
 import { DONE_CSS, DoneTray } from '@/components/horizon/DoneTray';
 import { BRIEF_CSS } from '@/components/horizon/TaskBriefCard';
 import { CHAT_CSS } from '@/components/horizon/BriefChat';
@@ -178,6 +179,8 @@ export function SunriseHero() {
   const [undo, setUndo] = React.useState<{ text: string; run: () => Promise<unknown> } | null>(null);
   const undoTimer = React.useRef<number | null>(null);
   const [letGoAsk, setLetGoAsk] = React.useState<{ id: string; listType: string; short: string; title: string } | null>(null);
+  // One task was dropped on another in the sky: he is asked whether to merge them.
+  const [mergeAsk, setMergeAsk] = React.useState<{ from: MergeSide; into: MergeSide } | null>(null);
   const [tick, setTick] = React.useState(0);
   const [cards, setCards] = React.useState<ActionCard[]>([]);
   const [answers, setAnswers] = React.useState<CardAnswer[]>([]);
@@ -376,6 +379,7 @@ export function SunriseHero() {
   hostRef.current = { toggleDaily, feedSpace };
   const chatRef = React.useRef<(taskId: string, threadId: string) => void>(() => {});
   const lateRef = React.useRef<(taskId: string, act: 'done' | 'letgo', at: { left: number; bottom: number }) => void>(() => {});
+  const mergeRef = React.useRef<(fromId: string, intoId: string) => void>(() => {});
 
   const stepInside = React.useCallback(async () => {
     const sky = skyRef.current, made = engineRef.current;
@@ -419,6 +423,7 @@ export function SunriseHero() {
         onChat: (taskId, threadId) => chatRef.current(taskId, threadId),
         onTaskMenu: (taskId, at) => setTaskMenu({ taskId, x: at.right, y: at.bottom }),
         onLate: (taskId, act, at) => lateRef.current(taskId, act, at),
+        onMerge: (fromId, intoId) => mergeRef.current(fromId, intoId),
       });
       engineRef.current = made;
       setEngine(made);
@@ -475,6 +480,30 @@ export function SunriseHero() {
     offerUndo(`Let go of ${short.replace(/[.…]+$/, '')}.`, () => post('/api/tasks/let-go/restore', { taskId }));
     refreshTasks();
   }, [letGoAsk, offerUndo, refreshTasks]);
+
+  // Merging: one task dragged onto another in the sky. He is asked first, and may leave OpenClaw a note; the task
+  // dropped on stays (unless he swaps them), and OpenClaw makes one task of the two afterwards.
+  mergeRef.current = (fromId, intoId) => {
+    const h = dataRef.current?.horizon;
+    if (!h) return;
+    const named = [...h.items, ...h.holds, ...h.further, ...h.stale, ...h.undated, ...h.undatedRest, ...h.wants];
+    const side = (id: string): MergeSide | null => {
+      const found = named.find((item) => item.id === id);
+      return found ? { id, title: found.title || found.short } : null;
+    };
+    const from = side(fromId), into = side(intoId);
+    if (from && into) setMergeAsk({ from, into });
+  };
+  const merge = React.useCallback(async (fromId: string, intoId: string, note: string): Promise<string | void> => {
+    const json = await post('/api/tasks/merge', { fromId, intoId, note }).catch(() => null);
+    if (!json?.success) return json?.error || 'Could not merge the tasks.';
+    const kept = [mergeAsk?.from, mergeAsk?.into].find((task) => task?.id === intoId)?.title ?? 'the other task';
+    setMergeAsk(null);
+    engineRef.current?.closeTray();
+    offerUndo(`Merged into ${kept.replace(/[.…]+$/, '')}.${json.data?.combining ? ' OpenClaw is making one task of the two.' : ''}`,
+      () => post('/api/tasks/merge', { action: 'undo', mergeId: json.data?.mergeId }));
+    refreshTasks();
+  }, [mergeAsk, offerUndo, refreshTasks]);
 
   // Giving an undated task a When: it launches from the ground onto its ring.
   const setWhen = React.useCallback(async (taskId: string, short: string, dueDate: string) => {
@@ -790,6 +819,7 @@ export function SunriseHero() {
       )}
       <div style={{ position: 'relative', zIndex: 70 }}>
         <LetGoReasonModal taskText={letGoAsk?.title ?? null} onCancel={() => setLetGoAsk(null)} onConfirm={letGo} />
+        <MergeTasksModal ask={mergeAsk} onCancel={() => setMergeAsk(null)} onConfirm={merge} />
       </div>
     </section>
   );

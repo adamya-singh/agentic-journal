@@ -398,6 +398,17 @@ input.need{border-color:#e0572a!important;box-shadow:0 0 0 3px rgba(224,87,42,.2
 .narrow .thing:not(.hook){border-radius:14px}
 /* The opened form's one button. */
 .shape.full .p-actions .go{max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* One task carried onto another, to merge them: a chip under the pointer says what letting go will do, the task
+   picked up fades where it was, and the one it is over lights up. */
+.sr-sky.merging{user-select:none;-webkit-user-select:none;cursor:grabbing}
+.sr-sky.merging .thing,.sr-sky.merging .mote{cursor:grabbing}
+.thing.mrg-from,.mote.mrg-from{opacity:.4}
+.thing.mrg-over{z-index:9;outline:3px solid var(--signal);outline-offset:3px;box-shadow:0 0 0 1px rgba(255,255,255,.7),0 0 38px 10px rgba(255,122,47,.6)}
+.mote.mrg-over{color:#fff}
+.mote.mrg-over::before{background:rgba(255,122,47,.35);box-shadow:0 0 0 2px var(--signal),0 0 18px 6px rgba(255,122,47,.55)}
+.sr-merge-chip{position:fixed;left:0;top:0;z-index:90;max-width:340px;padding:6px 13px;border-radius:999px;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  background:rgba(20,12,6,.92);color:#fff6ec;font:500 12.5px var(--sans);box-shadow:0 0 0 1px rgba(255,255,255,.22),0 12px 26px -10px rgba(0,0,0,.8)}
+.sr-merge-chip.ok{background:var(--signal);color:#1b0d05;font-weight:600;box-shadow:0 0 0 1px rgba(255,255,255,.5),0 12px 26px -8px rgba(255,122,47,.7)}
 /* The workspace: a task opened in place. What it holds is drawn by React (TaskPane). */
 .sr-pane{position:absolute;left:0;top:0;z-index:12;width:0;height:0;border-radius:16px;opacity:0;pointer-events:none;overflow:hidden;
   background:linear-gradient(180deg,#fff8ef,#ffefdc);color:#24140a;
