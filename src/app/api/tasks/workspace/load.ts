@@ -17,8 +17,9 @@ export function loadWorkspace(taskId: string): { view: WorkspaceView; work: Reso
   const surfaces = deriveSurfaces({
     links: brief?.links ?? [],
     next: brief?.next ? { label: brief.next.label, ...(brief.next.href ? { href: brief.next.href } : {}) } : null,
-    work: work ? { title: work.title, href: work.href, blocks: work.blocks.length } : null,
+    work: work ? { title: work.title, href: work.href, blocks: work.blocks.filter((block) => block.kind !== 'file').length } : null,
     pasted: readPastedTabs(taskId),
+    files: (work?.blocks ?? []).flatMap((block) => (block.kind === 'file' ? [{ id: block.id, path: block.path, ...(block.label ? { label: block.label } : {}) }] : [])),
   });
   return { view: workspaceView({ taskId, title: ref.task.text, work, surfaces }), work };
 }

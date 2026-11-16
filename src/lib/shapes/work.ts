@@ -20,10 +20,31 @@ export type WorkBlock =
   | {kind: 'timer', id: string, label: string, seconds: number, steps?: string[]} // a rehearsal, a workout, a sprint
   | {kind: 'reading', id: string, title: string, by?: string, href?: string, excerpt?: string} // something to read
   | {kind: 'part', id: string, part: Part} // a picture from the shapes bank: a path, a number, facts
+  | {kind: 'file', id: string, path: string, label?: string, notes?: string[]} // a real file he is working on, shown as it is; notes: what he will say, one per page
 export type WorkKind = WorkBlock['kind']
-export const workKinds: readonly WorkKind[] = ['doc', 'checklist', 'letter', 'problem', 'fields', 'choices', 'slides', 'timer', 'reading', 'part']
+export type FileBlock = Extract<WorkBlock, {kind: 'file'}>
+export const workKinds: readonly WorkKind[] = ['doc', 'checklist', 'letter', 'problem', 'fields', 'choices', 'slides', 'timer', 'reading', 'part', 'file']
 
 export const workLimits = {blocks: 6, body: 4000, text: 600, short: 120, items: 12, total: 12_000} as const
+// A file's notes are his words for each page, not a draft of the work: they have their own room.
+export const fileLimits = {pages: 40, note: 1200, path: 400} as const
+
+/**
+ * Where a file of the task is, as a path inside OpenClaw's workspace folder ("deck/talk.pdf"). It may be given
+ * from the home folder ("~/.openclaw/workspace/deck/talk.pdf", "/home/x/.openclaw/workspace/deck/talk.pdf").
+ * Null for anything that is not a plain path inside that folder: another absolute path, one that climbs out
+ * with "..", a hidden file or folder, a web address.
+ */
+export function workspacePath(input: unknown): string | null {
+  if (typeof input !== 'string') return null
+  const raw = input.trim()
+  if (raw === '' || raw.length > fileLimits.path || /[\0\\\n\r]/.test(raw) || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return null
+  const inside = raw.replace(/^(?:~|\/home\/[^/]+|\/root)\/\.openclaw\/workspace(?:\/|$)/, '')
+  if (inside.startsWith('/') || inside.startsWith('~')) return null
+  const parts = inside.split('/').filter(part => part !== '' && part !== '.')
+  if (parts.length === 0 || parts.some(part => part === '..' || part.startsWith('.'))) return null
+  return parts.join('/')
+}
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value)
 const isHttp = (value: unknown): value is string => {
@@ -116,6 +137,13 @@ function parseBlock(raw: unknown, index: number): {block: WorkBlock, problem: nu
       delete part.from
       return {block: {kind, id, part}, problem: null}
     }
+    case 'file': {
+      const path = workspacePath(raw['path'])
+      if (path === null) return drop('its path is not a file inside the OpenClaw workspace folder')
+      const notes = (Array.isArray(raw['notes']) ? raw['notes'] : []).slice(0, fileLimits.pages).map(note => long(note, fileLimits.note) ?? '')
+      while (notes.length > 0 && notes[notes.length - 1]!.trim() === '') notes.pop()
+      return {block: {kind, id, path, ...optional('label', short(raw['label'], 80)), ...notes.length > 0 ? {notes} : {}}, problem: null}
+    }
     default:
       return {block: null, problem: `unknown block ${JSON.stringify(raw['kind'])} dropped`}
   }
@@ -136,7 +164,8 @@ export function parseBlocks(raw: unknown): {blocks: WorkBlock[], problems: strin
     if (read.block === null) { problems.push(read.problem); continue }
     if (blocks.length >= workLimits.blocks) { problems.push(`${read.block.kind} block dropped, a task opens to at most ${workLimits.blocks}`); continue }
     const block = seen.has(read.block.id) ? {...read.block, id: `${read.block.id}-${index}`} : read.block
-    size += JSON.stringify(block).length
+    // A file's notes do not count against the work's size: they have their own limits.
+    size += JSON.stringify(block.kind === 'file' ? {...block, notes: []} : block).length
     if (size > workLimits.total) { problems.push(`${block.kind} block dropped, the work is over ${workLimits.total} characters`); break }
     if (hasSlot(block)) problems.push(`${block.kind} block has a fill-in slot like "[Insert …]": write the real thing or leave the line open`)
     seen.add(block.id)
@@ -150,7 +179,7 @@ const SLOT = /\[(?:insert|your|author|year|x|n|specific|topic|name|date|title|tb
 export const hasSlot = (block: WorkBlock) => SLOT.test(JSON.stringify(block).replace(/[-*]\s+\[[ xX]\]/g, ''))
 
 /** A block he is meant to act in: where "jump in" points. Pictures, readings and timers are context. */
-export const isActive = (block: WorkBlock) => block.kind !== 'part' && block.kind !== 'reading' && block.kind !== 'timer'
+export const isActive = (block: WorkBlock) => block.kind !== 'part' && block.kind !== 'reading' && block.kind !== 'timer' && block.kind !== 'file'
 
 /** The blocks as the text OpenClaw reads in its brief prompt. */
 export function workPrompt(): string {
@@ -169,6 +198,7 @@ export function workPrompt(): string {
     '- timer (label, seconds, steps?): a rehearsal, a workout or a timed sprint, with its steps.',
     '- reading (title, by?, href?, excerpt?): the thing to read, with where to open it. Follow it with a doc for his notes.',
     '- part (part): one read-only picture from the parts above, e.g. the steps to the deadline or a few facts.',
+    `- file (path, label?, notes?): a real file of the task that you made or found in your workspace folder (a deck exported to PDF, a document, an image), shown to him as it is, page by page. path is inside ~/.openclaw/workspace. notes is what he will say, one string per page, at most ${fileLimits.note} characters each. When the work is a file, send the file block and do not also copy the file's content into slides or a doc.`,
     'No fill-in slots. Never write a bracketed blank such as [Insert quote], [Author], [Year], [topic] or "Session [X]", and never a line that only describes what should go there. Where you read the real thing (the reading\'s title and author, the session, the example), write it. Where only he can supply the words, end the line with a colon and leave it open.',
     'Every word in a block must be true to what you read. Never invent a problem, a quote, a field, a slide or an option, and never fill a block with placeholder text. If you could not read the real thing (the problem set, the form, the thread), do not send that block: say what you could not reach in a flag instead.',
   ].join('\n')

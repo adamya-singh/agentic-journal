@@ -5,7 +5,9 @@
 // - Left, the brief, folded away unless the screen is very wide: what OpenClaw says about the task (why it is easy,
 //   what it already did), the facts of the task in one strip, what OpenClaw wants him to know, and everything else
 //   the Journal knows, folded.
-// - Middle, the surfaces, one tab each. "Work" is what OpenClaw started, each block drawn as the thing it is (a
+// - Middle, the surfaces, one tab each. A real file of the task (a `file` block of its work: the deck's PDF, a
+//   document) is shown as it is (FileSurface), with what he will say under each page; a task with a file opens on
+//   it. "Work" is what OpenClaw started, each block drawn as the thing it is (a
 //   letter on paper, a slide lit on a stage, a page with a margin, a list to tick), saving itself as he works; with
 //   nothing started it offers to have OpenClaw start it, or to start it himself. Every real link the task has is a
 //   web tab, shown live in OpenClaw's own browser (BrowserSurface); he can paste an address for another.
@@ -22,14 +24,16 @@ import { getCurrentDateISO } from '@/lib/current-date';
 import type { BriefAction, BriefRelated, TaskBrief } from '@/lib/task-brief';
 import type { ResolvedWork } from '@/lib/hook-work';
 import type { IconName, Part } from '@/lib/shapes/catalog';
-import { isActive, type WorkBlock } from '@/lib/shapes/work';
+import { isActive, type FileBlock, type WorkBlock } from '@/lib/shapes/work';
 import { iconOf, renderPart } from '@/lib/shapes/render';
 import type { SunriseData } from '@/lib/sunrise/data';
 import { confirmText, runBriefAction } from '@/components/horizon/brief-actions';
 import { surfaceActivity, type ChatSurfaceRef, type SurfaceActivity } from '@/lib/task-chat';
-import { defaultSurfaceId, deriveSurfaces, pageKey, readPastedPages, safeWebUrl, surfaceId, withoutPastedPage, type Surface, type WebSurface } from '@/lib/task-surfaces';
+import { fileKind } from '@/lib/task-files';
+import { defaultSurfaceId, deriveSurfaces, fileSurfaceId, pageKey, readPastedPages, safeWebUrl, surfaceId, withoutPastedPage, type Surface, type WebSurface } from '@/lib/task-surfaces';
 import { BROWSER_SURFACE_CSS, BrowserSurface, type OpenedTab } from './BrowserSurface';
 import { CHATS_CSS, ChatsPanel, MiniChat, useTaskChats } from './WorkspaceChats';
+import { FILE_SURFACE_CSS, FileSurface } from './FileSurface';
 import { SESSIONS_PANEL_CSS, TaskSessions } from './WorkspaceSessions';
 import { TASK_WORK_CSS, TaskWorkStrip, useTaskWork } from './TaskWorkStrip';
 
@@ -550,7 +554,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
-export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
+export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + FILE_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -977,25 +981,35 @@ function BlockView({ block, title, href, lead, status, focusJump, onChange }: {
       );
     case 'part':
       return <div className="srp-block srp-pic"><Facts parts={[block.part]} /></div>;
+    case 'file':
+      return null;   // a file has a tab of its own (FileTab)
   }
 }
 
 /** What the pane and the work card share about the work on file: its version, and whether he has unsaved typing. */
-interface WorkSync { rev: number; busy: boolean }
+/**
+ * What the pane and what saves the work share: the version on file, whether he has unsaved typing, and the blocks
+ * as he last left them. The work card and a file's tab are drawn one at a time, each saving the same blocks; the
+ * one that is drawn next starts from what the last one held, not from the copy the pane first read.
+ */
+interface WorkSync { rev: number; busy: boolean; held?: { key: string; blocks: WorkBlock[] } }
+type SaveState = 'idle' | 'saving' | 'saved' | 'failed';
+/** One value per version of the work the pane was given: what is drawn from it is drawn again when it changes. */
+const workKey = (work: ResolvedWork) => `${work.baseHash}|${work.edited}|${work.rev}`;
 
-/** The started work: the step to take now, then its blocks, which save themselves as he works in them. */
-function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, onWork }: {
-  taskId: string; work: ResolvedWork; next: string; focusJump: boolean; narrow: boolean; quiet: boolean; again: boolean; sync: React.RefObject<WorkSync>; onWork: (work: ResolvedWork | null) => void;
-}) {
-  const [blocks, setBlocks] = React.useState(work.blocks);
-  const [state, setState] = React.useState<'idle' | 'saving' | 'saved' | 'failed'>('idle');
-  const saved = React.useRef(work.blocks);
+/** The work's blocks as he changes them, saving themselves a moment after he stops. */
+function useWorkSaver(taskId: string, work: ResolvedWork, sync: React.RefObject<WorkSync>, onWork: (work: ResolvedWork | null) => void) {
+  const key = workKey(work);
+  const held = sync.current.held?.key === key ? sync.current.held.blocks : null;
+  const [blocks, setBlocks] = React.useState(held ?? work.blocks);
+  const [state, setState] = React.useState<SaveState>('idle');
+  const saved = React.useRef(held ?? work.blocks);
   const timer = React.useRef<number | null>(null);
   const latest = React.useRef(blocks);
   latest.current = blocks;
   // The version on file his blocks started from, and the blocks he has changed since: OpenClaw may write the
   // work from a chat while he is in it, and a save then lays only his changed blocks over what it wrote.
-  const rev = React.useRef(work.rev);
+  const rev = React.useRef(held ? Math.max(work.rev, sync.current.rev) : work.rev);
   const dirty = React.useRef(new Set<string>());
 
   // One save is out at a time, and the next one sent is always the newest text. Two out together
@@ -1036,6 +1050,7 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, o
     const next = latest.current.map((b) => (b.id === block.id ? block : b));
     dirty.current.add(block.id);
     sync.current.busy = true;
+    sync.current.held = { key, blocks: next };
     setBlocks(next);
     setState('idle');
     if (timer.current) window.clearTimeout(timer.current);
@@ -1064,11 +1079,21 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, o
       void save(latest.current);
     }
   };
-  const edited = work.edited || blocks !== work.blocks;
+  return { blocks, state, change, takeTheirs };
+}
+
+/** The started work: the step to take now, then its blocks, which save themselves as he works in them. */
+function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, onWork }: {
+  taskId: string; work: ResolvedWork; next: string; focusJump: boolean; narrow: boolean; quiet: boolean; again: boolean; sync: React.RefObject<WorkSync>; onWork: (work: ResolvedWork | null) => void;
+}) {
+  const { blocks: all, state, change, takeTheirs } = useWorkSaver(taskId, work, sync, onWork);
+  // A file of the task has a tab of its own (FileTab): here are the blocks he works in.
+  const blocks = React.useMemo(() => all.filter((block) => block.kind !== 'file'), [all]);
+  const edited = work.edited || all !== work.blocks;
   const status = (
     <>
       <i className={`led${state === 'saving' ? ' busy' : state === 'failed' ? ' bad' : ''}`} aria-hidden="true" />
-      <span role="status">{state === 'saving' ? 'Saving…' : state === 'failed' ? 'Not saved. Keep typing to retry' : state === 'idle' && blocks === work.blocks && work.by === 'openclaw' ? 'Written by OpenClaw in chat' : state === 'saved' || edited ? 'Saved' : 'Started by OpenClaw'}</span>
+      <span role="status">{state === 'saving' ? 'Saving…' : state === 'failed' ? 'Not saved. Keep typing to retry' : state === 'idle' && all === work.blocks && work.by === 'openclaw' ? 'Written by OpenClaw in chat' : state === 'saved' || edited ? 'Saved' : 'Started by OpenClaw'}</span>
     </>
   );
   // The block to jump into is the first one he acts in; what comes before it is context.
@@ -1105,6 +1130,23 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, o
       )}
     </section>
   );
+}
+
+/** A file of the task, in its own tab: the file as it is, and (a deck) what he will say on each page, saved with the work. */
+function FileTab({ taskId, work, blockId, sync, onWork, page, onPage, onAsk, head }: {
+  taskId: string; work: ResolvedWork; blockId: string; sync: React.RefObject<WorkSync>; onWork: (work: ResolvedWork | null) => void;
+  page: number; onPage: (page: number) => void; onAsk: () => void; head: React.ReactNode;
+}) {
+  const { blocks, state, change } = useWorkSaver(taskId, work, sync, onWork);
+  const block = blocks.find((each): each is FileBlock => each.kind === 'file' && each.id === blockId);
+  if (!block) return null;
+  const note = (index: number, text: string) => {
+    const notes = [...(block.notes ?? [])];
+    while (notes.length <= index) notes.push('');
+    notes[index] = text;
+    change({ ...block, notes });
+  };
+  return <FileSurface taskId={taskId} block={block} page={page} onPage={onPage} onNote={note} saving={state} onAsk={onAsk} head={head} />;
 }
 
 // ───────────── the side ─────────────
@@ -1271,14 +1313,14 @@ const ICON_HUE: Record<string, keyof typeof HUES> = {
 };
 // The kind of page: what the work is decides how wide it is and what it looks like.
 const SCENES: Record<WorkBlock['kind'], string> = {
-  doc: 'page', checklist: 'list', letter: 'letter', problem: 'problem', fields: 'form', choices: 'pick', slides: 'deck', timer: 'timer', reading: 'read', part: 'page',
+  doc: 'page', checklist: 'list', letter: 'letter', problem: 'problem', fields: 'form', choices: 'pick', slides: 'deck', timer: 'timer', reading: 'read', part: 'page', file: 'page',
 };
 
 // ───────────── the pane ─────────────
 
 // The word on a work tab: what sort of thing the work is.
 const WORK_TAGS: Record<WorkBlock['kind'], string> = {
-  doc: 'doc', checklist: 'list', letter: 'mail', problem: 'work', fields: 'form', choices: 'pick', slides: 'slides', timer: 'timer', reading: 'read', part: 'work',
+  doc: 'doc', checklist: 'list', letter: 'mail', problem: 'work', fields: 'form', choices: 'pick', slides: 'slides', timer: 'timer', reading: 'read', part: 'work', file: 'file',
 };
 // How wide the opened pane is for a sky this wide (engine.ts workRect), and how many of the three parts fit: a
 // phone shows one at a time; a wide screen shows the work and OpenClaw, and the brief too when all three fit.
@@ -1578,13 +1620,18 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       else window.localStorage.removeItem(closedKey);
     } catch { /* it still closes for now */ }
   }, [closedKey]);
+  // The work's real files have a tab each; the blocks he works in are the Work tab.
+  const rest = React.useMemo(() => (work?.blocks ?? []).filter((block) => block.kind !== 'file'), [work]);
   const surfaces = React.useMemo<Surface[]>(() => deriveSurfaces({
     links: brief?.links ?? [],
     next: n ? { label: n.label, ...(n.href ? { href: n.href } : {}) } : null,
-    work: work ? { title: work.title, href: work.href, blocks: work.blocks.length } : null,
+    work: work ? { title: work.title, href: work.href, blocks: rest.length } : null,
     pasted,
-  }).filter((surface) => surface.kind !== 'web' || surface.pasted === true || !closed.includes(pageKey(surface.url))), [brief?.links, n, work, pasted, closed]);
-  const hasWork = !!work && work.blocks.length > 0;
+    files: (work?.blocks ?? []).flatMap((block) => (block.kind === 'file' ? [{ id: block.id, path: block.path, ...(block.label ? { label: block.label } : {}) }] : [])),
+  }).filter((surface) => surface.kind !== 'web' || surface.pasted === true || !closed.includes(pageKey(surface.url))), [brief?.links, n, work, rest, pasted, closed]);
+  const hasWork = rest.length > 0;
+  // The page of each file he is on.
+  const [filePage, setFilePage] = React.useState<Record<string, number>>({});
   // He has not chosen a tab until he presses one: until then the task shows where it would open by itself.
   const [picked, setPicked] = React.useState<string | null>(null);
   const settled = brief !== undefined && work !== undefined;
@@ -1629,7 +1676,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const [pages, setPages] = React.useState<Record<string, { url: string; title: string }>>({});
   const choose = React.useCallback((id: string) => {
     setPicked(id);
-    if (id !== 'work') setArmed((was) => (was[id] ? was : { ...was, [id]: true }));
+    if (id.startsWith('web:')) setArmed((was) => (was[id] ? was : { ...was, [id]: true }));
   }, []);
   /** Shows a page as a tab, adding one when the task has no tab for it. Null when it is not a web address. */
   const showPage = React.useCallback((href: string): string | null => {
@@ -1652,9 +1699,10 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const about = React.useMemo<ChatSurfaceRef | null>(() => {
     if (!selected) return null;
     if (selected.kind === 'work') return hasWork ? { kind: 'work', label: selected.label } : null;
+    if (selected.kind === 'file') return { kind: 'file', label: selected.label, block: selected.block, ...(fileKind(selected.path) === 'pdf' ? { page: filePage[selected.id] ?? 1 } : {}) };
     const page = pages[selected.id];
     return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
-  }, [selected, pages, hasWork]);
+  }, [selected, pages, hasWork, filePage]);
   const chats = useTaskChats(taskId, phone ? tab === 'chat' : chatsOpen);
   // Opened from the bubble under the task: that chat is the one showing.
   const openChat = chats.open;
@@ -1665,6 +1713,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const found: Record<string, SurfaceActivity> = {};
     for (const surface of surfaces) {
       const refs: ChatSurfaceRef[] = surface.kind === 'work' ? [{ kind: 'work', label: '' }]
+        : surface.kind === 'file' ? [{ kind: 'file', label: '', block: surface.block }]
         : [surface.url, pages[surface.id]?.url].filter((url): url is string => !!url).map((url) => ({ kind: 'web', label: '', url }));
       const doing = surfaceActivity(chats.threads, refs);
       if (doing) found[surface.id] = doing;
@@ -1718,7 +1767,12 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
 
   const showSurface = React.useCallback((ref: ChatSurfaceRef) => {
     if (ref.kind === 'work') choose('work');
-    else if (ref.url) showPage(ref.url);
+    else if (ref.kind === 'file') {
+      if (!ref.block) return;
+      const id = fileSurfaceId(ref.block);
+      choose(id);
+      if (ref.page) setFilePage((was) => ({ ...was, [id]: ref.page as number }));
+    } else if (ref.url) showPage(ref.url);
     if (phone) setTab('work');
   }, [choose, showPage, phone]);
   const [adding, setAdding] = React.useState(false);
@@ -1779,11 +1833,14 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   // On a wide sheet the caret goes straight to the place to pick up from; on a phone that would raise the keyboard.
   const focusJump = cols > 1;
 
-  const lead = work ? work.blocks.find(isActive) ?? work.blocks[0] : undefined;
+  const lead = rest.find(isActive) ?? rest[0];
   // The form's rows are its small picture of a list; opened, the list itself is there to tick.
-  const listed = work?.blocks.some((block) => block.kind === 'checklist') ?? false;
+  const listed = rest.some((block) => block.kind === 'checklist');
   const shown = React.useMemo(() => parts.filter((part) => !(listed && part.kind === 'rows')), [parts, listed]);
-  const tally = work && work.blocks.length === 1 && lead?.kind === 'checklist' ? tallyOf(lead.body) : null;
+  const tally = rest.length === 1 && lead?.kind === 'checklist' ? tallyOf(lead.body) : null;
+  // Above a file: the task's next step where it leads somewhere, and its checklist's tally, which opens the list.
+  const checks = rest.find((block) => block.kind === 'checklist');
+  const checked = checks?.kind === 'checklist' ? tallyOf(checks.body) : null;
   // A task whose list has one box left, or none, is a verdict, not a workspace: the statement, and one button.
   const verdict = tally !== null && tally.all - tally.ticked <= 1;
   const scene = verdict ? 'verdict' : lead ? SCENES[lead.kind] : 'empty';
@@ -1793,7 +1850,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const headline = says?.[0] || form?.name || title;
   const why = says ? says[1] : form?.what ?? '';
   const links = (brief?.links ?? []).filter((l) => l.href !== n?.href);
-  const webCount = surfaces.length - 1;
+  const webCount = surfaces.filter((surface) => surface.kind === 'web').length;
   const doing = selected ? activity[selected.id] : undefined;
   const chatKeys = React.useMemo(() => chats.threads.map((t) => t.sessionKey), [chats.threads]);
   // What OpenClaw is doing about the surface that is showing, as far as the chats say. It opens that chat.
@@ -1810,7 +1867,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const chatBusy = chats.working > 0 || !!chats.thread?.pending;
 
   return (
-    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${work && work.blocks.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ` wide${briefOpen ? ' brief-on' : ''}${chatsOpen ? ' chats-on' : ''}`}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
+    <div ref={root} className={`srp ws cols-${cols} scene-${scene}${rest.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ` wide${briefOpen ? ' brief-on' : ''}${chatsOpen ? ' chats-on' : ''}`}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
       {phone && (
         <header className="srw-top">
           <button type="button" className="srw-back" onClick={onClose} aria-label="Close the task, back to Sunrise">‹</button>
@@ -1927,19 +1984,19 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
         <div className="srw-tabs">
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
             {surfaces.map((surface) => {
-              const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : hasWork ? surface.label : 'Work';
+              const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : surface.kind === 'file' || hasWork ? surface.label : 'Work';
               const state = activity[surface.id]?.state;
-              const closes = surface.kind === 'web';
+              const web = surface.kind === 'web' ? surface : null;
               return (
-                <span key={surface.id} role="presentation" className={`srw-tabwrap${closes ? ' closes' : ''}`}>
-                  <button type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.label} onClick={() => choose(surface.id)}
-                    onAuxClick={closes ? (event) => { if (event.button === 1) { event.preventDefault(); closeTab(surface); } } : undefined}
-                    onKeyDown={closes ? (event) => { if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); closeTab(surface); } } : undefined}>
-                    <small>{surface.kind === 'web' ? 'web' : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
+                <span key={surface.id} role="presentation" className={`srw-tabwrap${web ? ' closes' : ''}`}>
+                  <button type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.kind === 'file' ? `~/.openclaw/workspace/${surface.path}` : surface.label} onClick={() => choose(surface.id)}
+                    onAuxClick={web ? (event) => { if (event.button === 1) { event.preventDefault(); closeTab(web); } } : undefined}
+                    onKeyDown={web ? (event) => { if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); closeTab(web); } } : undefined}>
+                    <small>{surface.kind === 'web' ? 'web' : surface.kind === 'file' ? surface.tag : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
                     <span>{name}</span>
                     {state && <i className={`srw-dot ${state}`} role="img" aria-label={state === 'working' ? 'OpenClaw is working on this' : 'OpenClaw answered'} />}
                   </button>
-                  {closes && <button type="button" className="srw-tabx" onClick={() => closeTab(surface)} aria-label={`Close ${name}`} title="Close this tab (or middle-click it)">×</button>}
+                  {web && <button type="button" className="srw-tabx" onClick={() => closeTab(web)} aria-label={`Close ${name}`} title="Close this tab (or middle-click it)">×</button>}
                 </span>
               );
             })}
@@ -1972,11 +2029,38 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               })}
               onPage={(page) => setPages((was) => (was[selected.id]?.url === page.url && was[selected.id]?.title === page.title ? was : { ...was, [selected.id]: page }))}
             />
+          ) : selected?.kind === 'file' && work ? (
+            <FileTab
+              key={`${selected.id}|${workKey(work)}`}
+              taskId={taskId}
+              work={work}
+              blockId={selected.block}
+              sync={workSync}
+              onWork={setWork}
+              page={filePage[selected.id] ?? 1}
+              onPage={(page) => setFilePage((was) => ({ ...was, [selected.id]: page }))}
+              onAsk={() => showChats(true)}
+              head={(
+                <>
+                  {n?.href && <a className="srp-jump" href={n.href} {...outLink(n.href)} onClick={linkClick(n.href)}><i className="play" aria-hidden="true">▶</i><span>{n.label}</span></a>}
+                  {work.href && work.href !== n?.href && <a href={work.href} target="_blank" rel="noopener noreferrer">Finish it there ↗</a>}
+                  {checks && checked && checked.all > 0 && (
+                    <>
+                      <span className="sp" />
+                      <button type="button" className={`srf-tally${checked.ticked < checked.all ? ' open' : ''}`} onClick={() => choose('work')} title="Open the list">
+                        {checked.ticked === checked.all && <span aria-hidden="true">✓</span>}
+                        {checks.kind === 'checklist' && checks.label ? checks.label : 'To tick'} · {checked.ticked} of {checked.all}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            />
           ) : (
             <div className="srw-work">
               <div className="srp-col">
                 {work ? (
-                  <WorkCard key={`${work.baseHash}|${work.edited}|${work.rev}`} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict && !workAgain} narrow={surfaceWidth < 820} quiet={verdict} again={workAgain} sync={workSync} onWork={setWork} />
+                  <WorkCard key={workKey(work)} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict && !workAgain} narrow={surfaceWidth < 820} quiet={verdict} again={workAgain} sync={workSync} onWork={setWork} />
                 ) : (
                   <section className="srp-work srp-empty" aria-label="The work">
                     {work === undefined ? <p>Opening…</p> : filling ? (

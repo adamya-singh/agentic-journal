@@ -255,7 +255,7 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
 
 /** The surface a chat or a message is about. Pressing it shows that surface. */
 export function AboutChip({ about, onShow, said }: { about: ChatSurfaceRef; onShow?: (about: ChatSurfaceRef) => void; said?: boolean }) {
-  const inner = <><small>{about.kind === 'web' ? 'web' : 'work'}</small><span>{about.label}</span></>;
+  const inner = <><small>{about.kind === 'web' ? 'web' : about.kind === 'file' ? 'file' : 'work'}</small><span>{about.label}{about.kind === 'file' && about.page ? ` · page ${about.page}` : ''}</span></>;
   const title = about.url ?? about.label;
   return onShow
     ? <button type="button" className={`srk-about${said ? ' said' : ''}`} title={title} onClick={(e) => { e.stopPropagation(); onShow(about); }}>{inner}</button>
@@ -341,7 +341,8 @@ const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface 
   );
 }, (was, now) => was.onShowSurface === now.onShowSurface && was.message.role === now.message.role && was.message.text === now.message.text
   && was.message.at === now.message.at && was.message.about?.kind === now.message.about?.kind && was.message.about?.label === now.message.about?.label
-  && was.message.about?.url === now.message.about?.url && was.message.from === now.message.from);
+  && was.message.about?.url === now.message.about?.url && was.message.about?.block === now.message.about?.block && was.message.about?.page === now.message.about?.page
+  && was.message.from === now.message.from);
 
 /**
  * The chats panel: the list, or the one chat that is open. `phone` is the whole Chat tab of a phone's workspace:

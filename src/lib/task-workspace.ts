@@ -4,7 +4,7 @@
 // and not only in the chat or in a file of OpenClaw's own.
 // Pure: no filesystem. Server only (it hashes), so the page never imports it.
 import { workHash, type ResolvedWork, type WorkWriter } from '@/lib/hook-work';
-import { parseBlocks, workLimits, type WorkBlock } from '@/lib/shapes/work';
+import { fileLimits, parseBlocks, workLimits, type WorkBlock } from '@/lib/shapes/work';
 import type { Surface } from '@/lib/task-surfaces';
 import type { ChatSurfaceRef } from '@/lib/task-chat';
 
@@ -55,7 +55,7 @@ function workspaceRules(taskId: string): string[] {
   const { blocks, body, text } = workLimits;
   const file = `/tmp/workspace-${taskId.slice(0, 8)}.json`;
   return [
-    'You are in the chat of this task’s workspace in the Journal. He sees the workspace beside this chat: a Work tab (blocks he works in: a doc, a checklist, a letter, slides and so on) and one tab per web page of the task, shown in your browser.',
+    'You are in the chat of this task’s workspace in the Journal. He sees the workspace beside this chat: one tab per real file of the task (a "file" block: a PDF shown page by page as it is, with what he will say under each page; a document; an image), a Work tab (the other blocks, which he works in: a doc, a checklist, a letter and so on) and one tab per web page of the task, shown in your browser.',
     'The Work tab is where the work for this task lives, and you and he work in the same copy. When he asks you to write, draft, fill in, fix or continue something that is in the Work tab or belongs there (the slides, the outline, the letter, the answers), put it INTO the Work tab, then say in a line or two what you changed. Never leave the work only in this chat, and never only in a file of your own. He sees your change within a few seconds, without reloading. This needs no asking: it is what he asks for when he asks for the work.',
     'A draft to react to may be shown in the chat first when he asks for options or a proposal; once he says go ahead, it goes into the Work tab.',
     'Read the workspace as it stands (his latest edits included) before you change it:',
@@ -69,7 +69,8 @@ function workspaceRules(taskId: string): string[] {
     `{"taskId":"${taskId}","action":"close-tab","url":"https://..."} take off a tab that was added (the task’s own links stay)`,
     'The answer is the workspace after the change; "problems" names anything that was dropped or cut, so read it. Keep what he wrote unless he asks you to change it: change the block you are working on ("block") rather than rewriting all of them, and keep a block’s id when you change it.',
     `Blocks, each {"kind":"...","id":"<short stable name>",...}, at most ${blocks}: doc (label?, body: markdown, at most ${body} characters) · checklist (label?, body: "- [ ]" / "- [x]" lines) · letter (to, subject, body) · problem (label?, prompt, given?, work) · fields (label?, items: [{label, value, needs?, hint?}]) · choices (prompt, options: [{title, detail?, points?}], picked?) · slides (items: [{title, body?, notes?}], at: the slide to show) · timer (label, seconds, steps?) · reading (title, by?, href?, excerpt?). A slide’s body and notes, a problem’s prompt and a field’s value hold at most ${text} characters each. No bracketed fill-in slots like [Insert quote]: write the real thing or leave the line open.`,
-    'When the task also needs a file (a PDF to upload, a document), the Work tab holds what the file is made from and is changed first; then make the file from it, and give its full path in your answer and in the task’s Progress.',
+    `- file (path: inside ~/.openclaw/workspace, label?, notes?: what he will say, one string per page, at most ${fileLimits.note} characters each): a real file, shown as it is.`,
+    'When the work is a file (a deck exported to PDF, a document to upload), the file is the work. Make or change the file itself in your workspace folder, keep its path, and have a "file" block for it: he then sees the real pages, and a file you write again is shown again within a few seconds. Do not copy a file’s content into slides, a doc or any other block, and remove a block that only repeats a file. What he will say on each page goes in the file block’s "notes", not in a second file he cannot see. Give the file’s full path in your answer and in the task’s Progress too.',
   ];
 }
 
@@ -78,7 +79,9 @@ const who = (by: WorkWriter | null) => (by === 'openclaw' ? 'last written by you
 /** The workspace as it stands, in words and JSON. */
 function workspaceState(view: WorkspaceView, on: ChatSurfaceRef | null): string[] {
   const lines: string[] = [];
+  const file = on?.kind === 'file' ? view.work?.blocks.find((block) => block.kind === 'file' && block.id === on.block) : undefined;
   if (on?.kind === 'web' && on.url) lines.push(`He is on the tab of this page, open in your browser: ${on.label && on.label !== on.url ? `"${on.label}" ` : ''}${on.url} . When he says "this page", he means that tab: use your browser tool on it.`);
+  else if (on?.kind === 'file' && file?.kind === 'file') lines.push(`He is on the tab of this file, shown as it is: ~/.openclaw/workspace/${file.path}${on.page ? `, page ${on.page}` : ''} (file block "${file.id}"). When he says "this page", "this slide" or "this", he means ${on.page ? 'that page of ' : ''}that file: change the file itself and keep its path.`);
   else if (view.work) lines.push(`He is on the Work tab ("${view.work.title}"). When he says "this", "the slides", "the doc" or "the draft", he means what is in it.`);
   else lines.push('He is on the Work tab, and nothing has been started in it yet. A "write" starts it.');
   if (view.tabs.length > 0) lines.push('Web tabs:', ...view.tabs.map((tab) => `- ${tab.label}: ${tab.url}${tab.pasted ? ' (added)' : ''}`));
@@ -96,6 +99,10 @@ function workspaceState(view: WorkspaceView, on: ChatSurfaceRef | null): string[
  */
 export function workspaceBrief(view: WorkspaceView, tell: 'rules' | 'state' | 'where', on: ChatSurfaceRef | null): string {
   if (tell === 'where') {
+    if (on?.kind === 'file') {
+      const here = workspaceState({ ...view, tabs: [] }, on)[0] ?? '';
+      return here.startsWith('He is on the tab of this file') ? `${WORKSPACE_MARK}: nothing in it changed since your last turn. ${here}]` : '';
+    }
     if (on?.kind !== 'web' || !on.url) return '';
     return `${WORKSPACE_MARK}: nothing in it changed since your last turn. ${workspaceState({ ...view, work: null, tabs: [] }, on)[0]}]`;
   }

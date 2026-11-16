@@ -6,11 +6,13 @@
 import type { TaskBrief } from '@/lib/task-brief';
 import { pageKey } from '@/lib/task-surfaces';
 
-/** What he was looking at in the task's workspace when he wrote: the work OpenClaw started, or a page in OpenClaw's browser. */
+/** What he was looking at in the task's workspace when he wrote: the work OpenClaw started, a page in OpenClaw's browser, or a file of the task. */
 export interface ChatSurfaceRef {
-  kind: 'work' | 'web';
+  kind: 'work' | 'web' | 'file';
   label: string;
   url?: string;                  // a web surface's address
+  block?: string;                // a file surface's block of the work
+  page?: number;                 // the page of that file he was on, from 1
 }
 
 export interface TaskChatMessage {
@@ -105,10 +107,14 @@ export function chatTitle(firstMessage: string): string {
 /** A surface reference as it came over the wire, or null when it is not one. */
 export function parseSurfaceRef(raw: unknown): ChatSurfaceRef | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { kind, label, url } = raw as Record<string, unknown>;
-  if ((kind !== 'work' && kind !== 'web') || typeof label !== 'string') return null;
+  const { kind, label, url, block, page } = raw as Record<string, unknown>;
+  if ((kind !== 'work' && kind !== 'web' && kind !== 'file') || typeof label !== 'string') return null;
   const name = clip(label, 120);
   if (kind === 'work') return { kind, label: name || 'Work' };
+  if (kind === 'file') {
+    if (typeof block !== 'string' || block === '' || block.length > 60) return null;
+    return { kind, label: name || 'File', block, ...(typeof page === 'number' && Number.isInteger(page) && page >= 1 && page <= 9999 ? { page } : {}) };
+  }
   if (typeof url !== 'string' || !/^https?:\/\//i.test(url) || url.length > 2000) return null;
   return { kind, label: name || url, url };
 }
@@ -171,7 +177,7 @@ export function latestChat(threads: TaskChatThread[] | undefined): TaskChatThrea
 export interface SurfaceActivity { state: 'working' | 'answered'; threadId: string; ask: string }
 
 const sameSurface = (a: ChatSurfaceRef, b: ChatSurfaceRef) =>
-  a.kind === b.kind && (a.kind === 'work' || (!!a.url && !!b.url && pageKey(a.url) === pageKey(b.url)));
+  a.kind === b.kind && (a.kind === 'work' || (a.kind === 'file' ? !!a.block && a.block === b.block : !!a.url && !!b.url && pageKey(a.url) === pageKey(b.url)));
 
 /**
  * The one thing known about OpenClaw and a surface: a chat whose last request was sent from that surface has a turn

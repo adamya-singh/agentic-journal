@@ -1,7 +1,9 @@
-// The surfaces of a task's workspace: the work OpenClaw started (or the place to start it), and one web page per
-// real link the task has, shown in OpenClaw's own browser. Nothing here is made up: a task with no links has no
-// web surfaces until he pastes an address himself.
+// The surfaces of a task's workspace: one per real file of its work (a `file` block: the PDF, the document, shown
+// as it is), the work OpenClaw started in blocks (or the place to start it), and one web page per real link the
+// task has, shown in OpenClaw's own browser. Nothing here is made up: a task with no files has no file surfaces,
+// and one with no links has no web surfaces until he pastes an address himself.
 // Pure: the page, the browser route and the tests share it.
+import { fileExt, fileName } from '@/lib/task-files';
 
 export interface WorkSurface { id: 'work'; kind: 'work'; label: string }
 export interface WebSurface {
@@ -12,13 +14,24 @@ export interface WebSurface {
   tag: string;                   // a word for where it leads: "canvas", "posting", "link"
   pasted?: true;                 // he added it himself
 }
-export type Surface = WorkSurface | WebSurface;
+export interface FileSurface {
+  id: string;                    // "file:<block id>"
+  kind: 'file';
+  block: string;                 // the id of the work's `file` block
+  label: string;
+  path: string;                  // inside OpenClaw's workspace folder
+  tag: string;                   // its extension: "pdf", "md"
+}
+export type Surface = WorkSurface | WebSurface | FileSurface;
 
 export interface SurfaceInputs {
   links: { label: string; href: string; kind: string }[];
   next: { label: string; href?: string } | null;
+  /** `blocks` counts the blocks he works in: the work's blocks that are not files. */
   work: { title: string; href: string | null; blocks: number } | null;
   pasted?: string[];
+  /** The work's `file` blocks, in their order. */
+  files?: { id: string; path: string; label?: string }[];
 }
 
 const MAX_URL = 2000;
@@ -52,14 +65,16 @@ export function pageKey(url: string): string {
 }
 
 export const surfaceId = (url: string) => `web:${pageKey(url)}`;
+export const fileSurfaceId = (block: string) => `file:${block}`;
 
 function hostLabel(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; }
 }
 
 /**
- * The workspace's tabs, in order: the work, then the place the next step leads, the place the started work gets
- * finished, the task's links, and the pages he pasted. One tab per page however many times it is linked.
+ * The workspace's tabs, in order: the task's files, the work (left out when the files are all the work there is),
+ * then the place the next step leads, the place the started work gets finished, the task's links, and the pages
+ * he pasted. One tab per page however many times it is linked.
  */
 export function deriveSurfaces(input: SurfaceInputs): Surface[] {
   const web: WebSurface[] = [];
@@ -76,11 +91,20 @@ export function deriveSurfaces(input: SurfaceInputs): Surface[] {
   if (input.work?.href) add(input.work.href, hostLabel(input.work.href), 'finish');
   for (const link of input.links) add(link.href, link.label, link.kind === 'app' ? 'journal' : link.kind);
   for (const url of input.pasted ?? []) add(url, hostLabel(url), 'page', true);
-  return [{ id: 'work', kind: 'work', label: input.work?.title.trim() || 'Work' }, ...web];
+  const files: FileSurface[] = (input.files ?? []).map((file) => ({
+    id: fileSurfaceId(file.id), kind: 'file', block: file.id, label: file.label?.trim() || fileName(file.path), path: file.path, tag: fileExt(file.path) || 'file',
+  }));
+  const work: WorkSurface[] = files.length > 0 && (input.work?.blocks ?? 0) === 0 ? [] : [{ id: 'work', kind: 'work', label: input.work?.title.trim() || 'Work' }];
+  return [...files, ...work, ...web];
 }
 
-/** The tab a task opens on: the work when OpenClaw started some, else its first page, else the empty work tab. */
+/**
+ * The tab a task opens on: its first file when it has one (the thing being worked on), else the work when OpenClaw
+ * started some, else its first page, else the empty work tab.
+ */
 export function defaultSurfaceId(surfaces: Surface[], hasWork: boolean): string {
+  const file = surfaces.find((surface) => surface.kind === 'file');
+  if (file) return file.id;
   if (hasWork) return 'work';
   return surfaces.find((surface) => surface.kind === 'web')?.id ?? 'work';
 }
