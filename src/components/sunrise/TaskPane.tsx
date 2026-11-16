@@ -458,6 +458,13 @@ const WORKSPACE_CSS = `
 .srw-tabwrap.closes .srw-tab{padding-right:36px}
 .srp .srw-tabx{position:absolute;right:5px;top:50%;width:26px;height:26px;margin-top:-14px;display:grid;place-items:center;padding:0;border:0;border-radius:50%;background:rgba(34,19,10,.07);color:#5b4230;font:600 17px/1 var(--sans);cursor:pointer}
 .srp .srw-tabx:hover,.srp .srw-tabx:focus-visible{background:rgba(34,19,10,.12);color:#22130a;outline:0}
+/* How big the tab that is showing is drawn: his zoom for that one tab. */
+.srw-zoom{flex:none;display:inline-flex;align-items:center;height:34px;margin-bottom:5px;border-radius:11px;border:1px solid rgba(40,22,10,.18);background:linear-gradient(180deg,#fff,#f1ece5);box-shadow:inset 0 1px 0 #fff,0 2px 0 rgba(40,22,10,.1);overflow:hidden}
+.srp .srw-zoom button{height:100%;min-width:30px;padding:0 6px;border:0;background:none;color:#22130a;font:500 15px/1 var(--sans);cursor:pointer}
+.srp .srw-zoom button:hover{background:rgba(34,19,10,.07)}
+.srp .srw-zoom button:disabled{opacity:.35;cursor:default;background:none}
+.srp .srw-zoom .pct{min-width:50px;font:500 11.5px var(--mono);border-left:1px solid rgba(40,22,10,.12);border-right:1px solid rgba(40,22,10,.12)}
+.srp .srw-zoom.on .pct{color:var(--a);font-weight:600}
 .srw-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--a)}
 .srw-dot.working{animation:srp-pulse 1.4s ease-in-out infinite}
 /* What OpenClaw is doing about the surface that is showing, as far as the chats say. It opens that chat. */
@@ -1133,9 +1140,9 @@ function WorkCard({ taskId, work, next, focusJump, narrow, quiet, again, sync, o
 }
 
 /** A file of the task, in its own tab: the file as it is, and (a deck) what he will say on each page, saved with the work. */
-function FileTab({ taskId, work, blockId, sync, onWork, page, onPage, onAsk, head }: {
+function FileTab({ taskId, work, blockId, sync, onWork, page, onPage, onAsk, head, zoom }: {
   taskId: string; work: ResolvedWork; blockId: string; sync: React.RefObject<WorkSync>; onWork: (work: ResolvedWork | null) => void;
-  page: number; onPage: (page: number) => void; onAsk: () => void; head: React.ReactNode;
+  page: number; onPage: (page: number) => void; onAsk: () => void; head: React.ReactNode; zoom: number;
 }) {
   const { blocks, state, change } = useWorkSaver(taskId, work, sync, onWork);
   const block = blocks.find((each): each is FileBlock => each.kind === 'file' && each.id === blockId);
@@ -1146,7 +1153,7 @@ function FileTab({ taskId, work, blockId, sync, onWork, page, onPage, onAsk, hea
     notes[index] = text;
     change({ ...block, notes });
   };
-  return <FileSurface taskId={taskId} block={block} page={page} onPage={onPage} onNote={note} saving={state} onAsk={onAsk} head={head} />;
+  return <FileSurface taskId={taskId} block={block} page={page} onPage={onPage} onNote={note} saving={state} onAsk={onAsk} head={head} zoom={zoom} />;
 }
 
 // ───────────── the side ─────────────
@@ -1326,6 +1333,23 @@ const WORK_TAGS: Record<WorkBlock['kind'], string> = {
 // phone shows one at a time; a wide screen shows the work and OpenClaw, and the brief too when all three fit.
 const paneWidthFor = (sky: number) => (sky < 700 ? sky - 16 : sky - 24);
 const colsFor = (sky: number): 1 | 2 | 3 => (sky < 700 ? 1 : paneWidthFor(sky) >= 1500 ? 3 : 2);
+
+// How big one tab is drawn: the steps the buttons and the keys take, and the limits.
+const ZOOM_STEPS = [0.5, 0.67, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3] as const;
+const ZOOM_MIN = ZOOM_STEPS[0], ZOOM_MAX = ZOOM_STEPS[ZOOM_STEPS.length - 1]!;
+const zoomWithin = (value: number) => Math.round(Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, value)) * 100) / 100;
+/** The next step up (1) or down (-1) from a zoom. */
+const zoomStep = (from: number, direction: 1 | -1) => (direction > 0
+  ? ZOOM_STEPS.find((step) => step > from + 0.004) ?? ZOOM_MAX
+  : [...ZOOM_STEPS].reverse().find((step) => step < from - 0.004) ?? ZOOM_MIN);
+function readZooms(key: string): Record<string, number> {
+  try {
+    const stored: unknown = JSON.parse(window.localStorage.getItem(key) ?? '{}');
+    const out: Record<string, number> = {};
+    if (stored && typeof stored === 'object') for (const [id, value] of Object.entries(stored)) if (typeof value === 'number' && Number.isFinite(value)) out[id] = zoomWithin(value);
+    return out;
+  } catch { return {}; }
+}
 
 // Which sides are open and how wide he dragged them, kept in this browser for every task.
 interface LayoutPrefs { brief?: boolean | undefined; chats?: boolean | undefined; briefW?: number | undefined; chatW?: number | undefined }
@@ -1632,11 +1656,67 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const hasWork = rest.length > 0;
   // The page of each file he is on.
   const [filePage, setFilePage] = React.useState<Record<string, number>>({});
+  // How big each tab is drawn: his zoom for that tab alone, kept in this browser with the task.
+  const zoomKey = `sr-tab-zoom:${taskId}`;
+  const [zooms, setZooms] = React.useState<Record<string, number>>(() => (typeof window === 'undefined' ? {} : readZooms(zoomKey)));
+  const changeZoom = React.useCallback((id: string, to: (from: number) => number) => {
+    setZooms((was) => {
+      const next = { ...was };
+      const value = zoomWithin(to(was[id] ?? 1));
+      if (Math.abs(value - 1) < 0.005) delete next[id];
+      else next[id] = value;
+      try {
+        if (Object.keys(next).length > 0) window.localStorage.setItem(zoomKey, JSON.stringify(next));
+        else window.localStorage.removeItem(zoomKey);
+      } catch { /* it still holds for this visit */ }
+      return next;
+    });
+  }, [zoomKey]);
   // He has not chosen a tab until he presses one: until then the task shows where it would open by itself.
   const [picked, setPicked] = React.useState<string | null>(null);
   const settled = brief !== undefined && work !== undefined;
   const selectedId = picked !== null && surfaces.some((surface) => surface.id === picked) ? picked : settled ? defaultSurfaceId(surfaces, hasWork) : 'work';
   const selected = surfaces.find((surface) => surface.id === selectedId) ?? surfaces[0];
+  const zoom = selected ? zooms[selected.id] ?? 1 : 1;
+  // Ctrl or ⌘ with the wheel (a pinch on a trackpad) over the tab, or with + - 0 while the pointer is over it or
+  // the caret is in it, zooms that tab and not the whole page.
+  const zoomTarget = React.useRef<string | null>(null);
+  zoomTarget.current = selected?.id ?? null;
+  const overSurface = React.useRef(false);
+  React.useEffect(() => {
+    const el = surfaceBox.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      const id = zoomTarget.current;
+      if (!(event.ctrlKey || event.metaKey) || !id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const by = Math.exp(Math.max(-0.1, Math.min(0.1, -event.deltaY * 0.01)));
+      changeZoom(id, (from) => from * by);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      const id = zoomTarget.current;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey || !id) return;
+      if (!overSurface.current && !el.contains(document.activeElement)) return;
+      const direction = event.key === '=' || event.key === '+' ? 1 : event.key === '-' || event.key === '_' ? -1 : event.key === '0' ? 0 : null;
+      if (direction === null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      changeZoom(id, (from) => (direction === 0 ? 1 : zoomStep(from, direction)));
+    };
+    const enter = () => { overSurface.current = true; };
+    const leave = () => { overSurface.current = false; };
+    el.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    el.addEventListener('pointerenter', enter);
+    el.addEventListener('pointerleave', leave);
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      el.removeEventListener('wheel', onWheel, { capture: true });
+      el.removeEventListener('pointerenter', enter);
+      el.removeEventListener('pointerleave', leave);
+      window.removeEventListener('keydown', onKey, true);
+    };
+  }, [changeZoom]);
   // With more tabs than fit, the one that is showing is brought into view, and stays there as the room changes.
   const tablist = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => {
@@ -2001,6 +2081,13 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               );
             })}
           </div>
+          {!phone && selected && (
+            <span className={`srw-zoom${zoom !== 1 ? ' on' : ''}`} role="group" aria-label="Zoom of this tab">
+              <button type="button" onClick={() => changeZoom(selected.id, (from) => zoomStep(from, -1))} disabled={zoom <= ZOOM_MIN} aria-label="Zoom this tab out" title="Zoom this tab out (Ctrl or ⌘ and −, over the tab)">−</button>
+              <button type="button" className="pct" onClick={() => changeZoom(selected.id, () => 1)} disabled={zoom === 1} aria-label={`This tab is at ${Math.round(zoom * 100)}%. Back to 100%.`} title="Back to 100% (Ctrl or ⌘ and 0, over the tab)">{Math.round(zoom * 100)}%</button>
+              <button type="button" onClick={() => changeZoom(selected.id, (from) => zoomStep(from, 1))} disabled={zoom >= ZOOM_MAX} aria-label="Zoom this tab in" title="Zoom this tab in (Ctrl or ⌘ and +, or pinch, over the tab)">+</button>
+            </span>
+          )}
           {adding ? (
             <form className="srw-add" onSubmit={addPage}>
               <input autoFocus value={addText} className={addBad ? 'bad' : undefined} placeholder="Paste a web address" aria-label="A web address to open in OpenClaw’s browser" aria-invalid={addBad}
@@ -2021,6 +2108,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               covered={phone && tab !== 'work'}
               opened={opened[selected.id] ?? null}
               narrow={cols === 1}
+              zoom={zoom}
               watching={doing?.state === 'working'}
               onArm={() => choose(selected.id)}
               onOpened={(tab) => setOpened((was) => {
@@ -2040,6 +2128,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               page={filePage[selected.id] ?? 1}
               onPage={(page) => setFilePage((was) => ({ ...was, [selected.id]: page }))}
               onAsk={() => showChats(true)}
+              zoom={zoom}
               head={(
                 <>
                   {n?.href && <a className="srp-jump" href={n.href} {...outLink(n.href)} onClick={linkClick(n.href)}><i className="play" aria-hidden="true">▶</i><span>{n.label}</span></a>}
@@ -2058,7 +2147,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             />
           ) : (
             <div className="srw-work">
-              <div className="srp-col">
+              <div className="srp-col" style={zoom !== 1 ? { zoom } : undefined}>
                 {work ? (
                   <WorkCard key={workKey(work)} taskId={taskId} work={work} next={next} focusJump={focusJump && !verdict && !workAgain} narrow={surfaceWidth < 820} quiet={verdict} again={workAgain} sync={workSync} onWork={setWork} />
                 ) : (

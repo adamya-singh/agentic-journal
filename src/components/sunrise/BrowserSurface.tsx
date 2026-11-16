@@ -77,13 +77,14 @@ export const BROWSER_SURFACE_CSS = `
  */
 export interface OpenedTab { targetId: string; host: string; created: boolean }
 
-export function BrowserSurface({ surface, armed, covered, opened, narrow, watching, onArm, onOpened, onPage }: {
+export function BrowserSurface({ surface, armed, covered, opened, narrow, watching, zoom = 1, onArm, onOpened, onPage }: {
   surface: WebSurface;
   armed: boolean;                 // he chose this page: it may be opened in OpenClaw's browser
   covered: boolean;               // something is drawn over it (the brief, on a phone)
   opened: OpenedTab | null;
   narrow: boolean;
   watching: boolean;              // OpenClaw has a turn out about this page: keep looking at the calm pace
+  zoom?: number;                  // how much bigger (or smaller) than fitted he made this tab; 1: as it is
   onArm: () => void;
   onOpened: (tab: OpenedTab | null) => void;
   onPage: (page: { url: string; title: string }) => void;
@@ -249,19 +250,29 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
     const el = screenRef.current;
     if (!targetId || !el) return;
     // Never narrower or shorter than a small window: in less room than that the picture is scaled down instead.
-    const width = Math.max(320, Math.round(el.clientWidth)), height = Math.max(240, Math.round(el.clientHeight));
-    const key = on ? `${width}x${height}` : '';
+    // Zoomed in, the page is laid out for a smaller window and drawn bigger to fill this space (and sharply: each
+    // of its pixels gets that many of the screen's); zoomed out, for a bigger window drawn smaller.
+    const width = Math.min(2560, Math.max(320, Math.round(el.clientWidth / zoom))), height = Math.min(2000, Math.max(240, Math.round(el.clientHeight / zoom)));
+    const key = on ? `${width}x${height}@${zoom}` : '';
     if (key === fitSize.current) return;
     fitSize.current = key;
     try {
       const response = await fetch(ENDPOINT, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'viewport', targetId, ...(on ? { width, height } : {}) }),
+        body: JSON.stringify({ action: 'viewport', targetId, ...(on ? { width, height, ...(zoom > 1 ? { scale: Math.min(3, zoom) } : {}) } : {}) }),
       });
       if (!response.ok) fitSize.current = on ? '' : fitSize.current;
     } catch { fitSize.current = ''; }
     kick();
-  }, [targetId, kick]);
+  }, [targetId, kick, zoom]);
+  // Zooming this tab lays the page out again for the space at that zoom (it is fitted from then on).
+  const zoomWas = React.useRef(zoom);
+  React.useEffect(() => {
+    if (zoomWas.current === zoom || !targetId) return;
+    zoomWas.current = zoom;
+    if (!fitted) { setFitted(true); setZoomed(false); }
+    void applyFit(true);
+  }, [zoom, targetId, fitted, applyFit]);
   React.useEffect(() => {
     const el = screenRef.current;
     if (!fitted || !el || typeof ResizeObserver === 'undefined') return;
@@ -362,7 +373,7 @@ export function BrowserSurface({ surface, armed, covered, opened, narrow, watchi
             src={frame.src}
             alt={pageTitle || surface.label}
             draggable={false}
-            style={zoomed ? { width: frame.width } : undefined}
+            style={zoomed ? { width: frame.width } : fitted && zoom !== 1 ? { width: '100%' } : undefined}
             onClick={(event) => {
               // The end of a drag is not a click.
               if (dragged.current) { dragged.current = false; return; }

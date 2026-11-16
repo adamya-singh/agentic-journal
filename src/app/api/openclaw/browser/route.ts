@@ -47,6 +47,7 @@ const ActionSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('viewport'), targetId: z.string().min(1).max(200),
     width: z.number().int().min(320).max(2560).optional(), height: z.number().int().min(240).max(2000).optional(),
+    scale: z.number().min(1).max(3).optional(),
   }),
   z.object({ action: z.literal('show'), targetId: z.string().min(1).max(200) }),
   z.object({ action: z.literal('close'), targetIds: z.array(z.string().min(1).max(200)).min(1).max(40) }),
@@ -134,7 +135,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
     if (body.action === 'viewport') {
-      const size = body.width && body.height ? { width: body.width, height: body.height } : null;
+      const size = body.width && body.height ? { width: body.width, height: body.height, ...(body.scale ? { scale: body.scale } : {}) } : null;
       try {
         await setBrowserViewport(body.targetId, size);
       } catch (error) {

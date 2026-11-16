@@ -43,8 +43,9 @@ export const FILE_SURFACE_CSS = `
 .srf-nav button.on small{color:#fff}
 .srf-nav img{display:block;width:100%;aspect-ratio:var(--ratio);border-radius:3px;background:#fff}
 .srf-stage{container-type:size;min-width:0;min-height:0;display:flex;flex-direction:column}
-.srf-page{container-type:size;flex:1 1 0;min-height:120px;display:flex;align-items:center;justify-content:center;margin:16px 20px 0}
-.srf-page img{flex:none;display:block;width:min(100cqw,calc(100cqh * var(--ratio)));aspect-ratio:var(--ratio);border-radius:4px;background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.2),0 0 60px 4px color-mix(in srgb,var(--glow) 34%,transparent)}
+/* Zoomed in, the page is bigger than its room and the room scrolls; the auto margins keep it centred while it fits. */
+.srf-page{container-type:size;flex:1 1 0;min-height:120px;display:flex;overflow:auto;overscroll-behavior:contain;margin:16px 20px 0}
+.srf-page img{flex:none;display:block;margin:auto;width:calc(min(100cqw,calc(100cqh * var(--ratio))) * var(--zoom,1));aspect-ratio:var(--ratio);border-radius:4px;background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.2),0 0 60px 4px color-mix(in srgb,var(--glow) 34%,transparent)}
 .srf-split{flex:none;position:relative;height:16px;cursor:row-resize;touch-action:none}
 .srf-split::after{content:"";position:absolute;left:50%;top:6px;width:44px;height:4px;margin-left:-22px;border-radius:999px;background:rgba(255,255,255,.28)}
 .srf-split:hover::after,.srf-split.on::after{background:rgba(255,255,255,.6)}
@@ -59,7 +60,7 @@ export const FILE_SURFACE_CSS = `
 .srf-show:fullscreen img{width:100vw;height:100vh;object-fit:contain}
 /* A document, an image, and a file that can only be downloaded. */
 .srf-doc{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;padding:30px 32px 44px;background:#fffefb;color:#22130a}
-.srf-doc article{max-width:760px;margin:0 auto;font:15.5px/1.62 var(--sans);overflow-wrap:anywhere}
+.srf-doc article{max-width:760px;margin:0 auto;font:15.5px/1.62 var(--sans);overflow-wrap:anywhere;zoom:var(--zoom,1)}
 .srf-doc h1{margin:0 0 14px;font:400 32px/1.12 var(--serif)}
 .srf-doc h2{margin:26px 0 8px;font:600 20px/1.25 var(--sans)}
 .srf-doc h3{margin:22px 0 6px;font:600 16.5px/1.3 var(--sans)}
@@ -78,8 +79,8 @@ export const FILE_SURFACE_CSS = `
 .srf-doc td,.srf-doc th{border:1px solid rgba(60,30,10,.16);padding:4px 9px;text-align:left}
 .srf-doc pre.plain{background:none;color:#22130a;padding:0;white-space:pre-wrap}
 .srf-doc .cut{font-size:13px;color:#8a6a52}
-.srf-pic{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px}
-.srf-pic img{max-width:100%;max-height:100%;border-radius:4px;background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.2)}
+.srf-pic{container-type:size;flex:1;min-height:0;display:flex;overflow:auto;overscroll-behavior:contain;margin:20px}
+.srf-pic img{flex:none;margin:auto;max-width:calc(100cqw * var(--zoom,1));max-height:calc(100cqh * var(--zoom,1));border-radius:4px;background:#fff;box-shadow:0 0 0 1px rgba(255,255,255,.2)}
 .srf-card{flex:1;min-height:0;display:grid;place-content:center;justify-items:center;gap:10px;padding:32px;text-align:center;color:rgba(255,255,255,.8);font:14px/1.5 var(--sans)}
 .srf-card b{font:400 26px/1.15 var(--serif);color:#fff;overflow-wrap:anywhere}
 .srf-card p{margin:0;max-width:52ch}
@@ -96,7 +97,7 @@ export const FILE_SURFACE_CSS = `
 /* The page is as wide as the phone, and the notes take the room under it. */
 .cols-1 .srf-stage{overflow:auto;overscroll-behavior:contain}
 .cols-1 .srf-page{container-type:normal;flex:none;min-height:0;margin:10px 10px 0}
-.cols-1 .srf-page img{width:100%}
+.cols-1 .srf-page img{width:calc(100% * var(--zoom,1))}
 .cols-1 .srf-split{display:none}
 .cols-1 .srf-notes{flex:1 0 auto;height:auto!important;min-height:132px;margin:10px}
 .cols-1 .srf-notes textarea{font-size:16px}
@@ -140,14 +141,16 @@ function TextView({ url, markdown }: { url: string; markdown: boolean }) {
 }
 
 /** A deck: its pages, the page he is on, and what he will say on it. */
-function DeckView({ taskId, block, meta, page, onPage, onNote, saving, show }: {
+function DeckView({ taskId, block, meta, page, onPage, onNote, saving, show, zoom }: {
   taskId: string; block: FileBlock; meta: FileMeta; page: number; onPage: (page: number) => void; onNote: (index: number, text: string) => void;
-  saving: 'idle' | 'saving' | 'saved' | 'failed'; show: React.RefObject<HTMLDivElement | null>;
+  saving: 'idle' | 'saving' | 'saved' | 'failed'; show: React.RefObject<HTMLDivElement | null>; zoom: number;
 }) {
   const pages = meta.pages ?? 1;
   const at = Math.max(1, Math.min(pages, page));
   const ratio = meta.ratio ?? 16 / 9;
-  const [wide] = React.useState<1600 | 2400>(() => (typeof window !== 'undefined' && window.devicePixelRatio > 1.4 ? 2400 : 1600));
+  // Drawn sharper on a dense screen, and when he zooms in.
+  const [dense] = React.useState(() => typeof window !== 'undefined' && window.devicePixelRatio > 1.4);
+  const wide: 1600 | 2400 = dense || zoom > 1.2 ? 2400 : 1600;
   const src = (n: number, width: 320 | 1600 | 2400) => fileUrl(taskId, block.id, { page: n, width, v: meta.mtime });
   const go = React.useCallback((to: number) => onPage(Math.max(1, Math.min(pages, to))), [onPage, pages]);
 
@@ -261,9 +264,10 @@ function DeckView({ taskId, block, meta, page, onPage, onNote, saving, show }: {
 
 /**
  * One file of the task. `head` is what sits above it (the task's next step, its checklist's tally). `onAsk` opens
- * the chat to ask OpenClaw for a change to what is showing.
+ * the chat to ask OpenClaw for a change to what is showing. `zoom` is how much bigger or smaller than fitted he
+ * has made this tab (1: as it fits).
  */
-export function FileSurface({ taskId, block, page, onPage, onNote, saving, onAsk, head }: {
+export function FileSurface({ taskId, block, page, onPage, onNote, saving, onAsk, head, zoom = 1 }: {
   taskId: string;
   block: FileBlock;
   page: number;
@@ -272,6 +276,7 @@ export function FileSurface({ taskId, block, page, onPage, onNote, saving, onAsk
   saving: 'idle' | 'saving' | 'saved' | 'failed';
   onAsk: () => void;
   head?: React.ReactNode;
+  zoom?: number;
 }) {
   // What the file is now, asked again every few seconds: a file written again is shown again.
   const [meta, setMeta] = React.useState<FileMeta | null | undefined>(undefined);
@@ -314,7 +319,7 @@ export function FileSurface({ taskId, block, page, onPage, onNote, saving, onAsk
   return (
     <div className="srf">
       <div className="srf-strip">{head}</div>
-      <div className="srf-win">
+      <div className="srf-win" style={{ '--zoom': String(zoom) } as React.CSSProperties}>
         <div className="srf-head">
           <span className={`srf-tag${ext === 'pdf' ? ' pdf' : ''}`}>{ext || 'file'}</span>
           <b title={`~/.openclaw/workspace/${block.path}`}>{name}</b>
@@ -338,7 +343,7 @@ export function FileSurface({ taskId, block, page, onPage, onNote, saving, onAsk
               <p>{problem ?? 'The file could not be read just now.'}</p>
               <button type="button" className="srf-btn" onClick={onAsk}>Ask OpenClaw about it</button>
             </div>
-          ) : deck ? <DeckView taskId={taskId} block={block} meta={meta} page={at} onPage={onPage} onNote={onNote} saving={saving} show={show} />
+          ) : deck ? <DeckView taskId={taskId} block={block} meta={meta} page={at} onPage={onPage} onNote={onNote} saving={saving} show={show} zoom={zoom} />
             : meta.kind === 'markdown' || meta.kind === 'text' ? <TextView url={fileUrl(taskId, block.id, { raw: true, v: meta.mtime })} markdown={meta.kind === 'markdown'} />
               : meta.kind === 'image' ? (
                 // eslint-disable-next-line @next/next/no-img-element

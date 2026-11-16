@@ -376,9 +376,10 @@ export async function answerFileChooser(targetId: string, files: string[]): Prom
  * Lays the page out for a window this size, so it fits the space he is viewing it in, or (null) gives the tab its
  * own window size back. Chrome keeps the size until it is told otherwise, so every tab sized here is remembered
  * and put back when he is done: when the session is ended (resetBrowserViewports), or by itself once he has not
- * looked at the browser for a while and the manual session has lapsed.
+ * looked at the browser for a while and the manual session has lapsed. `scale` is how many screen pixels each of
+ * the page's pixels is drawn with (he zoomed in: the window is smaller than the space and drawn bigger, sharply).
  */
-export async function setBrowserViewport(targetId: string, size: { width: number; height: number } | null): Promise<void> {
+export async function setBrowserViewport(targetId: string, size: { width: number; height: number; scale?: number } | null): Promise<void> {
   const fitted = (state.fitted ??= new Set());
   if (size === null) {
     // Forgotten only once Chrome has given the size back; a failed call is retried by the watch.
@@ -387,7 +388,7 @@ export async function setBrowserViewport(targetId: string, size: { width: number
     return;
   }
   await call(targetId, 'Emulation.setDeviceMetricsOverride', {
-    width: Math.round(size.width), height: Math.round(size.height), deviceScaleFactor: 0, mobile: false,
+    width: Math.round(size.width), height: Math.round(size.height), deviceScaleFactor: size.scale && size.scale > 1 ? Math.min(3, size.scale) : 0, mobile: false,
   });
   fitted.add(targetId);
   watchFitted();
