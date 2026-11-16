@@ -93,8 +93,12 @@ export const FILE_SURFACE_CSS = `
 .srp.cols-1 .srf-nav button{flex:0 0 104px;margin-left:0}
 .cols-1 .srf-nav button small{position:static;display:none}
 .srp.cols-1 .srf-btn.sq{display:none}
-.cols-1 .srf-page{margin:12px 10px 0}
-.cols-1 .srf-notes{margin:0 10px 10px}
+/* The page is as wide as the phone, and the notes take the room under it. */
+.cols-1 .srf-stage{overflow:auto;overscroll-behavior:contain}
+.cols-1 .srf-page{container-type:normal;flex:none;min-height:0;margin:10px 10px 0}
+.cols-1 .srf-page img{width:100%}
+.cols-1 .srf-split{display:none}
+.cols-1 .srf-notes{flex:1 0 auto;height:auto!important;min-height:132px;margin:10px}
 .cols-1 .srf-notes textarea{font-size:16px}
 .cols-1 .srf-doc{padding:18px 16px 32px}
 `;
