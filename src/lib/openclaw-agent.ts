@@ -4,9 +4,9 @@ import { readModelList, type OpenClawModels } from './openclaw-models';
 /**
  * Runs one turn of OpenClaw's main agent through the gateway and returns its reply text.
  * Reusing a session key continues the same conversation. Nothing is delivered to a chat channel.
- * With no `model` the turn runs on what OpenClaw would use by itself: the session's own model when one was picked
- * for it (in OpenClaw's app, or by setOpenClawSessionModel), else its default (agents.defaults in openclaw.json),
- * the same as a chat started in OpenClaw's app. No thinking level is passed.
+ * With no `model` or `thinking` the turn runs on what OpenClaw would use by itself: the session's own model and
+ * thinking effort when they were picked for it (in OpenClaw's app, or by setOpenClawSessionPicks), else its
+ * defaults (agents.defaults in openclaw.json), the same as a chat started in OpenClaw's app.
  * The `--json` envelope is { status: 'ok', result: { payloads: [{ text }] } }.
  */
 export async function runOpenClawAgentTurn(input: {
@@ -15,6 +15,8 @@ export async function runOpenClawAgentTurn(input: {
   timeoutMs?: number;
   /** The model for this turn ("provider/model"), over the session's and OpenClaw's own. */
   model?: string;
+  /** How hard it thinks on this turn ("off", "low", "high" and so on), over the session's and the model's own. */
+  thinking?: string;
 }): Promise<string> {
   const timeoutMs = input.timeoutMs ?? 120_000;
   const stdout = await runOpenClawCli(
@@ -23,6 +25,7 @@ export async function runOpenClawAgentTurn(input: {
       '--session-key', input.sessionKey,
       '--message', input.message,
       ...(input.model ? ['--model', input.model] : []),
+      ...(input.thinking ? ['--thinking', input.thinking] : []),
       '--timeout', String(Math.floor(timeoutMs / 1000) - 10),
       '--json',
     ],
@@ -48,15 +51,19 @@ const shared = globalThis as typeof globalThis & { __openClawModels?: ModelsStat
 const models: ModelsState = (shared.__openClawModels ??= { at: 0, list: null, reading: null });
 
 /**
- * The models OpenClaw is set up with (`openclaw models list --json`), read at most every ten minutes. Null when
- * OpenClaw is not here or could not say; a list read earlier is still given while a newer one cannot be had.
+ * The models OpenClaw is set up with, read at most every ten minutes: from its gateway (`models.list`, which also
+ * says how hard each can think), else from `openclaw models list --json` (models only). Null when OpenClaw is not
+ * here or could not say; a list read earlier is still given while a newer one cannot be had.
  */
 export function listOpenClawModels(): Promise<OpenClawModels | null> {
   if (!isOpenClawCliAvailable()) return Promise.resolve(null);
   if (models.list && Date.now() - models.at < MODELS_FRESH_MS) return Promise.resolve(models.list);
   models.reading ??= (async () => {
     try {
-      const read = readModelList(parseJsonObjectOutput(await runOpenClawCli(['models', 'list', '--json'], MODELS_TIMEOUT_MS)));
+      const read = await runOpenClawCli(['gateway', 'call', 'models.list', '--timeout', '20000', '--json'], MODELS_TIMEOUT_MS)
+        .then((stdout) => readModelList(parseJsonObjectOutput(stdout)))
+        .catch(() => null)
+        ?? readModelList(parseJsonObjectOutput(await runOpenClawCli(['models', 'list', '--json'], MODELS_TIMEOUT_MS)));
       if (read) { models.list = read; models.at = Date.now(); }
     } catch (error) {
       console.error('OpenClaw models could not be listed:', error instanceof Error ? error.message : error);
@@ -71,21 +78,21 @@ export function listOpenClawModels(): Promise<OpenClawModels | null> {
 const SESSION_PATCH_TIMEOUT_MS = 25_000;
 
 /**
- * Picks the model of one OpenClaw session, as the selector in OpenClaw's own app does (`sessions.patch`): later
- * turns in that session run on it, there and from here, and the app shows it picked. Null takes the pick off, so
- * the session follows OpenClaw's default again. A session that does not exist yet is made, with the pick on it.
- * Resolves to whether OpenClaw took it; never rejects.
+ * Picks the model and the thinking effort of one OpenClaw session, as the selectors in OpenClaw's own app do
+ * (`sessions.patch`): later turns in that session run on them, there and from here, and the app shows them picked.
+ * Null takes a pick off, so the session follows OpenClaw's default again; a pick left out is not touched. A session
+ * that does not exist yet is made, with the picks on it. Resolves to whether OpenClaw took them; never rejects.
  */
-export async function setOpenClawSessionModel(sessionKey: string, model: string | null): Promise<boolean> {
+export async function setOpenClawSessionPicks(sessionKey: string, picks: { model?: string | null; thinkingLevel?: string | null }): Promise<boolean> {
   if (!isOpenClawCliAvailable()) return false;
   try {
     const stdout = await runOpenClawCli(
-      ['gateway', 'call', 'sessions.patch', '--params', JSON.stringify({ key: sessionKey, model }), '--timeout', String(SESSION_PATCH_TIMEOUT_MS), '--json'],
+      ['gateway', 'call', 'sessions.patch', '--params', JSON.stringify({ key: sessionKey, ...picks }), '--timeout', String(SESSION_PATCH_TIMEOUT_MS), '--json'],
       SESSION_PATCH_TIMEOUT_MS + 5000,
     );
     return parseJsonObjectOutput(stdout)?.ok === true;
   } catch (error) {
-    console.error(`OpenClaw session ${sessionKey}: the model could not be set:`, error instanceof Error ? error.message : error);
+    console.error(`OpenClaw session ${sessionKey}: its model and thinking could not be set:`, error instanceof Error ? error.message : error);
     return false;
   }
 }
