@@ -7,6 +7,7 @@
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { hasModel, modelName, type OpenClawModels } from '@/lib/openclaw-models';
 import { openClawChatUrl } from '@/lib/openclaw-ui';
 import { MAX_CHAT_MESSAGE, type ChatState, type ChatSurfaceRef, type ChatThreadSummary, type ChatThreadView, type TaskChatMessage } from '@/lib/task-chat';
 
@@ -75,6 +76,11 @@ button.srk-about:hover{border-color:var(--a)}
 .srk-foot{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:7px;padding:10px 12px 12px;border-top:1px solid rgba(60,30,10,.1)}
 .srk-on{display:flex;align-items:center;gap:8px;min-width:0;font:11px var(--mono);color:#8a6a52}
 .srk-on .srk-about{flex:0 1 auto}
+/* The OpenClaw model that answers in this task's chats: the selector OpenClaw's own app has, here. */
+.srp .srk-model{flex:0 1 auto;min-width:0;max-width:210px;margin-left:auto;height:26px;padding:0 26px 0 10px;border-radius:999px;border:1px solid rgba(60,30,10,.18);color:#22130a;font:500 12px var(--sans);cursor:pointer;outline:0;text-overflow:ellipsis;appearance:none;-webkit-appearance:none;
+  background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235b4230' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 10px center}
+.srp .srk-model:hover,.srp .srk-model:focus-visible{border-color:var(--a)}
+.srp .srk-model.picked{border-color:color-mix(in srgb,var(--a) 45%,transparent);background-color:color-mix(in srgb,var(--a) 8%,#fff)}
 .srk-meta .srk-about{flex:0 1 auto}
 .srk-box{display:flex;align-items:flex-end;gap:8px}
 .srk-box textarea{flex:1;min-width:0;resize:none;max-height:120px;padding:9px 13px;border-radius:16px;border:1px solid rgba(60,30,10,.18);background:rgba(255,255,255,.9);color:#22130a;font:14px/1.4 var(--sans);outline:0;box-shadow:inset 0 1px 2px rgba(40,22,10,.1)}
@@ -110,6 +116,7 @@ button.srk-about:hover{border-color:var(--a)}
 /* A phone: the chats are the whole Chat tab. What is typed in is 16px (iOS zooms in on anything smaller), and what
    is pressed is a finger wide. */
 .cols-1 .srk-box textarea{font-size:16px;max-height:160px}
+.srp.cols-1 .srk-model{height:36px;max-width:60%;font-size:16px}
 .srp.cols-1 .srk-send{height:44px;padding:0 18px;font-size:15px}
 .srp.cols-1 .srk-back{padding:12px 8px;margin:-12px -8px;font-size:15px}
 .srp.cols-1 .srk-about{position:relative;min-height:28px}
@@ -160,6 +167,9 @@ export interface TaskChats {
   error: string | null;
   waiting: number;
   working: number;
+  /** The OpenClaw model picked for this task's chats ("provider/model"), or null for OpenClaw's default. */
+  model: string | null;
+  setModel: (model: string | null) => void;
   setDraft: (text: string) => void;
   open: (id: string) => void;
   startNew: () => void;
@@ -181,6 +191,10 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
   const [error, setError] = React.useState<string | null>(null);
   const currentRef = React.useRef(current);
   currentRef.current = current;
+  // The model picked for the task's chats. While a pick of his is on its way, a read that set off before it does
+  // not put the old one back.
+  const [model, setModelState] = React.useState<string | null>(null);
+  const picking = React.useRef(0);
 
   // Only the newest read is shown. A read that set off before a message was sent can come back
   // after it, with the chat as it was before: that put the composer back as if nothing was out.
@@ -190,9 +204,10 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
     const mine = ++reads.current;
     const wanted = id && id !== 'new' ? `&thread=${encodeURIComponent(id)}` : '';
     try {
-      const data = await call<{ threads: ChatThreadSummary[]; thread: ChatThreadView | null }>(`/api/tasks/brief-chat?id=${encodeURIComponent(taskId)}&list=1${wanted}`);
+      const data = await call<{ threads: ChatThreadSummary[]; thread: ChatThreadView | null; model?: string | null }>(`/api/tasks/brief-chat?id=${encodeURIComponent(taskId)}&list=1${wanted}`);
       if (mine !== reads.current) return;
       setThreads(data.threads);
+      if (picking.current === 0) setModelState(data.model ?? null);
       if (currentRef.current === id) setThread(id && id !== 'new' ? data.thread : null);
     } catch { /* keep what we have */ }
     setLoaded(true);
@@ -240,8 +255,20 @@ export function useTaskChats(taskId: string, watching: boolean): TaskChats {
     }
   }, [taskId, sending, thread, load]);
 
+  const setModel = React.useCallback((next: string | null) => {
+    const id = currentRef.current;
+    setError(null);
+    setModelState(next);
+    picking.current += 1;
+    reads.current += 1;   // reads still out carry the pick from before this one
+    void post<{ model: string | null }>({ action: 'model', taskId, model: next, ...(id && id !== 'new' ? { threadId: id } : {}) })
+      .then((saved) => setModelState(saved.model))
+      .catch((err) => setError(err instanceof Error ? err.message : 'That model could not be picked.'))
+      .finally(() => { picking.current -= 1; void load(); });
+  }, [taskId, load]);
+
   return {
-    loaded, threads, current, thread: thread && thread.id === current ? thread : null, draft, sending, error,
+    loaded, threads, current, thread: thread && thread.id === current ? thread : null, draft, sending, error, model, setModel,
     waiting: threads.filter((t) => t.state === 'waiting').length,
     working: threads.filter((t) => t.state === 'working').length,
     setDraft,
@@ -262,6 +289,20 @@ export function AboutChip({ about, onShow, said }: { about: ChatSurfaceRef; onSh
     : <span className={`srk-about${said ? ' said' : ''}`} title={title}>{inner}</span>;
 }
 
+// The models OpenClaw is set up with are asked for once per page; if that fails, the next composer asks again.
+let modelsAsked: Promise<OpenClawModels | null> | null = null;
+function useOpenClawModels(wanted: boolean): OpenClawModels | null {
+  const [list, setList] = React.useState<OpenClawModels | null>(null);
+  React.useEffect(() => {
+    if (!wanted) return;
+    let cancelled = false;
+    modelsAsked ??= call<OpenClawModels>('/api/openclaw/models').catch(() => { modelsAsked = null; return null; });
+    void modelsAsked.then((got) => { if (!cancelled) setList(got); });
+    return () => { cancelled = true; };
+  }, [wanted]);
+  return list;
+}
+
 /** A touch screen's keyboard has one Return key and no Shift+Enter: there it makes a new line and Send sends. */
 function useTouchKeyboard(): boolean {
   const [coarse] = React.useState(() => typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches);
@@ -277,6 +318,7 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, touch, onShowSu
   chats: TaskChats; about: ChatSurfaceRef | null; oneLine?: boolean; autoFocus?: boolean; touch?: boolean; onShowSurface?: (about: ChatSurfaceRef) => void;
 }) {
   const newlines = useTouchKeyboard() || !!touch;
+  const models = useOpenClawModels(!oneLine);
   const ref = React.useRef<HTMLTextAreaElement>(null);
   const pending = !!chats.thread?.pending;
   const shown = chats.current;
@@ -317,7 +359,20 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, touch, onShowSu
   return (
     <div className="srk-foot">
       {chats.error && <p className="srk-err" role="alert">{chats.error}</p>}
-      {about && <div className="srk-on">about <AboutChip about={about} onShow={onShowSurface} /></div>}
+      {(about || models) && (
+        <div className="srk-on">
+          {about && <>about <AboutChip about={about} onShow={onShowSurface} /></>}
+          {models && (
+            <select className={`srk-model${chats.model ? ' picked' : ''}`} value={chats.model ?? ''} onChange={(e) => chats.setModel(e.target.value || null)}
+              onKeyDown={(e) => e.stopPropagation()} onKeyUp={(e) => e.stopPropagation()}
+              aria-label="The OpenClaw model that answers in this task’s chats" title="The OpenClaw model that answers in this task’s chats. It holds for every chat of this task until you pick another.">
+              <option value="">{models.defaultKey ? `Default · ${modelName(models, models.defaultKey)}` : 'OpenClaw’s default'}</option>
+              {models.models.map((m) => <option key={m.key} value={m.key}>{m.name}</option>)}
+              {chats.model && !hasModel(models, chats.model) && <option value={chats.model}>{modelName(models, chats.model)} (no longer set up)</option>}
+            </select>
+          )}
+        </div>
+      )}
       {box}
     </div>
   );

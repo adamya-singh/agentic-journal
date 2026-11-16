@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
-import { runOpenClawAgentTurn } from '@/lib/openclaw-agent';
+import { listOpenClawModels, runOpenClawAgentTurn, setOpenClawSessionModel } from '@/lib/openclaw-agent';
+import { hasModel, isModelKey } from '@/lib/openclaw-models';
 import {
   buildChatTurnMessage,
   chatSummary,
@@ -22,6 +23,7 @@ import {
 import { workspaceBrief, workspaceSignature } from '@/lib/task-workspace';
 import { loadTaskBrief } from '../brief/build';
 import { loadWorkspace } from '../workspace/load';
+import { readTaskModel, setTaskModel } from './models';
 import { mutateChatThreads, readChatThreads, settleStaleChatTurns } from './store';
 import { chatSyncFailed, syncChatThread, syncChatThreadsSoon } from './sync';
 
@@ -39,14 +41,33 @@ const BodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('new'), taskId: z.string().min(1), about: z.unknown().optional() }),
   z.object({ action: z.literal('seen'), taskId: z.string().min(1), threadId: z.string().min(1) }),
   z.object({ action: z.literal('unread'), taskId: z.string().min(1), threadId: z.string().min(1) }),
+  z.object({ action: z.literal('model'), taskId: z.string().min(1), model: z.string().max(120).nullable(), threadId: z.string().min(1).optional() }),
 ]);
+
+/**
+ * Puts the model picked for the task on one chat's OpenClaw session, when it is not the one already there, so
+ * the chat runs on it wherever it is continued and OpenClaw's own app shows it picked. If OpenClaw does not take
+ * it, the chat keeps what it had and the next turn tries again.
+ */
+async function pickSessionModel(taskId: string, threadId: string, sessionKey: string, wanted: string | null): Promise<void> {
+  const thread = readChatThreads(taskId).find((t) => t.id === threadId);
+  if (!thread || thread.sessionKey !== sessionKey || (thread.modelSet ?? null) === wanted) return;
+  if (!(await setOpenClawSessionModel(sessionKey, wanted))) return;
+  mutateChatThreads((all) => {
+    const t = (all[taskId] ?? []).find((candidate) => candidate.id === threadId);
+    if (!t || t.sessionKey !== sessionKey) return;
+    if (wanted) t.modelSet = wanted;
+    else delete t.modelSet;
+  });
+}
 
 /**
  * GET /api/tasks/brief-chat?id=<taskId>
  *   The task's most recent chat with OpenClaw, or null before the first message.
  * GET /api/tasks/brief-chat?id=<taskId>&list=1[&thread=<threadId>]
- *   { threads, thread }: every chat of the task that has something in it, most recent first, each with its title,
- *   last line and state (working, waiting on him, idle); and the one asked for, in full, or null.
+ *   { threads, thread, model }: every chat of the task that has something in it, most recent first, each with its
+ *   title, last line and state (working, waiting on him, idle); the one asked for, in full, or null; and the
+ *   OpenClaw model picked for the task's chats, or null for OpenClaw's default.
  * Reading never marks a chat as seen.
  */
 export async function GET(request: NextRequest) {
@@ -70,7 +91,7 @@ export async function GET(request: NextRequest) {
   // What was said in these sessions outside the Journal is fetched behind this answer; the next read has it.
   if (thread) void syncChatThread(thread, OPEN_THREAD_SYNC_MS);
   syncChatThreadsSoon(threads);
-  return NextResponse.json({ success: true, data: { threads: listChats(threads).map((t) => chatSummary(t)), thread: thread ? viewOf(thread) : null } });
+  return NextResponse.json({ success: true, data: { threads: listChats(threads).map((t) => chatSummary(t)), thread: thread ? viewOf(thread) : null, model: readTaskModel(taskId) } });
 }
 
 /**
@@ -83,6 +104,10 @@ export async function GET(request: NextRequest) {
  * { action: 'new', taskId, about? }      a new, empty chat in a fresh OpenClaw session; the others are kept
  * { action: 'seen', taskId, threadId }   he has this chat open: it no longer waits on him
  * { action: 'unread', taskId, threadId } he marks it unread: it waits on him again until he opens it
+ * { action: 'model', taskId, model, threadId? }
+ *     Pick the OpenClaw model for this task's chats ("provider/model", one of GET /api/openclaw/models), or null
+ *     for OpenClaw's default. Every later message from the task's workspace runs on it. With threadId, that
+ *     chat's OpenClaw session is given the pick straight away. → { model }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -100,6 +125,21 @@ export async function POST(request: NextRequest) {
       });
       if (!thread) return NextResponse.json({ success: false, error: 'That chat is gone.' }, { status: 404 });
       return NextResponse.json({ success: true, data: chatView(thread) });
+    }
+
+    if (body.action === 'model') {
+      if (body.model !== null) {
+        if (!isModelKey(body.model)) return NextResponse.json({ success: false, error: 'That is not a model.' }, { status: 400 });
+        const list = await listOpenClawModels();
+        if (!list) return NextResponse.json({ success: false, error: 'OpenClaw’s models could not be read. Try again in a moment.' }, { status: 503 });
+        if (!hasModel(list, body.model)) return NextResponse.json({ success: false, error: 'OpenClaw is not set up with that model.' }, { status: 400 });
+      }
+      setTaskModel(body.taskId, body.model);
+      // The chat he has open is given the pick now, so "Continue in OpenClaw" finds it there. A chat with a turn
+      // out is left alone: its next turn brings the pick.
+      const open = body.threadId ? readChatThreads(body.taskId).find((t) => t.id === body.threadId) : undefined;
+      if (open && open.messages.length > 0 && !open.pendingSince) void pickSessionModel(body.taskId, open.id, open.sessionKey, body.model);
+      return NextResponse.json({ success: true, data: { model: body.model } });
     }
 
     const about = parseSurfaceRef(body.about);
@@ -175,7 +215,11 @@ async function answer(taskId: string, threadId: string, sessionKey: string, sent
   let reply: string | null = null;
   let error: string | null = null;
   try {
-    reply = await runOpenClawAgentTurn({ message, sessionKey, timeoutMs: CHAT_TURN_TIMEOUT_MS });
+    // The model he picked for this task's chats: on the session (so it holds wherever the chat goes on) and on
+    // the turn itself (so it holds even if the session could not be told).
+    const model = readTaskModel(taskId);
+    await pickSessionModel(taskId, threadId, sessionKey, model);
+    reply = await runOpenClawAgentTurn({ message, sessionKey, timeoutMs: CHAT_TURN_TIMEOUT_MS, ...(model ? { model } : {}) });
   } catch (err) {
     console.error(`brief chat ${taskId}: OpenClaw turn failed:`, err);
     error = 'OpenClaw couldn’t answer. Try again, or continue in OpenClaw.';

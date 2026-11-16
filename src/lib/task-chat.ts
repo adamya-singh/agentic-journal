@@ -4,6 +4,7 @@
 // looking at when that is a page in OpenClaw's browser.
 // Pure: no filesystem, so the route and the tests share it.
 import type { TaskBrief } from '@/lib/task-brief';
+import { isModelKey } from '@/lib/openclaw-models';
 import { pageKey } from '@/lib/task-surfaces';
 
 /** What he was looking at in the task's workspace when he wrote: the work OpenClaw started, a page in OpenClaw's browser, or a file of the task. */
@@ -38,6 +39,7 @@ export interface TaskChatThread {
   touchedAt: string;             // when he last did something in it (started it, wrote in it); a reply does not count
   outsideRunAt?: string | null;  // when OpenClaw's own history last said a run is in flight that the Journal did not start
   workSeen?: string;             // the workspace as this chat last knew it (workspaceSignature); absent until it has been told of the workspace
+  modelSet?: string;             // the model the Journal last picked on this chat's OpenClaw session; absent when it picked none
   about: ChatSurfaceRef | null;  // the surface it was started from
 }
 
@@ -272,6 +274,7 @@ function readThread(raw: unknown, taskId: string, index: number): TaskChatThread
     touchedAt: iso(r.touchedAt) ?? asked?.at ?? born,
     ...(iso(r.outsideRunAt) ? { outsideRunAt: iso(r.outsideRunAt) } : {}),
     ...(typeof r.workSeen === 'string' && r.workSeen ? { workSeen: r.workSeen } : {}),
+    ...(isModelKey(r.modelSet) ? { modelSet: r.modelSet } : {}),
     about: parseSurfaceRef(r.about),
   };
 }
