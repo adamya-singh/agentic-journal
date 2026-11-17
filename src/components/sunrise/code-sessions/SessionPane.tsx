@@ -147,7 +147,8 @@ function SessionMenu({ code, view, show, onClose }: { code: CodeSessions; view: 
   // On another device the command goes there over ssh, by its alias, and opens it in that device's own agent.
   const device = code.devices.find((d) => d.host === link.host);
   const away = !!device && !device.here;
-  const command = resumeCommand(link.agent, link.cwd, link.sessionId, away ? device.alias : null);
+  // A device whose `codex` is not on its PATH runs the copy its look found (the Mac's ChatGPT.app carries one).
+  const command = resumeCommand(link.agent, link.cwd, link.sessionId, away ? device.alias : null, away ? code.deviceOn(link.host)?.codex?.bin : null);
   const working = view.state === 'working' || view.state === 'needs-you' || !!view.turnId;
   const resume = (
     <>

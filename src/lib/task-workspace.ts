@@ -48,10 +48,13 @@ export interface WorkspacePeek { rev: number; tabs: string }
 
 export const WORKSPACE_MARK = '[Workspace of this task';
 
-const api = 'http://127.0.0.1:3000/api/tasks/workspace';
-
-/** How to read the workspace and change it through the Journal's local API: for OpenClaw's chats and coding sessions alike. */
-export function workspaceApiHelp(taskId: string): string[] {
+/**
+ * How to read the workspace and change it through the Journal's API: for OpenClaw's chats and coding sessions alike.
+ * `origin` is where the Journal is from where the reader runs: loopback on this machine (OpenClaw's chats), the
+ * tailnet address for a coding session on another device (same-origin.ts journalOriginFor).
+ */
+export function workspaceApiHelp(taskId: string, origin = 'http://127.0.0.1:3000'): string[] {
+  const api = `${origin.replace(/\/+$/, '')}/api/tasks/workspace`;
   const file = `/tmp/workspace-${taskId.slice(0, 8)}.json`;
   return [
     'Read the workspace as it stands (his latest edits included) before you change it:',

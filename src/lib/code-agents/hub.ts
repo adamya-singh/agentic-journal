@@ -15,6 +15,8 @@ import {
   type SessionTurn, type TokenUsage,
 } from './protocol';
 import { RpcError } from './transport';
+import { isRemote } from './ssh';
+import { journalOriginFor } from '@/lib/same-origin';
 import { changeCodeSession, findCodeSession, mutateCodeSessions, newLinkId, readAllCodeSessions, readCodeSessions } from './store';
 import type { TaskBrief } from '@/lib/task-brief';
 
@@ -649,7 +651,8 @@ export async function startSession(input: { taskId: string; agent: AgentKind; pl
   live.sending = true;
   live.state = 'working';
   live.stored = { state: 'working', busy: true };
-  const text = firstTurnText({ taskId: input.taskId, brief: input.brief, text: input.text });
+  // On another device 127.0.0.1 is that device: the session is told the Journal's tailnet address instead.
+  const text = firstTurnText({ taskId: input.taskId, brief: input.brief, text: input.text, journal: journalOriginFor(isRemote(input.place.host)) });
   void c.adapter.send(started.sessionId, text, input.picks)
     .then(({ turnId }) => { if (live.sending) { live.sending = false; live.turnId ??= turnId; settle(live); } })
     .catch((error) => {

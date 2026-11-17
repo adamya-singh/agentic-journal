@@ -15,6 +15,7 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { CODEX_PLACES, codexWord, findCodexCommand, tildePath } from '@/lib/codex-bin';
 import { hostAlias, machineName, thisHost } from '@/lib/proj-hosts';
 import type { DeviceStatus } from './protocol';
 import { childPipe, type ChildPipe } from './transport';
@@ -83,23 +84,31 @@ const BRIDGE_SOCKET = '"${CLAUDE_BRIDGE_SOCKET:-$HOME/.local/state/agentic-journ
 /** A checkout of the Journal on the device whose bridge has its packages, used when the bridge was not installed. */
 const BRIDGE_REPO = '"$HOME/projects/agentic-journal/bridge"';
 
+/** Where the look searches for Codex off the PATH. CODE_AGENTS_CODEX_PLACES (one per line) replaces it: the tests'. */
+const codexPlaces = () => (process.env.CODE_AGENTS_CODEX_PLACES ? process.env.CODE_AGENTS_CODEX_PLACES.split('\n').filter(Boolean) : CODEX_PLACES);
+
+/** The read-only look at a device (probeDevice). */
+export const probeScript = () => [
+  `printf '%s\\n' ${PROBE_START}`,
+  `printf 'home=%s\\n' "$HOME"`,
+  `printf 'os=%s\\n' "$(uname -s 2>/dev/null)"`,
+  `{ [ -n "\${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; } && printf 'wsl=1\\n'`,
+  // Codex: on the PATH, else a copy the desktop apps, Codex's own installs or the editors carry (codex-bin.ts), found
+  // in /bin/sh (zsh stops at a glob that matches nothing). Its daemon, and the daemon's own version, as that copy says.
+  `aj_codex=$(${findCodexCommand(codexPlaces())} 2>/dev/null)`,
+  `if [ -n "$aj_codex" ]; then printf 'codex=%s\\n' "$("$aj_codex" --version 2>/dev/null | head -n 1)"; [ "$aj_codex" = codex ] || printf 'codex_bin=%s\\n' "$aj_codex"; printf 'codex_home=%s\\n' "\${CODEX_HOME:-$HOME/.codex}"; aj_daemon=$("$aj_codex" app-server daemon version 2>/dev/null); case "$aj_daemon" in *'"status":"running"'*) printf 'codex_daemon=1\\n'; printf 'codex_server=%s\\n' "$(printf '%s' "$aj_daemon" | sed -n 's/.*"appServerVersion":"\\([^"]*\\)".*/\\1/p' | head -n 1)";; esac; fi`,
+  `if command -v claude >/dev/null 2>&1; then printf 'claude=%s\\n' "$(claude --version 2>/dev/null | head -n 1)"; fi`,
+  `if command -v node >/dev/null 2>&1; then printf 'node=%s\\n' "$(node --version 2>/dev/null)"; fi`,
+  `if [ -x ${BRIDGE_DIR}/run ]; then printf 'bridge=installed\\n'; elif [ -f ${BRIDGE_REPO}/claude-bridge.ts ] && [ -d ${BRIDGE_REPO}/node_modules/ws ]; then printf 'bridge=repo\\n'; fi`,
+  `[ -S ${BRIDGE_SOCKET} ] && printf 'bridge_socket=1\\n'`,
+  `printf '%s\\n' ${PROBE_END}`,
+].join('\n');
+
 export const REMOTE = {
-  probe: [
-    `printf '%s\\n' ${PROBE_START}`,
-    `printf 'home=%s\\n' "$HOME"`,
-    `printf 'os=%s\\n' "$(uname -s 2>/dev/null)"`,
-    `{ [ -n "\${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; } && printf 'wsl=1\\n'`,
-    `if command -v codex >/dev/null 2>&1; then printf 'codex=%s\\n' "$(codex --version 2>/dev/null | head -n 1)"; printf 'codex_home=%s\\n' "\${CODEX_HOME:-$HOME/.codex}"; case "$(codex app-server daemon version 2>/dev/null)" in *'"status":"running"'*) printf 'codex_daemon=1\\n';; esac; fi`,
-    `if command -v claude >/dev/null 2>&1; then printf 'claude=%s\\n' "$(claude --version 2>/dev/null | head -n 1)"; fi`,
-    `if command -v node >/dev/null 2>&1; then printf 'node=%s\\n' "$(node --version 2>/dev/null)"; fi`,
-    `if [ -x ${BRIDGE_DIR}/run ]; then printf 'bridge=installed\\n'; elif [ -f ${BRIDGE_REPO}/claude-bridge.ts ] && [ -d ${BRIDGE_REPO}/node_modules/ws ]; then printf 'bridge=repo\\n'; fi`,
-    `[ -S ${BRIDGE_SOCKET} ] && printf 'bridge_socket=1\\n'`,
-    `printf '%s\\n' ${PROBE_END}`,
-  ].join('\n'),
-  /** Codex's daemon, through its own byte pipe. */
-  codexProxy: `printf '%s\\n' ${PIPE_MARKER}; exec codex app-server proxy`,
+  /** Codex's daemon, through its own byte pipe; `bin` is the Codex the look found (`codex` on the PATH, else its path). */
+  codexProxy: (bin?: string | null) => `printf '%s\\n' ${PIPE_MARKER}; exec ${codexWord(bin)} app-server proxy`,
   /** Codex without a daemon: its app server on stdio, for as long as the connection lasts. */
-  codexStdio: `printf '%s\\n' ${PIPE_MARKER}; exec codex app-server`,
+  codexStdio: (bin?: string | null) => `printf '%s\\n' ${PIPE_MARKER}; exec ${codexWord(bin)} app-server`,
   /** The Claude bridge's proxy mode: the installed one, else a checkout's. */
   claudeProxy: [
     `if [ -x ${BRIDGE_DIR}/run ]; then printf '%s\\n' ${PIPE_MARKER}; exec ${BRIDGE_DIR}/run proxy; fi`,
@@ -149,7 +158,14 @@ export function parseProbe(host: string, stdout: string): DeviceStatus & { home?
     ...(kv.get('home') ? { home: kv.get('home') } : {}),
     ...(kv.get('os') ? { os: kv.get('os') } : {}),
     ...(kv.get('wsl') ? { wsl: true } : {}),
-    codex: kv.has('codex') ? { version: version(kv.get('codex')), daemon: kv.get('codex_daemon') === '1', ...(kv.get('codex_home') ? { home: kv.get('codex_home') } : {}) } : null,
+    codex: kv.has('codex')
+      ? {
+        version: version(kv.get('codex')), daemon: kv.get('codex_daemon') === '1',
+        ...(kv.get('codex_home') ? { home: kv.get('codex_home') } : {}),
+        ...(kv.get('codex_bin') ? { bin: kv.get('codex_bin') } : {}),
+        ...(kv.get('codex_server') ? { server: version(kv.get('codex_server')) ?? undefined } : {}),
+      }
+      : null,
     claude: kv.has('claude') ? { version: version(kv.get('claude')), bridge } : null,
     node: kv.get('node') ?? null,
   };
@@ -170,7 +186,7 @@ export async function probeDevice(host: string, options: { fresh?: boolean } = {
     try { alias = aliasOf(host); } catch (error) { return { host, reachable: false, reason: (error as Error).message }; }
     ensureControlDir();
     return new Promise<DeviceStatus>((resolve) => {
-      execFile(sshBinary(), sshArgs(alias, inLoginShell(REMOTE.probe)), { env: sshEnv(), timeout: PROBE_TIMEOUT_MS, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
+      execFile(sshBinary(), sshArgs(alias, inLoginShell(probeScript())), { env: sshEnv(), timeout: PROBE_TIMEOUT_MS, maxBuffer: 256 * 1024 }, (error, stdout, stderr) => {
         const parsed = parseProbe(host, String(stdout));
         if (parsed.reachable) { resolve(parsed); return; }
         const timedOut = !!error && (error as NodeJS.ErrnoException & { killed?: boolean }).killed;
@@ -191,9 +207,10 @@ export function forgetProbes(): void {
   probes.clear();
 }
 
-/** What a device reports in the pane: the look, without its home folder. */
+/** What a device reports in the pane: the look, without its home folder (a Codex found under it reads `~/…`). */
 export function publicStatus(status: DeviceStatus & { home?: string; node?: string | null }): DeviceStatus {
   const rest: DeviceStatus & { home?: string; node?: string | null } = { ...status };
+  if (rest.codex?.bin) rest.codex = { ...rest.codex, bin: tildePath(rest.codex.bin, rest.home) };
   delete rest.home;
   delete rest.node;
   return rest;

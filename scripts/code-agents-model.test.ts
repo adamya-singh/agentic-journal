@@ -11,7 +11,7 @@ import type { CodexThreadItem } from '../src/lib/code-agents/codex-types';
 import { clipMiddle, firstTurnText, taskMark, typedTextOf } from '../src/lib/code-agents/first-turn';
 import { applyEvent, clipOutput, OUTPUT_MAX, type SessionTurn } from '../src/lib/code-agents/protocol';
 import type { TaskBrief } from '../src/lib/task-brief';
-import { fromThisApp, fromThisAppStrict, journalHostNames } from '../src/lib/same-origin';
+import { fromThisApp, fromThisAppStrict, journalHostNames, journalOriginFor, journalPublicOrigin } from '../src/lib/same-origin';
 import { codeTurns, waitReasons } from '../src/lib/deploy-queue';
 
 const item = (raw: unknown) => codexItem(raw as CodexThreadItem);
@@ -140,6 +140,27 @@ test('the first turn carries the task’s mark, its brief and the Journal’s ru
   assert.deepEqual(typedTextOf('A later turn\nAdamya’s message:\nstill his'), { text: 'A later turn\nAdamya’s message:\nstill his', framed: false });
   // His text is last even when it holds the marker line itself.
   assert.deepEqual(typedTextOf(firstTurnText({ taskId: TASK, brief: null, text: 'Quote:\nAdamya’s message:\nend' })).text, 'end');
+});
+
+test('a session on another device is told the Journal’s tailnet address, not 127.0.0.1 (that is the device itself)', () => {
+  const TASK = '7a9e2f10-0000-4000-8000-000000000003';
+  assert.equal(journalOriginFor(false, {}), 'http://127.0.0.1:3000');
+  assert.equal(journalOriginFor(true, {}), 'https://ubuntu-laptop.taile85e97.ts.net');
+  assert.equal(journalOriginFor(true, { AGENTIC_JOURNAL_ORIGIN: 'https://box.tail1.ts.net/' }), 'https://box.tail1.ts.net');
+  assert.equal(journalPublicOrigin({ AGENTIC_JOURNAL_ORIGIN: 'not a url' }), 'https://ubuntu-laptop.taile85e97.ts.net');
+  const away = firstTurnText({ taskId: TASK, brief: null, text: 'Fix it', journal: journalOriginFor(true, {}) });
+  assert.ok(!away.includes('127.0.0.1'), 'no loopback address at all');
+  assert.ok(away.includes('curl -s -X POST https://ubuntu-laptop.taile85e97.ts.net/api/tasks/progress '));
+  assert.ok(away.includes(`curl -s 'https://ubuntu-laptop.taile85e97.ts.net/api/tasks/workspace?id=${TASK}'`));
+  assert.ok(away.includes('curl -s -X POST https://ubuntu-laptop.taile85e97.ts.net/api/tasks/workspace '));
+  assert.match(away, /runs on his laptop; from here it is at https:\/\/ubuntu-laptop/);
+  assert.match(away, /"file" block shows only files on his laptop/);
+  assert.ok(!away.includes('~/.openclaw/workspace'), 'no file block for a file on the device');
+  // This machine keeps loopback, as before.
+  const here = firstTurnText({ taskId: TASK, brief: null, text: 'Fix it', journal: journalOriginFor(false, {}) });
+  assert.equal(here, firstTurnText({ taskId: TASK, brief: null, text: 'Fix it' }));
+  assert.match(here, /runs on this machine at http:\/\/127\.0\.0\.1:3000/);
+  assert.ok(here.includes('~/.openclaw/workspace'));
 });
 
 test('the brief goes in as background data, labelled, and a long one loses its middle, not its progress', () => {

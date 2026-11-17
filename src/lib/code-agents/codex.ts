@@ -65,14 +65,17 @@ export function codexTransport(): MessageTransport | null {
 /**
  * How to reach Codex on another device, over ssh (ssh.ts): its daemon through `codex app-server proxy` when one runs
  * there (the WebSocket the daemon speaks, carried on ssh's stdio, so threads are shared with that device's Codex
- * apps), else `codex app-server` there on stdio for as long as the connection lasts. Throws why it cannot.
+ * apps), else `codex app-server` there on stdio for as long as the connection lasts. The `codex` is the one the look
+ * found: on the PATH, else an app's own copy. Throws why it cannot.
  */
 export async function remoteCodexTransport(host: string): Promise<MessageTransport> {
   const device = await probeDevice(host);
   if (!device.reachable) throw new Error(device.reason ?? `${machineName(host)} can’t be reached.`);
-  if (!device.codex) throw new Error(`Codex isn’t installed on ${machineName(host)} (no \`codex\` in its login shell’s PATH).`);
+  if (!device.codex) throw new Error(`Codex isn’t installed on ${machineName(host)} (no \`codex\` in its login shell’s PATH, and none of the Codex or ChatGPT apps’ own copies).`);
+  // `bin`: Codex is not on its PATH there but an app carries its own (the Mac's ChatGPT.app); that copy is run.
+  const bin = device.codex.bin;
   if (device.codex.daemon) {
-    return webSocketTransport({ label: `codex on ${host}`, url: 'ws://codex/', openTimeoutMs: 25_000, createConnection: () => sshPipe(host, REMOTE.codexProxy) });
+    return webSocketTransport({ label: `codex on ${host}`, url: 'ws://codex/', openTimeoutMs: 25_000, createConnection: () => sshPipe(host, REMOTE.codexProxy(bin)) });
   }
   // WSL with Codex's home in Windows' own folder (CODEX_HOME=/mnt/c/…): an app server started there cannot open its
   // state over the Windows mount (checked on the PC, 2026-11-17: "failed to initialize sqlite state runtime"), and the
@@ -80,7 +83,7 @@ export async function remoteCodexTransport(host: string): Promise<MessageTranspo
   if (/^\/mnt\/[a-z]\//i.test(device.codex.home ?? '')) {
     throw new Error(`Codex on ${machineName(host)} keeps its state in Windows’ folder (${device.codex.home}), where no Codex app server can run from WSL, and no Codex daemon runs there. Set CODEX_HOME to a folder inside WSL, or start a daemon with \`codex app-server daemon start\` there.`);
   }
-  const run = sshCommand(host, REMOTE.codexStdio);
+  const run = sshCommand(host, REMOTE.codexStdio(bin));
   return stdioJsonlTransport({ label: `codex app-server on ${host}`, ...run });
 }
 

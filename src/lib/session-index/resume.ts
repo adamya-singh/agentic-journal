@@ -13,13 +13,22 @@ function folder(cwd: string | null): string {
   return shq(dir);
 }
 
+/** The program: its usual name, or the path of the copy to run (`~/…` keeps the tilde bare, so the shell expands it). */
+function program(bin: string | null | undefined, name: string): string {
+  if (!bin || bin === name) return name;
+  if (bin.startsWith('~/')) return /^~\/[A-Za-z0-9._/@+-]+$/.test(bin) ? bin : `~/${shq(bin.slice(2))}`;
+  return word(bin);
+}
+
 /**
  * `cd '<cwd>' && claude --resume <id>`, or `… && codex resume <id>`; the id is quoted when it needs it. A session on
  * another device (`ssh`: its ssh alias) is resumed there, in its login shell, so its own `codex` or `claude` is found:
  * `ssh -t macbook 'exec "$SHELL" -lc '\''cd … && codex resume …'\'''`, written as plainly as quoting allows.
+ * `bin` is the Codex to run there when `codex` is not on that device's PATH (an app's own copy, as its look found it:
+ * `/Applications/ChatGPT.app/…/codex`, or `~/…`).
  */
-export function resumeCommand(app: 'claude-code' | 'codex', cwd: string | null, id: string, ssh?: string | null): string {
-  const agent = `${app === 'claude-code' ? 'claude --resume' : 'codex resume'} ${word(id)}`;
+export function resumeCommand(app: 'claude-code' | 'codex', cwd: string | null, id: string, ssh?: string | null, bin?: string | null): string {
+  const agent = `${app === 'claude-code' ? 'claude --resume' : `${program(bin, 'codex')} resume`} ${word(id)}`;
   if (!ssh) return `cd ${folder(cwd)} && ${agent}`;
   // A folder of plain characters is left bare (one quoting less to read); anything else is quoted as here.
   const dir = cwd && /^~?[A-Za-z0-9._/-]+$/.test(cwd) ? cwd : folder(cwd);

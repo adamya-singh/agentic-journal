@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { DatabaseSync } from 'node:sqlite';
-import { collectHost, localSource, parseListing, sshSource } from '../src/lib/session-index/collect.ts';
+import { appRecordOf, collectHost, localSource, parseListing, sshSource } from '../src/lib/session-index/collect.ts';
+import { deviceCodex, noteDeviceCodex } from '../src/lib/session-index/devices.ts';
+import { toRow } from '../src/lib/session-index/view.ts';
 import { feedClaudeLine, feedCodexLine, finishDigest, KEEP_MSGS, mergeAccs, newAcc } from '../src/lib/session-index/digest.ts';
 import { ingest } from '../src/lib/session-index/ingest.ts';
 import { journalTitle, openclawDigests } from '../src/lib/session-index/openclaw.ts';
@@ -313,6 +315,26 @@ test('the listing: macOS stat lines and GNU find lines alike; a cut-off listing 
     { kind: 'codex', size: 9, mtime: 1731000000500, path: '/Users/me/.codex/sessions/r.jsonl.zst' },
   ] });
   assert.throws(() => parseListing('AJ-HOME /x\n'), /did not finish/);
+});
+
+test('the Mac: its ChatGPT app’s Codex goes into its rows’ resume commands, and the Claude app’s ssh records read sshHost', () => {
+  const out = 'AJ-HOME /Users/me\nAJ-CODEX /Users/me/.cursor/extensions/openai.chatgpt-1/bin/macos-aarch64/codex\nAJ-END\n';
+  assert.deepEqual(parseListing(out), { home: '/Users/me', entries: [], codex: '~/.cursor/extensions/openai.chatgpt-1/bin/macos-aarch64/codex' });
+  assert.equal(parseListing('AJ-HOME /Users/me\nAJ-END\n').codex, undefined);
+  const app = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
+  write(path.join(dir, 'proj', 'registry.json'), JSON.stringify({ hosts: { laptop: { alias: 'ubuntu-laptop' }, mac: { alias: 'macbook' } } }));
+  assert.equal(deviceCodex('mac'), null);
+  noteDeviceCodex('mac', app);
+  assert.equal(deviceCodex('mac'), app);
+  const record = { uid: 'codex:th-1', app: 'codex', id: 'th-1', host: 'mac', cwd: '/Users/me/projects/notes', title: 'Notes', first: '', project: 'notes', started: null, ended: null, turns: 1 } as unknown as Parameters<typeof toRow>[0];
+  assert.equal(toRow(record, 'linked', 'x').resume, `ssh -t macbook 'exec "$SHELL" -lc "cd /Users/me/projects/notes && ${app} resume th-1"'`);
+  assert.equal(toRow({ ...record, app: 'claude-code', uid: 'claude-code:th-1' }, 'linked', 'x').resume, `ssh -t macbook 'exec "$SHELL" -lc "cd /Users/me/projects/notes && claude --resume th-1"'`);
+  noteDeviceCodex('mac', null);
+  assert.equal(deviceCodex('mac'), null);
+  assert.equal(toRow(record, 'linked', 'x').resume, `ssh -t macbook 'exec "$SHELL" -lc "cd /Users/me/projects/notes && codex resume th-1"'`);
+  // The Claude app writes its SSH sessions' host as sshHost.
+  assert.equal(appRecordOf({ cliSessionId: 'c-1', title: 'On the PC', sshConfig: { sshHost: 'win11', sshPort: 22 }, bridgeSessionIds: ['session_01AbC'] })?.ssh, 'win11');
+  assert.deepEqual(appRecordOf({ cliSessionId: 'c-1', bridgeSessionIds: ['session_01AbC'] })?.bridge, ['session_01AbC']);
 });
 
 test('rows: one OpenClaw row per session key; no resume command for a session in Windows itself; the Journal’s copies do not count by id', () => {

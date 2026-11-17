@@ -29,6 +29,20 @@ export function fromThisApp(headers: HeaderBag): boolean {
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 const DEFAULT_ORIGIN = 'https://ubuntu-laptop.taile85e97.ts.net';
 
+/** How the Journal is reached on its own machine: `next start` on loopback. */
+export const JOURNAL_LOOPBACK = 'http://127.0.0.1:3000';
+
+/** The Journal's public address (Tailscale serve): AGENTIC_JOURNAL_ORIGIN, else this laptop's tailnet name. */
+export function journalPublicOrigin(env: Record<string, string | undefined> = process.env): string {
+  try { return new URL(env.AGENTIC_JOURNAL_ORIGIN || DEFAULT_ORIGIN).origin; } catch { return DEFAULT_ORIGIN; }
+}
+
+/**
+ * Where a program on a device reaches the Journal's API (curl from a coding session, say): loopback on the Journal's
+ * own machine, its public tailnet address on any other device (127.0.0.1 there is that device itself).
+ */
+export const journalOriginFor = (remote: boolean, env: Record<string, string | undefined> = process.env) => (remote ? journalPublicOrigin(env) : JOURNAL_LOOPBACK);
+
 /** "Box.example:3000" → "box.example"; "[::1]:3111" → "[::1]". */
 function nameOf(host: string): string {
   const h = host.trim().toLowerCase();

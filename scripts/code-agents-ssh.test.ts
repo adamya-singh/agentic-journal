@@ -20,8 +20,10 @@ const REPO = path.resolve(import.meta.dirname, '..');
 const URL = 'http://127.0.0.1:3000/api/tasks/sessions';
 const SAME = { 'sec-fetch-site': 'same-origin', host: '127.0.0.1:3000' };
 const OWN = { model: null, effort: null, mode: 'own' as const };
+const MAC_CODEX = 'Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex';
 let dir: string;
 let home: string;
+let macHome: string;
 let sshLog: string;
 let fake: FakeCodex;
 let bridge: Bridge;
@@ -45,6 +47,7 @@ before(async () => {
   sshLog = path.join(dir, 'ssh.log');
   fake = await startFakeCodex();
   const bin = path.join(dir, 'device-bin');
+  macHome = path.join(dir, 'mac-home');
   const node = process.execPath;
   // The stand-in ssh: options up to `--`, then the alias and the command. "nowhere" does not resolve; anything else
   // is the device, its command run by its shell with nothing of this process's environment.
@@ -54,6 +57,7 @@ while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do shift; done
 shift; alias="$1"; shift
 if [ "$alias" = nowhere ]; then echo "ssh: Could not resolve hostname nowhere: Name or service not known" >&2; exit 255; fi
 if [ "$alias" = locked ]; then echo "openclaw@locked: Permission denied (publickey)." >&2; exit 255; fi
+if [ "$alias" = mac-box ]; then exec env -i HOME=${sh(macHome)} PATH=${sh(path.join(dir, 'mac-path'))} SHELL=/bin/sh /bin/sh -c "$1"; fi
 exec env -i HOME=${sh(home)} PATH=/usr/bin:/bin SHELL=/bin/sh /bin/sh -c "$1"
 `);
   write(path.join(home, '.profile'), `echo "Welcome to the device. Have a nice day."\nPATH=${sh(bin)}:$PATH\nexport PATH\n[ -f ${sh(path.join(dir, 'windows-home'))} ] && export CODEX_HOME=/mnt/c/Users/me/.codex\n`, 0o644);
@@ -67,6 +71,19 @@ case "$*" in
 esac
 `);
   write(path.join(bin, 'claude'), '#!/bin/sh\necho "2.1.400 (Claude Code)"\n');
+  // The Mac: no \`codex\` on its PATH, but the ChatGPT app carries its own, and a daemon of an older Codex runs.
+  // Its PATH has the usual tools and no codex (this machine's /usr/bin has one).
+  fs.mkdirSync(path.join(dir, 'mac-path'));
+  for (const tool of ['uname', 'grep', 'head', 'sed', 'cat', 'tr', 'env']) fs.symlinkSync(`/usr/bin/${tool}`, path.join(dir, 'mac-path', tool));
+  write(path.join(macHome, '.profile'), 'echo "Last login: today"\n', 0o644);
+  write(path.join(macHome, MAC_CODEX), `#!/bin/sh
+case "$*" in
+  --version) echo "codex-cli 0.169.0-alpha.11.1" ;;
+  "app-server daemon version") echo '{"status":"running","managedCodexPath":"/x","socketPath":"/y","cliVersion":"0.169.0-alpha.11.1","appServerVersion":"0.158.0"}' ;;
+  "app-server proxy") exec ${sh(node)} --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ${sh(path.join(REPO, 'bridge', 'claude-bridge.ts'))} proxy --socket ${sh(fake.socketPath)} ;;
+  *) echo "unexpected: $*" >&2; exit 2 ;;
+esac
+`);
   write(path.join(bin, 'node'), `#!/bin/sh\nexec ${sh(node)} "$@"\n`);
   // Codex with no daemon: its app server on stdio, newline JSON.
   write(path.join(dir, 'jsonl-codex.mjs'), `
@@ -89,8 +106,9 @@ esac
     `#!/bin/sh\nexec ${sh(node)} --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ${sh(path.join(REPO, 'bridge', 'claude-bridge.ts'))} "$@"\n`);
   // The proj registry: this machine, the PC (reached as pc-box), one ssh cannot resolve, one that refuses the key.
   const reg = path.join(dir, 'registry');
-  write(path.join(reg, 'registry.json'), JSON.stringify({ hosts: { laptop: { alias: 'ubuntu-laptop' }, pc: { alias: 'pc-box' }, far: { alias: 'nowhere' }, shut: { alias: 'locked' } } }), 0o644);
+  write(path.join(reg, 'registry.json'), JSON.stringify({ hosts: { laptop: { alias: 'ubuntu-laptop' }, pc: { alias: 'pc-box' }, far: { alias: 'nowhere' }, shut: { alias: 'locked' }, mac: { alias: 'mac-box' } } }), 0o644);
   write(path.join(reg, 'hosts', 'pc.json'), JSON.stringify({ host: 'pc', projects: { repo: { path: '~/projects/repo' } } }), 0o644);
+  write(path.join(reg, 'hosts', 'mac.json'), JSON.stringify({ host: 'mac', projects: { notes: { path: '~/projects/notes' } } }), 0o644);
   write(path.join(reg, 'hosts', 'far.json'), JSON.stringify({ host: 'far', projects: { site: { path: '~/projects/site' } } }), 0o644);
   fs.mkdirSync(path.join(dir, 'tasks'));
   fs.mkdirSync(path.join(dir, 'workspace'));
@@ -98,6 +116,8 @@ esac
   Object.assign(process.env, {
     BACKEND_DATA_DIR: dir, OPENCLAW_WORKSPACE_DIR: path.join(dir, 'workspace'), PROJ_REGISTRY_DIR: reg, PROJ_HOST: 'laptop',
     CODE_AGENTS_SSH: path.join(dir, 'ssh'), CODE_AGENTS_SSH_CONTROL: 'none',
+    // The look searches only the stand-in Mac's app copy off the PATH, never this machine's own Codex installs.
+    CODE_AGENTS_CODEX_PLACES: `"$HOME/${MAC_CODEX}"`,
     CODEX_APP_SERVER_SOCKET: path.join(dir, 'no-local-codex.sock'), CODEX_APP_SERVER_FALLBACK: 'none', CLAUDE_BRIDGE_SOCKET: path.join(dir, 'no-local-bridge.sock'),
   });
   fake.on('account/read', () => ({ account: { type: 'chatgpt', email: null, planType: 'plus' }, requiresOpenaiAuth: true }));
@@ -238,6 +258,34 @@ test('Codex on a device with no daemon runs its own app server there, on stdio',
   assert.ok(sshCalls().at(-1)!.includes('exec codex app-server\''), 'plain app-server, not the proxy');
 });
 
+test('a device with no `codex` on its PATH: the ChatGPT app’s own copy is found, its daemon attached to, and its path used to resume', async () => {
+  const mac = await ssh.probeDevice('mac');
+  const copy = path.join(macHome, MAC_CODEX);
+  assert.deepEqual(mac.codex, { version: '0.169.0-alpha.11.1', daemon: true, home: path.join(macHome, '.codex'), bin: copy, server: '0.158.0' });
+  assert.equal(ssh.publicStatus(mac).codex?.bin, `~/${MAC_CODEX}`, 'the pane sees it under ~, not his home folder');
+  const status = await hub.agentStatus('codex', 'mac');
+  assert.equal(status.state, 'ready');
+  assert.ok(sshCalls().at(-1)!.includes(`exec '\\''${copy}'\\'' app-server proxy`), `its own copy, through the daemon: ${sshCalls().at(-1)}`);
+  assert.ok(!sshCalls().some((c) => c.includes('-- mac-box ') && /app-server'|app-server$/.test(c)), 'no app server of its own started there');
+  // The way back in from a terminal runs that copy there.
+  const { resumeCommand } = await import('../src/lib/session-index/resume');
+  assert.equal(resumeCommand('codex', '~', 'th-1', 'macbook', `~/${MAC_CODEX}`), `ssh -t macbook 'exec "$SHELL" -lc "cd ~ && ~/${MAC_CODEX} resume th-1"'`);
+  assert.equal(resumeCommand('codex', '~/projects/notes', 'th-1', 'macbook', '/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex'),
+    `ssh -t macbook 'exec "$SHELL" -lc "cd ~/projects/notes && /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex resume th-1"'`);
+  assert.equal(resumeCommand('codex', '~', 'th-1', 'macbook', '/Apps/My Codex/codex'), `ssh -t macbook 'exec "$SHELL" -lc "cd ~ && '\\''/Apps/My Codex/codex'\\'' resume th-1"'`);
+  assert.equal(resumeCommand('claude-code', '~', 'c-1', 'macbook', '/x/codex'), `ssh -t macbook 'exec "$SHELL" -lc "cd ~ && claude --resume c-1"'`, 'Codex’s copy is not Claude’s');
+  // With no copy anywhere it says Codex is not there, and starts nothing.
+  fs.renameSync(copy, `${copy}.off`);
+  try {
+    hub.resetHub();
+    ssh.forgetProbes();
+    assert.equal((await ssh.probeDevice('mac')).codex, null);
+    assert.match((await hub.agentStatus('codex', 'mac')).reason!, /Codex isn’t installed on Mac \(no `codex` in its login shell’s PATH, and none of the Codex or ChatGPT apps’ own copies\)/);
+  } finally {
+    fs.renameSync(`${copy}.off`, copy);
+  }
+});
+
 test('WSL whose Codex keeps its state in Windows’ folder: no app server is started there, and it says why', async () => {
   daemon(false);
   fs.writeFileSync(path.join(dir, 'windows-home'), '');
@@ -284,7 +332,7 @@ test('routes: devices are listed at once, each device’s agents are asked on th
   const list = await json(await get(`id=${TASK}`));
   assert.equal(list.status, 200);
   assert.ok(Date.now() - t0 < 1000, 'the list never waits on a device');
-  assert.deepEqual(list.body.data.devices.map((d: any) => [d.host, d.label, d.alias, d.here]), [['laptop', 'laptop', null, true], ['pc', 'pc', 'pc-box', false], ['far', 'far', 'nowhere', false], ['shut', 'shut', 'locked', false]]);
+  assert.deepEqual(list.body.data.devices.map((d: any) => [d.host, d.label, d.alias, d.here]), [['laptop', 'laptop', null, true], ['pc', 'pc', 'pc-box', false], ['far', 'far', 'nowhere', false], ['shut', 'shut', 'locked', false], ['mac', 'Mac', 'mac-box', false]]);
   assert.ok(list.body.data.places.some((p: any) => p.host === 'pc' && p.cwd === '~/projects/repo' && p.available));
   const far = await json(await get(`id=${TASK}&agents=1&host=far`));
   assert.equal(far.body.data.device.reachable, false);

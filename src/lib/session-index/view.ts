@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { backendDataDir } from '../backend-data.ts';
 import { hostAlias, machineName, thisHost } from '../proj-hosts.ts';
+import { deviceCodex } from './devices.ts';
 import { resumeCommand } from './resume.ts';
 import { indexExists, openIndex, type SessionRecord } from './store.ts';
 import type { SessionApp, SessionRow, SessionTarget, SessionsView } from './types.ts';
@@ -62,7 +63,11 @@ export function toRow(s: SessionRecord, tier: SessionRow['tier'], why: string, n
   else if (s.app === 'claude-code' && s.bridge) row.href = `https://claude.ai/code/${encodeURIComponent(s.bridge)}`;
   // A session on another device is resumed there, through ssh by its proj alias. One that ran in Windows itself (the
   // PC's Windows Claude or Codex app, a C: folder) has no command that reaches it from here.
-  else if ((s.app === 'claude-code' || s.app === 'codex') && !/^[A-Za-z]:[\\/]/.test(s.cwd ?? '')) row.resume = resumeCommand(s.app, s.cwd, s.id, s.host !== thisHost() ? hostAlias(s.host) : null);
+  // A device whose `codex` is not on its PATH runs the copy the collector found there (the Mac's ChatGPT.app one).
+  else if ((s.app === 'claude-code' || s.app === 'codex') && !/^[A-Za-z]:[\\/]/.test(s.cwd ?? '')) {
+    const away = s.host !== thisHost();
+    row.resume = resumeCommand(s.app, s.cwd, s.id, away ? hostAlias(s.host) : null, away && s.app === 'codex' ? deviceCodex(s.host) : null);
+  }
   return row;
 }
 

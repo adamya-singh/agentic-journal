@@ -15,21 +15,25 @@ import { createInterface } from 'node:readline';
 import { PassThrough, Transform, type Readable } from 'node:stream';
 import zlib from 'node:zlib';
 import { backendDataDir } from '../backend-data.ts';
+import { findCodexCommand, tildePath } from '../codex-bin.ts';
 import { hostAlias, hostProjects, knownHosts, thisHost } from '../proj-hosts.ts';
 import { feedClaudeLine, feedCodexLine, finishDigest, mergeAccs, newAcc, type DigestAcc } from './digest.ts';
 import { journalChatTitles, journalNames, openclawDigests } from './openclaw.ts';
+import { noteDeviceCodex } from './devices.ts';
 import { inboxDir, sessionIndexDir } from './store.ts';
 import type { AppRecord, SessionDigest } from './types.ts';
 import { journalIds } from './view.ts';
 
 export type EntryKind = 'claude' | 'codex' | 'codex-index' | 'app';
 export interface Entry { kind: EntryKind; path: string; size: number; mtime: number }
-export interface Listing { home: string | null; entries: Entry[] }
+/** codex: the Codex there when `codex` is not on its PATH (an app's own copy, codex-bin.ts), for its resume commands. */
+export interface Listing { home: string | null; entries: Entry[]; codex?: string }
 
 /**
  * Lists a device's transcripts, read-only, in POSIX sh (GNU find on Linux and WSL, BSD find and stat on macOS):
  * Claude Code's (~/.claude/projects, and on WSL the Windows user's too), Codex's (CODEX_HOME, ~/.codex, and on WSL the
- * Windows Codex home), Codex's thread names, and the Claude desktop app's session records. Each folder once.
+ * Windows Codex home), Codex's thread names, and the Claude desktop app's session records. Each folder once. Also
+ * which Codex runs there when `codex` is not on its PATH (the Mac's ChatGPT.app copy; only `--version` is run).
  */
 export const LIST_SCRIPT = `P=
 find / -maxdepth 0 -printf '' >/dev/null 2>&1 && P=1
@@ -37,6 +41,7 @@ L() { if [ -n "$P" ]; then find "$@" -printf '%s %T@ %p\\n' 2>/dev/null; else fi
 seen=:
 once() { r=$(cd "$1" 2>/dev/null && pwd -P) || return 1; case "$seen" in *":$r:"*) return 1;; esac; seen="$seen$r:"; return 0; }
 printf 'AJ-HOME %s\\n' "$HOME"
+c=$(${findCodexCommand()} 2>/dev/null); [ -n "$c" ] && [ "$c" != codex ] && printf 'AJ-CODEX %s\\n' "$c"
 for d in "$HOME/.claude/projects" /mnt/c/Users/*/.claude/projects; do
   [ -d "$d" ] && once "$d" || continue
   printf 'AJ-ROOT claude %s\\n' "$d"; L "$d" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl'
@@ -57,16 +62,18 @@ export function parseListing(stdout: string): Listing {
   let home: string | null = null;
   let kind: EntryKind | null = null;
   let ended = false;
+  let codex: string | null = null;
   const entries: Entry[] = [];
   for (const line of stdout.split('\n')) {
     if (line.startsWith('AJ-HOME ')) { home = line.slice(8).trim() || null; continue; }
+    if (line.startsWith('AJ-CODEX /')) { codex = line.slice(9).trim(); continue; }
     if (line.startsWith('AJ-ROOT ')) { const k = line.slice(8).split(' ')[0]; kind = (['claude', 'codex', 'codex-index', 'app'] as const).find((x) => x === k) ?? null; continue; }
     if (line === 'AJ-END') { ended = true; continue; }
     const m = /^(\d+) (\d+(?:\.\d+)?) (\/.+)$/.exec(line);
     if (m && kind) entries.push({ kind, size: Number(m[1]), mtime: Math.round(Number(m[2]) * 1000), path: m[3]! });
   }
   if (!ended) throw new Error('the listing of its sessions did not finish');
-  return { home, entries };
+  return { home, entries, ...(codex ? { codex: tildePath(codex, home) } : {}) };
 }
 
 // ---- Where the bytes come from: this machine's disk, or another device through ssh.
@@ -225,7 +232,8 @@ export function appRecordOf(raw: unknown): AppRecord | null {
   const num = (v: unknown) => (typeof v === 'number' ? v : typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? Date.parse(v) : undefined);
   return {
     cli, title: typeof r.title === 'string' ? r.title : '', bridge,
-    ssh: ssh ? String(ssh.host ?? ssh.hostname ?? ssh.alias ?? '') || null : null,
+    // The app writes {sshHost, sshPort?, sshIdentityFile?} (seen on the Mac, 2026-11-17); the other names are kept.
+    ssh: ssh ? String(ssh.sshHost ?? ssh.host ?? ssh.hostname ?? ssh.alias ?? '') || null : null,
     ...(typeof (r.cwd ?? r.originCwd) === 'string' ? { cwd: String(r.cwd ?? r.originCwd) } : {}),
     ...(r.isArchived === true || r.archived === true ? { archived: true } : {}),
     created: num(r.createdAt), active: num(r.lastActivityAt ?? r.updatedAt),
@@ -354,6 +362,7 @@ export async function collectHost(source: Source, options: { deadline: number; k
     if (f.endsWith('.json') && !keep.has(f)) { fs.rmSync(path.join(inbox, f), { force: true }); result.removed++; }
   }
   writeAtomic(stateFile(host), JSON.stringify(next));
+  noteDeviceCodex(host, listing.codex ?? null);
   result.sessions = digests.length;
   return result;
 }

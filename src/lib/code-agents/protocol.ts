@@ -100,7 +100,9 @@ export interface DeviceStatus {
   reason?: string;           // why it cannot be reached
   os?: string;               // uname -s: Linux, Darwin
   wsl?: boolean;
-  codex?: { version: string | null; daemon: boolean; home?: string } | null;    // null: not installed there; home: its CODEX_HOME
+  // null: not installed there. home: its CODEX_HOME. bin: the Codex found when `codex` is not on its PATH (an app's
+  // own copy, codex-bin.ts; `~/…` in the pane). server: the version its running daemon reports.
+  codex?: { version: string | null; daemon: boolean; home?: string; bin?: string; server?: string } | null;
   claude?: { version: string | null; bridge: 'running' | 'installed' | 'missing' } | null;
   checkedAt?: number;
 }

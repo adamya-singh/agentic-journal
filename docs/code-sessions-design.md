@@ -790,8 +790,8 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
   it in b3642ca, and its stream and Codex turns work there: see "The stream through Tailscale").
 - Claude Code, after the live check: a real `claude auth login` completed from the pane, `compact_boundary` and
   `api_retry` messages, a rate-limited turn, `Task`/sub-agent shapes live, and the Claude desktop app's Code tab list
-  are still unseen. A Journal session on another device is told the Journal is at `127.0.0.1:3000`, which is not the
-  Journal there. The CLI updates itself (2.1.302 → 2.1.326 during the check); `sdk-types.ts` was checked against what
+  are still unseen. (A session on another device was told the Journal is at `127.0.0.1:3000`; fixed 2026-11-17, see
+  "The first turn on another device".) The CLI updates itself (2.1.302 → 2.1.326 during the check); `sdk-types.ts` was checked against what
   both sent, not against a new `sdk.d.ts`.
 - `own` for Claude Code with a settings `defaultMode` of `bypassPermissions`: the SDK wants
   `allowDangerouslySkipPermissions` for that mode when it is given as an option; whether Claude Code honours it from
@@ -867,7 +867,8 @@ its link in `tasks/code-sessions.json`, not by matching its text:
     `.jsonl.zst`), `session_index.jsonl` for thread names, on WSL the Windows user's Claude and Codex homes, and on
     macOS the Claude app's `claude-code-sessions` records. OpenClaw's sessions come from its agent sqlite, read-only,
     on this machine only.
-  - **Read-only on devices:** only `find`, `stat`, `tail -c +N`, `cat` and `gzip` run there, with BatchMode and the
+  - **Read-only on devices:** only `find`, `stat`, `tail -c +N`, `cat`, `gzip` and a Codex copy's `--version` (to find
+    one off the PATH, for the resume commands) run there, with BatchMode and the
     code agents' shared ssh master. The listing takes his login shell's environment but runs in sh. Nothing is
     installed, started or written on a device.
   - **Incremental:** what was read is kept in `session-index/collect/<host>.json` (size, time, the digest so far). A
@@ -946,12 +947,25 @@ there with that device's own Codex or Claude Code, its login and its transcripts
   terminal finds. Found here: a plain `ssh ubuntu-laptop codex` runs `/usr/bin/codex` 0.144.4, the login shell finds
   `~/.local/bin/codex` 0.169.0. A login shell that is not POSIX (fish) is not supported. Each command prints a marker
   line (`AJ-PIPE-1`) before it starts; whatever a profile prints before it is dropped (`childPipe` in transport.ts).
-- **The look** (`probeDevice`, read-only): one ssh that prints home, `uname -s`, WSL or not, `codex --version`,
-  `CODEX_HOME`, whether `codex app-server daemon version` says `running`, `claude --version`, node, whether the
+- **The look** (`probeDevice`, read-only): one ssh that prints home, `uname -s`, WSL or not, which Codex there is
+  (below) and its `--version`, `CODEX_HOME`, whether `<codex> app-server daemon version` says `running` and the
+  daemon's own `appServerVersion` (`codex.server`), `claude --version`, node, whether the
   bridge is installed (`~/.local/share/agentic-journal/claude-bridge/run`, else a checkout at
   `~/projects/agentic-journal/bridge` with its packages) and whether its socket is there. Kept 60 s (30 s when it could
   not reach the device); looks asked for at once share one ssh. This machine is never looked at.
-- **Codex:** with a daemon there, `ssh <alias> codex app-server proxy` is a byte pipe to it and the Journal speaks the
+- **Finding Codex off the PATH** (`src/lib/codex-bin.ts`, added 2026-11-17): `codex` on the login shell's PATH
+  first; else the first of these that answers `--version`: the Mac's ChatGPT.app CLI
+  (`/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`, also under
+  `~/Applications`), Codex's managed installs (`~/.codex/packages/standalone/current/bin/codex`,
+  `~/.codex/packages/app-server-daemon/current/bin/codex`), the ChatGPT app for Linux (`/usr/lib/chatgpt/resources/codex`;
+  `/opt/codex-desktop` does not exist on this laptop), `~/.local/bin`, `~/.npm-global/bin`, nvm's
+  `~/.nvm/versions/node/*/bin/codex` (nvm loads from `.zshrc`, so a login shell does not see it), then the Cursor and
+  VS Code extensions' copies (`~/.cursor|.vscode/extensions/openai.chatgpt-*/bin/*/codex`). The search runs in
+  `/bin/sh` with the login shell's environment (zsh stops at a glob that matches nothing). The copy found is
+  `codex.bin` (the pane gets it as `~/…` when it is under his home), every remote Codex command runs it
+  (`REMOTE.codexProxy(bin)`, `codexStdio(bin)`), and so do the resume commands (below). WSL is unchanged: the Linux
+  paths are looked at, and the `/mnt/…` CODEX_HOME refusal stays. `CODE_AGENTS_CODEX_PLACES` replaces the list (tests).
+- **Codex:** with a daemon there, `ssh <alias> <codex> app-server proxy` is a byte pipe to it and the Journal speaks the
   daemon's WebSocket over ssh's stdio (`webSocketTransport({ createConnection: () => sshPipe(…) })`; `childPipe` gives
   `ws` the few socket methods it calls). Threads are the daemon's own, shared with that device's Codex apps. Without a
   daemon, `ssh <alias> codex app-server` speaks newline JSON on stdio for as long as the connection lasts (its turns
@@ -978,7 +992,8 @@ there with that device's own Codex or Claude Code, its login and its transcripts
   place's device until he picks another). Sign in works per device.
 - **Rows** name the device in his words (`placeLine`: "PC · repo"); the session head too.
 - **Open in…** on another device: `ssh -t <alias> 'exec "$SHELL" -lc "cd ~/projects/x && codex resume <id>"'`
-  (`resumeCommand(app, cwd, id, alias)`, quoting stays plain when the folder is; checked by running the commands
+  (`resumeCommand(app, cwd, id, alias, bin)`; on a device whose `codex` is off the PATH, `codex` is the copy its look
+  found, e.g. the Mac's `/Applications/ChatGPT.app/…/MacOS/codex resume <id>`; quoting stays plain when the folder is; checked by running the commands
   against a stand-in ssh); the session index rows of other devices carry the same command.
 - Phone width checked (iPhone 15 profile in Chrome): the chips wrap, nothing scrolls sideways.
 
@@ -1008,9 +1023,16 @@ only `--local --prefix … --no-service`. Tested locally only: `--dry-run`, argu
   Claude Code 2.1.289; **no Linux node** (only Windows' npm on PATH); no bridge; a checkout at
   `~/projects/agentic-journal`. So: Codex sessions there need a daemon or a WSL-side CODEX_HOME; Claude Code needs node
   ≥ 22.18 installed in WSL, then the install script.
-- **Mac** (mac → macbook): **not reachable** from the laptop: `macbook` does not resolve (its tailnet name is
-  `adamyas-macbook-pro`), and that name's host key is not in known_hosts. Nothing else is known. It needs an ssh Host
-  entry here (e.g. `Host macbook` → `HostName adamyas-macbook-pro`, its user) and the host key accepted, by him.
+- **Mac** (mac → macbook, reachable since 2026-11-17, key login): macOS 26.6.2, zsh, node v25.8.1 and claude 2.1.285
+  in /opt/homebrew/bin. **No `codex` on the login PATH**; Codex copies: ChatGPT.app's CLI 0.169.0-alpha.11.1 (what the
+  look picks), an nvm npm install 0.158.0 (`~/.nvm/versions/node/v22.13.0/bin/codex`, not on the login PATH: the
+  daemon runs from it, `app-server --listen unix://`, since Oct 13), a Cursor extension's copy. Daemon running
+  (`appServerVersion` 0.158.0), control socket `~/.codex/app-server-control/app-server-control.sock` → a socket under
+  `/private/tmp/codex-daemon-501/`. `config.toml`: model gpt-6.1-sol, `approval_policy = "never"`,
+  `sandbox_mode = "danger-full-access"`. The ChatGPT app also runs its own `codex app-server` on stdio (not the
+  daemon). Claude bridge: installed and running under launchd (`com.agentic-journal.claude-bridge`, from
+  `~/.local/share/agentic-journal/claude-bridge`) as of 14:13 on 2026-11-17, installed by someone else while this was
+  checked (not by this work); Claude Code reads `ready` (Max) there through it.
 
 ### Checked live (throwaway dev server on 3111, copied data, a registry copy with an extra host `self` → ubuntu-laptop)
 
@@ -1029,17 +1051,70 @@ only `--local --prefix … --no-service`. Tested locally only: `--dry-run`, argu
 
 ### Open items (other devices)
 
-- No real turn on another physical device; the Mac is unreachable and the PC has no daemon and no node in WSL.
+- One real Codex turn on the Mac (below). The PC still has no daemon and no node in WSL.
 - Signing in on another device, Claude Code on another device and the plain-`codex app-server` path are tested only
   against the fakes (`scripts/code-agents-ssh.test.ts`: a stand-in ssh running a "device" with its own home and a
   chatty profile, the bridge's proxy as Codex's byte pipe, a newline-JSON app server, the real bridge with the
   stand-in SDK).
 - A remote place is not checked to exist until the agent there is asked; the bridge and Codex refuse a missing one.
 - launchd on macOS is written from the docs, not run.
-- Session index on the Mac: unreachable (`macbook` does not resolve). The BSD find/stat listing and the Claude app
-  record fields (`cliSessionId`, `title`, `sshConfig`, `isArchived`, `lastActivityAt`, `session_…` Remote Control
-  ids) are from docs and proj's code, not checked on a Mac. A Remote Control link from a transcript's `bridge-session`
+- Session index on the Mac: checked (below). The Claude app record fields `cliSessionId`, `title`, `cwd`,
+  `isArchived`, `lastActivityAt`, `bridgeSessionIds` (`session_…`) are as read; `sshConfig` is `{sshHost, sshPort?,
+  sshIdentityFile?}` (now read). Its first full read is about 3.9 GB, mostly Claude Code transcripts. A Remote Control link from a transcript's `bridge-session`
   (`cse_…`) is not used: its claude.ai URL form is not verified. ssh from inside the system unit (no SSH_AUTH_SOCK;
   the key comes from `~/.ssh/config`'s IdentityFile) was not run.
 - The Codex daemon on another device must already run (`codex app-server daemon start` there); the Journal never
   starts one.
+- A Codex session on the Mac runs under the Mac's seatbelt sandbox, which works (unlike bubblewrap here): in a
+  read-only or workspace-write sandbox without network access its `curl` to the Journal is blocked and Codex asks to
+  run it outside the sandbox (seen live). With his own settings (`never` / full access) it just runs.
+- The resume command of a row in the session index uses the Codex the collector last found on that device
+  (`session-index/devices.json`); production writes it on its first timer run after the deploy.
+
+### The first turn on another device (fixed 2026-11-17)
+
+The first-turn brief told every session the Journal is at `http://127.0.0.1:3000`; on the Mac that is the Mac itself
+(nothing listens there: checked). Now `firstTurnText({ …, journal })` gets `journalOriginFor(isRemote(host))`
+(`same-origin.ts`): loopback on the Journal's machine, else `journalPublicOrigin()` = `AGENTIC_JOURNAL_ORIGIN` or the
+default `https://ubuntu-laptop.taile85e97.ts.net` (Tailscale serve, tailnet only). It names both the progress and the
+workspace calls (`workspaceApiHelp(taskId, origin)`; OpenClaw's own chats keep loopback), says the Journal "runs on his
+laptop; from here it is at …", and on another device does not offer a `file` block (it shows only files of the laptop's
+`~/.openclaw/workspace`): it asks for the full path instead.
+
+What those routes ask of a request: nothing. `/api/tasks/progress` and `/api/tasks/workspace` have no origin check and
+there is no middleware, so a curl with no `Origin` is taken the same from loopback and through the ts.net name.
+Checked read-only, from the Mac through `https://ubuntu-laptop.taile85e97.ts.net` and from the laptop on loopback,
+with the same answers: `GET /api/tasks/workspace?id=<made-up id>` → 404 "No open task has the id …"; `POST
+/api/tasks/progress {}` → 400; `POST /api/tasks/workspace` with a body that is not JSON → 400. `GET
+/api/tasks/sessions` from the Mac with no `Origin` → 403 (the strict check, unchanged). Anyone on the tailnet can
+write progress and Work tab blocks, as anyone on the laptop could before; the tailnet is his own devices.
+
+### Checked live on the Mac (2026-11-17; throwaway dev server on 3111, copied data, registry copy without the PC)
+
+- The look: reachable, Darwin, Codex `0.169.0-alpha.11.1` at the ChatGPT.app path, daemon running (server 0.158.0),
+  Claude 2.1.285 with the bridge running. Status through `ssh macbook <ChatGPT.app codex> app-server proxy` → the
+  running daemon: Codex `ready` (Plus, version 0.158.0 from the daemon, its limits); models (gpt-6-astra default …);
+  own settings `never` / `danger-full-access`; its native list for `~/projects/projects-index`. Claude Code `ready`
+  (Max) through the bridge there (status only, no turn).
+- One Codex turn, from the route the form uses, on a throwaway task that exists only in the copy
+  (`c0de3111-…-ac01`), in `~/projects/projects-index`, mode Plan only (read-only sandbox), prompt "run pwd and say what
+  it printed": thread `01a1eaf4-2779-7142-b465-7d6a25f4e30a`. The stream delivered it live (turn-started 1.4 s after
+  the start, deltas, `pwd` → `/Users/adamyasingh/projects/projects-index`, completed in 30 s). Codex then tried to
+  record progress with `curl -s -X POST https://ubuntu-laptop.taile85e97.ts.net/api/tasks/progress …` (the brief's new
+  address): the sandbox blocked the network, it asked to run it outside, and the request was **denied** from the pane's
+  route (production was never written to; that id is not a task there anyway). Its reply said so.
+- Native there: the thread is in the Mac's `~/.codex/session_index.jsonl` ("run pwd and say what it printed"), its
+  rollout is `~/.codex/sessions/2026/11/17/rollout-…-01a1eaf4-….jsonl` with source `vscode` / originator "Codex
+  Desktop", and `thread/list` (the pane's "Continue an existing session") lists it. The rollout's first message holds
+  "runs on his laptop; from here it is at https://ubuntu-laptop.taile85e97.ts.net" and no `127.0.0.1:3000`.
+- The pane (headless Chrome, 1440 wide): the row reads "Mac · projects-index", the head "Mac · projects-index", and
+  "Open in Codex" shows `ssh -t macbook 'exec "$SHELL" -lc "cd ~/projects/projects-index &&
+  /Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex resume 01a1eaf4-…"'`
+  (that path and `resume --help` checked to run there in the login shell). One turn in all; nothing installed,
+  started or stopped on the Mac (the turn attached to the running daemon; the ssh pipe ended with the dev server).
+- Session index, `scripts/session-index.ts sync --host mac --budget 240` on a scratch data dir: the BSD `stat`
+  listing works as written (843 files in 0.6 s: 377 Claude Code transcripts, 3.7 GB; 314 Codex rollouts, 310 of them
+  `.zst`, 150 MB; `session_index.jsonl`; 151 Claude app records, 14 MB) and found the ChatGPT.app Codex for the rows.
+  In 240 s it read 67 files (newest first, all Claude Code) into 42 sessions and 13 app records; 776 were left for later
+  runs (peak 296 MB). Production's timer reads the rest over its next runs, as with the PC.
+
