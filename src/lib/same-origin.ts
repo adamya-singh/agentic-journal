@@ -19,7 +19,8 @@ export function fromThisApp(headers: HeaderBag): boolean {
   if (!origin) return true;
   try {
     const asked = new URL(origin).host;
-    return [headers.get('host'), headers.get('x-forwarded-host')].some((host) => host !== null && host.toLowerCase() === asked);
+    const forwarded = (headers.get('x-forwarded-host') ?? '').split(',').map((h) => h.trim()).filter(Boolean);
+    return [headers.get('host'), ...forwarded].some((host) => host !== null && host.toLowerCase() === asked);
   } catch {
     return false;
   }
@@ -36,14 +37,30 @@ function nameOf(host: string): string {
 }
 
 /**
+ * One name of AGENTIC_JOURNAL_HOSTS as he may write it: a bare name ("box.ts.net"), with a port ("journal.lan:3000"),
+ * or a whole address copied from the browser ("https://box.ts.net/", "http://journal.lan:3000/sunrise").
+ */
+function listedName(part: string): string | null {
+  const p = part.trim();
+  if (!p) return null;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(p)) {
+    try { return nameOf(new URL(p).host); } catch { return null; }
+  }
+  return nameOf(p.split('/')[0]!);
+}
+
+/**
  * The names the Journal is reached by, on any port: loopback; the host of AGENTIC_JOURNAL_ORIGIN, the public address
  * the app already uses for its links (by default this laptop's Tailscale name); and any names in
- * AGENTIC_JOURNAL_HOSTS (comma-separated, e.g. "box.tail1234.ts.net,journal.lan").
+ * AGENTIC_JOURNAL_HOSTS (comma- or space-separated, e.g. "box.tail1234.ts.net,journal.lan"; a whole address works too).
  */
 export function journalHostNames(env: Record<string, string | undefined> = process.env): Set<string> {
   const names = new Set(LOOPBACK);
   try { names.add(nameOf(new URL(env.AGENTIC_JOURNAL_ORIGIN || DEFAULT_ORIGIN).host)); } catch { /* a bad value adds nothing */ }
-  for (const part of (env.AGENTIC_JOURNAL_HOSTS ?? '').split(',')) if (part.trim()) names.add(nameOf(part));
+  for (const part of (env.AGENTIC_JOURNAL_HOSTS ?? '').split(/[\s,]+/)) {
+    const name = listedName(part);
+    if (name) names.add(name);
+  }
   return names;
 }
 
@@ -64,7 +81,8 @@ export function fromThisAppStrict(headers: HeaderBag, env: Record<string, string
   const host = headers.get('host');
   const forwarded = headers.get('x-forwarded-host');
   if (!host || !known.has(nameOf(host))) return false;
-  if (forwarded !== null && !known.has(nameOf(forwarded))) return false;
+  // A chain of proxies lists every name it was asked by ("a.ts.net, 127.0.0.1:3000"): each must be the Journal's.
+  if (forwarded !== null && !forwarded.split(',').every((name) => known.has(nameOf(name)))) return false;
   if (origin) {
     try { if (!known.has(nameOf(new URL(origin).host))) return false; } catch { return false; }
   }

@@ -1,5 +1,5 @@
 [Unit]
-Description=Agentic Journal session index: fold in the session digests machines sent (proj sessions)
+Description=Agentic Journal session index: collect every device's agent sessions (this one from disk, the others over ssh, read-only) and fold them in
 After=agentic-journal.service
 
 [Service]
@@ -8,8 +8,10 @@ User=openclaw
 Group=openclaw
 WorkingDirectory=/home/openclaw/projects/agentic-journal
 Environment=NODE_ENV=production
-ExecStart=/usr/bin/env node scripts/session-index.ts ingest
+# The heap is held under MemoryMax so V8 collects before the cgroup kills it (a first run reads gigabytes of transcripts).
+ExecStart=/usr/bin/env node --max-old-space-size=256 --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/session-index.ts sync
 Nice=10
-MemoryMax=512M
+# A first run peaked at about 450 MB (Node 24, a 330 MB transcript on the PC); the heap itself is capped at 256 MB.
+MemoryMax=768M
 TimeoutStartSec=300
 UMask=0077

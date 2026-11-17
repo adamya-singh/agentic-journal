@@ -23,7 +23,7 @@ import type {
 } from '../src/lib/code-agents/protocol.ts';
 import { isApprovalDecision, isExplicitMode, isPermissionMode, PERMISSION_MAPPING } from '../src/lib/code-agents/protocol.ts';
 import {
-  approvalFor, DENY_MESSAGE, historyTurns, isLimited, limitSummary, limitWindow, modelEntries, nativeSession, sessionRuleOptions, STOP_MESSAGE, TurnBuilder,
+  approvalFor, DENY_MESSAGE, historyTurns, isLimited, limitSummary, limitWindows, modelEntries, nativeSession, sessionRuleOptions, STOP_MESSAGE, TaskTracker, TurnBuilder,
 } from './mapping.ts';
 import type {
   ClaudeSdk, SdkCanUseToolOptions, SdkMessage, SdkPermissionResult, SdkPermissionUpdate, SdkQuery, SdkQueryOptions, SdkUserInput,
@@ -161,6 +161,7 @@ function pushQueue(): PushQueue {
 
 interface Held {
   request: ApprovalRequest;
+  toolName: string;
   input: Record<string, unknown>;
   suggestions: SdkPermissionUpdate[];
   toolUseId: string | null;
@@ -193,6 +194,8 @@ interface Session {
   sizeCheck: Promise<void> | null;
   seen: Set<string>;                   // uuids of messages this bridge sent or heard in the session (its own writes)
   rules: SdkPermissionUpdate[];        // "allow for this session" answers, for queries opened again
+  rulesPick: SessionPicks['mode'] | null;   // the mode picked when an answer moved the session's mode (setMode)
+  tasks: TaskTracker | null;           // its task list (TaskCreate/TaskUpdate), across turns
   lock: Promise<unknown>;
   lastState: NativeState | null;
   tokens: TokenUsage;
@@ -286,7 +289,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
   const makeSession = (id: string, cwd: string, title: string | null, isNew: boolean, known: number | null): Session => {
     const session: Session = {
       id, cwd, title, isNew, query: null, input: null, applied: null, stderr: '', turn: null, lastFailed: false,
-      approvals: new Map(), subscribers: new Set(), idle: null, known, sizeCheck: null, seen: new Set(), rules: [], lock: Promise.resolve(), lastState: null,
+      approvals: new Map(), subscribers: new Set(), idle: null, known, sizeCheck: null, seen: new Set(), rules: [], rulesPick: null, tasks: null, lock: Promise.resolve(), lastState: null,
       tokens: { total: 0, input: 0, output: 0, contextWindow: null },
     };
     sessions.set(id, session);
@@ -354,20 +357,43 @@ export function createBridge(deps: BridgeDeps): Bridge {
     try { q?.close(); } catch (error) { log(`closing a query failed: ${message(error)}`); }
   };
 
-  const openQuery = (session: Session, picks: SessionPicks) => {
+  /**
+   * Thinking summaries, unless his settings turn them off. Run through the SDK, Claude Code asks for thinking
+   * without its text (CLI 2.1.302 consults `showThinkingSummaries` only in its terminal; seen live: signed, empty
+   * thinking blocks), which leaves the pane nothing to show while Claude thinks. `--thinking-display summarized`
+   * asks for the text and leaves whether and how much it thinks as it was.
+   */
+  const thinkingArgs = async (cwd: string): Promise<{ extraArgs?: Record<string, string> }> => {
+    if (sdk.resolveSettings) {
+      try {
+        const resolved = await sdk.resolveSettings({ cwd, settingSources: ['user', 'project', 'local'] });
+        if (resolved.effective?.showThinkingSummaries === false) return {};
+      } catch { /* cannot tell: ask for them */ }
+    }
+    return { extraArgs: { 'thinking-display': 'summarized' } };
+  };
+
+  const openQuery = async (session: Session, picks: SessionPicks) => {
     const input = pushQueue();
+    const { permissionMode: ruleMode, ...rules } = sessionRuleOptions(session.rules);
+    // "Allow for this session" on an edit moves the session's mode (acceptEdits); it holds while the pick it was
+    // given under does.
+    const mode = ruleMode && session.rulesPick === picks.mode && picks.mode !== 'full'
+      ? { permissionMode: ruleMode }
+      // Its own settings: no mode is given, so Claude Code starts as it would in his terminal (settings' defaultMode).
+      : isExplicitMode(picks.mode) ? { permissionMode: PERMISSION_MAPPING[picks.mode]['claude-code'] } : {};
     const options: SdkQueryOptions = {
       cwd: session.cwd,
       ...(session.isNew ? { sessionId: session.id, ...(session.title ? { title: session.title } : {}) } : { resume: session.id }),
       pathToClaudeCodeExecutable: deps.claudePath,
       settingSources: ['user', 'project', 'local'],
       systemPrompt: { type: 'preset', preset: 'claude_code' },
-      // Its own settings: no mode is given, so Claude Code starts as it would in his terminal (settings' defaultMode).
-      ...(isExplicitMode(picks.mode) ? { permissionMode: PERMISSION_MAPPING[picks.mode]['claude-code'] } : {}),
+      ...mode,
       ...(picks.mode === 'full' ? { allowDangerouslySkipPermissions: true } : {}),
       ...(picks.model ? { model: picks.model } : {}),
       ...(picks.effort ? { effort: picks.effort } : {}),
-      ...sessionRuleOptions(session.rules),
+      ...rules,
+      ...await thinkingArgs(session.cwd),
       env: deps.env,
       canUseTool: (toolName, toolInput, opts) => canUseTool(session, toolName, toolInput, opts),
       includePartialMessages: true,
@@ -408,7 +434,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     if (session.turn) return session.turn;
     const turnId = id ?? crypto.randomUUID();
     const at = Date.now();
-    const turn: LiveTurn = { id: turnId, builder: new TurnBuilder(turnId, session.cwd, at, (event) => emit(session, event)), query: q, interrupting: false, stopTimer: null };
+    const turn: LiveTurn = { id: turnId, builder: new TurnBuilder(turnId, session.cwd, at, (event) => emit(session, event), session.tasks ??= new TaskTracker()), query: q, interrupting: false, stopTimer: null };
     session.turn = turn;
     session.lastFailed = false;
     if (session.idle) { clearTimeout(session.idle); session.idle = null; }
@@ -498,9 +524,9 @@ export function createBridge(deps: BridgeDeps): Bridge {
         return;
       }
       case 'rate_limit_event': {
-        const w = m.rate_limit_info ? limitWindow(m.rate_limit_info) : null;
-        if (!w) return;
-        windows.set(w.type, w);
+        const found = m.rate_limit_info ? limitWindows(m.rate_limit_info) : [];
+        if (!found.length) return;
+        for (const w of found) windows.set(w.type, w);
         const limits = limitSummary(windows.values());
         for (const client of clients) { try { client.notify('account/limits', { limits }); } catch { /* gone */ } }
         return;
@@ -519,7 +545,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
     const request: ApprovalRequest = { id, turnId: turn.id, itemId: opts.toolUseID ?? null, ...approvalFor(toolName, input, opts, session.cwd), at: Date.now() };
     let settled = false;
     const held: Held = {
-      request, input, suggestions: opts.suggestions ?? [], toolUseId: opts.toolUseID ?? null,
+      request, toolName, input, suggestions: opts.suggestions ?? [], toolUseId: opts.toolUseID ?? null,
       resolve: (result) => { if (settled) return; settled = true; resolve(result); },
     };
     session.approvals.set(id, held);
@@ -540,16 +566,26 @@ export function createBridge(deps: BridgeDeps): Bridge {
       if (!held.request.decisions.includes(decision)) throw new BridgeError(BRIDGE_ERROR.invalid, 'That answer is not one of the choices.');
       session.approvals.delete(approvalId);
       const turn = session.turn;
-      if (decision === 'allow') held.resolve({ behavior: 'allow', updatedInput: held.input });
+      if (decision === 'allow') {
+        // Leaving plan mode leaves it for the session (CLI 2.1.302 goes to `default`), also for a query opened again
+        // while plan is still the pick.
+        if (held.toolName === 'ExitPlanMode' && session.applied?.mode === 'plan') {
+          session.rules = session.rules.filter((r) => r.type !== 'setMode');
+          session.rules.push({ type: 'setMode', mode: 'default', destination: 'session' });
+          session.rulesPick = 'plan';
+        }
+        held.resolve({ behavior: 'allow', updatedInput: held.input });
+      }
       else if (decision === 'allow-session') {
         // Claude Code's own "don't ask again" rules, kept for this session only (never written to a settings file),
         // and kept here too, for the next query opened for it.
         const updates = held.suggestions.map((s) => ({ ...s, destination: 'session' }));
         for (const u of updates) if (!session.rules.some((r) => JSON.stringify(r) === JSON.stringify(u))) session.rules.push(u);
+        if (updates.some((u) => u.type === 'setMode')) session.rulesPick = session.applied?.mode ?? null;
         held.resolve({ behavior: 'allow', updatedInput: held.input, updatedPermissions: updates });
       } else {
         if (held.toolUseId) turn?.builder.declined.add(held.toolUseId);
-        if (decision === 'cancel' && turn) turn.interrupting = true;
+        if (decision === 'cancel' && turn) { turn.interrupting = true; turn.builder.stopping = true; }
         held.resolve(decision === 'cancel' ? { behavior: 'deny', message: STOP_MESSAGE, interrupt: true } : { behavior: 'deny', message: DENY_MESSAGE });
       }
       emit(session, { type: 'approval-resolved', approvalId, decision, by: 'journal' });
@@ -762,9 +798,19 @@ export function createBridge(deps: BridgeDeps): Bridge {
       subscribe(session, client);
       return withLock(session, async () => {
         if (session.turn) throw new BridgeError(BRIDGE_ERROR.turnRunning, 'Claude Code is still working in this session. Steer it, or stop it first.');
+        // A mode he picks now wins over one an earlier "allow for this session" moved the session to.
+        if (session.rulesPick !== null && session.rulesPick !== picks.mode) {
+          session.rules = session.rules.filter((r) => r.type !== 'setMode');
+          session.rulesPick = null;
+        }
         if (session.query && (!samePicks(session.applied, picks) || await changedElsewhere(session))) closeQuery(session);
         if (session.idle) { clearTimeout(session.idle); session.idle = null; }
-        const q = session.query ?? openQuery(session, picks);
+        // The task list so far, so a turn that updates a task an earlier one made can name it.
+        if (!session.tasks && !session.isNew) {
+          const tasks = new TaskTracker();
+          try { historyTurns(await sdk.getSessionMessages(session.id, { dir: session.cwd }), session.cwd, tasks); session.tasks = tasks; } catch { /* named by number until then */ }
+        }
+        const q = session.query ?? await openQuery(session, picks);
         const turnId = crypto.randomUUID();
         const turn = ensureTurn(session, q, turnId);
         turn.builder.user(turnId, text, Date.now());
@@ -792,6 +838,7 @@ export function createBridge(deps: BridgeDeps): Bridge {
       const turn = session.turn;
       if (!turn) return {};
       turn.interrupting = true;
+      turn.builder.stopping = true;
       for (const [id, held] of session.approvals) {
         if (held.request.turnId !== turn.id) continue;
         session.approvals.delete(id);

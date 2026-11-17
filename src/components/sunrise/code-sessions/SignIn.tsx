@@ -1,6 +1,6 @@
 'use client';
 
-// Signing in to a coding agent on this device, from where a new chat starts. Codex: a link and a code he enters on
+// Signing in to a coding agent on a device (this machine, or another one over ssh), from where a new chat starts. Codex: a link and a code he enters on
 // that page (its device-code way in), and the Journal waits until Codex says it is done. Claude Code: a link, and the
 // code the page shows him pasted back here; the Claude bridge runs `claude auth login` for it. Either can be stopped.
 // The link and the code are shown only here: nothing in the Journal logs or keeps them.
@@ -14,8 +14,15 @@ const TERMINAL: Record<AgentKind, string> = { codex: 'codex login', 'claude-code
 const live = (login: AgentLogin | null) => !!login && (login.state === 'starting' || login.state === 'waiting' || login.state === 'checking');
 const stop = (e: React.KeyboardEvent) => e.stopPropagation();
 
-/** One agent's sign-in on this device: shown while it is signed out, or while a sign-in runs or has just ended. */
-export function AgentSignIn({ code, agent, status }: { code: CodeSessions; agent: AgentKind; status: AgentStatus | undefined }) {
+/** One agent's sign-in on a device: shown while it is signed out, or while a sign-in runs or has just ended. */
+export function AgentSignIn({ code, agent, status, host: device, label: deviceLabel }: {
+  code: CodeSessions; agent: AgentKind; status: AgentStatus | undefined;
+  /** The device (its proj host name); this machine when not given. */
+  host?: string;
+  /** What the device is called (laptop, PC, Mac). */
+  label?: string;
+}) {
+  const on = device && device !== code.here ? device : undefined;
   const label = AGENT_LABEL[agent];
   const app = SESSION_APP[agent];
   const [login, setLogin] = React.useState<AgentLogin | null>(null);
@@ -28,27 +35,27 @@ export function AgentSignIn({ code, agent, status }: { code: CodeSessions; agent
   // A sign-in already running (another tab, a reload) is picked up.
   React.useEffect(() => {
     if (!signedOut) return;
-    let on = true;
-    code.loginRead(agent).then((got) => { if (on && got && got.state !== 'cancelled') setLogin(got); }, () => {});
-    return () => { on = false; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per agent while it is signed out
-  }, [agent, signedOut]);
+    let live = true;
+    code.loginRead(agent, on).then((got) => { if (live && got && got.state !== 'cancelled') setLogin(got); }, () => {});
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per agent and device while it is signed out
+  }, [agent, signedOut, on]);
 
   // While it runs, the server is asked how it stands; once it is done, each agent's status is read again.
   const running = live(login);
   React.useEffect(() => {
     if (!running) return;
-    let on = true;
+    let live = true;
     const timer = window.setInterval(() => {
-      code.loginRead(agent).then((got) => {
-        if (!on) return;
+      code.loginRead(agent, on).then((got) => {
+        if (!live) return;
         setLogin(got);
-        if (got?.state === 'done') code.refreshAgents();
+        if (got?.state === 'done') code.refreshAgents(on);
       }, () => {});
     }, POLL_MS);
-    return () => { on = false; window.clearInterval(timer); };
+    return () => { live = false; window.clearInterval(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the poll follows whether one runs
-  }, [agent, running]);
+  }, [agent, running, on]);
 
   if (!signedOut && !login) return null;
   if (!signedOut && login?.state !== 'done') return null;
@@ -59,23 +66,23 @@ export function AgentSignIn({ code, agent, status }: { code: CodeSessions; agent
     try {
       const got = await work();
       setLogin(got);
-      if (got.state === 'done') code.refreshAgents();
+      if (got.state === 'done') code.refreshAgents(on);
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : fallback);
     } finally {
       setBusy(false);
     }
   };
-  const begin = () => { setPasted(''); void act(() => code.loginStart(agent), 'Signing in could not start.'); };
-  const cancel = () => { if (login) void act(() => code.loginCancel(agent, login.id), 'It could not be stopped.'); };
+  const begin = () => { setPasted(''); void act(() => code.loginStart(agent, on), 'Signing in could not start.'); };
+  const cancel = () => { if (login) void act(() => code.loginCancel(agent, login.id, on), 'It could not be stopped.'); };
   const send = () => {
     const typed = pasted.trim();
     if (!login || !typed) return;
     setPasted('');   // not kept in the page once it is sent
-    void act(() => code.loginCode(agent, login.id, typed), 'The code did not reach Claude Code.');
+    void act(() => code.loginCode(agent, login.id, typed, on), 'The code did not reach Claude Code.');
   };
 
-  const host = status?.host ?? 'this device';
+  const host = deviceLabel ?? status?.host ?? 'this device';
   let body: React.ReactNode;
   if (login?.state === 'done') {
     body = <p className="ok" role="status">Signed in. {label} is ready on {host}.</p>;

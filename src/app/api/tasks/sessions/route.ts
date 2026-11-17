@@ -4,10 +4,11 @@ import {
   adoptSession, agentLogin, agentModels, agentOwnSettings, agentStatus, answerApproval, archiveSession, cancelLogin, HubError, interruptSession, markSessionSeen,
   nativeSessions, refreshTask, renameSession, sendLoginCode, sendToSession, sessionDetail, sessionSummaries, setSessionPicks, startLogin, startSession, steerSession,
 } from '@/lib/code-agents/hub';
-import { defaultPlace, placesFor, thisHost, validatePlace } from '@/lib/code-agents/places';
+import { defaultPlace, isKnownDevice, listDevices, placesFor, thisHost, validatePlace } from '@/lib/code-agents/places';
+import { isRemote, probeDevice, publicStatus } from '@/lib/code-agents/ssh';
 import {
   AGENT_KINDS, APPROVAL_DECISIONS, DEFAULT_PICKS, PERMISSION_MODES,
-  type AgentKind, type AgentStatus, type ModelEntry, type OwnSettings, type SessionPicks,
+  type AgentKind, type AgentStatus, type DeviceStatus, type ModelEntry, type OwnSettings, type SessionPicks,
 } from '@/lib/code-agents/protocol';
 import { readCodeSessions, readTaskPlace, setTaskPlace } from '@/lib/code-agents/store';
 import { fromThisAppStrict } from '@/lib/same-origin';
@@ -23,6 +24,8 @@ export const dynamic = 'force-dynamic';
 // docs/code-sessions-design.md has the whole contract.
 
 const STATUS_WAIT_MS = 4000;
+/** Another device answers over ssh: a first look there (a login, its login shell, the agent) takes a few seconds. */
+const REMOTE_STATUS_WAIT_MS = 15_000;
 const TEXT_MAX = 20_000;
 
 const fail = (status: number, error: string) => NextResponse.json({ success: false, error }, { status, headers: { 'Cache-Control': 'no-store' } });
@@ -63,14 +66,24 @@ const BodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('login-cancel'), taskId, agent, host, loginId }),
 ]);
 
-/** Signing in works on this device only for now (Stage 4 adds the others). */
-const loginHostRefused = (wanted: string | null | undefined) => (wanted && wanted !== thisHost() ? `Signing in on ${wanted} is not available yet.` : null);
+/** The device asked for (this machine when none is named), or why it cannot be one. */
+function deviceOf(wanted: string | null | undefined): { ok: true; host: string } | { ok: false; error: string } {
+  if (!wanted) return { ok: true, host: thisHost() };
+  return isKnownDevice(wanted) ? { ok: true, host: wanted } : { ok: false, error: `No device is called ${wanted}.` };
+}
 
-/** Each agent's status, without waiting long on one that does not answer. */
+/** What a look at the device found (another device: over ssh, read-only, kept a minute). */
+async function deviceStatus(host: string): Promise<DeviceStatus> {
+  if (!isRemote(host)) return { host, reachable: true };
+  return publicStatus(await probeDevice(host));
+}
+
+/** Each agent's status on one device, without waiting long on one that does not answer. */
 async function statuses(host: string): Promise<Record<AgentKind, AgentStatus>> {
+  const wait = isRemote(host) ? REMOTE_STATUS_WAIT_MS : STATUS_WAIT_MS;
   const one = (kind: AgentKind) => Promise.race([
     agentStatus(kind, host).catch((error): AgentStatus => ({ agent: kind, host, state: 'offline', reason: error instanceof Error ? error.message : String(error) })),
-    new Promise<AgentStatus>((resolve) => setTimeout(() => resolve({ agent: kind, host, state: 'offline', reason: 'It did not answer in time.' }), STATUS_WAIT_MS)),
+    new Promise<AgentStatus>((resolve) => setTimeout(() => resolve({ agent: kind, host, state: 'offline', reason: 'It did not answer in time.' }), wait)),
   ]);
   const list = await Promise.all(AGENT_KINDS.map(one));
   return Object.fromEntries(list.map((s) => [s.agent, s])) as Record<AgentKind, AgentStatus>;
@@ -132,7 +145,9 @@ export async function GET(request: NextRequest) {
       // The models an agent offers, for picking them before a session is started.
       const kind = agent.safeParse(modelsOf);
       if (!kind.success) return fail(400, 'That is not an agent.');
-      return ok({ models: await agentModels(kind.data, thisHost()) });
+      const device = deviceOf(params.get('host'));
+      if (!device.ok) return fail(400, device.error);
+      return ok({ models: await agentModels(kind.data, device.host) });
     }
     const ownOf = params.get('own');
     if (ownOf !== null) {
@@ -146,9 +161,9 @@ export async function GET(request: NextRequest) {
     if (loginOf !== null) {
       const kind = agent.safeParse(loginOf);
       if (!kind.success) return fail(400, 'That is not an agent.');
-      const refusedHost = loginHostRefused(params.get('host'));
-      if (refusedHost) return fail(400, refusedHost);
-      return ok({ login: agentLogin(kind.data, thisHost()) });
+      const device = deviceOf(params.get('host'));
+      if (!device.ok) return fail(400, device.error);
+      return ok({ login: agentLogin(kind.data, device.host) });
     }
     const wanted = params.get('session');
     if (wanted !== null) {
@@ -161,11 +176,17 @@ export async function GET(request: NextRequest) {
       ]);
       return ok({ ...detail, models, own });
     }
-    if (params.get('agents') !== null) return ok({ agents: await statuses(thisHost()) });
+    if (params.get('agents') !== null) {
+      // One device at a time: a device that does not answer never holds up this machine's.
+      const device = deviceOf(params.get('host'));
+      if (!device.ok) return fail(400, device.error);
+      const [agents, status] = await Promise.all([statuses(device.host), deviceStatus(device.host)]);
+      return ok({ agents, device: status });
+    }
     // The list answers at once; each agent's status (which can take seconds) is read on its own, with &agents.
     refreshTask(id);
     const place = readTaskPlace(id);
-    return ok({ sessions: sessionSummaries(id), place: place ?? defaultPlace(), places: placesFor(place) });
+    return ok({ sessions: sessionSummaries(id), place: place ?? defaultPlace(), places: placesFor(place), devices: listDevices() });
   } catch (error) {
     if (error instanceof HubError) return fail(error.status, error.message);
     console.error('Error reading coding sessions:', error);
@@ -209,11 +230,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === 'login' || body.action === 'login-code' || body.action === 'login-cancel') {
-      const refusedHost = loginHostRefused(body.host);
-      if (refusedHost) return fail(400, refusedHost);
-      if (body.action === 'login') return ok(await startLogin(body.agent, thisHost()));
-      if (body.action === 'login-code') return ok(await sendLoginCode(body.agent, thisHost(), body.loginId, body.code));
-      return ok(await cancelLogin(body.agent, thisHost(), body.loginId));
+      // On any device: that device's agent signs in there (its own `codex` or `claude auth login`).
+      const device = deviceOf(body.host);
+      if (!device.ok) return fail(400, device.error);
+      if (body.action === 'login') return ok(await startLogin(body.agent, device.host));
+      if (body.action === 'login-code') return ok(await sendLoginCode(body.agent, device.host, body.loginId, body.code));
+      return ok(await cancelLogin(body.agent, device.host, body.loginId));
     }
 
     if (body.action === 'start') {
@@ -230,13 +252,17 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.action === 'adopt') {
-      // Only this machine's sessions can be attached for now: refused before anything is asked of the agent.
-      const host = body.host ?? thisHost();
-      if (host !== thisHost()) return fail(400, `Sessions on ${host} are not available yet.`);
+      // A device the Journal does not know is refused before anything is asked of an agent.
+      const device = deviceOf(body.host);
+      if (!device.ok) return fail(400, device.error);
+      const host = device.host;
       if (fullRefused(body.picks, body.confirmFull, null)) return fail(400, FULL_UNCONFIRMED);
-      // Its turns run in its own folder, which must be one of the places on offer like any other session's.
-      const allow = (cwd: string) => { const place = validatePlace({ host, cwd }); return place.ok ? null : place.error; };
-      const link = await adoptSession({ taskId: body.taskId, agent: body.agent, host, sessionId: body.sessionId, picks: body.picks ?? DEFAULT_PICKS, allow });
+      // Its turns run in its own folder, which must be one of the places on offer like any other session's. Another
+      // device's agent names the folder in full: its home there (from the look over ssh) makes it `~/…` again.
+      const home = isRemote(host) ? (await probeDevice(host)).home : undefined;
+      const allow = (cwd: string) => { const place = validatePlace({ host, cwd }, home); return place.ok ? null : place.error; };
+      const placeCwd = (cwd: string) => { const place = validatePlace({ host, cwd }, home); return place.ok ? place.place.cwd : cwd; };
+      const link = await adoptSession({ taskId: body.taskId, agent: body.agent, host, sessionId: body.sessionId, picks: body.picks ?? DEFAULT_PICKS, allow, placeCwd });
       return ok(link);
     }
 

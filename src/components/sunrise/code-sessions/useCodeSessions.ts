@@ -6,7 +6,7 @@
 // docs/code-sessions-design.md; the routes are /api/tasks/sessions and /api/tasks/sessions/stream.
 import React from 'react';
 import type {
-  AgentKind, AgentLogin, AgentStatus, ApprovalDecision, ApprovalRequest, CodeSessionLink, ModelEntry, NativeSession, OwnSettings, Place, PlaceChoice,
+  AgentKind, AgentLogin, AgentStatus, ApprovalDecision, ApprovalRequest, CodeSessionLink, DeviceInfo, DeviceStatus, ModelEntry, NativeSession, OwnSettings, Place, PlaceChoice,
   RateLimitSummary, SessionEvent, SessionPicks, SessionState, SessionSummary, SessionTurn, TokenUsage,
 } from '@/lib/code-agents/protocol';
 import { applySessionEvent } from '@/lib/code-sessions-ui';
@@ -20,6 +20,8 @@ const STREAM_RETRY_MS = 3000;
 const STREAM_GIVE_UP = 4;
 /** Each agent's status is read again at most this often (the server keeps it 15 s too). */
 const AGENTS_EVERY_MS = 15_000;
+/** Another device's, while he is choosing where a chat runs (a look there goes over ssh; the server keeps it a minute). */
+const DEVICE_AGENTS_EVERY_MS = 30_000;
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -34,6 +36,7 @@ interface ListData {
   sessions: SessionSummary[];
   place: Place;
   places: PlaceChoice[];
+  devices?: DeviceInfo[];
 }
 
 interface DetailData {
@@ -71,9 +74,18 @@ export interface CodeSessions {
   sessions: SessionSummary[];
   place: Place | null;
   places: PlaceChoice[];
+  /** This machine's agents. */
   agents: Partial<Record<AgentKind, AgentStatus>>;
   /** Each agent's status has been read once (it comes after the list). */
   agentsLoaded: boolean;
+  /** The devices a session can run on: this machine first. */
+  devices: DeviceInfo[];
+  /** This machine's host name. */
+  here: string;
+  /** Each device's agents, once read (this machine's are `agents`). */
+  agentsOn: (host: string) => Partial<Record<AgentKind, AgentStatus>> | undefined;
+  /** What a look at each other device found (reachable, what it has), once read. */
+  deviceOn: (host: string) => DeviceStatus | undefined;
   /** The session that is open (its link id), or null. */
   current: string | null;
   /** The new-chat chooser is showing. */
@@ -110,18 +122,18 @@ export interface CodeSessions {
   archive: () => Promise<boolean>;
   setPlace: (place: Place) => Promise<void>;
   native: (agent: AgentKind, place: Place) => Promise<NativeSession[]>;
-  /** The models an agent offers, to pick before a session starts. */
-  models: (agent: AgentKind) => Promise<ModelEntry[]>;
+  /** The models an agent offers on a device (this machine when none), to pick before a session starts. */
+  models: (agent: AgentKind, host?: string) => Promise<ModelEntry[]>;
   adopt: (agent: AgentKind, sessionId: string, host: string) => Promise<boolean>;
   /** What the agent's own settings come to for sessions in a place (the `own` mode). */
   own: (agent: AgentKind, place: Place) => Promise<OwnSettings>;
-  /** Each agent's status read again now (after signing in). */
-  refreshAgents: () => void;
-  /** Signing in to an agent on this device: the sign-in running (or just ended), start, the pasted code, stop. */
-  loginRead: (agent: AgentKind) => Promise<AgentLogin | null>;
-  loginStart: (agent: AgentKind) => Promise<AgentLogin>;
-  loginCode: (agent: AgentKind, loginId: string, code: string) => Promise<AgentLogin>;
-  loginCancel: (agent: AgentKind, loginId: string) => Promise<AgentLogin>;
+  /** Each agent's status read again now (after signing in), on a device (this machine when none). */
+  refreshAgents: (host?: string) => void;
+  /** Signing in to an agent on a device: the sign-in running (or just ended), start, the pasted code, stop. */
+  loginRead: (agent: AgentKind, host?: string) => Promise<AgentLogin | null>;
+  loginStart: (agent: AgentKind, host?: string) => Promise<AgentLogin>;
+  loginCode: (agent: AgentKind, loginId: string, code: string, host?: string) => Promise<AgentLogin>;
+  loginCancel: (agent: AgentKind, loginId: string, host?: string) => Promise<AgentLogin>;
   refresh: () => void;
 }
 
@@ -213,6 +225,20 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     try { setAgents((await call<{ agents: Record<AgentKind, AgentStatus> }>(`/api/tasks/sessions?id=${task}&agents=1`)).agents); } catch { agentsAt.current = 0; }
     setAgentsLoaded(true);
   }, [task, enabled]);
+  // Other devices: each on its own request, so one that does not answer holds up nothing else.
+  const [remote, setRemote] = React.useState<Record<string, { agents: Partial<Record<AgentKind, AgentStatus>>; device: DeviceStatus }>>({});
+  const remoteAt = React.useRef<Record<string, number>>({});
+  const loadDevice = React.useCallback(async (host: string, force = false) => {
+    if (!enabled || (!force && Date.now() - (remoteAt.current[host] ?? 0) < DEVICE_AGENTS_EVERY_MS)) return;
+    remoteAt.current[host] = Date.now();
+    try {
+      const got = await call<{ agents: Record<AgentKind, AgentStatus>; device: DeviceStatus }>(`/api/tasks/sessions?id=${task}&agents=1&host=${encodeURIComponent(host)}`);
+      setRemote((was) => ({ ...was, [host]: got }));
+    } catch (err) {
+      remoteAt.current[host] = 0;
+      setRemote((was) => ({ ...was, [host]: { agents: {}, device: { host, reachable: false, reason: message(err, 'It could not be asked.') } } }));
+    }
+  }, [task, enabled]);
   const reads = React.useRef(0);
   const loadList = React.useCallback(async () => {
     if (!enabled) return;
@@ -239,6 +265,19 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     soon.current = window.setTimeout(() => { soon.current = 0; void loadList(); }, 400);
   }, [loadList]);
   React.useEffect(() => () => window.clearTimeout(soon.current), []);
+
+  const devices = React.useMemo(() => list?.devices ?? [], [list?.devices]);
+  const here = devices.find((d) => d.here)?.host ?? list?.place.host ?? 'laptop';
+  const currentHost = list?.sessions.find((s) => s.id === current)?.host ?? null;
+  React.useEffect(() => {
+    if (!enabled) return;
+    const wanted = devices.filter((d) => !d.here && (choosing || d.host === currentHost)).map((d) => d.host);
+    if (wanted.length === 0) return;
+    const each = () => { for (const host of wanted) void loadDevice(host); };
+    each();
+    const timer = window.setInterval(() => { if (document.visibilityState === 'visible') each(); }, DEVICE_AGENTS_EVERY_MS);
+    return () => window.clearInterval(timer);
+  }, [enabled, devices, choosing, currentHost, loadDevice]);
 
   const limitsOf = React.useCallback((agent: AgentKind) => agents[agent]?.limits ?? null, [agents]);
   const limitsRef = React.useRef(limitsOf);
@@ -514,15 +553,20 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     return data.sessions;
   }, [task]);
 
-  const models = React.useCallback(async (agent: AgentKind) => (await call<{ models: ModelEntry[] }>(`/api/tasks/sessions?id=${task}&models=${agent}`)).models, [task]);
+  const onHost = (host?: string) => (host ? `&host=${encodeURIComponent(host)}` : '');
+  const models = React.useCallback(async (agent: AgentKind, host?: string) => (await call<{ models: ModelEntry[] }>(`/api/tasks/sessions?id=${task}&models=${agent}${onHost(host)}`)).models, [task]);
 
   const own = React.useCallback(async (agent: AgentKind, place: Place) =>
     (await call<{ own: OwnSettings }>(`/api/tasks/sessions?id=${task}&own=${agent}&cwd=${encodeURIComponent(place.cwd)}&host=${encodeURIComponent(place.host)}`)).own, [task]);
-  const refreshAgents = React.useCallback(() => { agentsAt.current = 0; void loadAgents(); }, [loadAgents]);
-  const loginRead = React.useCallback(async (agent: AgentKind) => (await call<{ login: AgentLogin | null }>(`/api/tasks/sessions?id=${task}&login=${agent}`)).login, [task]);
-  const loginStart = React.useCallback((agent: AgentKind) => post<AgentLogin>({ action: 'login', taskId, agent }), [taskId]);
-  const loginCode = React.useCallback((agent: AgentKind, loginId: string, code: string) => post<AgentLogin>({ action: 'login-code', taskId, agent, loginId, code }), [taskId]);
-  const loginCancel = React.useCallback((agent: AgentKind, loginId: string) => post<AgentLogin>({ action: 'login-cancel', taskId, agent, loginId }), [taskId]);
+  const refreshAgents = React.useCallback((host?: string) => {
+    if (host && host !== here) { void loadDevice(host, true); return; }
+    agentsAt.current = 0;
+    void loadAgents();
+  }, [loadAgents, loadDevice, here]);
+  const loginRead = React.useCallback(async (agent: AgentKind, host?: string) => (await call<{ login: AgentLogin | null }>(`/api/tasks/sessions?id=${task}&login=${agent}${onHost(host)}`)).login, [task]);
+  const loginStart = React.useCallback((agent: AgentKind, host?: string) => post<AgentLogin>({ action: 'login', taskId, agent, ...(host ? { host } : {}) }), [taskId]);
+  const loginCode = React.useCallback((agent: AgentKind, loginId: string, code: string, host?: string) => post<AgentLogin>({ action: 'login-code', taskId, agent, loginId, code, ...(host ? { host } : {}) }), [taskId]);
+  const loginCancel = React.useCallback((agent: AgentKind, loginId: string, host?: string) => post<AgentLogin>({ action: 'login-cancel', taskId, agent, loginId, ...(host ? { host } : {}) }), [taskId]);
 
   const adopt = React.useCallback(async (agent: AgentKind, sessionId: string, host: string) => {
     setError(null);
@@ -546,6 +590,10 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     places: list?.places ?? [],
     agents,
     agentsLoaded: !enabled || agentsLoaded,
+    devices,
+    here,
+    agentsOn: (host: string) => (host === here ? agents : remote[host]?.agents),
+    deviceOn: (host: string) => (host === here ? { host, reachable: true } : remote[host]?.device),
     current,
     choosing,
     view: view && view.link.id === current ? view : null,

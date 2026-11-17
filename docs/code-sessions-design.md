@@ -1,9 +1,10 @@
 # Coding sessions in the task workspace (Codex, Claude Code)
 
-Reference for Stages 1 and 2 of the plan "Claude Code and Codex sessions in the task workspace": what is built, the
-contracts the chat pane (Stage 3) builds against, and what is still open. Stage 1 is the core and Codex on this
-laptop; Stage 2 is Claude Code through its bridge (`bridge/`). With no bridge running, Claude Code reads `offline`
-with a reason that says how to start it.
+Reference for the plan "Claude Code and Codex sessions in the task workspace": what is built, the contracts the chat
+pane builds against, and what is still open. Stage 1 is the core and Codex on this laptop; Stage 2 is Claude Code
+through its bridge (`bridge/`); Stage 3 the chat pane (and the session index, "Sessions in the session index");
+Stage 4 the other devices over ssh ("Other devices"). With no bridge running, Claude Code reads `offline` with a
+reason that says how to start it.
 
 ## Architecture
 
@@ -20,6 +21,9 @@ browser ──GET/POST /api/tasks/sessions──────┐
                         │ JSON-RPC (transport.ts)                │ JSON-RPC, same transport
      WebSocket over ~/.codex/app-server-control/*.sock      WebSocket over the bridge's unix socket
      (fallback: `codex app-server` child, stdio JSONL)
+     another device: the same WebSocket over               another device: the same WebSocket over
+     `ssh <alias> codex app-server proxy` (ssh.ts),         `ssh <alias> <bridge>/run proxy` (ssh.ts)
+     or `ssh <alias> codex app-server` (stdio JSONL)
                         ▼                                        ▼
              Codex daemon (shared with the desktop app)    claude-bridge daemon (Agent SDK)
 ```
@@ -30,8 +34,9 @@ browser ──GET/POST /api/tasks/sessions──────┐
 - **Where a session runs** is a per-task place `{host, cwd}` in `tasks/task-places.json` (`places.ts`): the
   shared OpenClaw workspace (`workspaceRoot()`) or a project of the `proj` registry
   (`~/projects/projects-index`, override `PROJ_REGISTRY_DIR`; this host from `~/.config/proj/host`, override
-  `PROJ_HOST`). A cwd must exist, be a folder, and be one of the offered roots or inside one (links resolved).
-  Only this host's places can be started on; other hosts' projects are listed with `available: false`. A task whose
+  `PROJ_HOST`). On this machine a cwd must exist, be a folder, and be one of the offered roots or inside one (links
+  resolved). Another device's places are its projects as its proj file writes them (`~/projects/x`), offered as
+  available; nothing there is looked at to validate one (see "Other devices"). A task whose
   place is a subfolder of an offered root (set with the `place` action) gets it offered too, labelled
   `<root> / <subfolder>` (`placesFor`), so the picker can show and keep it; the picker itself offers only the roots.
 - **What the agent is told** (`first-turn.ts`): the first turn is `[aj:task:<id>]` + a one-line intro, the task
@@ -45,8 +50,11 @@ browser ──GET/POST /api/tasks/sessions──────┐
   a request with neither `Sec-Fetch-Site` nor `Origin` is refused too, and the `Host` header, `X-Forwarded-Host`
   (when sent) and the `Origin` must each name the Journal itself: loopback (`127.0.0.1`, `localhost`, `[::1]`) on
   any port, the host of `AGENTIC_JOURNAL_ORIGIN` (the public address the app already uses for links; default
-  `https://ubuntu-laptop.taile85e97.ts.net`), and any names in **`AGENTIC_JOURNAL_HOSTS`** (comma-separated, e.g.
-  `box.tail1234.ts.net,journal.lan`; set it in the Journal's `.env`, there is no example env file in the repo).
+  `https://ubuntu-laptop.taile85e97.ts.net`; the `.env` here does not set it, so the default is what production uses),
+  and any names in **`AGENTIC_JOURNAL_HOSTS`** (comma- or space-separated, e.g. `box.tail1234.ts.net,journal.lan`; a
+  name with a port or a whole address such as `https://box.ts.net/` works too; set it in the Journal's `.env`, there
+  is no example env file in the repo). An `X-Forwarded-Host` that lists several names (a chain of proxies) passes only
+  when every one of them is the Journal's.
   Without the name check a DNS-rebinding page (`http://evil.example:3000` pointed at this machine) passes over plain
   http: no `Sec-Fetch-Site` is sent and its Origin matches its Host by construction. The check stops other web
   pages in his browser; it does not stop a program on the machine, which can send any headers (and could reach the
@@ -56,9 +64,10 @@ browser ──GET/POST /api/tasks/sessions──────┐
   is working"); one whose `settledAt` is within the 15-minute quiet period holds it as "was active N min ago".
   The hub sets `workingSince` while a turn runs or waits on approval and clears it when the turn ends.
 
-Files: `src/lib/code-agents/{protocol,transport,adapter,codex-types,codex,claude,hub,store,places,first-turn}.ts`,
+Files: `src/lib/code-agents/{protocol,transport,adapter,codex-types,codex,claude,hub,store,places,first-turn,ssh}.ts`,
+`src/lib/proj-hosts.ts` (the proj registry: hosts, aliases, projects; plain node, the session-index CLI uses it too),
 `src/app/api/tasks/sessions/route.ts`, `src/app/api/tasks/sessions/stream/route.ts`. Tests:
-`scripts/code-agents-{transport,model,hub,routes,own,login}.test.ts` with the fake app server
+`scripts/code-agents-{transport,model,hub,routes,own,login,ssh}.test.ts` with the fake app server
 `scripts/code-agents-fake-codex.ts` (its `REAL` holds message shapes recorded from the real daemon). Claude Code: `src/lib/code-agents/claude.ts` and `bridge/*.ts`; tests
 `scripts/code-agents-claude-{model,bridge,adapter}.test.ts` with the stand-in SDK `scripts/code-agents-fake-claude-sdk.ts`.
 
@@ -201,15 +210,21 @@ own host names (see "Strict same-origin").
       "settledAt": "…", "state": "idle", "unread": true, "approvals": 0 }],
     "place": { "host": "laptop", "cwd": "/home/openclaw/.openclaw/workspace" },
     "places": [{ "host": "laptop", "cwd": "…", "label": "OpenClaw workspace", "kind": "workspace", "available": true },
-               { "host": "mac", "cwd": "~/projects/site", "label": "site", "kind": "project", "project": "site", "available": false, "reason": "Sessions on mac are not available yet." }],
+               { "host": "mac", "cwd": "~/projects/site", "label": "site", "kind": "project", "project": "site", "available": true }],
+    "devices": [{ "host": "laptop", "label": "laptop", "alias": null, "here": true }, { "host": "wsl", "label": "PC", "alias": "win11", "here": false }],
     "agents": { "codex": { "state": "ready", "account": { "kind": "subscription", "plan": "plus" }, "limits": { "windows": [{ "label": "5 hours", "usedPercent": 100, "resetsAt": 1794856885000 }], "blocked": true }, "version": "0.169.0" },
                 "claude-code": { "state": "offline", "reason": "The Claude Code bridge isn’t running on this device. Start it with …" } } }
   ```
   (`agents` is shown here for reference: it now comes from its own request, below.) The list answers at once,
   without waiting on any agent. Sessions the store calls working but this process has not heard from are joined
   behind the answer (the next poll has their real state). Poll this like the chats list.
-- `?id=<taskId>&agents` → `{ agents }`, each agent's status; each waits at most 4 s. The pane reads it beside the
-  list, at most every 15 s, so opening a workspace never waits on a slow agent.
+- `?id=<taskId>&agents[&host=]` → `{ agents, device }`: each agent's status on that device (this machine when no
+  host; another must be a known device, else 400), and what the look at it found (`DeviceStatus`: reachable or why
+  not, OS, WSL, Codex version / daemon / CODEX_HOME, Claude Code version and whether the bridge is installed and
+  running; never its home folder). Each agent waits at most 4 s here, 15 s on another device. The pane reads this
+  machine's beside the list, at most every 15 s, and another device's on its own request (every 30 s) only while the
+  new-chat form is open or a session of that device is open, so a device that does not answer never slows this one.
+- `?id=<taskId>&models=<agent>[&host=]` → `{ models }` on that device.
 - `?id=<taskId>&session=<linkId>[&cursor=<older>]` → `{ link, turns, older, seq, state, turnId, approvals, tokens,
   models }`. `turns` is one page (20 turns), oldest first; `older` is the cursor for the page before (null at
   the start). Reading joins the session so its events start flowing. Follow with the stream from `seq`.
@@ -218,7 +233,8 @@ own host names (see "Strict same-origin").
 - `?id=<taskId>&own=<agent>&cwd=<folder>[&host=]` → `{ own: OwnSettings }` for sessions in that folder (a valid
   place). The session detail carries `own` for the session's folder too (null when the agent did not say).
 - `?id=<taskId>&login=<agent>[&host=]` → `{ login: AgentLogin | null }`: the sign-in running on that device, or one
-  that ended in the last 5 minutes. Polled every 1.5 s by the pane while one runs. Another host is a 400 for now.
+  that ended in the last 5 minutes. Polled every 1.5 s by the pane while one runs. Any known device (400 for a host
+  that is none); the sign-in runs there (its `codex` device code, or its bridge's `claude auth login`).
 
 ### `POST /api/tasks/sessions`
 
@@ -233,13 +249,14 @@ own host names (see "Strict same-origin").
 { "action": "interrupt", "taskId", "session" }                           // → null; the turn ends with turn-completed interrupted
 { "action": "approve", "taskId", "session", "approvalId", "decision": "allow" | "allow-session" | "deny" | "cancel" }
 { "action": "adopt", "taskId", "agent", "sessionId", "host"?, "picks"? } // attach a native session → the link; 409 if on another task;
-                                                                         // 400 for another host, before the agent is asked anything
+                                                                         // 400 for an unknown host, before the agent is asked anything;
+                                                                         // another device's folder is kept as `~/…`
 { "action": "rename", "taskId", "session", "title" }                     // renamed in the agent too → the link
 { "action": "archive", "taskId", "session" }                             // archived in the agent, hidden from the list; 409 while running
 { "action": "picks", "taskId", "session", "picks" }                      // stored; applied on the next turn → the link
 { "action": "seen", "taskId", "session" }                                // → the link (unread clears)
 { "action": "place", "taskId", "place": { "host", "cwd" } }             // → the validated place
-{ "action": "login", "taskId", "agent", "host"? }                       // start signing in → AgentLogin; 409 when signed in
+{ "action": "login", "taskId", "agent", "host"? }                       // start signing in on that device → AgentLogin; 409 when signed in
 { "action": "login-code", "taskId", "agent", "host"?, "loginId", "code" }   // Claude Code: the pasted code → AgentLogin
 { "action": "login-cancel", "taskId", "agent", "host"?, "loginId" }     // → AgentLogin (cancelled); 404 for one not running
 ```
@@ -355,9 +372,14 @@ enable --now agentic-journal-claude-bridge` (linger is on for `openclaw`). Not i
   installed `claude`; `settingSources: ['user','project','local']`; `systemPrompt: {type:'preset',
   preset:'claude_code'}`; `permissionMode` from the mode, none for `own` (`allowDangerouslySkipPermissions` only for `full`);
   `model` / `effort` when picked; `includePartialMessages: true`; `canUseTool`; `disallowedTools:
-  ['AskUserQuestion']` (its question form has nowhere to show; Claude asks in its reply); `env` (below).
+  ['AskUserQuestion']` (its question form has nowhere to show; Claude asks in its reply); `env` (below);
+  `extraArgs: {'thinking-display': 'summarized'}` unless his settings say `showThinkingSummaries: false` (through the
+  SDK, Claude Code asks for thinking without its text and consults that setting only in its terminal, so without the
+  flag the pane had no thinking to show; the flag changes only whether the text comes, not whether or how much Claude
+  thinks).
 - **Environment:** the bridge's own minus every `CLAUDE_*`, `CLAUDECODE` and `ANTHROPIC_*`, plus
-  `CLAUDE_CODE_ENTRYPOINT=agentic-journal`. No API key or base URL can reach Claude Code, so it uses this
+  `CLAUDE_CODE_ENTRYPOINT=agentic-journal` and `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` (CLI 2.1.x offers its task list,
+  TaskCreate/TaskUpdate, only to entrypoints it knows; without it a Journal session had no way to keep a plan). No API key or base URL can reach Claude Code, so it uses this
   device's `claude auth login`. The one exception: `CLAUDE_BRIDGE_OAUTH_TOKEN`, set on purpose in the bridge's env
   file (a token from `claude setup-token`), is passed as `CLAUDE_CODE_OAUTH_TOKEN`. An inherited
   `CLAUDE_CODE_OAUTH_TOKEN` (a shell under the desktop app has one) is dropped like the rest.
@@ -374,8 +396,12 @@ enable --now agentic-journal-claude-bridge` (linger is on for `openclaw`). Not i
   is noted. Messages that cannot be read reopen it, to be safe.
 - **Allow for this session:** the rules of each `allow-session` answer are kept with the session in the bridge for as
   long as the bridge runs, and every query opened for it again (idle release, new picks, changed elsewhere) gets them
-  as `allowedTools` (`Tool(rule)`) and `additionalDirectories` (`sessionRuleOptions` in mapping.ts). A bridge
-  restart forgets them, as Claude Code itself would. Tested only against the stand-in SDK. Limitation: the bridge cannot know a Claude app has
+  as `allowedTools` (`Tool(rule)`) and `additionalDirectories` (`sessionRuleOptions` in mapping.ts). Claude Code's
+  suggestion for an edit is not a rule but a mode (`{type:'setMode', mode:'acceptEdits'}`, seen live): the session's
+  mode moves, and a query opened again starts in it while the mode picked when it moved is still the pick; a mode he
+  picks after that wins and drops it. Leaving plan mode (ExitPlanMode allowed while the pick is `plan`) is kept the
+  same way (`default`, as Claude Code goes to), so a query opened again does not drop back into plan. A bridge restart
+  forgets them, as Claude Code itself would. Checked live (below). Limitation: the bridge cannot know a Claude app has
   the session open *now*; two writers at once (a turn here while one runs in the app) are not prevented.
 - **Turn ids:** his message goes in with `uuid` = the turn id, and Claude Code keeps it as the transcript's uuid,
   so live turns and history agree. Work Claude Code starts by itself (a background task reporting back, a queued
@@ -391,7 +417,9 @@ enable --now agentic-journal-claude-bridge` (linger is on for `openclaw`). Not i
   on sign-in makes it `signed-out` until a status read at least 30 s later says signed in, or a turn succeeds.
   `signed-out` reason: "Claude Code isn’t signed in on this device. Sign in here, or run `claude auth login` in a
   terminal." `apiKeySource` or an
-  api-key auth method reads `account.kind: 'api-key'`. Limits come from `rate_limit_event` messages.
+  api-key auth method reads `account.kind: 'api-key'`. Signed in (seen 2026-11-17): `authMethod: 'claude.ai'`,
+  `subscriptionType: 'max'` → "subscription, max". Limits come from `rate_limit_event` messages (per window in
+  `unifiedWindows`).
 - **Models:** `supportedModels()` on a short query with `persistSession: false` that runs no turn (works signed
   out), cached 10 min. The `default` row is dropped; the model it resolves to is marked `isDefault`.
 
@@ -447,19 +475,28 @@ are suggestions and no `suppressAlwaysAllowRule`); `deny` → `{behavior:'deny',
 Ids: text and thinking blocks `<API message id>:<block index>` (the SDK sends one assistant message per block,
 sharing the API message id; stream events carry the same index), a tool call its `tool_use` id, his message its
 uuid. Stream `text_delta` / `thinking_delta` → `item-delta` (`input_json_delta` is ignored; the whole tool call
-comes in the assistant message). `text` → agent; `thinking` → reasoning (empty signed thinking, as the transcript
-keeps it, is not shown); `Bash` → command (output from the tool's own `stdout`/`stderr` live, the result text in
+comes in the assistant message). A text or thinking item is begun with its first words, not at `content_block_start`:
+thinking without its text streams an empty block with empty deltas (seen live) and is no item at all.
+`text` → agent; `thinking` → reasoning (empty signed thinking, as the transcript keeps it, is not shown); `Bash` → command (output from the tool's own `stdout`/`stderr` live, the result text in
 history; exit code 0 on success, from `Exit code N` on failure); `Edit`/`Write`/`MultiEdit`/`NotebookEdit` →
 file-change with a unified diff from the input (or the tool's `structuredPatch` live; `Write` is `add` unless
-it says `update`); `TodoWrite` → plan; `WebSearch`/`WebFetch` → web-search; others (`mcp__server__tool` shown
+it says `update`); `TodoWrite` → plan; the task list (`TaskCreate`, `TaskUpdate`; CLI 2.1.x, loaded through `ToolSearch`) → one plan item
+per turn, `tasks:<turn id>`, holding the whole list as it stands (`TaskTracker`: a task is numbered from its result,
+`{task:{id}}` live, "Task #N created successfully: …" in the transcript; one tracker spans a session's turns, read
+from the transcript when a session is first run by this bridge); the calls themselves, `TaskList`/`TaskGet` and
+`ToolSearch` are not items (Claude Code's own apps do not show them); `WebSearch`/`WebFetch` → web-search; others (`mcp__server__tool` shown
 `server.tool`, `Task`/`Agent`, `Read`, `Grep`, `Skill` …) → tool with a short input and the result clipped.
-Results marked with the bridge's deny text or "doesn't want to proceed" → `declined`. Messages with a
+Results marked with the bridge's deny text or "doesn't want to proceed" → `declined`, except while the turn is
+being stopped (live) or when the transcript's "[Request interrupted…]" follows (history): Claude Code ends a tool cut
+short by Stop with the same words, and that reads `failed` (stopped), not declined. Messages with a
 `parent_tool_use_id` (inside a sub-agent) are not turns: live, each sub-agent tool call shows as "Working: …"
-on the parent tool item; history leaves them out. History: a turn starts at each message he sent; "[Request
-interrupted by user…]" marks the turn `interrupted`; a `<task-notification>` (or a non-human `origin`) starts a
+on the parent tool item; history leaves them out. History: a turn starts at each message he sent, except one the
+transcript marks `isQueuedCommand` (sent while Claude worked and taken into that turn: a steer), which is a user item
+of the turn it went into, as live; "[Request interrupted by user…]" marks the turn `interrupted`; a `<task-notification>` (or a non-human `origin`) starts a
 turn with the notice "A background task reported back."; Claude Code's own `<synthetic>` messages are the
 turn's error when worded as one ("API Error…", "Failed to authenticate…", usage limit), and are hidden
-otherwise ("No response requested."). The running turn in a history answer is the bridge's live copy.
+otherwise ("No response requested.", which Claude Code writes when the next message comes after a Stop; it does not
+stretch the stopped turn to its time either). The running turn in a history answer is the bridge's live copy.
 
 ## Stage 0: Codex findings (used here)
 
@@ -540,12 +577,108 @@ the fake did not:
 - Native: the thread is in `thread/list` for the folder with source `vscode`, has its name in
   `session_index.jsonl`, and is the one row of `codex resume` run in that folder (the picker rendered in a pty).
 
+## Live check with real turns (Claude Code, 2026-11-17)
+
+The first signed-in turns (Max plan; `claude auth status` in a clean env: `loggedIn: true`, `authMethod: claude.ai`,
+`subscriptionType: max`, `apiProvider: firstParty`). A throwaway `next dev` on 3111 (copied data dir, OpenClaw off,
+`OPENCLAW_WORKSPACE_DIR=~/.openclaw/workspace/journal-spike`) and a bridge of its own on a scratch socket (the real
+`bridge/*.ts` with every SDK message and `canUseTool` call logged to a scratch file), started with `env -i`. About 21
+short turns, mostly Haiku 5.5 at low effort, all in `~/.openclaw/workspace/journal-spike`. CLI 2.1.302, which updated
+itself to **2.1.326** during the check (a terminal `claude` run installed it; the bridge's next query used it).
+
+Checked and working (after the fixes below):
+
+- **Start from the pane** (New chat → Claude Code → Haiku 5.5 / Low effort / Ask first → Start, in a real headless
+  Chrome) with the task brief: the first user item reads "with the task's brief" and shows only his words.
+- **Streaming** text deltas; **thinking** summaries (with the flag below); **commands** with output, exit code
+  (`Exit code 2` on a failure) and duration; **edits** as diffs (a Write as `NEW x.txt +1`, `--- /dev/null`);
+  the **task list** as one plan ("2 of 2 done"); **usage**: `result.usage` per turn plus `modelUsage.contextWindow`
+  (1 000 000 for Haiku 5.5) into `usage-changed` (the pane does not show tokens anywhere; Codex's are not shown either).
+- **Approvals:** Allow (a Write), Allow for this session (a Write: `setMode acceptEdits`; a Bash command:
+  `addRules` for each part, `Bash(touch y.txt)` + `Bash(rm y.txt)`, offered for `localSettings` and sent back as
+  `session`), Deny (the command ends `declined`, the turn goes on and Claude says it was declined). The card's
+  buttons in the pane. `own` (adopted session, no `permissionMode` sent, `pwd` ran without asking: settings name no
+  `defaultMode`); `plan` (Claude wrote its plan file, loaded ExitPlanMode through ToolSearch and asked "ready to
+  leave plan mode" with the plan as the detail; Allow → mode `default`, its Write asked next); `full` refused
+  without `confirmFull` (400) and run with it.
+- **Stop** mid-command (`python3 -c 'import time; time.sleep(60)'`): the turn ended `interrupted` at once, the
+  python process gone. Claude Code refuses a foreground `sleep N` and runs it in the background instead; when that
+  finished, Claude Code began a turn by itself ("A background task reported back.", then "done"), which the bridge
+  opened and the pane showed.
+- **Steer** while a command ran: one `result` for both messages (`status.user_message_uuids` lists both); the
+  transcript keeps the steer as `isQueuedCommand`.
+- **Follow-up turns**, **model and effort picks** from the real list (each change opened Claude Code again with
+  `--model`/`--effort`), **history** after reopening, **rename** (picker shows the new name), **archive**,
+  **adopt** (an older session onto another task: history read, then a turn in `own`; adopting one already on a task
+  is refused, 409).
+- **Journal restart mid-turn:** the dev server was killed while a 25 s command ran; the bridge finished the turn on
+  its own (its `result` came while the Journal was down); the restarted Journal rejoined and the turn read done with
+  the command's output and the reply.
+- **Bridge restart:** the session was found on disk, its history read back, and the next turn resumed it.
+- **Native visibility:** `claude --resume` in the folder (real TUI in a pty) listed the Journal's sessions by their
+  titles ("Journal bridge check one" after the rename) with real replies in them; `claude --resume <id>` continued
+  one in the terminal ("terminal"), the Journal's history showed that turn, and the Journal's next turn knew it.
+  An **archived** session still shows in `claude --resume` (the CLI picker ignores the SDK's archive flag; the
+  bridge's own list and the desktop app's honour it).
+- **Events during a history read:** five and then six readers each read the session detail at a different moment
+  of a streaming turn (mid-text included), followed the stream from that `seq` applying `applyEvent`, and all ended
+  identical to a fresh read; no resets.
+- **Session-allow rules after the query is reopened:** after "Allow for this session" on a Bash command, the next
+  turn with another effort (a new Claude Code process) was opened with `allowedTools: ["Bash(touch y.txt)",
+  "Bash(rm y.txt)"]` and the same command ran without asking.
+- **Subscription:** no `ANTHROPIC_*`, no OAuth token in the children's environment (checked on the running
+  processes: only `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_ENABLE_TODO_TOOLS` and the SDK's own
+  `CLAUDE_AGENT_SDK_VERSION`, `CLAUDE_CODE_SDK_READS_SESSION_STATE`); `system/init` said `apiKeySource: none`;
+  status `ready`, account `subscription`, plan `max`.
+
+Broken against the real CLI, and fixed (bridge code: **the installed bridge service needs a restart after deploy**):
+
+- **Thinking never showed.** Through the SDK the CLI streams thinking blocks with empty text; an empty reasoning item
+  was begun and ended on each. Now items begin with their first words, and the bridge asks for summaries
+  (`--thinking-display summarized`, through `extraArgs`; `settings: {showThinkingSummaries: true}` does nothing
+  there). Seen after the fix: "I'm weighing whether a foreground `sleep 40` on its own would get through, …".
+- **No plan/todo list.** 2.1.302 has no TodoWrite in SDK sessions and offers TaskCreate/TaskUpdate only with
+  `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` (now set); they are deferred (loaded with ToolSearch). Mapped to one plan item
+  per turn (above); ToolSearch calls hidden.
+- **Usage limits never showed.** `rate_limit_event` carries no top-level `utilization`; it is per window in
+  `unifiedWindows` (`{seven_day: {utilization: 0.21, resetsAt: <seconds>, status}}`, `status` added in 2.1.326).
+  Now read (`limitWindows`): the status says "week 21%". `utilization` is a fraction and `resetsAt` seconds, as guessed.
+- **"Allow for this session" on an edit was lost** when Claude Code was opened again (it is a `setMode`, not a
+  rule); leaving plan mode likewise. Both kept now (above).
+- **A stopped command read "declined".** Now `failed`, live and in history.
+- **A steer read back as a turn of its own**, and **a stopped turn's length** ran to the next message (Claude Code's
+  "No response requested." comes then). Both fixed in `historyTurns`.
+- **Approval detail said things twice** (a command's description and Claude Code's description are the same
+  words; a Write's description is its file name). Said once now.
+- Pane: a thought read back from a transcript showed "0.0 s" (it has one time only): no length is shown then.
+
+Seen, left as is:
+
+- The first turn tells Claude about the Journal at `http://127.0.0.1:3000` (progress and workspace curls), so on a
+  test instance Claude reaches for **production** (twice here, both denied in `ask` mode). Production is right for
+  real use; on another device that address is not the Journal (open item).
+- Claude Code's models changed with the update: the default became Fable 5.2 ("Default · Fable 5.2" in the select).
+- **VS Code / the Claude desktop app:** no VS Code or Claude extension on this laptop. The desktop app on the Mac
+  drives this laptop over ssh (`~/.claude/remote`: its server and session folders), but keeps its Code tab's list on
+  the Mac, which could not be reached: whether the Journal's sessions show there is not known. They are ordinary
+  transcripts in `~/.claude/projects` labelled `agentic-journal`, which is what the CLI picker and the VS Code
+  extension read.
+
+Sessions made (journal-spike): `5f0ccfe8-3dee-45b8-867d-a7a32de30cfb` ("Journal bridge check one"),
+`e7f0ce6b-5374-4414-be01-07a125bd66c4`, `c7deb285-0ac0-4888-9b14-84cf2b50586f` (plan, archived),
+`2d47500c-8350-4eb0-be26-665ad8c608a4` (stop, steer, restart), `a5b0f4cd-8d2b-4920-a608-15474c088f9b` (from the
+pane); `dba1ec79-…` adopted. Tests: the stand-in SDK now sends what the real CLI sent (`REAL` in
+`scripts/code-agents-fake-claude-sdk.ts`), with new tests in `code-agents-claude-bridge.test.ts` and
+`code-agents-claude-model.test.ts`.
+
 ## Signing in (added 2026-11-17)
 
 Where a new chat starts (NewChat.tsx), each agent's card says who is signed in on the device ("Signed in on laptop ·
 Plus plan", `accountLine`), and an agent that is signed out gets a panel under the cards (`SignIn.tsx`) with **Sign
-in** (and the terminal command as the other way). Laptop only for now: the route takes an optional `host` and
-refuses any other with a 400, and the hub keeps one sign-in per (host, agent) connection, so Stage 4 can add hosts.
+in** (and the terminal command as the other way). It works per device: the route takes an optional `host` (any
+known device; 400 for one that is none), the hub keeps one sign-in per (host, agent) connection, and the panel
+signs in on the device picked in the form (see "Other devices"). Signing in on another device was tested only
+against the fakes.
 
 - **Kept in memory only.** The hub holds the `AgentLogin` (link, Codex's code) on the connection; nothing writes it
   to the store or a file, nothing logs it, and the pasted code passes straight through to the agent (the route and
@@ -620,7 +753,10 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
   out: `{tokenSource:'none', apiProvider:'firstParty'}`.
 - **`canUseTool(toolName, input, {signal, suggestions?, blockedPath?, decisionReason?, title?, displayName?,
   description?, suppressAlwaysAllowRule?, toolUseID, agentID?, requestId})`** → allow (`updatedInput`,
-  `updatedPermissions`) or deny (`message`, `interrupt?`). From the SDK's types; never called for real here.
+  `updatedPermissions`) or deny (`message`, `interrupt?`). Called for real in the live check (2026-11-17): a Write
+  with `suggestions: [{type:'setMode', mode:'acceptEdits', destination:'session'}]`, `description` = the file's name;
+  a Bash command with `addRules` per part for `localSettings`, `decisionReasonType: 'subcommandResults'`; ExitPlanMode
+  with no suggestions and `requiresUserInteraction: true`.
 - **Live through the bridge (Stage 2, signed out):** `initialize`, `status` (signed-out with the plain reason,
   version 2.1.302), `models`, `sessions/list` for `~/.openclaw/workspace/journal-spike` (picker parity: the
   spike's sdk-ts sessions are not listed), `session/history` of two real sessions of this repo (one 25 MB, 27
@@ -650,15 +786,13 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
 - Model "default" means Codex's default (config.toml), not whatever the thread last ran: a session adopted from the
   Codex app that ran another model moves to the default on its first turn from the Journal unless a model is picked.
 - Codex `plan` mode is approximated by a read-only sandbox until the experimental collaboration mode is used.
-- SSE through Tailscale serve and `next start` has not been tried on a running server (the strict check accepts
-  Tailscale serve's shape, X-Forwarded-Host or Sec-Fetch-Site; unit-tested); nor has the `serverExternalPackages:
-  ['ws']` production build (skipped in the live check: the laptop was short of memory).
-- **Claude Code needs a signed-in turn** (the laptop's login had expired): a successful reply, real
-  `stream_event` shapes and their order (thinking deltas, tool_use starts), a real `canUseTool` call and its
-  `suggestions`, "allow for this session" taking effect, `interrupt()` mid-tool and the result it sends,
-  `turn/steer` folding (one `result` or two), `rate_limit_event` values (is `utilization` a fraction, is
-  `resetsAt` seconds), `claude auth status` fields when signed in (`subscriptionType`?), `accountInfo` with a
-  subscription, and the Claude desktop app's session list. All are covered only against the stand-in SDK.
+- The `serverExternalPackages: ['ws']` production build has not been tried on its own (production was deployed with
+  it in b3642ca, and its stream and Codex turns work there: see "The stream through Tailscale").
+- Claude Code, after the live check: a real `claude auth login` completed from the pane, `compact_boundary` and
+  `api_retry` messages, a rate-limited turn, `Task`/sub-agent shapes live, and the Claude desktop app's Code tab list
+  are still unseen. A Journal session on another device is told the Journal is at `127.0.0.1:3000`, which is not the
+  Journal there. The CLI updates itself (2.1.302 → 2.1.326 during the check); `sdk-types.ts` was checked against what
+  both sent, not against a new `sdk.d.ts`.
 - `own` for Claude Code with a settings `defaultMode` of `bypassPermissions`: the SDK wants
   `allowDangerouslySkipPermissions` for that mode when it is given as an option; whether Claude Code honours it from
   settings without the flag (through the SDK) is not checked. Not the case here (no `defaultMode` set).
@@ -668,8 +802,7 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
 - Claude bridge: not installed as a service yet; `bridge/` needs `npm install --omit=optional` on each device. A
   bridge restart ends running turns as failed (history shows the partial turn as done). A session open in a
   Claude app at the same moment is not detected (see "Changed elsewhere").
-- Stage 3: session-index registration, sky/glance text naming the agent, the chat pane itself.
-- Stage 4: `ssh <host> codex app-server proxy` as a `webSocketTransport({ createConnection })` byte pipe.
+- Other devices: see the open items at the end of "Other devices".
 
 ## Chat pane (Stage 3)
 
@@ -694,3 +827,219 @@ Server additions for it: `CodeSessionLink.asking` (`{kind, title}` of the approv
 (models before a session starts); a link whose last turn failed reads `failed` after a restart until the next turn.
 The sky (`sunrise/load.ts`) counts sessions from the links store (`skyChats`, `skyTalk`); a bubble for a session
 carries the thread id `code:<linkId>`, which opens the workspace on that session.
+
+## Sessions in the session index (Stage 3, added 2026-11-17)
+
+"Sessions that worked on this" (the workspace, `WorkspaceSessions.tsx`) and the Sessions block of the brief and
+action cards (`CardSessions.tsx`) read `sessionsFor(task:<id> | card:<ac_id>)` in `src/lib/session-index/view.ts`.
+A Codex or Claude Code session started from a task's chats, or brought into them, is on that task **exactly**, from
+its link in `tasks/code-sessions.json`, not by matching its text:
+
+- `readCodeLinks()` reads the links file by hand (plain node: the session-index CLI runs view.ts without the app's
+  import aliases). Each link of the task becomes a row with the reason "Started from this task’s chats", "Brought into
+  this task’s chats" (adopted) or "Was one of this task’s chats" (archived: it still worked on the task).
+- **One row per session.** Its uid is `<agent>:<session id>` (`codex:<thread id>`, `claude-code:<session id>`), the
+  same uid `proj sessions` digests get. When the index has the session too (its transcript's first turn carries
+  `[aj:task:<id>]`, so the index would link it by itself), the row is the index's record (its turns, the app's title)
+  with the link's reason; the link's rows go first, so the surest reason wins. Without it, the row is made from the
+  link: title, device, folder (`project` is the folder's name), start and last activity, 0 turns (not shown).
+- "Running now" for a link's row is the hub's `workingSince` stamp (less than 3 h old), not "touched in the last 20
+  minutes" as for index rows, so an idle session opened a moment ago does not read as running. This holds when the row
+  is the index's record too (fixed 2026-11-17: an idle Claude Code session that had finished two minutes before read
+  as running once the index had it).
+- A card that became a task shows the task's coding sessions ("Started from its task’s chats").
+- **No index is needed.** Rows from links show on a server no machine has sent sessions to (production's index was
+  empty until the collector below); the panes say "No machine has sent its sessions yet" where they gave the indexed count, and the
+  workspace still shows its "nothing is indexed yet" note when there is nothing else to list.
+- **"Not this"** works on such a row before the index has the session (`setFeedback` accepts a uid that is one of the
+  target's coding sessions, and makes index.db for the feedback if the server has none); "+ Link a session" still
+  needs the index.
+- The workspace leaves out the task's own live sessions (they are in the chats list above); archived ones show there
+  with "Continue here", which brings them back as a new link.
+- A row of a session on another device carries the ssh resume command (see "Other devices").
+
+- **How the index is fed (added 2026-11-17).** No machine ever sent digests: the planned `proj sessions` was never
+  written, so production's inbox did not exist and every ingest folded nothing (index.db: 0 sessions; the timer and
+  paths were fine). The Journal now collects them itself: `scripts/session-index.ts sync` (the 15-minute
+  `agentic-journal-session-index` timer; `collect` alone, `--host`, `--budget`) runs `collect.ts`, then `ingest`.
+  - **Where it reads:** this machine's transcripts from disk; every other proj host's over ssh, by its alias. It reads
+    ~/.claude/projects/<dir>/<id>.jsonl, CODEX_HOME and ~/.codex sessions and archived_sessions (`.jsonl`,
+    `.jsonl.zst`), `session_index.jsonl` for thread names, on WSL the Windows user's Claude and Codex homes, and on
+    macOS the Claude app's `claude-code-sessions` records. OpenClaw's sessions come from its agent sqlite, read-only,
+    on this machine only.
+  - **Read-only on devices:** only `find`, `stat`, `tail -c +N`, `cat` and `gzip` run there, with BatchMode and the
+    code agents' shared ssh master. The listing takes his login shell's environment but runs in sh. Nothing is
+    installed, started or written on a device.
+  - **Incremental:** what was read is kept in `session-index/collect/<host>.json` (size, time, the digest so far). A
+    grown transcript is read from where it ended; a rewritten one is read whole. Each device gets 80 s of new reads per
+    run, newest first. A device's inbox is the collector's, so a session gone from its disk leaves the inbox and the
+    index (feedback stays). An unreachable device keeps what it sent.
+  - **Digests** (`digest.ts`, `openclaw.ts`): his messages and the replies (Claude's sidechains and own notes, and
+    Codex's injected context, left out); the first and last 6 messages, redacted as they are kept (no secret is in the
+    saved state); files changed; refs = `[aj:…]` marks plus task and card ids the Journal knows, found in messages and
+    tool inputs, not tool output. A Codex thread split over several rollout files is one session. OpenClaw: one
+    session per key (its windows joined), each cron run its own and only when it names a Journal id, no heartbeats.
+    Journal-started keys get titles in words ("Filled in the brief for “…”", "Chat about “…”").
+  - **Rows:** one OpenClaw row per session key (a cron job's runs open the same place, so only the latest is shown). No
+    resume command for a session in a Windows folder (`C:\…`). Any project named like `agentic-journal` counts as
+    Journal development for the by-id rule.
+  - **Numbers on 2026-11-17:** laptop 136 Claude Code, 360 Codex and 511 OpenClaw sessions (22 s first run, about 4 s
+    after). PC 140 Claude Code (28 in Windows) and 252 Codex, from 3.2 GB read over ssh: about 9 minutes the first
+    time, spread over runs; 1.6 s after. The first run peaked at about 450 MB, so the unit caps the heap at 256 MB with
+    `MemoryMax=768M`. Production needs the deploy that installs the unit; the PC catches up over its first few hours of
+    runs.
+  - Checked against copies of production's tasks and cards: "buy drone parts", "Midterm 2", "3 Lenses part 2" and the
+    class tasks show their brief runs, chats and the Canvas-sync / skipped-class runs that made them (38 of 266 open
+    tasks have rows); a Journal-linked Codex thread the index also holds is one row (the index's record, the link's
+    reason). On the 3111 test instance, after `sync --host laptop` on its data copy, the test task listed its five
+    Claude Code sessions (one archived: "Was one of this task's chats") and the adopted one on the other task, each
+    once, none "running now", each with its `claude --resume` command.
+  - Tests: `scripts/session-index-collect.test.ts`.
+
+Tests: `scripts/session-index.test.ts` (four new: no index at all, one row with the index's record, a card's task, "Not
+this"). Checked on the throwaway dev server: a Codex session started there over ssh came back from
+`/api/session-index/card` as one `linked` row with its ssh resume command.
+
+## The stream through Tailscale (checked live on production, 2026-11-17)
+
+Production is `https://ubuntu-laptop.taile85e97.ts.net` (Tailscale serve, tailnet only) → `http://127.0.0.1:3000`
+(`next start`). `AGENTIC_JOURNAL_ORIGIN` is not set in `.env`, so the strict check's default name is this one.
+Checked read-only against production with a made-up task id (`00000000-0000-4000-8000-00000000c0de`, no such task):
+
+- **Accepted** through the ts.net name with `Sec-Fetch-Site: same-origin` (as a browser sends over https), and with a
+  ts.net `Origin`; refused (403) with another site's `Origin`, with `Sec-Fetch-Site: cross-site`, and with neither.
+- **Not buffered, not compressed:** asked with `Accept-Encoding: gzip, br`, the answer came with no
+  `content-encoding`, `cache-control: no-cache, no-store, no-transform`, `x-accel-buffering: no`, chunked; the opening
+  `retry`/comment arrived within ~0.1 s; events arrived as they happened (turn-started at 2.4 s, the user item at 2.8 s,
+  the reply at 7.5 s, turn-completed at 7.7 s, each when Codex sent it).
+- **Keep-alives:** a stream held 5.5 minutes got its `: beat` every 15 s (21 of them) and was never cut; Tailscale serve
+  closes nothing idle at that rate. 15 s is kept.
+- **Replay:** a new stream with `after=<link>:<seq before the turn>` replayed all 15 events at once; `Last-Event-ID`
+  from the middle replayed the 7 after it; a seq the log never had got one `reset`.
+- How the events were made: the throwaway Codex thread `01a1e7fb-…` ("Journal own-mode check", journal-spike) was
+  adopted onto the made-up task id and sent one trivial turn ("Reply with one short sentence saying hello…"; it said
+  "Hello, Adamya!"). Production had no `tasks/code-sessions.json` before; the file then held only that one link, and was
+  deleted after the check, so production's data is as it was (its hub keeps the link in memory until it is let go).
+
+Fixed in code: `AGENTIC_JOURNAL_HOSTS` now takes a name with a port or a whole address (`https://box.ts.net/`; before,
+`https://…` read as the name "https"), and spaces as well as commas; an `X-Forwarded-Host` list (proxy chain) is
+checked name by name. Nothing else needed changing for the stream; these need a deploy.
+
+## Other devices (Stage 4, added 2026-11-17)
+
+From the new-chat form he picks a device (this machine, or another host of the proj registry), and the session runs
+there with that device's own Codex or Claude Code, its login and its transcripts: native there.
+
+### How a device is reached (`ssh.ts`)
+
+- **Devices** come from the proj registry (`src/lib/proj-hosts.ts`): `registry.json` `hosts.<host>.alias` is the ssh
+  name (laptop → ubuntu-laptop, mac → macbook, wsl → win11), `hosts/<host>.json` lists its projects (`~/projects/x`).
+  `listDevices()` (places.ts) puts this machine first. An alias ssh could misread (not a plain name or user@name) is
+  not used.
+- **ssh options:** `-T -e none -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=4`
+  and a master kept 10 minutes per device (`ControlMaster=auto`, `ControlPath=~/.local/state/agentic-journal/ssh/%C`,
+  `ControlPersist=600`; `CODE_AGENTS_SSH_CONTROL` = another folder, or `none`; a folder too deep for a socket path goes
+  without reuse). ssh never asks for anything: a device without key login, or with an unknown host key, is
+  unreachable and says why. ssh runs with only HOME, PATH, USER, LOGNAME, SHELL, LANG, LC_*, TZ, TMPDIR, XDG_* and
+  SSH_AUTH_SOCK (`sshEnv`), never the Journal's `.env`. `CODE_AGENTS_SSH` names another ssh program (the tests').
+- **Login shell:** every remote command runs as `exec "${SHELL:-/bin/sh}" -lc '<script>'`, so it finds what his
+  terminal finds. Found here: a plain `ssh ubuntu-laptop codex` runs `/usr/bin/codex` 0.144.4, the login shell finds
+  `~/.local/bin/codex` 0.169.0. A login shell that is not POSIX (fish) is not supported. Each command prints a marker
+  line (`AJ-PIPE-1`) before it starts; whatever a profile prints before it is dropped (`childPipe` in transport.ts).
+- **The look** (`probeDevice`, read-only): one ssh that prints home, `uname -s`, WSL or not, `codex --version`,
+  `CODEX_HOME`, whether `codex app-server daemon version` says `running`, `claude --version`, node, whether the
+  bridge is installed (`~/.local/share/agentic-journal/claude-bridge/run`, else a checkout at
+  `~/projects/agentic-journal/bridge` with its packages) and whether its socket is there. Kept 60 s (30 s when it could
+  not reach the device); looks asked for at once share one ssh. This machine is never looked at.
+- **Codex:** with a daemon there, `ssh <alias> codex app-server proxy` is a byte pipe to it and the Journal speaks the
+  daemon's WebSocket over ssh's stdio (`webSocketTransport({ createConnection: () => sshPipe(…) })`; `childPipe` gives
+  `ws` the few socket methods it calls). Threads are the daemon's own, shared with that device's Codex apps. Without a
+  daemon, `ssh <alias> codex app-server` speaks newline JSON on stdio for as long as the connection lasts (its turns
+  end with it), except when `CODEX_HOME` is in Windows' folder under WSL (`/mnt/c/…`): then nothing is started and it
+  says so (see the PC below).
+- **Claude Code:** `ssh <alias> <bridge>/run proxy` (the bridge's own `proxy` mode, byte for byte to its socket), so
+  the same bridge protocol v2 over WebSocket. The look tells apart "not installed" (install it with
+  `scripts/install-claude-bridge.sh <host>`), "installed, not running" (start its service) and running. The bridge's
+  "on this device" in its reasons becomes the device's name.
+- **Folders:** another device's place is kept as its proj file writes it (`~/projects/x`); the adapters expand `~`
+  with the home the look found before asking the agent there (thread/start, thread/list, config/read, the bridge's
+  session/start, sessions/list, settings/own). `validatePlace` for another device checks the folder is one of its
+  projects or inside one (no `..`), without looking there (the agent refuses a folder that is not there); a full path
+  under its home (what an agent reports for a session he brings in) is read back as `~/…`.
+- **Hub:** unchanged in shape: one connection per (host, agent), each with its own reconnect and backoff, rejoin,
+  status cache, models, own settings, sign-in and native list. A dropped ssh reads the device's sessions offline and
+  is made again while anyone needs it (tested: drop, offline, rejoined after the first pause).
+
+### In the pane
+
+- **New chat:** an "On" row of device chips (shown when there is more than one device), each with its state in a few
+  words ("this machine", "Codex ready", "can’t be reached", "checking…"); the reason of an unreachable device under it.
+  The agent cards, the sign-in panels, the models and the place select all follow the device picked (the task's
+  place's device until he picks another). Sign in works per device.
+- **Rows** name the device in his words (`placeLine`: "PC · repo"); the session head too.
+- **Open in…** on another device: `ssh -t <alias> 'exec "$SHELL" -lc "cd ~/projects/x && codex resume <id>"'`
+  (`resumeCommand(app, cwd, id, alias)`, quoting stays plain when the folder is; checked by running the commands
+  against a stand-in ssh); the session index rows of other devices carry the same command.
+- Phone width checked (iPhone 15 profile in Chrome): the chips wrap, nothing scrolls sideways.
+
+### `scripts/install-claude-bridge.sh`
+
+`scripts/install-claude-bridge.sh <host|alias> [--dry-run] [--prefix <dir>] [--no-service] [--no-start]`, or `--local`.
+Checks first (read-only, in the device's login shell): Linux or macOS, node ≥ 22.18 (the bridge runs its TypeScript
+as is) and not Windows' node under WSL, npm, `claude`, and `systemctl --user` (Linux) or launchd (macOS). Then copies
+`bridge/*.ts`, its package files and `src/lib/code-agents/{protocol,adapter}.ts` to `<prefix>.new` (default
+`~/.local/share/agentic-journal/claude-bridge`), `npm install --omit=optional` there (kept from the last install when
+the lock file is the same), swaps it in, writes `<prefix>/run` (the node it found, `run serve|proxy`), and writes and
+(re)starts `agentic-journal-claude-bridge.service` (systemd user unit, `CLAUDE_CLI_PATH` and PATH from the checks) or
+`com.agentic-journal.claude-bridge` (launchd agent). Says plainly and stops for: Windows itself, Linux/WSL without
+systemd --user, old node, no key login. This laptop's own bridge runs from the repo under the same unit name, so here
+only `--local --prefix … --no-service`. Tested locally only: `--dry-run`, argument errors, and a real
+`--local --prefix <scratch> --no-service` install (3.6 s), whose `run serve` answered `initialize` (protocol 2) and
+`status` (signed-out) through its own `run proxy`. **Never run against another device.**
+
+### What each device has (read-only looks, 2026-11-17)
+
+- **laptop** (this machine, ubuntu-laptop): Codex 0.169.0 with its daemon; Claude Code 2.1.302 (signed out), bridge
+  running from the repo; node 24.22.1. `ssh ubuntu-laptop` (key login to itself) works; `ssh localhost` fails on a
+  changed host key in known_hosts (left alone).
+- **PC** (wsl → win11, user win10ubuntu, WSL2, systemd --user running): Codex 0.162.0-alpha.17.2 with
+  `CODEX_HOME=/mnt/c/Users/7adam/.codex` (Windows' Codex home, shared with the Windows Codex app, which was running)
+  and no daemon (`codex app-server daemon version` fails: "socket directory path exists and is not a directory");
+  Claude Code 2.1.289; **no Linux node** (only Windows' npm on PATH); no bridge; a checkout at
+  `~/projects/agentic-journal`. So: Codex sessions there need a daemon or a WSL-side CODEX_HOME; Claude Code needs node
+  ≥ 22.18 installed in WSL, then the install script.
+- **Mac** (mac → macbook): **not reachable** from the laptop: `macbook` does not resolve (its tailnet name is
+  `adamyas-macbook-pro`), and that name's host key is not in known_hosts. Nothing else is known. It needs an ssh Host
+  entry here (e.g. `Host macbook` → `HostName adamyas-macbook-pro`, its user) and the host key accepted, by him.
+
+### Checked live (throwaway dev server on 3111, copied data, a registry copy with an extra host `self` → ubuntu-laptop)
+
+- `self`: look reachable (Codex 0.169.0 daemon, Claude 2.1.302 bridge running); Codex ready (Plus); Claude Code
+  signed-out through `ssh ubuntu-laptop … bridge proxy` → the running bridge (read-only status).
+- One real Codex turn on `self` through `ssh ubuntu-laptop codex app-server proxy`: started from the form's route in
+  `~/.openclaw/workspace/journal-spike` (thread `01a1ea16-4e70-7c90-86b5-34fd1519da47`, "Hello, Adamya!"); the stream
+  delivered it live, replay and reset as on production; the thread is native (in `session_index.jsonl` and
+  `thread/list` source `vscode`); its history and "Open in Codex" (ssh resume command) render in the pane.
+- `mac`: unreachable with the plain reason in a fraction of a second; the list never waited.
+- `wsl` (the PC): the look worked; the agents' status then started **one `codex app-server` on the PC** (the no-daemon
+  path), which exited at once with "failed to initialize sqlite state runtime under /mnt/c/Users/7adam/.codex". That
+  is why the WSL `/mnt/` guard exists now (nothing is started there in that case). The PC was then taken out of the
+  test registry. Its Windows Codex home had files written at 10:15 (before) and `logs_2.sqlite-wal` at 10:16:45, 2 s
+  after that start: from the Windows Codex app or from that app server, it cannot be told.
+
+### Open items (other devices)
+
+- No real turn on another physical device; the Mac is unreachable and the PC has no daemon and no node in WSL.
+- Signing in on another device, Claude Code on another device and the plain-`codex app-server` path are tested only
+  against the fakes (`scripts/code-agents-ssh.test.ts`: a stand-in ssh running a "device" with its own home and a
+  chatty profile, the bridge's proxy as Codex's byte pipe, a newline-JSON app server, the real bridge with the
+  stand-in SDK).
+- A remote place is not checked to exist until the agent there is asked; the bridge and Codex refuse a missing one.
+- launchd on macOS is written from the docs, not run.
+- Session index on the Mac: unreachable (`macbook` does not resolve). The BSD find/stat listing and the Claude app
+  record fields (`cliSessionId`, `title`, `sshConfig`, `isArchived`, `lastActivityAt`, `session_…` Remote Control
+  ids) are from docs and proj's code, not checked on a Mac. A Remote Control link from a transcript's `bridge-session`
+  (`cse_…`) is not used: its claude.ai URL form is not verified. ssh from inside the system unit (no SSH_AUTH_SOCK;
+  the key comes from `~/.ssh/config`'s IdentityFile) was not run.
+- The Codex daemon on another device must already run (`codex app-server daemon start` there); the Journal never
+  starts one.

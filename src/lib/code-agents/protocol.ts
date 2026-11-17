@@ -82,7 +82,27 @@ export interface ModelEntry {
 
 export interface Place {
   host: string;              // a `proj` host name; 'laptop' is this machine
-  cwd: string;               // absolute, on that host
+  cwd: string;               // absolute on this machine; on another device as its `proj` file writes it (`~/projects/x`)
+}
+
+/** A device sessions can run on: this machine, or one the `proj` registry knows and ssh reaches by `alias`. */
+export interface DeviceInfo {
+  host: string;              // the `proj` host name: laptop, wsl, mac
+  label: string;             // laptop, PC, Mac
+  alias: string | null;      // how ssh reaches it (null for this machine, or a name ssh cannot use)
+  here: boolean;             // this machine
+}
+
+/** What a read-only look over ssh found on a device (this machine: reachable, nothing else asked). */
+export interface DeviceStatus {
+  host: string;
+  reachable: boolean;
+  reason?: string;           // why it cannot be reached
+  os?: string;               // uname -s: Linux, Darwin
+  wsl?: boolean;
+  codex?: { version: string | null; daemon: boolean; home?: string } | null;    // null: not installed there; home: its CODEX_HOME
+  claude?: { version: string | null; bridge: 'running' | 'installed' | 'missing' } | null;
+  checkedAt?: number;
 }
 
 export interface PlaceChoice extends Place {

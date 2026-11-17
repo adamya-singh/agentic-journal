@@ -117,6 +117,7 @@ export function ingest(opts: { rebuild?: boolean; now?: Date } = {}) {
   const addChunk = db.prepare('insert into chunks(uid, n, text) values (?,?,?)');
   const addFts = db.prepare('insert into chunks_fts(text, uid, n) values (?,?,?)');
   let changed = 0;
+  let removed = 0;
   tx(db, () => {
     for (const [uid, d] of digests) {
       const app = d.app === 'claude-code' ? apps.get(d.id) : undefined;
@@ -132,11 +133,20 @@ export function ingest(opts: { rebuild?: boolean; now?: Date } = {}) {
       const parts = [`${title}\n${d.project} ${d.branch}\n${d.files.map((f) => path.basename(f)).join(' ')}`, ...chunk(d, common)];
       parts.forEach((text, n) => { addChunk.run(uid, n, text); addFts.run(text, uid, n); });
     }
+    // A session no device sends any more (gone from its disk, or no longer one worth indexing) leaves the index; what
+    // Adamya said about it ("Not this", a link by hand) stays in feedback, for if it comes back.
+    for (const uid of known.keys()) {
+      if (digests.has(uid)) continue;
+      db.prepare('delete from sessions where uid = ?').run(uid);
+      delChunks.run(uid);
+      delFts.run(uid);
+      removed++;
+    }
     db.prepare("insert into meta(k, v) values ('boilerplate', ?) on conflict(k) do update set v = excluded.v").run(commonHash);
     db.prepare("insert into meta(k, v) values ('ingested_at', ?) on conflict(k) do update set v = excluded.v").run(at);
     db.exec('delete from hosts');
     const addHost = db.prepare('insert into hosts(host, files, last_sync) values (?,?,?)');
     for (const h of hosts) addHost.run(h.host, h.files, h.lastSync);
   });
-  return { sessions: digests.size, changed, boilerplate: common.size, hosts: hosts.map((h) => h.host) };
+  return { sessions: digests.size, changed, removed, boilerplate: common.size, hosts: hosts.map((h) => h.host) };
 }

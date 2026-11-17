@@ -1,5 +1,5 @@
 [Unit]
-Description=Fold new agent session digests into the Agentic Journal session index every 15 minutes
+Description=Collect agent sessions from every device into the Agentic Journal session index every 15 minutes
 
 [Timer]
 OnBootSec=3min

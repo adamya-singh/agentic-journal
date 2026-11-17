@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  applySessionEvent, chatsState, codeLinkOf, codeRowId, commandOutcome, diffCounts, failureText, formatDuration, isInternalHref, limitResetsAt, limitsLine,
+  accountLine, applySessionEvent, chatsState, codeLinkOf, codeRowId, commandOutcome, diffCounts, failureText, formatDuration, isInternalHref, limitResetsAt, limitsLine,
   linkUnread, mergeChatRows, namesLine, parseDiff, placeGroups, placeLine, resumeCommand, sessionGlance, sessionPill, skyChats, skyTalk,
   stepsSummary, storedState, toolInputLine, turnBlocks,
 } from '../src/lib/code-sessions-ui';
@@ -64,6 +64,14 @@ test('a session at a glance: its pill, its line, its place', () => {
   assert.equal(resumeCommand('codex', '/p', '01a1e72f-95ea-7570-81c0-34d94083c4ac'), "cd '/p' && codex resume 01a1e72f-95ea-7570-81c0-34d94083c4ac");
   assert.equal(resumeCommand('codex', '/p', 'x; rm -rf ~'), "cd '/p' && codex resume 'x; rm -rf ~'");
   assert.equal(resumeCommand('claude-code', '/p', "it's"), "cd '/p' && claude --resume 'it'\\''s'");
+  // On another device: ssh there by its alias, in its login shell (so its own codex is found), plainly when it can be.
+  assert.equal(resumeCommand('codex', '~/projects/site', 'th-1', 'win11'), `ssh -t win11 'exec "$SHELL" -lc "cd ~/projects/site && codex resume th-1"'`);
+  assert.equal(resumeCommand('claude-code', '/Users/a/my site', 'abc', 'macbook'),
+    `ssh -t macbook 'exec "$SHELL" -lc "cd '\\''/Users/a/my site'\\'' && claude --resume abc"'`);
+  assert.match(resumeCommand('codex', '/p/$HOME', 'x', 'win11'), /^ssh -t win11 'exec "\$SHELL" -lc '/, 'a $ is never left to a double-quoted shell');
+  // The device in his words, when the pane knows it; who is signed in where.
+  assert.equal(placeLine('wsl', '~/projects/site', [], [{ host: 'wsl', label: 'PC' }]), 'PC · site');
+  assert.equal(accountLine({ state: 'ready', host: 'wsl', account: { kind: 'subscription', plan: 'plus' } }, 'PC'), 'Signed in on PC · Plus plan');
 });
 
 test('links in what an agent wrote: only paths on this site stay in the tab', () => {

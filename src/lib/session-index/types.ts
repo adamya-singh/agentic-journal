@@ -1,11 +1,12 @@
 // The session index: every OpenClaw, Claude Code and Codex session on Adamya's machines, so a task or an
-// action card can list the ones that worked on it. Each machine's `proj sessions` sends redacted digests
-// to data/session-index/inbox/<host>/; `scripts/session-index.ts ingest` folds them into index.db.
+// action card can list the ones that worked on it. The collector (collect.ts, `scripts/session-index.ts sync` on a
+// 15-minute timer) reads each device's transcripts (this one from disk, the others over ssh, read-only) into redacted
+// digests in data/session-index/inbox/<host>/; `ingest` folds them into index.db.
 
 export const SESSION_APPS = ['openclaw', 'claude-code', 'codex'] as const;
 export type SessionApp = (typeof SESSION_APPS)[number];
 
-/** One session as `proj sessions` writes it (v1). Text is already redacted on the machine it came from. */
+/** One session as the collector writes it (v1). Its text is already redacted. */
 export interface SessionDigest {
   v: 1;
   app: SessionApp;

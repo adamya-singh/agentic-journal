@@ -133,7 +133,8 @@ function ToolStep({ item }: { item: Item<'tool'> }) {
 function ThoughtStep({ item }: { item: Item<'reasoning'> }) {
   const [open, setOpen] = React.useState(false);
   const first = item.text.replace(/[*_`#>]+/g, '').split('\n').find((l) => l.trim()) ?? '';
-  const took = item.startedAt && item.endedAt ? formatDuration(item.endedAt - item.startedAt) : '';
+  // A thought read back from a transcript has one time only: no length to say.
+  const took = item.startedAt && item.endedAt && item.endedAt > item.startedAt ? formatDuration(item.endedAt - item.startedAt) : '';
   return (
     <div className="srk-step">
       <StepLine tag="think" open={open} onToggle={() => setOpen(!open)} label="What it thought">

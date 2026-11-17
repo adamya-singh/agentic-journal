@@ -144,11 +144,19 @@ function SessionMenu({ code, view, show, onClose }: { code: CodeSessions; view: 
   const [mode, setMode] = React.useState<'menu' | 'rename' | 'archive'>('menu');
   const [title, setTitle] = React.useState(link.title);
   const [copied, setCopied] = React.useState(false);
-  const command = resumeCommand(link.agent, link.cwd, link.sessionId);
+  // On another device the command goes there over ssh, by its alias, and opens it in that device's own agent.
+  const device = code.devices.find((d) => d.host === link.host);
+  const away = !!device && !device.here;
+  const command = resumeCommand(link.agent, link.cwd, link.sessionId, away ? device.alias : null);
   const working = view.state === 'working' || view.state === 'needs-you' || !!view.turnId;
   const resume = (
     <>
-      <p>Open this session in {label}: run this in a terminal on {link.host}. {link.agent === 'codex' ? 'It is in the Codex app’s list for this folder too.' : 'It is in Claude Code’s own list for this folder too.'}</p>
+      <p>
+        {away
+          ? <>Open this session in {label} on {device.label}: run this in a terminal here; it opens it there, over ssh. </>
+          : <>Open this session in {label}: run this in a terminal on {device?.label ?? link.host}. </>}
+        {link.agent === 'codex' ? `It is in the Codex app’s list for this folder${away ? ` on ${device.label}` : ''} too.` : `It is in Claude Code’s own list for this folder${away ? ` on ${device.label}` : ''} too.`}
+      </p>
       <pre>{command}</pre>
       <div className="row">
         <button type="button" className="srp-chip" onClick={() => void copyText(command).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); })}>{copied ? 'Copied' : 'Copy the command'}</button>
@@ -311,7 +319,7 @@ export function SessionPane({ code, phone, autoFocus, closer }: { code: CodeSess
         </span>
         {link && (
           <span className="srk-meta">
-            <span className="where" title={link.cwd}>{placeLine(link.host, link.cwd, code.places)}</span>
+            <span className="where" title={link.cwd}>{placeLine(link.host, link.cwd, code.places, code.devices)}</span>
             {model && <span>· {model}</span>}
             {view && <button type="button" className="srk-linkish" aria-expanded={show === 'resume'} onClick={() => setShow(show === 'resume' ? null : 'resume')}>Open in {label} ↗</button>}
           </span>

@@ -139,7 +139,7 @@ test('who is signed in, in words', () => {
 
 test('`claude auth login` runs without anything that points it at another login, and opens no browser here', () => {
   const env = loginEnv(cleanChildEnv({ PATH: '/usr/bin', HOME: '/home/me', ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'u', CLAUDE_CODE_OAUTH_TOKEN: 'inherited', CLAUDECODE: '1', CLAUDE_CONFIG_DIR: '/elsewhere', CLAUDE_BRIDGE_OAUTH_TOKEN: 'deliberate' }));
-  assert.deepEqual(Object.keys(env).sort(), ['BROWSER', 'CLAUDE_CODE_ENTRYPOINT', 'HOME', 'PATH']);
+  assert.deepEqual(Object.keys(env).sort(), ['BROWSER', 'CLAUDE_CODE_ENABLE_TODO_TOOLS', 'CLAUDE_CODE_ENTRYPOINT', 'HOME', 'PATH']);
   assert.equal(env.BROWSER, 'true');
   // Where to sign in: the link after "visit:", only once all of it has come.
   assert.equal(loginUrlOf("Opening…\nIf the browser didn't open, visit: https://claude.com/cai/oauth/authorize?a=1&b=2\nPaste code here if prompted > "), 'https://claude.com/cai/oauth/authorize?a=1&b=2');

@@ -190,18 +190,19 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
       </section>
     );
   }
-  if (view.indexed === 0) {
-    return (
-      <section className="srs" aria-label="Sessions that worked on this task">
-        {head()}
-        <p className="srs-note">Nothing is indexed yet. No machine has sent its sessions to this Journal, so it cannot tell which sessions worked on this task.</p>
-      </section>
-    );
-  }
   const own = new Set(chatKeys);
   const linked = new Set(codeSessions.map((s) => `${s.agent}:${s.sessionId}`));
   const isChat = (row: SessionRow) => (!!row.key && own.has(row.key)) || linked.has(row.uid);
   const rows = view.rows.filter((row) => !isChat(row));
+  // The task's own coding sessions are known without the index; anything else needs a machine to have sent its sessions.
+  if (view.indexed === 0 && rows.length === 0) {
+    return (
+      <section className="srs" aria-label="Sessions that worked on this task">
+        {head()}
+        <p className="srs-note">Nothing is indexed yet. No machine has sent its sessions to this Journal, so it cannot tell which other sessions worked on this task.</p>
+      </section>
+    );
+  }
   const listed = new Set(view.rows.map((row) => row.uid));
   const not = (row: SessionRow) => {
     setError(null);
@@ -217,7 +218,7 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
       <div className="srs-foot">
         <button type="button" className="srs-link" aria-expanded={picking} onClick={() => setPicking((was) => !was)}>+ Link a session</button>
         <span className="srs-status">
-          {view.indexed.toLocaleString()} indexed{view.hosts.length > 0 ? ` from ${view.hosts.map((h) => h.machine).join(', ')}` : ''}
+          {view.indexed ? `${view.indexed.toLocaleString()} indexed${view.hosts.length > 0 ? ` from ${view.hosts.map((h) => h.machine).join(', ')}` : ''}` : 'No machine has sent its sessions yet'}
           {stale.length > 0 && ` · ${stale.map((h) => `${h.machine} last sent ${lastSent(h.lastSync)}`).join(', ')}`}
         </span>
       </div>

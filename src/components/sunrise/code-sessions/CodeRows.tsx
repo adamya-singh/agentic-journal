@@ -4,7 +4,7 @@
 // under the surface while the chats are folded away.
 import React from 'react';
 import { SESSION_APP } from '@/components/horizon/CardSessions';
-import { AGENT_LABEL, type PlaceChoice, type SessionSummary } from '@/lib/code-agents/protocol';
+import { AGENT_LABEL, type DeviceInfo, type PlaceChoice, type SessionSummary } from '@/lib/code-agents/protocol';
 import { placeLine, sessionGlance, sessionPill } from '@/lib/code-sessions-ui';
 import type { CodeSessions } from './useCodeSessions';
 
@@ -14,7 +14,7 @@ export function AgentMark({ agent }: { agent: keyof typeof SESSION_APP }) {
   return <span className={`srs-app ${app.cls}`} title={app.name} aria-hidden="true">{app.tile}</span>;
 }
 
-export function CodeSessionRow({ session: s, when, places, onOpen }: { session: SessionSummary; when: string; places: PlaceChoice[]; onOpen: () => void }) {
+export function CodeSessionRow({ session: s, when, places, devices = [], onOpen }: { session: SessionSummary; when: string; places: PlaceChoice[]; devices?: DeviceInfo[]; onOpen: () => void }) {
   const pill = sessionPill(s);
   const line = sessionGlance(s);
   return (
@@ -25,7 +25,7 @@ export function CodeSessionRow({ session: s, when, places, onOpen }: { session: 
         <span className={`l${s.state === 'needs-you' ? ' needs' : s.state === 'failed' ? ' failed' : ''}`}>{line}</span>
       </button>
       <span className="srk-meta">
-        {when}<span className="where" title={s.cwd}>· {placeLine(s.host, s.cwd, places)}</span>
+        {when}<span className="where" title={s.cwd}>· {placeLine(s.host, s.cwd, places, devices)}</span>
       </span>
     </div>
   );

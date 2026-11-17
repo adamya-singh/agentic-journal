@@ -20,10 +20,16 @@ const CARD_TASK = '77777777-7777-4777-8777-777777777777';
 const NOW = Date.parse('2026-10-20T18:00:00Z');
 
 let dir: string, previous: string | undefined;
+const savedProj = { PROJ_REGISTRY_DIR: process.env.PROJ_REGISTRY_DIR, PROJ_HOST: process.env.PROJ_HOST };
 beforeEach(() => {
   previous = process.env.BACKEND_DATA_DIR;
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'session-index-test-'));
   process.env.BACKEND_DATA_DIR = dir;
+  // The proj registry: this machine is the laptop; the PC (wsl) is reached over ssh as win11.
+  fs.mkdirSync(path.join(dir, 'proj', 'hosts'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'proj', 'registry.json'), JSON.stringify({ hosts: { laptop: { alias: 'ubuntu-laptop' }, wsl: { alias: 'win11' }, mac: { alias: 'macbook' } } }));
+  process.env.PROJ_REGISTRY_DIR = path.join(dir, 'proj');
+  process.env.PROJ_HOST = 'laptop';
   fs.mkdirSync(path.join(dir, 'tasks'));
   fs.writeFileSync(path.join(dir, 'tasks', 'have-to-do.json'), JSON.stringify({ tasks: [TASK, ...OTHER_TASKS, CARD_TASK].map((id) => ({ id, text: 'x' })) }));
   fs.mkdirSync(path.join(dir, 'action-cards'));
@@ -34,6 +40,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   closeIndex();
+  for (const [key, value] of Object.entries(savedProj)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   if (previous === undefined) delete process.env.BACKEND_DATA_DIR;
   else process.env.BACKEND_DATA_DIR = previous;
   fs.rmSync(dir, { recursive: true, force: true });
@@ -135,15 +142,18 @@ test('rows carry the way back in: Control UI key, claude.ai link, or a resume co
     digest({ id: 'cc', refs: [TASK], cwd: "/home/x/it's here" }),
     digest({ id: 'rc', refs: [TASK] }),
     digest({ id: 'cx', app: 'codex', refs: [TASK], cwd: '/home/x/projects/SO-ARM-101' }),
+    digest({ id: 'lx', app: 'codex', host: 'laptop', refs: [TASK], cwd: '/home/openclaw/projects/site' }),
   ], [{ cli: 'rc', title: 'Remote one', bridge: ['session_01XYZ'] }]);
   ingest();
   const rows = Object.fromEntries(sessionsFor(parseTarget(`task:${TASK}`)!, NOW).rows.map((r) => [r.uid, r]));
   assert.equal(rows['openclaw:oc'].key, `agent:main:journal-chat-${TASK}-1`);
   assert.equal(rows['openclaw:oc'].live, true);
   assert.equal(rows['claude-code:rc'].href, 'https://claude.ai/code/session_01XYZ');
-  assert.equal(rows['claude-code:cc'].resume, `cd '/home/x/it'\\''s here' && claude --resume cc`);
-  assert.equal(rows['codex:cx'].resume, `cd '/home/x/projects/SO-ARM-101' && codex resume cx`);
+  // On another device, the command runs there: ssh by its alias, in its login shell (its own codex and claude).
+  assert.equal(rows['codex:cx'].resume, `ssh -t win11 'exec "$SHELL" -lc "cd /home/x/projects/SO-ARM-101 && codex resume cx"'`);
+  assert.equal(rows['claude-code:cc'].resume, `ssh -t win11 'exec "$SHELL" -lc '\\''cd '\\''\\'\\'''\\''/home/x/it'\\''\\'\\'''\\''\\'\\''\\'\\'''\\'''\\''\\'\\'''\\''s here'\\''\\'\\'''\\'' && claude --resume cc'\\'''`);
   assert.equal(rows['codex:cx'].machine, 'PC');
+  assert.equal(rows['codex:lx'].resume, `cd '/home/openclaw/projects/site' && codex resume lx`);
 });
 
 test('search finds sessions by words in their title or text', () => {
@@ -170,4 +180,82 @@ test('the API checks the target and saves feedback', async () => {
     method: 'POST', body: JSON.stringify({ target: `task:${TASK}`, uid: 'claude-code:work', verdict: 'not' }),
   }));
   assert.equal((await res.json()).data.rows.length, 0);
+});
+
+// ---- The task's own coding sessions (Codex, Claude Code started from its chats or brought into them).
+
+function codeSessions(byTask: Record<string, object[]>) {
+  fs.writeFileSync(path.join(dir, 'tasks', 'code-sessions.json'), JSON.stringify({ schemaVersion: 1, sessions: byTask }));
+}
+const codeLink = (over: Record<string, unknown>) => ({
+  id: `cs${Math.random().toString(36).slice(2, 8)}`, agent: 'codex', host: 'laptop', cwd: '/home/openclaw/projects/site', sessionId: 'th-1', title: 'Make the tests pass',
+  picks: { model: null, effort: null, mode: 'own' }, createdAt: '2026-10-20T16:00:00Z', touchedAt: '2026-10-20T16:30:00Z', seenAt: null,
+  lastState: 'idle', lastLine: '', settledAt: '2026-10-20T16:40:00Z', ...over,
+});
+
+test('a task’s own coding sessions are on it exactly, with no index on this server at all', () => {
+  codeSessions({
+    [TASK]: [
+      codeLink({ sessionId: 'th-started', title: 'Make the tests pass' }),
+      codeLink({ agent: 'claude-code', sessionId: 'cc-adopted', title: 'Fix the gripper', adopted: true, cwd: '/home/x/it', workingSince: '2026-10-20T17:55:00Z' }),
+      codeLink({ sessionId: 'th-archived', title: 'An old try', archived: true }),
+    ],
+    [OTHER_TASKS[0]]: [codeLink({ sessionId: 'th-other', title: 'Not this task' })],
+  });
+  const v = sessionsFor(parseTarget(`task:${TASK}`)!, NOW);
+  assert.equal(v.indexed, 0);
+  assert.deepEqual(v.rows.map((r) => [r.uid, r.why, r.live]), [
+    ['claude-code:cc-adopted', 'Brought into this task’s chats', true],
+    ['codex:th-started', 'Started from this task’s chats', false],
+    ['codex:th-archived', 'Was one of this task’s chats', false],
+  ]);
+  const started = v.rows.find((r) => r.uid === 'codex:th-started')!;
+  assert.deepEqual([started.title, started.machine, started.started, started.ended, started.turns, started.project], ['Make the tests pass', 'laptop', '2026-10-20T16:00:00Z', '2026-10-20T16:40:00Z', 0, 'site']);
+  assert.equal(started.resume, `cd '/home/openclaw/projects/site' && codex resume th-started`);
+  // Touched a moment ago is not "running now": only a turn that runs is.
+  codeSessions({ [TASK]: [codeLink({ sessionId: 'th-started', touchedAt: '2026-10-20T17:59:00Z', settledAt: '2026-10-20T17:59:00Z' })] });
+  assert.equal(sessionsFor(parseTarget(`task:${TASK}`)!, NOW).rows[0]!.live, false);
+  // Another task, and a card with no task, have none of them; nor does the index's own file get made by reading.
+  assert.deepEqual(titles(`task:${OTHER_TASKS[1]}`), []);
+  assert.equal(fs.existsSync(path.join(dir, 'session-index', 'index.db')), false);
+});
+
+test('a coding session the index also found is one row: the index’s record, the link’s reason', () => {
+  codeSessions({ [TASK]: [codeLink({ sessionId: 'th-1', title: 'Journal title' })] });
+  // Its transcript carries the [aj:task:…] mark of its first turn, so the index links it too, by itself.
+  send('laptop', [digest({ id: 'th-1', app: 'codex', host: 'laptop', title: 'Codex’s own title', turns: 7, refs: [`aj:task:${TASK}`] })]);
+  ingest();
+  const v = sessionsFor(parseTarget(`task:${TASK}`)!, NOW);
+  assert.deepEqual(v.rows.map((r) => [r.uid, r.title, r.why, r.turns]), [['codex:th-1', 'Codex’s own title', 'Started from this task’s chats', 7]]);
+  assert.equal(v.indexed, 1);
+  // Its last message a moment ago does not make it "running now" either: only the hub's stamp does (seen live:
+  // an idle Claude Code session finished two minutes before read as running).
+  send('laptop', [digest({ id: 'th-1', app: 'codex', host: 'laptop', title: 'Codex’s own title', turns: 7, refs: [`aj:task:${TASK}`], ended: new Date(NOW - 60_000).toISOString() })]);
+  ingest();
+  assert.equal(sessionsFor(parseTarget(`task:${TASK}`)!, NOW).rows[0]!.live, false);
+  codeSessions({ [TASK]: [codeLink({ sessionId: 'th-1', workingSince: new Date(NOW - 60_000).toISOString() })] });
+  assert.equal(sessionsFor(parseTarget(`task:${TASK}`)!, NOW).rows[0]!.live, true);
+});
+
+test('the card a task came from shows the task’s coding sessions too', () => {
+  codeSessions({ [CARD_TASK]: [codeLink({ sessionId: 'th-card', title: 'From the card’s task' })] });
+  assert.deepEqual(titles(`card:${CARD}`), ['From the card’s task · Started from its task’s chats']);
+  assert.deepEqual(titles('card:ac_99999999'), []);
+});
+
+test('"Not this" takes a coding session off the task even before the index has it, and can be undone', async () => {
+  codeSessions({ [TASK]: [codeLink({ sessionId: 'th-1' }), codeLink({ sessionId: 'th-2', title: 'Second' })] });
+  const target = parseTarget(`task:${TASK}`)!;
+  setFeedback(target, 'codex:th-1', 'not');
+  assert.deepEqual(titles(target), ['Second · Started from this task’s chats']);
+  setFeedback(target, 'codex:th-1', 'clear');
+  assert.equal(titles(target).length, 2);
+  // Only the task's own sessions: a session of another task, not in the index, still cannot be linked or refused.
+  assert.throws(() => setFeedback(parseTarget(`task:${OTHER_TASKS[0]}`)!, 'codex:th-1', 'not'), /not in the index/);
+  assert.throws(() => setFeedback(target, 'codex:th-3', 'link'), /not in the index/);
+  // Through the API, as the brief cards do.
+  const res = await feedbackRoute(new NextRequest('http://x/api/session-index/feedback', {
+    method: 'POST', body: JSON.stringify({ target: `task:${TASK}`, uid: 'codex:th-2', verdict: 'not' }),
+  }));
+  assert.deepEqual((await res.json()).data.rows.map((r: { uid: string }) => r.uid), ['codex:th-1']);
 });

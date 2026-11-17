@@ -223,7 +223,8 @@ async function ready(agent: AgentKind, host: string): Promise<Conn> {
   } catch (error) {
     c.up = false;
     c.reason = message(error);
-    throw new HubError(503, `${AGENT_LABEL[agent]} can’t be reached: ${message(error)}`);
+    const why = message(error);
+    throw new HubError(503, /can’t be reached|isn’t (installed|running)/.test(why) ? why : `${AGENT_LABEL[agent]} can’t be reached: ${why}`);
   }
   c.up = true;
   c.reason = null;
@@ -741,7 +742,13 @@ export async function archiveSession(linkId: string): Promise<void> {
 }
 
 /** Attaches one of the agent's own sessions to the task. */
-export async function adoptSession(input: { taskId: string; agent: AgentKind; host: string; sessionId: string; picks: SessionPicks; allow?: (cwd: string) => string | null }): Promise<CodeSessionLink> {
+export async function adoptSession(input: {
+  taskId: string; agent: AgentKind; host: string; sessionId: string; picks: SessionPicks;
+  /** Why its folder is not a place a session may run, or null. */
+  allow?: (cwd: string) => string | null;
+  /** Its folder as the link keeps it (another device's as `~/…`, as its proj file writes it). */
+  placeCwd?: (cwd: string) => string;
+}): Promise<CodeSessionLink> {
   for (const [taskId, links] of Object.entries(readAllCodeSessions())) {
     const have = links.find((l) => l.agent === input.agent && l.host === input.host && l.sessionId === input.sessionId && !l.archived);
     if (have) {
@@ -756,7 +763,7 @@ export async function adoptSession(input: { taskId: string; agent: AgentKind; ho
   if (refused) throw new HubError(400, refused);
   const at = nowIso();
   const link: CodeSessionLink = {
-    id: newLinkId(), agent: input.agent, host: input.host, cwd: resumed.cwd ?? '', sessionId: input.sessionId,
+    id: newLinkId(), agent: input.agent, host: input.host, cwd: input.placeCwd ? input.placeCwd(resumed.cwd ?? '') : resumed.cwd ?? '', sessionId: input.sessionId,
     title: resumed.title || 'Untitled', picks: input.picks, createdAt: at, touchedAt: at, seenAt: at, lastState: 'idle', lastLine: '', adopted: true,
   };
   mutateCodeSessions((all) => { (all[input.taskId] ??= []).push(link); });

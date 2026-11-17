@@ -16,6 +16,16 @@ export const CODE_SESSIONS_CSS = `
 /* New chat: which agent, then for a coding agent where it runs and what to do. */
 .srk-new{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;display:grid;grid-template-columns:minmax(0,1fr);align-content:start;gap:12px;padding:2px 14px 16px}
 .srk-new h4,.srk-lbl{margin:0;font:500 9.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a)}
+/* Which device: this machine, or another of his over ssh, each with how it stands. */
+.srk-devices{display:flex;flex-wrap:wrap;gap:6px}
+.srp .srk-device{display:inline-flex;align-items:baseline;gap:7px;padding:5px 12px;border-radius:999px;border:1px solid rgba(60,30,10,.18);background:rgba(255,255,255,.7);color:#22130a;font:inherit;cursor:pointer}
+.srk-device b{font:600 12.5px var(--sans)}
+.srk-device span{font:10.5px var(--mono);color:#8a6a52}
+.srk-device span.ok{color:#1f7a4a}
+.srk-device span.off{color:#a3361a}
+.srp .srk-device:hover{background:#fff;border-color:color-mix(in srgb,var(--a) 35%,#fff)}
+.srp .srk-device[aria-checked=true]{background:#fff;border-color:var(--a);box-shadow:0 0 0 2px color-mix(in srgb,var(--a) 18%,transparent)}
+.srp.cols-1 .srk-device{min-height:44px;align-items:center;padding:6px 14px}
 .srk-agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}
 .srp .srk-agent{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr);gap:2px 10px;align-items:start;align-content:start;padding:10px 12px;border-radius:14px;border:1px solid rgba(255,255,255,.95);background:rgba(255,255,255,.7);box-shadow:0 1px 2px rgba(120,60,10,.08);color:#22130a;font:inherit;text-align:left;cursor:pointer}
 .srk-agent .srs-app{grid-row:1/3;margin-top:1px}

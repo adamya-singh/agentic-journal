@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { ApprovalGoneError, type AdapterConfig, type AgentAdapter, type HistoryPage, type LoginStarted, type NativeState, type ResumeResult } from './adapter';
 import type { AgentStatus, EventBody, ModelEntry, NativeSession, OwnSettings, RateLimitSummary } from './protocol';
-import { connectRpc, RpcError, unixSocketTransport, type RpcClient } from './transport';
+import { expandHome, isRemote, probeDevice, REMOTE, sshPipe } from './ssh';
+import { connectRpc, RpcError, unixSocketTransport, webSocketTransport, type MessageTransport, type RpcClient } from './transport';
+import { machineName } from '@/lib/proj-hosts';
 
 /** The bridge's "no such session or approval" (BRIDGE_ERROR.notFound in bridge/sessions.ts). */
 const BRIDGE_NOT_FOUND = -32004;
@@ -24,8 +26,26 @@ export function claudeBridgeSocketPath(): string {
   return process.env.CLAUDE_BRIDGE_SOCKET || path.join(os.homedir(), '.local', 'state', 'agentic-journal', 'claude-bridge.sock');
 }
 
+/**
+ * How to reach the Claude bridge on another device, over ssh (ssh.ts): its `proxy` mode there pipes ssh's stdio to the
+ * bridge's socket, so the Journal speaks the same WebSocket as here. Throws why it cannot (device, Claude Code or the
+ * bridge not there, or the bridge not running).
+ */
+export async function remoteBridgeTransport(host: string): Promise<MessageTransport> {
+  const device = await probeDevice(host);
+  const name = machineName(host);
+  if (!device.reachable) throw new Error(device.reason ?? `${name} can’t be reached.`);
+  if (!device.claude) throw new Error(`Claude Code isn’t installed on ${name} (no \`claude\` in its login shell’s PATH).`);
+  if (device.claude.bridge === 'missing') throw new Error(`The Claude Code bridge isn’t installed on ${name}. Put it there with \`scripts/install-claude-bridge.sh ${host}\` from the Journal’s folder on this machine.`);
+  if (device.claude.bridge === 'installed') throw new Error(`The Claude Code bridge isn’t running on ${name}. Start it there with \`systemctl --user start agentic-journal-claude-bridge\` (on a Mac: \`launchctl kickstart gui/$(id -u)/com.agentic-journal.claude-bridge\`).`);
+  return webSocketTransport({ label: `claude bridge on ${host}`, url: 'ws://bridge/', openTimeoutMs: 25_000, createConnection: () => sshPipe(host, REMOTE.claudeProxy) });
+}
+
 export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
   const { host, sink } = config;
+  const remote = isRemote(host);
+  /** A folder as the bridge there needs it: `~/…` (how the proj registry writes another device's folders) in full. */
+  const there = async (cwd: string) => (remote && cwd.startsWith('~') ? expandHome(cwd, (await probeDevice(host)).home) : cwd);
   let client: RpcClient | null = null;
   let connecting: Promise<RpcClient> | null = null;
   let modelCache: { at: number; list: ModelEntry[] } | null = null;
@@ -69,14 +89,20 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
     if (client && !client.closed) return client;
     if (connecting) return connecting;
     connecting = (async () => {
-      const socket = claudeBridgeSocketPath();
-      if (!fs.existsSync(socket)) throw new Error(BRIDGE_NOT_RUNNING);
       let next: RpcClient;
-      try { next = await connectRpc(unixSocketTransport(socket, 'claude bridge')); } catch { throw new Error(BRIDGE_NOT_RUNNING); }
+      if (remote) {
+        next = await connectRpc(await remoteBridgeTransport(host));
+      } else {
+        const socket = claudeBridgeSocketPath();
+        if (!fs.existsSync(socket)) throw new Error(BRIDGE_NOT_RUNNING);
+        try { next = await connectRpc(unixSocketTransport(socket, 'claude bridge')); } catch { throw new Error(BRIDGE_NOT_RUNNING); }
+      }
       next.onNotification(onNotification);
       try {
         const init = await next.request<{ protocol?: number }>('initialize', { clientInfo: CLIENT_INFO }, { timeoutMs: 10_000 });
-        if (init?.protocol !== BRIDGE_PROTOCOL) throw new Error(`The Claude Code bridge speaks protocol ${String(init?.protocol)}; the Journal needs ${BRIDGE_PROTOCOL}. Restart the bridge after a deploy.`);
+        if (init?.protocol !== BRIDGE_PROTOCOL) {
+          throw new Error(`The Claude Code bridge${remote ? ` on ${machineName(host)}` : ''} speaks protocol ${String(init?.protocol)}; the Journal needs ${BRIDGE_PROTOCOL}. ${remote ? `Update it with \`scripts/install-claude-bridge.sh ${host}\`.` : 'Restart the bridge after a deploy.'}`);
+        }
         next.notify('initialized', {});
       } catch (error) {
         next.close();
@@ -113,7 +139,9 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
       }
       try {
         const status = await c.request<AgentStatus>('status', undefined, { timeoutMs: 20_000 });
-        return { ...status, agent: 'claude-code', host };
+        // The bridge speaks of "this device", its own; from here it is that device by name.
+        const reason = remote && status.reason ? status.reason.replace(/on this device/g, `on ${machineName(host)}`).replace(/in a terminal\./, 'in a terminal there.') : status.reason;
+        return { ...status, agent: 'claude-code', host, ...(reason ? { reason } : {}) };
       } catch (error) {
         return { agent: 'claude-code', host, state: 'offline', reason: `The Claude Code bridge did not answer: ${error instanceof Error ? error.message : String(error)}` };
       }
@@ -129,12 +157,12 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
 
     async listNative(cwd, limit = 50): Promise<NativeSession[]> {
       const c = await rpc();
-      return (await c.request<{ sessions: NativeSession[] }>('sessions/list', { cwd, limit }))?.sessions ?? [];
+      return (await c.request<{ sessions: NativeSession[] }>('sessions/list', { cwd: await there(cwd), limit }))?.sessions ?? [];
     },
 
     async start({ cwd, picks, title }) {
       const c = await rpc();
-      const answer = await c.request<{ sessionId: string; title: string }>('session/start', { cwd, picks, title });
+      const answer = await c.request<{ sessionId: string; title: string }>('session/start', { cwd: await there(cwd), picks, title });
       joined.add(answer.sessionId);
       return { sessionId: answer.sessionId, title: answer.title || title };
     },
@@ -194,7 +222,7 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
 
     async ownSettings(cwd): Promise<OwnSettings> {
       const c = await rpc();
-      const answer = await c.request<{ permissionMode?: string | null }>('settings/own', cwd ? { cwd } : {}, { timeoutMs: 10_000 });
+      const answer = await c.request<{ permissionMode?: string | null }>('settings/own', cwd ? { cwd: await there(cwd) } : {}, { timeoutMs: 10_000 });
       return { permissionMode: typeof answer?.permissionMode === 'string' ? answer.permissionMode : null };
     },
 

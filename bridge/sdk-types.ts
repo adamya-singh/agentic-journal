@@ -46,6 +46,9 @@ export interface SdkRateLimitInfo {
   resetsAt?: number;
   rateLimitType?: string;             // five_hour | seven_day | seven_day_opus | seven_day_sonnet | overage | ...
   utilization?: number;
+  /** Not in sdk.d.ts, but what CLI 2.1.302 sends: each window's use (a fraction) and reset (seconds). */
+  unifiedWindows?: Record<string, { utilization?: number; resetsAt?: number; status?: string } | undefined>;
+  overageStatus?: string;
 }
 
 /** Any message the query yields. `type` (and `subtype` for system/result) says which fields are there. */
@@ -132,6 +135,8 @@ export interface SdkQueryOptions {
   allowedTools?: string[];            // rules allowed without asking, as Claude Code spells them ("Bash(npm test:*)")
   additionalDirectories?: string[];
   persistSession?: boolean;
+  /** More CLI flags, as `{flag: value}` (`--flag value`). */
+  extraArgs?: Record<string, string | null>;
   stderr?: (data: string) => void;
 }
 
@@ -181,12 +186,14 @@ export interface SdkSessionMessage {
   parent_tool_use_id: string | null;
   timestamp?: string;                 // ISO
   origin?: { kind?: string };         // human | peer | task-notification | ...
+  /** A message he sent while Claude worked, taken into the running turn (CLI 2.1.302: "absorbed mid-turn"). */
+  isQueuedCommand?: boolean;
   message: SdkApiMessage;
 }
 
 /** resolveSettings' answer (alpha in 0.3.325), as far as the bridge reads it. */
 export interface SdkResolvedSettings {
-  effective: { permissions?: { defaultMode?: string } };
+  effective: { permissions?: { defaultMode?: string }; showThinkingSummaries?: boolean };
   [key: string]: unknown;
 }
 

@@ -77,9 +77,10 @@ export function sessionGlance(s: Pick<SessionSummary, 'agent' | 'state' | 'lastL
 const baseName = (cwd: string) => cwd.replace(/\/+$/, '').split('/').pop() || cwd;
 
 /** "laptop · agentic-journal": the device, then the place's name (its project, the workspace, or the folder's own). */
-export function placeLine(host: string, cwd: string, places: PlaceChoice[] = []): string {
+/** "laptop · agentic-journal", "PC · repo": the device (in his words, from `devices`) and the place's name. */
+export function placeLine(host: string, cwd: string, places: PlaceChoice[] = [], devices: { host: string; label: string }[] = []): string {
   const known = places.find((p) => p.host === host && p.cwd === cwd);
-  return `${host} · ${known ? known.label : baseName(cwd)}`;
+  return `${devices.find((d) => d.host === host)?.label ?? host} · ${known ? known.label : baseName(cwd)}`;
 }
 
 /** The places as the picker groups them: this device's first (the ones a session can start in), then each other device. */
@@ -337,14 +338,16 @@ export function planWords(plan: string | undefined): string | null {
 }
 
 /** Who is signed in to the agent on its device, in a few words: "Signed in on laptop · Plus plan", "Not signed in on laptop". */
-export function accountLine(status: Pick<AgentStatus, 'state' | 'host' | 'account'> | null | undefined): string | null {
+/** Who is signed in to an agent there, in a line; `device` names the device in his words (PC, Mac), else its host. */
+export function accountLine(status: Pick<AgentStatus, 'state' | 'host' | 'account'> | null | undefined, device?: string): string | null {
   if (!status) return null;
-  if (status.state === 'signed-out') return `Not signed in on ${status.host}`;
+  const on = device ?? status.host;
+  if (status.state === 'signed-out') return `Not signed in on ${on}`;
   if (status.state !== 'ready') return null;
   const account = status.account;
-  if (account?.kind === 'api-key') return `Signed in on ${status.host} with an API key`;
+  if (account?.kind === 'api-key') return `Signed in on ${on} with an API key`;
   const plan = planWords(account?.plan);
-  return `Signed in on ${status.host}${plan ? ` · ${plan}` : ''}`;
+  return `Signed in on ${on}${plan ? ` · ${plan}` : ''}`;
 }
 
 // ---- The stream, applied without touching what React already drew.

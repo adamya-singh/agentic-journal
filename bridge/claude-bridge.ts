@@ -46,6 +46,9 @@ export function cleanChildEnv(env: Env = process.env): Record<string, string | u
     out[key] = value;
   }
   out.CLAUDE_CODE_ENTRYPOINT = ENTRYPOINT;
+  // Claude Code offers its task list (TaskCreate, TaskUpdate …) only to entrypoints it knows, or with this set
+  // (found in CLI 2.1.302: without it the Journal's sessions had no way to keep a plan, as his terminal does).
+  out.CLAUDE_CODE_ENABLE_TODO_TOOLS = '1';
   if (env.CLAUDE_BRIDGE_OAUTH_TOKEN) out.CLAUDE_CODE_OAUTH_TOKEN = env.CLAUDE_BRIDGE_OAUTH_TOKEN;
   return out;
 }

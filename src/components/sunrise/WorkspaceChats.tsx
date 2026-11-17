@@ -489,7 +489,7 @@ export function ChatsPanel({ chats, code, about, autoFocus, phone, onShowSurface
         <div className="srk-list">
           {coding && code!.error && <p className="srk-err" role="alert">{code!.error}</p>}
           {rows.map((row) => {
-            if (row.kind === 'code') return <CodeSessionRow key={row.id} session={row.session} when={chatWhen(sessionActivityAt(row.session))} places={code!.places} onOpen={() => code!.open(row.session.id)} />;
+            if (row.kind === 'code') return <CodeSessionRow key={row.id} session={row.session} when={chatWhen(sessionActivityAt(row.session))} places={code!.places} devices={code!.devices} onOpen={() => code!.open(row.session.id)} />;
             const t = row.thread;
             return (
             <div key={t.id} className={`srk-row${coding ? ' srk-arow' : ''}`}>

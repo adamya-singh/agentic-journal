@@ -12,7 +12,7 @@ import path from 'node:path';
 import { createBridge, SIGNED_OUT_REASON, type AuthInfo, type Bridge } from '../bridge/sessions.ts';
 import { listenBridge, type BridgeServer } from '../bridge/server.ts';
 import { DENY_MESSAGE, STOP_MESSAGE } from '../bridge/mapping.ts';
-import { createFakeClaudeSdk, type FakeClaudeSdk } from './code-agents-fake-claude-sdk';
+import { createFakeClaudeSdk, REAL, type FakeClaudeSdk } from './code-agents-fake-claude-sdk';
 import { connectRpc, unixSocketTransport, type RpcClient } from '../src/lib/code-agents/transport';
 import { applyEvent, type EventBody, type SessionTurn } from '../src/lib/code-agents/protocol';
 
@@ -348,6 +348,9 @@ test('a message sent while it works goes into the running turn', async () => {
   const steerItem: any = events(sessionId).slice(from).filter((e: any) => e.type === 'item-completed' && e.item.kind === 'user')[1];
   assert.equal(steered.uuid, steerItem.item.id);
   await assert.rejects(rpc.request('turn/steer', { sessionId, turnId, text: 'late' }), /Nothing is running/);
+  // Read back, it is still one turn: the transcript marks the message taken in (isQueuedCommand).
+  const last = (await rpc.request<any>('session/history', { sessionId })).turns.at(-1);
+  assert.deepEqual([last.id, last.items.filter((i: any) => i.kind === 'user').map((i: any) => i.text)], [turnId, ['Do the thing', 'and the other thing']]);
 });
 
 test('the bridge restarts: the session is found on disk, resumed, and its history read', async () => {
@@ -416,4 +419,179 @@ test('signed out, and an API key', async () => {
   assert.deepEqual(((await make({ loggedIn: true, authMethod: 'api_key' }).handle(me, 'status', {})) as any).account, { kind: 'api-key' });
   const missing = createBridge({ sdk, claudePath: '/nope/claude', env: {}, authStatus: async () => auth, version: async () => null, log: () => {} });
   assert.match(((await missing.handle(me, 'status', {})) as any).reason, /can’t be run here/);
+});
+
+// ---- Shapes the real CLI sent (2.1.302 / 2.1.326, the live check of 2026-11-17), through the stand-in.
+
+/** A new session in `cwd` with one turn run by `script`; returns the events of that turn and its id. */
+async function oneTurn(script: FakeClaudeSdk['script'], picks = PICKS, title = 'Real shapes') {
+  const c = await open();
+  const { sessionId: id } = await c.rpc.request<any>('session/start', { cwd, picks, title });
+  sdk.script = script;
+  const { turnId } = await c.rpc.request<any>('turn/send', { sessionId: id, text: 'Go', picks });
+  await until(() => c.events(id).some((e) => e.type === 'turn-completed'));
+  return { ...c, id, turnId };
+}
+
+test('a real turn: summaries asked for, empty thinking not shown, the task list as one plan, ToolSearch hidden, usage windows', async () => {
+  const { id, turnId, events, heard, rpc } = await oneTurn(async (ctx) => {
+    ctx.thinking('msg_t1', '');                                   // what the CLI sends without summaries
+    ctx.tool('toolu_ts', 'ToolSearch', { query: 'select:TaskCreate,TaskUpdate', max_results: 5 }, 'msg_t1', { stream: true, index: 1 });
+    ctx.toolResult('toolu_ts', '[tool_reference]', { own: { matches: ['TaskCreate', 'TaskUpdate'] } });
+    ctx.thinking('msg_t2', 'I will make the two tasks first.');
+    ctx.tool('toolu_c1', 'TaskCreate', { subject: 'Run date', description: 'Run date', activeForm: 'Running date' }, 'msg_t2', { stream: true, index: 1 });
+    ctx.tool('toolu_c2', 'TaskCreate', { subject: 'Run uname', description: 'Run uname', activeForm: 'Running uname' }, 'msg_t2');
+    const one = REAL.taskCreated('1', 'Run date');
+    ctx.toolResult('toolu_c1', one.text, { own: one.own });
+    const two = REAL.taskCreated('2', 'Run uname');
+    ctx.toolResult('toolu_c2', two.text, { own: two.own });
+    ctx.tool('toolu_u1', 'TaskUpdate', { taskId: '1', status: 'in_progress' }, 'msg_t3');
+    const upd = REAL.taskUpdated('1', 'pending', 'in_progress');
+    ctx.toolResult('toolu_u1', upd.text, { own: upd.own });
+    ctx.emit(REAL.rateLimit);
+    ctx.tool('toolu_u2', 'TaskUpdate', { taskId: '1', status: 'completed' }, 'msg_t4');
+    ctx.toolResult('toolu_u2', 'Updated task #1 status');
+    ctx.text('msg_t5', 'Done.');
+    ctx.result();
+  });
+  // Summaries are asked for (his settings do not turn them off), and nothing else about thinking is changed.
+  assert.deepEqual(sdk.queries.at(-1)!.options.extraArgs, { 'thinking-display': 'summarized' });
+  const items = events(id).filter((e: any) => e.type === 'item-started' || e.type === 'item-completed').map((e: any) => e.item);
+  // The thinking that came without its text is no item at all; the summary is one, begun with its first words.
+  assert.ok(!items.some((i: any) => i.id === 'msg_t1:0'), 'no empty thought');
+  assert.ok(events(id).some((e: any) => e.type === 'item-delta' && e.itemId === 'msg_t2:0' && e.delta === 'I will make the two tasks first.'));
+  assert.ok(!items.some((i: any) => i.kind === 'tool'), 'no ToolSearch or task tool items');
+  const plan = items.filter((i: any) => i.kind === 'plan').at(-1);
+  assert.equal(plan.id, `tasks:${turnId}`);
+  assert.deepEqual(plan.steps, [{ text: 'Run date', status: 'done' }, { text: 'Run uname', status: 'pending' }]);
+  const replayed = events(id).reduce((turns, e) => applyEvent(turns, e), [] as SessionTurn[]);
+  assert.deepEqual(replayed[0]!.items.map((i) => i.kind), ['user', 'reasoning', 'plan', 'agent']);
+  assert.equal((replayed[0]!.items[1] as any).text, 'I will make the two tasks first.');
+  // The usage window is in unifiedWindows, a fraction, its reset in seconds.
+  const limits = heard.filter((h) => h.method === 'account/limits').at(-1)!.params.limits;
+  assert.deepEqual(limits, { windows: [{ label: 'week', usedPercent: 21, resetsAt: 1795244400000 }], blocked: false });
+  // History reads the same items: the list kept across the transcript, numbered from the results' text.
+  const history = await rpc.request<any>('session/history', { sessionId: id });
+  assert.deepEqual(history.turns[0].items.map((i: any) => i.kind), ['user', 'reasoning', 'plan', 'agent']);
+  assert.deepEqual(history.turns[0].items[2].steps, plan.steps);
+
+  // A later turn (a new Claude Code process) updates a task the first one made: it is found by its number.
+  sdk.script = async (ctx) => {
+    ctx.tool('toolu_u3', 'TaskUpdate', { taskId: '2', status: 'in_progress' }, 'msg_t6');
+    ctx.toolResult('toolu_u3', 'Updated task #2 status');
+    ctx.result();
+  };
+  const from = events(id).length;
+  const { turnId: second } = await rpc.request<any>('turn/send', { sessionId: id, text: 'Next', picks: { ...PICKS, effort: 'high' } });
+  await until(() => events(id).slice(from).some((e) => e.type === 'turn-completed'));
+  const later: any = events(id).slice(from).filter((e: any) => e.type === 'item-completed' && e.item.kind === 'plan').at(-1);
+  assert.deepEqual([later.item.id, later.item.steps], [`tasks:${second}`, [{ text: 'Run date', status: 'done' }, { text: 'Running uname', status: 'running' }]]);
+});
+
+test('his settings turn thinking summaries off: none are asked for', async () => {
+  sdk.settings = { showThinkingSummaries: false };
+  try {
+    await oneTurn(async (ctx) => { ctx.text('msg_n', 'ok'); ctx.result(); });
+    assert.equal(sdk.queries.at(-1)!.options.extraArgs, undefined);
+  } finally {
+    sdk.settings = {};
+  }
+});
+
+test('"allow for this session" on an edit moves the mode, and keeps it for a query opened again; leaving plan mode too', async () => {
+  const c = await open();
+  const ask = { ...PICKS, mode: 'ask' };
+  const { sessionId: id } = await c.rpc.request<any>('session/start', { cwd, picks: ask, title: 'Modes' });
+  const answers: any[] = [];
+  const turn = async (picks: typeof PICKS, script: FakeClaudeSdk['script'], decide?: string) => {
+    sdk.script = script;
+    const from = c.events(id).length;
+    await c.rpc.request('turn/send', { sessionId: id, text: 'Go', picks });
+    if (decide) {
+      await until(() => c.events(id).slice(from).some((e) => e.type === 'approval-asked'));
+      const asked: any = c.events(id).slice(from).find((e) => e.type === 'approval-asked');
+      await c.rpc.request('approval/answer', { approvalId: asked.approval.id, decision: decide });
+    }
+    await until(() => c.events(id).slice(from).some((e) => e.type === 'turn-completed'));
+    return sdk.queries.at(-1)!.options;
+  };
+  const write = async (ctx: any) => {
+    ctx.tool('toolu_w1', 'Write', { file_path: `${cwd}/x.txt`, content: 'hi\n' });
+    answers.push(await ctx.ask('Write', { file_path: `${cwd}/x.txt`, content: 'hi\n' }, { toolUseID: 'toolu_w1', ...REAL.writeAsk }));
+    ctx.toolResult('toolu_w1', 'File created', { own: { type: 'create', filePath: `${cwd}/x.txt`, structuredPatch: [] } });
+    ctx.result();
+  };
+  const first = await turn(ask, write, 'allow-session');
+  assert.equal(first.permissionMode, 'default');
+  // Claude Code's own suggestion is a mode for the session.
+  assert.deepEqual(answers[0].updatedPermissions, [{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]);
+  // The approval's words say the file once (Claude Code's description of a Write is its name).
+  const asked: any = c.events(id).find((e) => e.type === 'approval-asked');
+  assert.deepEqual([asked.approval.title, asked.approval.detail], ['Write x.txt', undefined]);
+  // New picks open Claude Code again: the session keeps the mode it was moved to.
+  const reopened = await turn({ ...ask, effort: 'high' }, async (ctx: any) => { ctx.text('msg_m1', 'ok'); ctx.result(); });
+  assert.equal(reopened.permissionMode, 'acceptEdits');
+  // A mode he picks wins over it.
+  const picked = await turn({ ...ask, mode: 'auto-edit' }, async (ctx: any) => { ctx.text('msg_m2', 'ok'); ctx.result(); });
+  assert.equal(picked.permissionMode, 'acceptEdits');
+  const back = await turn(ask, async (ctx: any) => { ctx.text('msg_m3', 'ok'); ctx.result(); });
+  assert.equal(back.permissionMode, 'default');
+
+  // Plan only: leaving plan mode (allowed) leaves it for the session, also for a query opened again.
+  const plan = { ...PICKS, mode: 'plan' };
+  await turn(plan, async (ctx: any) => {
+    ctx.tool('toolu_p', 'ExitPlanMode', { plan: '1. Write p.txt' });
+    answers.push(await ctx.ask('ExitPlanMode', { plan: '1. Write p.txt' }, { toolUseID: 'toolu_p', ...REAL.exitPlanAsk }));
+    ctx.toolResult('toolu_p', 'User has approved your plan.');
+    ctx.result();
+  }, 'allow');
+  assert.equal(sdk.queries.at(-1)!.options.permissionMode, 'plan');
+  const afterPlan = await turn({ ...plan, effort: 'low' }, async (ctx: any) => { ctx.text('msg_m4', 'ok'); ctx.result(); });
+  assert.equal(afterPlan.permissionMode, 'default');
+});
+
+test('a command allowed for the session is not asked again after Claude Code is opened again', async () => {
+  const c = await open();
+  const ask = { ...PICKS, mode: 'ask' };
+  const { sessionId: id } = await c.rpc.request<any>('session/start', { cwd, picks: ask, title: 'Rules' });
+  sdk.script = async (ctx) => {
+    ctx.tool('toolu_b', 'Bash', { command: 'touch y.txt && rm y.txt', description: 'Create and remove y.txt' });
+    await ctx.ask('Bash', { command: 'touch y.txt && rm y.txt', description: 'Create and remove y.txt' }, { toolUseID: 'toolu_b', ...REAL.bashAsk });
+    ctx.toolResult('toolu_b', '', { own: { stdout: '', stderr: '' } });
+    ctx.result();
+  };
+  await c.rpc.request('turn/send', { sessionId: id, text: 'Go', picks: ask });
+  await until(() => c.events(id).some((e) => e.type === 'approval-asked'));
+  const asked: any = c.events(id).find((e) => e.type === 'approval-asked');
+  // Its description is the command's own: said once.
+  assert.equal(asked.approval.detail, 'Create and remove y.txt');
+  await c.rpc.request('approval/answer', { approvalId: asked.approval.id, decision: 'allow-session' });
+  await until(() => c.events(id).some((e) => e.type === 'turn-completed'));
+  sdk.script = async (ctx) => { ctx.text('msg_r2', 'ok'); ctx.result(); };
+  await c.rpc.request('turn/send', { sessionId: id, text: 'Again', picks: { ...ask, model: 'haiku' } });
+  await until(() => c.events(id).filter((e) => e.type === 'turn-completed').length === 2);
+  assert.deepEqual(sdk.queries.at(-1)!.options.allowedTools, ['Bash(touch y.txt)', 'Bash(rm y.txt)']);
+});
+
+test('Stop in the middle of a command: it reads stopped, not declined, live and in history', async () => {
+  const c = await open();
+  const { sessionId: id } = await c.rpc.request<any>('session/start', { cwd, picks: PICKS, title: 'Stop' });
+  sdk.script = async (ctx) => {
+    ctx.tool('toolu_long', 'Bash', { command: "python3 -c 'import time; time.sleep(60)'" }, 'msg_l', { stream: true });
+    await ctx.interrupted;
+    ctx.stoppedTool('toolu_long');
+    ctx.result({ subtype: 'error_during_execution', is_error: true });
+  };
+  const { turnId } = await c.rpc.request<any>('turn/send', { sessionId: id, text: 'Sleep', picks: PICKS });
+  await until(() => c.events(id).some((e: any) => e.type === 'item-updated' && e.item.id === 'toolu_long'));
+  await c.rpc.request('turn/interrupt', { sessionId: id, turnId });
+  await until(() => c.events(id).some((e) => e.type === 'turn-completed'));
+  const live: any = c.events(id).filter((e: any) => e.type === 'item-completed' && e.item.id === 'toolu_long').at(-1);
+  assert.equal(live.item.status, 'failed');
+  // Claude Code writes "No response requested." when the next message comes: not shown, and not the stopped turn's end.
+  sdk.transcripts.get(id)!.messages.push({ type: 'assistant', uuid: 'syn1', session_id: id, parent_tool_use_id: null, timestamp: new Date(Date.now() + 3_600_000).toISOString(), message: { id: 'syn', model: '<synthetic>', role: 'assistant', content: [{ type: 'text', text: 'No response requested.' }] } });
+  const history = await c.rpc.request<any>('session/history', { sessionId: id });
+  const t = history.turns[0];
+  assert.deepEqual([t.status, t.items.map((i: any) => `${i.kind}:${i.status ?? ''}`)], ['interrupted', ['user:', 'command:failed']]);
+  assert.ok(t.endedAt - t.startedAt < 60_000);
 });

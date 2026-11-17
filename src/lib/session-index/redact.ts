@@ -1,6 +1,6 @@
-// A second redaction pass on the Journal side, the same rules as `proj sessions` uses on each machine. The
-// collector already removed secrets before anything left the machine; this catches a digest from an older
-// collector or a rule added since.
+// Redaction of session text. The collector redacts each message as it keeps it (digest.ts), so no secret reaches a
+// digest or the collector's saved state; ingest runs it again, which catches a digest from an older collector or a
+// rule added since.
 
 const RULES: [RegExp, string][] = [
   [/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[private key]'],

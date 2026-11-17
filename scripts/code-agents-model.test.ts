@@ -11,7 +11,7 @@ import type { CodexThreadItem } from '../src/lib/code-agents/codex-types';
 import { clipMiddle, firstTurnText, taskMark, typedTextOf } from '../src/lib/code-agents/first-turn';
 import { applyEvent, clipOutput, OUTPUT_MAX, type SessionTurn } from '../src/lib/code-agents/protocol';
 import type { TaskBrief } from '../src/lib/task-brief';
-import { fromThisApp, fromThisAppStrict } from '../src/lib/same-origin';
+import { fromThisApp, fromThisAppStrict, journalHostNames } from '../src/lib/same-origin';
 import { codeTurns, waitReasons } from '../src/lib/deploy-queue';
 
 const item = (raw: unknown) => codexItem(raw as CodexThreadItem);
@@ -209,6 +209,15 @@ test('the strict same-origin check refuses a request that says nothing of where 
   assert.equal(strict({ origin: 'https://box.ts.net', host: 'box.ts.net' }, { AGENTIC_JOURNAL_HOSTS: 'journal.lan, Box.ts.net' }), true);
   assert.equal(strict({ origin: 'https://box.ts.net', host: 'box.ts.net' }, { AGENTIC_JOURNAL_ORIGIN: 'https://box.ts.net' }), true);
   assert.equal(strict({ origin: `https://${ts}`, host: '127.0.0.1:3000', 'x-forwarded-host': ts }, { AGENTIC_JOURNAL_ORIGIN: 'https://box.ts.net' }), false);
+  // AGENTIC_JOURNAL_HOSTS as he may write it: with a port, as a whole address from the browser, space-separated.
+  const listed = journalHostNames({ AGENTIC_JOURNAL_HOSTS: 'https://Box.ts.net/, http://journal.lan:3000/sunrise  pi.local:8080,,[fd7a::1]:3000' });
+  for (const name of ['box.ts.net', 'journal.lan', 'pi.local', '[fd7a::1]', ts, '127.0.0.1']) assert.ok(listed.has(name), name);
+  assert.ok(!listed.has('https') && !listed.has('http'), 'a scheme is not a name');
+  assert.equal(strict({ 'sec-fetch-site': 'same-origin', host: 'journal.lan:3000' }, { AGENTIC_JOURNAL_HOSTS: 'http://journal.lan:3000/' }), true);
+  // A chain of proxies lists each name it was asked by: all of them must be the Journal's.
+  assert.equal(strict({ 'sec-fetch-site': 'same-origin', host: '127.0.0.1:3000', 'x-forwarded-host': `${ts}, 127.0.0.1:3000` }), true);
+  assert.equal(strict({ origin: `https://${ts}`, host: '127.0.0.1:3000', 'x-forwarded-host': `${ts}, 127.0.0.1:3000` }), true);
+  assert.equal(strict({ 'sec-fetch-site': 'same-origin', host: '127.0.0.1:3000', 'x-forwarded-host': `${ts}, evil.example` }), false);
 });
 
 test('the links store keeps links and glances only, and drops what cannot be a link', async () => {
@@ -258,7 +267,7 @@ test('the links store keeps links and glances only, and drops what cannot be a l
   }
 });
 
-test('places: the workspace and this machine’s projects can be started on; anything else is refused', async () => {
+test('places: the workspace, this machine’s projects and other devices’ projects can be started on; anything else is refused', async () => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'code-places-')));
   const saved = { reg: process.env.PROJ_REGISTRY_DIR, host: process.env.PROJ_HOST, ws: process.env.OPENCLAW_WORKSPACE_DIR };
   const workspace = path.join(dir, 'workspace');
@@ -282,13 +291,26 @@ test('places: the workspace and this machine’s projects can be started on; any
       ['laptop', 'OpenClaw workspace', 'workspace', true],
       ['laptop', 'gone', 'project', false],
       ['laptop', 'repo', 'project', true],
-      ['mac', 'site', 'project', false],
+      ['mac', 'site', 'project', true],
     ]);
     assert.deepEqual(validatePlace({ host: 'laptop', cwd: repo }), { ok: true, place: { host: 'laptop', cwd: repo } });
     assert.deepEqual(validatePlace({ host: 'laptop', cwd: path.join(repo, 'src') }), { ok: true, place: { host: 'laptop', cwd: path.join(repo, 'src') } });
     assert.equal(validatePlace({ host: 'laptop', cwd: workspace }).ok, true);
     const refused = (place: { host?: unknown; cwd?: unknown }) => { const r = validatePlace(place); return r.ok ? 'allowed' : r.error; };
-    assert.equal(refused({ host: 'mac', cwd: '~/projects/site' }), 'Sessions on mac are not available yet.');
+    // Another device's folder is as its proj file writes it (nothing there is looked at); one of its projects, or in one.
+    assert.deepEqual(validatePlace({ host: 'mac', cwd: '~/projects/site' }), { ok: true, place: { host: 'mac', cwd: '~/projects/site' } });
+    assert.deepEqual(validatePlace({ host: 'mac', cwd: '~/projects/site/docs/' }), { ok: true, place: { host: 'mac', cwd: '~/projects/site/docs' } });
+    // Its agent names the folder in full: with its home known, that is the same place.
+    assert.deepEqual(validatePlace({ host: 'mac', cwd: '/Users/a/projects/site' }, '/Users/a'), { ok: true, place: { host: 'mac', cwd: '~/projects/site' } });
+    assert.equal(refused({ host: 'mac', cwd: '/Users/a/projects/site' }), 'That folder is not one of the places a session can run.');
+    assert.equal(refused({ host: 'mac', cwd: '~/projects/site/../secrets' }), 'That folder is not one of the places a session can run.');
+    assert.equal(refused({ host: 'mac', cwd: '~/projects/sitex' }), 'That folder is not one of the places a session can run.');
+    assert.equal(refused({ host: 'mac', cwd: 'projects/site' }), 'The folder must be a full path.');
+    assert.equal(refused({ host: 'pi', cwd: '~/projects/site' }), 'No device is called pi.');
+    assert.deepEqual(placesFor({ host: 'mac', cwd: '~/projects/site/docs' }).filter((p) => p.host === 'mac').map((p) => [p.label, p.cwd]),
+      [['site', '~/projects/site'], ['site / docs', '~/projects/site/docs']]);
+    const { listDevices } = await import('../src/lib/code-agents/places');
+    assert.deepEqual(listDevices(), [{ host: 'laptop', label: 'laptop', alias: null, here: true }, { host: 'mac', label: 'Mac', alias: 'mac', here: false }]);
     assert.equal(refused({ host: 'laptop', cwd: path.join(dir, 'outside') }), 'That folder is not one of the places a session can run.');
     assert.equal(refused({ host: 'laptop', cwd: path.join(repo, 'escape') }), 'That folder is not one of the places a session can run.');
     assert.equal(refused({ host: 'laptop', cwd: path.join(repo, 'file.txt') }), 'That is not a folder.');

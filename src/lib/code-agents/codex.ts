@@ -19,7 +19,9 @@ import {
   type AgentStatus, type ApprovalDecision, type ApprovalRequest, type ItemStatus, type LimitWindow, type ModelEntry,
   type NativeSession, type OwnSettings, type RateLimitSummary, type SessionItem, type SessionPicks, type SessionTurn, type TurnStatus,
 } from './protocol';
-import { connectRpc, RPC_METHOD_NOT_FOUND, RpcError, stdioJsonlTransport, unixSocketTransport, type MessageTransport, type RpcClient, type RpcId } from './transport';
+import { expandHome, isRemote, probeDevice, REMOTE, sshCommand, sshPipe } from './ssh';
+import { connectRpc, RPC_METHOD_NOT_FOUND, RpcError, stdioJsonlTransport, unixSocketTransport, webSocketTransport, type MessageTransport, type RpcClient, type RpcId } from './transport';
+import { machineName } from '@/lib/proj-hosts';
 
 const CLIENT_INFO = { name: 'agentic_journal', title: 'Agentic Journal', version: '0.1.0' };
 const MODELS_TTL_MS = 5 * 60_000;
@@ -58,6 +60,28 @@ export function codexTransport(): MessageTransport | null {
   if (fs.existsSync(socket)) return unixSocketTransport(socket, 'codex');
   if (process.env.CODEX_APP_SERVER_FALLBACK === 'none') return null;
   return stdioJsonlTransport({ label: 'codex app-server', command: process.env.CODEX_CLI_PATH || 'codex', args: ['app-server'], env: codexChildEnv() as NodeJS.ProcessEnv });
+}
+
+/**
+ * How to reach Codex on another device, over ssh (ssh.ts): its daemon through `codex app-server proxy` when one runs
+ * there (the WebSocket the daemon speaks, carried on ssh's stdio, so threads are shared with that device's Codex
+ * apps), else `codex app-server` there on stdio for as long as the connection lasts. Throws why it cannot.
+ */
+export async function remoteCodexTransport(host: string): Promise<MessageTransport> {
+  const device = await probeDevice(host);
+  if (!device.reachable) throw new Error(device.reason ?? `${machineName(host)} can’t be reached.`);
+  if (!device.codex) throw new Error(`Codex isn’t installed on ${machineName(host)} (no \`codex\` in its login shell’s PATH).`);
+  if (device.codex.daemon) {
+    return webSocketTransport({ label: `codex on ${host}`, url: 'ws://codex/', openTimeoutMs: 25_000, createConnection: () => sshPipe(host, REMOTE.codexProxy) });
+  }
+  // WSL with Codex's home in Windows' own folder (CODEX_HOME=/mnt/c/…): an app server started there cannot open its
+  // state over the Windows mount (checked on the PC, 2026-11-17: "failed to initialize sqlite state runtime"), and the
+  // Windows Codex app writes the same files. Nothing is started; he can point CODEX_HOME at a WSL folder or run a daemon.
+  if (/^\/mnt\/[a-z]\//i.test(device.codex.home ?? '')) {
+    throw new Error(`Codex on ${machineName(host)} keeps its state in Windows’ folder (${device.codex.home}), where no Codex app server can run from WSL, and no Codex daemon runs there. Set CODEX_HOME to a folder inside WSL, or start a daemon with \`codex app-server daemon start\` there.`);
+  }
+  const run = sshCommand(host, REMOTE.codexStdio);
+  return stdioJsonlTransport({ label: `codex app-server on ${host}`, ...run });
 }
 
 // ---- From Codex's shapes to the Journal's.
@@ -319,6 +343,9 @@ let approvalCounter = 0;
 
 export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
   const { host, sink } = config;
+  const remote = isRemote(host);
+  /** A folder as Codex there knows it: `~/…` (how the proj registry writes another device's folders) in full. */
+  const there = async (cwd: string) => (remote && cwd.startsWith('~') ? expandHome(cwd, (await probeDevice(host)).home) : cwd);
   let client: RpcClient | null = null;
   let connecting: Promise<RpcClient> | null = null;
   let version: string | undefined;
@@ -533,7 +560,7 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
     if (client && !client.closed) return client;
     if (connecting) return connecting;
     connecting = (async () => {
-      const transport = codexTransport();
+      const transport = remote ? await remoteCodexTransport(host) : codexTransport();
       if (!transport) throw new Error('Codex is not running here: its app server has no socket.');
       const next = await connectRpc(transport);
       next.onNotification(onNotification);
@@ -583,7 +610,8 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
    * What config.toml says about permissions (for a folder, with its project layers): what `own` comes to. A value it
    * does not set is unknown, and then the Journal says nothing to Codex about it.
    */
-  const ownConfig = async (cwd?: string | null): Promise<OwnConfig> => {
+  const ownConfig = async (asked?: string | null): Promise<OwnConfig> => {
+    const cwd = asked ? await there(asked) : asked;
     const key = cwd ?? '';
     const have = ownCache.get(key);
     if (have && Date.now() - have.at < OWN_TTL_MS) return have.config;
@@ -630,12 +658,14 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
       try {
         c = await rpc();
       } catch (error) {
-        return { agent: 'codex', host, state: 'offline', reason: `Codex can’t be reached: ${error instanceof Error ? error.message : String(error)}` };
+        const why = error instanceof Error ? error.message : String(error);
+        // Another device's reason names the device already ("PC can’t be reached: …").
+        return { agent: 'codex', host, state: 'offline', reason: remote ? why : `Codex can’t be reached: ${why}` };
       }
       const status: AgentStatus = { agent: 'codex', host, state: 'ready', ...(version ? { version } : {}) };
       try {
         const account = await c.request<CodexAccountReadResult>('account/read', { refreshToken: false });
-        if (!account?.account) return { ...status, state: 'signed-out', reason: 'Codex isn’t signed in on this device. Sign in here, or run `codex login` in a terminal.' };
+        if (!account?.account) return { ...status, state: 'signed-out', reason: remote ? `Codex isn’t signed in on ${machineName(host)}. Sign in here, or run \`codex login\` in a terminal there.` : 'Codex isn’t signed in on this device. Sign in here, or run `codex login` in a terminal.' };
         status.account = account.account.type === 'chatgpt'
           ? { kind: 'subscription', plan: account.account.planType }
           : { kind: account.account.type === 'apiKey' ? 'api-key' : 'other' };
@@ -652,8 +682,9 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
 
     models,
 
-    async listNative(cwd, limit = 50) {
+    async listNative(asked, limit = 50) {
       const c = await rpc();
+      const cwd = await there(asked);
       const answer = await c.request<CodexThreadListResult>('thread/list', { cwd, limit, sortKey: 'updated_at', archived: false });
       // thread/list can name a thread more than once; the first is the most recent.
       const seen = new Set<string>();
@@ -666,8 +697,9 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
       return out;
     },
 
-    async start({ cwd, picks, title }) {
+    async start({ cwd: given, picks, title }) {
       const c = await rpc();
+      const cwd = await there(given);
       // Its own settings: nothing is said, so the thread runs on config.toml's approval policy and sandbox, as one
       // started in the Codex app does. An explicit mode is said.
       const asked = isExplicitMode(picks.mode) ? PERMISSION_MAPPING[picks.mode].codex : null;

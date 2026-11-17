@@ -6,9 +6,9 @@
 //   - Newline-delimited JSON on a child's stdin/stdout (`codex app-server` with no daemon running).
 // The client matches answers to requests by id, times requests out, retries when the server says it is overloaded,
 // and hands the server's own requests (approvals) to whoever answers them later.
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import type { Duplex } from 'node:stream';
+import { Duplex } from 'node:stream';
 import WebSocket from 'ws';
 
 export interface TransportHandlers {
@@ -74,6 +74,91 @@ export function webSocketTransport(options: WebSocketTransportOptions): MessageT
       if (ws) { try { ws.close(); } catch { ws.terminate(); } }
     },
   };
+}
+
+// ---- A child's stdio as a byte pipe, to speak WebSocket over (ssh running `codex app-server proxy` on a device).
+
+/** A child's stdin and stdout as one stream, with the few socket methods `ws` and `http` call on what they are given. */
+export interface ChildPipe extends Duplex {
+  setTimeout(ms: number, callback?: () => void): this;
+  setNoDelay(noDelay?: boolean): this;
+  setKeepAlive(enable?: boolean, delay?: number): this;
+  ref(): this;
+  unref(): this;
+  /** The child's last words on stderr (kept to 4000 characters). */
+  readonly stderr: string;
+}
+
+export interface ChildPipeOptions {
+  /** A line the child prints when the pipe begins: everything before it (a login shell's chatter) is dropped. */
+  marker?: string;
+  /** What the failure was, from the child's stderr and exit code, when it ends before the marker. */
+  describe?: (stderr: string, code: number | string | null) => string;
+}
+
+export function childPipe(child: ChildProcess, options: ChildPipeOptions = {}): ChildPipe {
+  const stdin = child.stdin!;
+  const stdout = child.stdout!;
+  let stderr = '';
+  let begun = !options.marker;
+  let head = Buffer.alloc(0);
+  let idleMs = 0;
+  let idle: ReturnType<typeof setTimeout> | null = null;
+  const marker = Buffer.from(`${options.marker ?? ''}\n`);
+
+  const pipe = new Duplex({
+    allowHalfOpen: false,
+    read() { stdout.resume(); },
+    write(chunk: Buffer, _encoding, callback) {
+      if (!stdin.writable) { callback(new Error('the pipe is closed')); return; }
+      touch();
+      // A child that ends before its pipe began (ssh could not connect) says why when it exits: not "EPIPE" here.
+      stdin.write(chunk, (error) => callback(error && begun ? error : null));
+    },
+    final(callback) { stdin.end(); callback(); },
+    destroy(error, callback) {
+      if (idle) clearTimeout(idle);
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+      callback(error);
+    },
+  }) as ChildPipe;
+
+  const touch = () => {
+    if (idle) clearTimeout(idle);
+    idle = idleMs > 0 ? setTimeout(() => pipe.emit('timeout'), idleMs) : null;
+  };
+  const deliver = (chunk: Buffer) => { touch(); if (!pipe.push(chunk)) stdout.pause(); };
+
+  child.stderr?.on('data', (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-4000); });
+  stdout.on('data', (chunk: Buffer) => {
+    if (begun) { deliver(chunk); return; }
+    head = Buffer.concat([head, chunk]);
+    const at = head.indexOf(marker);
+    if (at < 0) { if (head.length > 1 << 20) head = head.subarray(head.length - marker.length); return; }
+    begun = true;
+    const rest = head.subarray(at + marker.length);
+    head = Buffer.alloc(0);
+    if (rest.length) deliver(rest);
+  });
+  // Before the pipe began, its end is the child failing: the exit says why.
+  stdout.once('end', () => { if (begun) pipe.push(null); });
+  stdin.on('error', () => { /* the exit that follows ends the pipe */ });
+  child.once('error', (error) => pipe.destroy(error));
+  child.once('exit', (code, signal) => {
+    // Ended before it began: that is why the connection failed.
+    if (!begun) { pipe.destroy(new Error(options.describe?.(stderr, signal ?? code) ?? (stderr.trim().split('\n').pop() || `the command ended (${signal ?? code})`))); return; }
+    setImmediate(() => { if (!pipe.destroyed) pipe.destroy(); });
+  });
+
+  Object.assign(pipe, {
+    setTimeout(ms: number, callback?: () => void) { idleMs = ms; if (callback) pipe.once('timeout', callback); touch(); return pipe; },
+    setNoDelay() { return pipe; },
+    setKeepAlive() { return pipe; },
+    ref() { return pipe; },
+    unref() { return pipe; },
+  });
+  Object.defineProperty(pipe, 'stderr', { get: () => stderr });
+  return pipe;
 }
 
 /** A WebSocket server listening on a unix socket, as Codex's daemon does. */

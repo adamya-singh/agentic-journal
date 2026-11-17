@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { approvalFor, fileEdits, historyTurns, limitSummary, limitWindow, modelEntries, nativeSession, TurnBuilder } from '../bridge/mapping.ts';
+import { approvalFor, fileEdits, historyTurns, limitSummary, limitWindow, limitWindows, modelEntries, nativeSession, sessionRuleOptions, TurnBuilder } from '../bridge/mapping.ts';
 import { cleanChildEnv, findClaude, transcriptCwd } from '../bridge/claude-bridge.ts';
 import type { SdkSessionMessage } from '../bridge/sdk-types.ts';
 import type { EventBody } from '../src/lib/code-agents/protocol';
@@ -158,7 +158,7 @@ test('Claude Code runs on this device’s login, labelled as the Journal’s', (
     PATH: '/usr/bin', HOME: '/home/me', ANTHROPIC_API_KEY: 'k', ANTHROPIC_BASE_URL: 'u', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'sdk-ts',
     CLAUDE_CODE_OAUTH_TOKEN: 'inherited', CLAUDE_CODE_SESSION_ID: 'x', CLAUDE_CONFIG_DIR: '/c',
   });
-  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'agentic-journal' });
+  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/home/me', CLAUDE_CODE_ENTRYPOINT: 'agentic-journal', CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' });
   // A token given to the bridge on purpose is the one thing passed on.
   assert.equal(cleanChildEnv({ CLAUDE_BRIDGE_OAUTH_TOKEN: 'mine', CLAUDE_CODE_OAUTH_TOKEN: 'inherited' }).CLAUDE_CODE_OAUTH_TOKEN, 'mine');
   assert.equal(findClaude({ CLAUDE_CLI_PATH: '/opt/claude' }), '/opt/claude');
@@ -176,4 +176,71 @@ test('a session’s folder from its transcript, when the SDK’s info has none',
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('shapes from the real CLI (2.1.302 / 2.1.326): task list, steer, Stop, its own messages, usage, session modes', () => {
+  const stopped = "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+  const transcript: SdkSessionMessage[] = [
+    msg('user', 'u1', { role: 'user', content: 'Make two tasks' }),
+    msg('assistant', 'a1', said('m1', [{ type: 'tool_use', id: 'ts', name: 'ToolSearch', input: { query: 'select:TaskCreate' } }])),
+    msg('user', 'r0', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'ts', content: [{ type: 'tool_reference' } as never] }] }),
+    msg('assistant', 'a2', said('m2', [{ type: 'thinking', thinking: 'Two tasks, then run them.', signature: 's' } as never])),
+    msg('assistant', 'a3', said('m2', [{ type: 'tool_use', id: 'c1', name: 'TaskCreate', input: { subject: 'Run date', activeForm: 'Running date' } }])),
+    msg('assistant', 'a4', said('m2', [{ type: 'tool_use', id: 'c2', name: 'TaskCreate', input: { subject: 'Run uname' } }])),
+    msg('user', 'r1', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'Task #1 created successfully: Run date' }] }),
+    msg('user', 'r2', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'c2', content: 'Task #2 created successfully: Run uname' }] }),
+    msg('assistant', 'a5', said('m3', [{ type: 'tool_use', id: 'up', name: 'TaskUpdate', input: { taskId: '1', status: 'in_progress' } }])),
+    msg('user', 'r3', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'up', content: 'Updated task #1 status' }] }),
+    // He steered: kept as a message taken into the running turn.
+    msg('user', 'q1', { role: 'user', content: 'and say hi' }, { isQueuedCommand: true }),
+    msg('assistant', 'a6', said('m4', [{ type: 'text', text: 'hi' }])),
+    // A second turn, stopped in the middle of a command.
+    msg('user', 'u2', { role: 'user', content: 'Sleep' }),
+    msg('assistant', 'a7', said('m5', [{ type: 'tool_use', id: 'b1', name: 'Bash', input: { command: 'sleep 60' } }])),
+    msg('user', 'r4', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'b1', content: stopped, is_error: true }] }),
+    msg('user', 'i1', { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] }),
+  ];
+  // Written when the next message came, long after: not shown, and not the end of the stopped turn.
+  transcript.push({ ...msg('assistant', 'syn', said('m6', [{ type: 'text', text: 'No response requested.' }], '<synthetic>')), timestamp: new Date(clock + 3_600_000).toISOString() });
+  transcript.push(msg('user', 'u3', { role: 'user', content: 'Done with 2' }));
+  transcript.push(msg('assistant', 'a8', said('m7', [{ type: 'tool_use', id: 'up2', name: 'TaskUpdate', input: { taskId: '2', status: 'completed' } }])));
+  const [one, two, three] = historyTurns(transcript, CWD);
+  assert.deepEqual(one!.items.map((i) => `${i.kind}:${i.id}`), ['user:u1', 'reasoning:m2:0', 'plan:tasks:u1', 'user:q1', 'agent:m4:0']);
+  assert.deepEqual((one!.items[2] as { steps: unknown }).steps, [{ text: 'Running date', status: 'running' }, { text: 'Run uname', status: 'pending' }]);
+  assert.deepEqual([two!.status, two!.items.map((i) => `${i.kind}:${(i as { status?: string }).status ?? ''}`)], ['interrupted', ['user:', 'command:failed']]);
+  assert.ok(two!.endedAt! - two!.startedAt! < 10_000);
+  // The list lives across turns: a later turn finds task 2 by its number.
+  assert.deepEqual((three!.items[1] as { steps: unknown }).steps, [{ text: 'Running date', status: 'running' }, { text: 'Run uname', status: 'done' }]);
+
+  // Live: thinking without its text (the default through the SDK) is no item; a summary is, begun with its words.
+  const events: EventBody[] = [];
+  const b = new TurnBuilder('t1', CWD, 1, (e) => events.push(e));
+  b.stream({ type: 'message_start', message: { id: 'mx' } }, 1);
+  b.stream({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }, 1);
+  b.stream({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: '' } }, 1);
+  b.stream({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', id: 'ts2', name: 'ToolSearch', input: {} } }, 2);
+  b.assistant({ message: said('mx', [{ type: 'thinking', thinking: '' }]) }, 2);
+  b.assistant({ message: said('mx', [{ type: 'tool_use', id: 'ts2', name: 'ToolSearch', input: { query: 'x' } }]) }, 2);
+  assert.deepEqual(events, []);
+  // A tool cut short while the turn is being stopped reads failed; the same words otherwise are a refusal.
+  b.assistant({ message: said('my', [{ type: 'tool_use', id: 'b2', name: 'Bash', input: { command: 'sleep 9' } }]) }, 3);
+  b.stopping = true;
+  b.toolResults([{ type: 'tool_result', tool_use_id: 'b2', content: stopped, is_error: true }], 'Error: stopped', 4);
+  assert.equal((b.turn.items.at(-1) as { status: string }).status, 'failed');
+
+  // Usage: per window in unifiedWindows (2.1.326 adds each window's status).
+  const real = { status: 'allowed' as const, resetsAt: 1795244400, rateLimitType: 'seven_day', unifiedWindows: { seven_day: { utilization: 0.21, resetsAt: 1795244400, status: 'allowed' }, five_hour: { utilization: 1, resetsAt: 1794950000, status: 'rejected' } } };
+  assert.equal(limitWindow(real), null);
+  assert.deepEqual(limitSummary(limitWindows(real)), { windows: [{ label: 'week', usedPercent: 21, resetsAt: 1795244400000 }, { label: '5 hours', usedPercent: 100, resetsAt: 1794950000000 }], blocked: true });
+
+  // "Allow for this session" on an edit is a mode; rules and folders as before; full access never comes this way.
+  assert.deepEqual(sessionRuleOptions([
+    { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'session' },
+    { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
+    { type: 'setMode', mode: 'bypassPermissions', destination: 'session' },
+  ]), { allowedTools: ['Bash(npm test)'], permissionMode: 'acceptEdits' });
+
+  // Claude Code's descriptions repeat what the approval says already.
+  assert.equal(approvalFor('Write', { file_path: `${CWD}/x.txt` }, { description: 'x.txt' }, CWD).detail, undefined);
+  assert.equal(approvalFor('Bash', { command: 'ls', description: 'List' }, { description: 'List' }, CWD).detail, 'List');
 });

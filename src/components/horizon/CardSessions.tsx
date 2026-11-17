@@ -210,8 +210,8 @@ export function CardSessions({ target, variant, prompt, onMore }: {
     call(`/api/session-index/card?target=${encodeURIComponent(target)}`).then((v) => { if (live) setView(v); }, () => { if (live) setView(null); });
     return () => { live = false; };
   }, [target]);
-  // No index on this server yet (no machine has sent sessions): say nothing.
-  if (!view || !view.indexed) return null;
+  // No index on this server yet (no machine has sent sessions) and no coding session of its task: say nothing.
+  if (!view || (!view.indexed && !view.rows.length)) return null;
   const compact = variant === 'compact';
   if (compact && !view.rows.length) return null;
   const rows = compact ? view.rows.slice(0, 2) : view.rows;
@@ -247,7 +247,7 @@ export function CardSessions({ target, variant, prompt, onMore }: {
           <div className="hzs-foot">
             <button type="button" className="hzs-link" aria-expanded={picking} onClick={() => setPicking((p) => !p)}>+ Link a session</button>
             <span className="hzs-status">
-              {view.indexed.toLocaleString()} sessions from {view.hosts.map((h) => h.machine).join(', ')}
+              {view.indexed ? `${view.indexed.toLocaleString()} sessions from ${view.hosts.map((h) => h.machine).join(', ')}` : 'No machine has sent its sessions yet'}
               {stale.length > 0 && ` · ${stale.map((h) => `${h.machine} last sent ${ago(h.lastSync)}`).join(', ')}`}
             </span>
           </div>
