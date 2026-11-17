@@ -10,7 +10,9 @@
 import React from 'react';
 import { copyText, SESSION_APP, sessionDates } from '@/components/horizon/CardSessions';
 import { openClawChatUrl } from '@/lib/openclaw-ui';
+import type { RefreshResult } from '@/lib/session-index/refresh';
 import type { SessionRow, SessionsView } from '@/lib/session-index/types';
+import { FINDER_CSS, linkSession, SessionFinder } from './SessionFinder';
 
 export const SESSIONS_PANEL_CSS = `
 .srs{flex:none;display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:10px;padding-top:12px;border-top:1px solid rgba(60,30,10,.12)}
@@ -39,20 +41,30 @@ export const SESSIONS_PANEL_CSS = `
 .srs-pick{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;padding:10px;border-radius:14px;border:1px solid color-mix(in srgb,var(--a) 35%,transparent);background:rgba(255,255,255,.75)}
 .srs-pick input{width:100%;box-sizing:border-box;height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:13px var(--sans);outline:0}
 .srs-pick input:focus{border-color:var(--a)}
-.srs-pick ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
-.srs-pick li button{display:grid;grid-template-columns:22px minmax(0,1fr);gap:1px 8px;align-items:center;width:100%;padding:6px;border-radius:9px;border:0;background:transparent;color:#22130a;font:12.5px var(--sans);text-align:left;cursor:pointer}
-.srs-pick li button:hover,.srs-pick li button:focus-visible{background:color-mix(in srgb,var(--a) 10%,#fff);outline:0}
-.srs-pick li .srs-app{grid-row:1/3;width:22px;height:22px;border-radius:6px;font-size:8px;margin:0}
-.srs-pick li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.srs-pick li .d{font:10.5px var(--mono);color:#8a6a52}
+.srs-pick>ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:2px}
+.srs-pick>ul>li>button{display:grid;grid-template-columns:22px minmax(0,1fr);gap:1px 8px;align-items:center;width:100%;padding:6px;border-radius:9px;border:0;background:transparent;color:#22130a;font:12.5px var(--sans);text-align:left;cursor:pointer}
+.srs-pick>ul>li>button:hover,.srs-pick>ul>li>button:focus-visible{background:color-mix(in srgb,var(--a) 10%,#fff);outline:0}
+.srs-pick>ul>li .srs-app{grid-row:1/3;width:22px;height:22px;border-radius:6px;font-size:8px;margin:0}
+.srs-pick>ul>li span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.srs-pick>ul>li .d{font:10.5px var(--mono);color:#8a6a52}
 .srs-err{margin:0;font-size:12.5px;color:#a3361a}
 /* A phone: what is typed in is 16px (iOS zooms in on anything smaller), and what is pressed is a finger wide. */
 .cols-1 .srs-pick input{height:44px;font-size:16px}
 .srp.cols-1 .srs-go{min-height:44px;padding:8px 14px;font-size:13.5px}
 .srp.cols-1 .srs-not{padding:12px 6px;margin:-12px -6px;font-size:13px}
 .srp.cols-1 .srs-link{min-height:44px;padding:8px 14px;font-size:13.5px}
-.cols-1 .srs-pick li button{min-height:44px}
-`;
+.cols-1 .srs-pick>ul>li>button{min-height:44px}
+.srp .srs-again{display:inline-flex;align-items:center;gap:5px;border:1px solid rgba(60,30,10,.18);background:transparent;border-radius:999px;padding:3px 10px;font:500 12px var(--sans);color:#4a2a14;cursor:pointer}
+.srp .srs-again:hover:not(:disabled){border-color:var(--a);background:#fff}
+.srp .srs-again:disabled{cursor:default;color:#8a6a52}
+.srs-again svg{width:12px;height:12px;flex:none}
+.srs-again[aria-busy=true] svg{animation:srs-spin .9s linear infinite}
+@keyframes srs-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.srs-again[aria-busy=true] svg{animation:none}}
+.srs-checked{margin:0;font:10.5px/1.5 var(--mono);color:#8a6a52}
+.srs-checked.warn{color:#a3561a}
+.srp.cols-1 .srs-again{min-height:44px;padding:8px 14px;font-size:13.5px}
+` + FINDER_CSS;
 
 const TASK_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REFRESH_MS = 120_000;
@@ -112,7 +124,13 @@ function Row({ row, onNot, onContinue }: { row: SessionRow; onNot: (row: Session
   );
 }
 
-function Picker({ target, hidden, onLinked, onClose }: { target: string; hidden: (row: SessionRow) => boolean; onLinked: (view: SessionsView) => void; onClose: () => void }) {
+function Picker({ target, taskId, hidden, linkedUids, onLinked, onClose }: {
+  target: string; taskId: string; hidden: (row: SessionRow) => boolean; linkedUids: Set<string>;
+  /** A link made; `close` when it came from the manual search, which closes the panel as it always did. */
+  onLinked: (view: SessionsView, close: boolean) => void;
+  onClose: () => void;
+}) {
+  const [mode, setMode] = React.useState<'search' | 'ask'>('search');
   const [q, setQ] = React.useState('');
   const [hits, setHits] = React.useState<SessionRow[] | null>(null);
   const [error, setError] = React.useState<string | null>(null);
@@ -126,29 +144,63 @@ function Picker({ target, hidden, onLinked, onClose }: { target: string; hidden:
     return () => { live = false; window.clearTimeout(timer); };
   }, [q]);
   const shown = (hits ?? []).filter((hit) => !hidden(hit));
+  const tab = (id: 'search' | 'ask', label: string) => (
+    <button type="button" role="tab" id={`srs-tab-${id}`} aria-selected={mode === id} onClick={() => setMode(id)}>{label}</button>
+  );
   return (
     <div className="srs-pick">
-      <input autoFocus value={q} placeholder="Search session titles and text" aria-label="Search sessions to link to this task"
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose(); }}
-        onKeyUp={(e) => e.stopPropagation()} />
-      {hits && (shown.length > 0 ? (
-        <ul>
-          {shown.map((hit) => (
-            <li key={hit.uid}>
-              <button type="button" onClick={() => { feedback(target, hit.uid, 'link').then(onLinked, (e: Error) => setError(e.message)); }}>
-                <span className={`srs-app ${SESSION_APP[hit.app].cls}`} aria-hidden="true">{SESSION_APP[hit.app].tile}</span>
-                <span>{hit.title}</span>
-                <span className="d">{[SESSION_APP[hit.app].name, hit.machine, sessionDates(hit)].filter(Boolean).join(' · ')}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : <p className="srs-note">No other session matches.</p>)}
-      {error && <p className="srs-err" role="alert">{error}</p>}
+      <div className="srs-tabs" role="tablist" aria-label="How to find the session">{tab('search', 'Search')}{tab('ask', 'Ask OpenClaw')}</div>
+      {mode === 'search' && (
+        <>
+          <input autoFocus value={q} placeholder="Search session titles and text" aria-label="Search sessions to link to this task"
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Escape') onClose(); }}
+            onKeyUp={(e) => e.stopPropagation()} />
+          {hits && (shown.length > 0 ? (
+            <ul>
+              {shown.map((hit) => (
+                <li key={hit.uid}>
+                  <button type="button" onClick={() => { linkSession(target, hit.uid).then((v) => onLinked(v, true), (e: Error) => setError(e.message)); }}>
+                    <span className={`srs-app ${SESSION_APP[hit.app].cls}`} aria-hidden="true">{SESSION_APP[hit.app].tile}</span>
+                    <span>{hit.title}</span>
+                    <span className="d">{[SESSION_APP[hit.app].name, hit.machine, sessionDates(hit)].filter(Boolean).join(' · ')}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="srs-note">No other session matches. <button type="button" className="srs-not" onClick={() => setMode('ask')}>Ask OpenClaw to look</button></p>)}
+          {error && <p className="srs-err" role="alert">{error}</p>}
+        </>
+      )}
+      {/* Kept mounted while the search tab is open: a turn that takes a while goes on, and what was typed stays. */}
+      <SessionFinder taskId={taskId} hidden={mode !== 'ask'} isLinked={(uid) => linkedUids.has(uid)} onClose={onClose}
+        onLink={async (row) => { onLinked(await linkSession(target, row.uid), false); }} />
     </div>
   );
 }
+
+const ago = (iso: string, now: number) => {
+  const mins = Math.round((now - Date.parse(iso)) / 60_000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  if (mins < 48 * 60) return `${Math.round(mins / 60)}h ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
+/** What a refresh says, in a line: what it found, which device it could not reach, or why it did not run. */
+function refreshLine(r: RefreshResult): { text: string; warn: boolean } {
+  const problems = r.devices.filter((d) => !d.reachable).map((d) => `the ${d.machine} ${d.error ?? 'could not be reached'}`);
+  const behind = r.devices.filter((d) => d.reachable && d.pending > 0).map((d) => d.machine);
+  if (r.state === 'failed') return { text: r.message ?? 'The index could not be collected just now.', warn: true };
+  if (r.state === 'busy') return { text: r.message ?? 'The index was being collected already.', warn: false };
+  const added = r.added ?? 0;
+  const parts = [r.message ?? (added > 0 ? `${added} new session${added === 1 ? '' : 's'} came in.` : r.changed > 0 ? 'Up to date; no new sessions, newer messages folded in.' : 'Up to date; nothing new.')];
+  if (problems.length) parts.push(`${problems.join('; ').replace(/^t/, 'T')}: what it sent before is kept.`);
+  if (behind.length) parts.push(`The ${behind.join(' and the ')} still has more to send; the regular run catches up.`);
+  return { text: parts.join(' '), warn: problems.length > 0 };
+}
+
+const AGAIN_ICON = <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 
 /**
  * The sessions of one task. `chatKeys` are the OpenClaw session keys of the task's own chats, which are left out
@@ -167,6 +219,20 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
   const [failed, setFailed] = React.useState(false);
   const [picking, setPicking] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [checking, setChecking] = React.useState(false);
+  const [checked, setChecked] = React.useState<RefreshResult | null>(null);
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(t); }, []);
+  // "Check again": the devices are asked for what they have now, then the list is read anew.
+  const checkAgain = () => {
+    if (checking) return;
+    setChecking(true);
+    setError(null);
+    call<{ view: SessionsView; refresh: RefreshResult }>('/api/session-index/refresh', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }),
+    }).then(({ view: got, refresh }) => { setView(got); setFailed(false); setChecked(refresh); }, (e: Error) => setError(e.message))
+      .finally(() => { setChecking(false); setNow(Date.now()); });
+  };
   const load = React.useCallback(() => {
     if (!valid) return;
     call<SessionsView>(`/api/session-index/card?target=${encodeURIComponent(target)}`)
@@ -182,6 +248,14 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
   const head = (count?: number) => (
     <div className="srs-head"><h4>Sessions that worked on this</h4>{count ? <span className="n">{count}</span> : null}</div>
   );
+  const again = (
+    <button type="button" className="srs-again" onClick={checkAgain} disabled={checking} aria-busy={checking}
+      title="Ask the devices for their newest sessions, then show this list again">
+      {AGAIN_ICON}{checking ? 'Checking…' : 'Check again'}
+    </button>
+  );
+  const said = checked ? refreshLine(checked) : null;
+  const checkedLine = said && <p className={`srs-checked${said.warn ? ' warn' : ''}`} role="status">{said.text}</p>;
   if (!view) {
     return (
       <section className="srs" aria-label="Sessions that worked on this task">
@@ -200,6 +274,9 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
       <section className="srs" aria-label="Sessions that worked on this task">
         {head()}
         <p className="srs-note">Nothing is indexed yet. No machine has sent its sessions to this Journal, so it cannot tell which other sessions worked on this task.</p>
+        <div className="srs-foot">{again}</div>
+        {checkedLine}
+        {error && <p className="srs-err" role="alert">{error}</p>}
       </section>
     );
   }
@@ -214,14 +291,18 @@ export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onCon
       {head(rows.length)}
       {rows.length > 0 ? <ul className="srs-list">{rows.map((row) => <Row key={row.uid} row={row} onNot={not} onContinue={onContinue} />)}</ul>
         : <p className="srs-note">None of the {view.indexed.toLocaleString()} indexed sessions is linked to this task{view.rows.length > 0 ? ' besides its chats above' : ''}.</p>}
-      {picking && <Picker target={target} hidden={(row) => listed.has(row.uid) || isChat(row)} onLinked={(got) => { setView(got); setPicking(false); }} onClose={() => setPicking(false)} />}
+      {picking && <Picker target={target} taskId={taskId} hidden={(row) => listed.has(row.uid) || isChat(row)} linkedUids={listed}
+        onLinked={(got, close) => { setView(got); if (close) setPicking(false); }} onClose={() => setPicking(false)} />}
       <div className="srs-foot">
         <button type="button" className="srs-link" aria-expanded={picking} onClick={() => setPicking((was) => !was)}>+ Link a session</button>
+        {again}
         <span className="srs-status">
           {view.indexed ? `${view.indexed.toLocaleString()} indexed${view.hosts.length > 0 ? ` from ${view.hosts.map((h) => h.machine).join(', ')}` : ''}` : 'No machine has sent its sessions yet'}
+          {view.checkedAt && ` · checked ${ago(view.checkedAt, now)}`}
           {stale.length > 0 && ` · ${stale.map((h) => `${h.machine} last sent ${lastSent(h.lastSync)}`).join(', ')}`}
         </span>
       </div>
+      {checkedLine}
       {error && <p className="srs-err" role="alert">{error}</p>}
     </section>
   );

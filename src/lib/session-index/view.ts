@@ -19,6 +19,8 @@ const HUB_REFS = 6;
 // says nothing about doing that task. Its copies and experiments count too (agentic-journal-quickadd,
 // handwired-agentic-journal-experimentation on the PC).
 const JOURNAL_REPO = /agentic-journal/;
+// The Journal's "find a session" chats with OpenClaw (lib/session-finder.ts).
+const FINDER_KEY = /:journal-find-/;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$|^ac_[0-9a-f]{8}$/;
 
 export { machineName };
@@ -179,6 +181,7 @@ function linksFor(kind: 'task' | 'card', id: string, known: Set<string>): Link[]
   for (const s of byRef) {
     const refs = JSON.parse(s.refs) as string[];
     if (!refs.includes(id)) continue;   // LIKE treats _ as a wildcard
+    if (FINDER_KEY.test(s.key ?? '')) continue;   // a chat that looked for sessions for the task did not work on it
     if (JOURNAL_REPO.test(s.project ?? '')) continue;
     if (refs.filter((r) => ID.test(r) && known.has(r)).length > HUB_REFS) continue;
     out.push({ s, why: kind === 'card' ? 'Works on this card by its id' : 'Works on this task by its id' });
@@ -235,13 +238,14 @@ export function sessionsFor(target: SessionTarget, now = Date.now()): SessionsVi
   return { rows: shown, ...indexStatus() };
 }
 
-export function indexStatus(): Pick<SessionsView, 'indexed' | 'hosts'> {
+export function indexStatus(): Pick<SessionsView, 'indexed' | 'hosts' | 'checkedAt'> {
   if (!indexExists()) return { indexed: 0, hosts: [] };
   const db = openIndex();
   const indexed = (db.prepare('select count(*) as n from sessions').get() as { n: number }).n;
   const hosts = (db.prepare('select host, last_sync from hosts order by host').all() as { host: string; last_sync: string | null }[])
     .map((h) => ({ host: h.host, machine: machineName(h.host), lastSync: h.last_sync }));
-  return { indexed, hosts };
+  const checkedAt = (db.prepare("select v from meta where k = 'ingested_at'").get() as { v?: string } | undefined)?.v ?? null;
+  return { indexed, hosts, checkedAt };
 }
 
 /** Sessions whose title or text match, for linking one by hand. */
@@ -254,7 +258,7 @@ export function searchSessions(q: string, limit = 8, now = Date.now()): SessionR
     group by uid order by best limit ?`)
     .all(match, limit) as { uid: string }[];
   const get = db.prepare('select * from sessions where uid = ?');
-  return hits.map((h) => get.get(h.uid) as unknown as SessionRecord).filter(Boolean).map((s) => toRow(s, 'matched', '', now));
+  return hits.map((h) => get.get(h.uid) as unknown as SessionRecord).filter((s) => s && !FINDER_KEY.test(s.key ?? '')).map((s) => toRow(s, 'matched', '', now));
 }
 
 export function setFeedback(target: SessionTarget, uid: string, verdict: 'link' | 'not' | 'clear', now = new Date()) {

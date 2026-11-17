@@ -69,4 +69,6 @@ export interface SessionsView {
   rows: SessionRow[];
   indexed: number;
   hosts: { host: string; machine: string; lastSync: string | null }[];
+  /** When the index last folded in what the devices sent (the timer's run or a refresh), whether or not anything changed. */
+  checkedAt?: string | null;
 }

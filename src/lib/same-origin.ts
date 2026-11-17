@@ -32,6 +32,17 @@ const DEFAULT_ORIGIN = 'https://ubuntu-laptop.taile85e97.ts.net';
 /** How the Journal is reached on its own machine: `next start` on loopback. */
 export const JOURNAL_LOOPBACK = 'http://127.0.0.1:3000';
 
+const LOOPBACK_HOST = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d{1,5})?$/i;
+
+/**
+ * Where an agent on this machine (OpenClaw) reaches the server that was asked, by the request's Host: the loopback
+ * address it was asked by (a test instance on its own port), else the Journal's own loopback address (asked through
+ * Tailscale serve, say).
+ */
+export function journalSelfOrigin(host: string | null): string {
+  return host && LOOPBACK_HOST.test(host.trim()) ? `http://${host.trim().toLowerCase()}` : JOURNAL_LOOPBACK;
+}
+
 /** The Journal's public address (Tailscale serve): AGENTIC_JOURNAL_ORIGIN, else this laptop's tailnet name. */
 export function journalPublicOrigin(env: Record<string, string | undefined> = process.env): string {
   try { return new URL(env.AGENTIC_JOURNAL_ORIGIN || DEFAULT_ORIGIN).origin; } catch { return DEFAULT_ORIGIN; }

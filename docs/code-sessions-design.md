@@ -901,6 +901,50 @@ Tests: `scripts/session-index.test.ts` (four new: no index at all, one row with 
 this"). Checked on the throwaway dev server: a Codex session started there over ssh came back from
 `/api/session-index/card` as one `linked` row with its ssh resume command.
 
+### Ask OpenClaw to find a session, and Check again (added 2026-11-17)
+
+- **"+ Link a session" has two tabs** (workspace only, `WorkspaceSessions.tsx` + `SessionFinder.tsx`): Search (as
+  before) and Ask OpenClaw, a small chat. He says what he remembers; OpenClaw searches the index and answers with
+  sessions, each a session row (agent mark, title, device · folder · when, its reason) with a Link button that posts the
+  same `/api/session-index/feedback {verdict: link}` as the manual search. OpenClaw never links anything.
+- **Route** `/api/session-index/finder` (GET `?taskId=`, `fromThisApp`; POST `send | retry | reset`, `fromThisAppStrict`,
+  zod). A send runs one `runOpenClawAgentTurn` behind the answer (5 min timeout); the panel polls GET every 2.5 s while
+  it is out and the manual search stays usable. One OpenClaw session per task, key
+  `agent:main:cron:journal-find-<task>-<ms>`: follow-ups have context, "Start over" begins a new key. Stored in
+  `session-index/finder.json` (owner only), not `tasks/brief-chats.json`, so it is in none of the task's chats, sky
+  bubbles or unread marks. The `:cron:` key is a "run" to the collector, indexed only if it names a Journal id, and
+  the prompt has every task/card id and `[aj:…]` mark taken out (`withoutIds`); `view.ts` and `find.ts` also skip any
+  `:journal-find-` session, so it never counts as work on the task or shows up as a hit.
+- **What OpenClaw is told** (`lib/session-finder.ts buildFinderTurn`): the task (title, kind, due, 600 chars of notes
+  as background), the sessions already linked (by title), how many sessions from which devices (and which devices have
+  sent nothing), today's date, the search, the read-only rules, and the exact reply
+  `{"message": "...", "sessions": [{"uid": "...", "why": "..."}]}` (at most 5). Later turns are his words plus the
+  shape again. Until OpenClaw has answered once, every send is a first turn (it carries all he said).
+- **The search it is given:** `GET /api/session-index/find` (`fromThisApp`: curl on the machine passes, other sites'
+  pages do not) and `scripts/session-index.ts find|show` (`lib/session-index/find.ts`): `q` (all words as prefixes,
+  then most of them), `app`, `device` (laptop | PC | Mac, any of his names), `folder`, `after`/`before`, `limit`; each
+  hit has the device, folder, dates, first message, files, the matched lines, and on this machine its transcript path
+  (it may read that read-only); `uid=` gives the indexed text. The curl address is the loopback address the page was
+  asked by (`journalSelfOrigin`: a test instance on 3111 gets 3111), else `127.0.0.1:3000`.
+- **Checking the answer:** `extractJsonObject` → `readFinderReply` → `checkFinderPicks`: every uid must be in the index
+  (else dropped and counted: "1 session it named is not in the index"); an answer that is not the JSON shows its words
+  with "nothing here can be linked". Rows are rebuilt from the index on every read, so a session that left it goes.
+- **States:** OpenClaw unavailable on this server (503, composer off), nothing indexed (409, nobody asked), a device
+  with nothing indexed ("Nothing from the Mac is indexed yet"), thinking with elapsed seconds, a failed turn in words
+  (`finderError`: gateway not answering / busy / took too long / couldn't answer) with Try again, "OpenClaw never
+  answered" for a turn cut off by a restart.
+- **Check again** (`POST /api/session-index/refresh {target}`, strict same-origin; `lib/session-index/refresh.ts`): runs
+  the timer's own `scripts/session-index.ts sync` as a child process with `--budget 5 --list-timeout 12 --stop-after 45`
+  (this machine first; a device whose listing does not answer in 12 s is given up on; no device is asked after 45 s;
+  stopped at 100 s), then answers with the list. Presses while one runs share it; one within 20 s reuses its answer.
+  The panel shows "Checking…", then what came in, which device could not be reached (what it sent before is kept) or
+  still has more to send, and "checked N min ago" (the index's `meta.ingested_at`, now `checkedAt` on the view).
+- **One sync at a time:** `lib/session-index/lock.ts` (`session-index/sync.lock`, O_EXCL, pid + time + token; a dead
+  pid or a 30-minute-old lock is taken over). `sync`, `collect` and `ingest` in the CLI take it; one that finds it held
+  prints `{skipped}` and does nothing. A refresh that finds the timer's run holding it waits up to 20 s, then shows what
+  the index has. Note the timer runs the CLI from the working tree, so the lock is live there without a deploy.
+- Tests: `scripts/session-finder.test.ts`.
+
 ## The stream through Tailscale (checked live on production, 2026-11-17)
 
 Production is `https://ubuntu-laptop.taile85e97.ts.net` (Tailscale serve, tailnet only) → `http://127.0.0.1:3000`

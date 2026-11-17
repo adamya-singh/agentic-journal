@@ -106,10 +106,11 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv, timeoutMs:
   });
 }
 
-export function localSource(host = thisHost()): Source {
+/** `listTimeoutMs`: how long the listing may take (a refresh from the Journal waits less than the timer). */
+export function localSource(host = thisHost(), listTimeoutMs = 120_000): Source {
   return {
     host, remote: false,
-    list: async () => parseListing(await run('/bin/sh', ['-c', LIST_SCRIPT], process.env, 120_000)),
+    list: async () => parseListing(await run('/bin/sh', ['-c', LIST_SCRIPT], process.env, listTimeoutMs)),
     read: (file, start) => fs.createReadStream(file, { start }),
     text: async (file) => fs.readFileSync(file, 'utf8'),
   };
@@ -154,7 +155,7 @@ function afterMarker(): Transform {
   });
 }
 
-export function sshSource(host: string, alias: string): Source {
+export function sshSource(host: string, alias: string, listTimeoutMs = 120_000): Source {
   const ssh = process.env.CODE_AGENTS_SSH || 'ssh';
   const env = sshEnv();
   // The listing gets his login shell's environment (CODEX_HOME as his terminal has it) but runs in sh: zsh, the Mac's
@@ -162,7 +163,7 @@ export function sshSource(host: string, alias: string): Source {
   const listCommand = `exec "\${SHELL:-/bin/sh}" -lc ${shq(`exec /bin/sh -c ${shq(LIST_SCRIPT)}`)}`;
   return {
     host, remote: true,
-    list: async () => parseListing(await run(ssh, sshArgs(alias, listCommand), env, 120_000)),
+    list: async () => parseListing(await run(ssh, sshArgs(alias, listCommand), env, listTimeoutMs)),
     read(file, start) {
       // A compressed rollout comes as it is; a transcript comes gzipped (a third of its size or less).
       const zst = file.endsWith('.zst');
@@ -269,7 +270,8 @@ function projectFinder(host: string, home: string | null): (cwd: string) => stri
   return (cwd) => projects.find((p) => cwd === p.path || cwd.startsWith(`${p.path}/`))?.name ?? null;
 }
 
-export interface HostResult { host: string; remote: boolean; reachable: boolean; error?: string; files: number; read: number; pending: number; sessions: number; written: number; removed: number }
+/** skipped: the run's time was up before this device's turn came; it was not asked at all. */
+export interface HostResult { host: string; remote: boolean; reachable: boolean; skipped?: boolean; error?: string; files: number; read: number; pending: number; sessions: number; written: number; removed: number }
 
 export async function collectHost(source: Source, options: { deadline: number; known: ReadonlySet<string>; openclaw?: boolean; log?: (line: string) => void }): Promise<HostResult> {
   const host = source.host;
@@ -369,19 +371,24 @@ export async function collectHost(source: Source, options: { deadline: number; k
 
 /**
  * Every device of the proj registry (this one first), or the ones named. Each device has `budgetMs` to start new reads
- * in, so a first run that has gigabytes to read on one device does not starve the others.
+ * in, so a first run that has gigabytes to read on one device does not starve the others. `listTimeoutMs` bounds how
+ * long a device's listing may take (a device that does not answer is given up on then), and a device whose turn
+ * comes after `stopAfterMs` from the start is not asked this run (a refresh from the Journal is kept short).
  */
-export async function collect(options: { hosts?: string[]; budgetMs?: number; log?: (line: string) => void } = {}): Promise<HostResult[]> {
+export async function collect(options: { hosts?: string[]; budgetMs?: number; listTimeoutMs?: number; stopAfterMs?: number; log?: (line: string) => void } = {}): Promise<HostResult[]> {
   const here = thisHost();
   const hosts = options.hosts?.length ? options.hosts : [here, ...knownHosts().filter((h) => h !== here)];
   const { ids } = journalIds();
   const out: HostResult[] = [];
+  const stopAt = options.stopAfterMs ? Date.now() + options.stopAfterMs : Infinity;
+  const none = { files: 0, read: 0, pending: 0, sessions: 0, written: 0, removed: 0 };
   for (const host of hosts) {
-    const deadline = Date.now() + (options.budgetMs ?? 80_000);
-    if (host === here) { out.push(await collectHost(localSource(host), { deadline, known: ids, openclaw: true, log: options.log })); continue; }
+    if (Date.now() > stopAt) { out.push({ host, remote: host !== here, reachable: false, skipped: true, error: 'its turn did not come before the time was up', ...none }); continue; }
+    const deadline = Math.min(Date.now() + (options.budgetMs ?? 80_000), stopAt);
+    if (host === here) { out.push(await collectHost(localSource(host, options.listTimeoutMs), { deadline, known: ids, openclaw: true, log: options.log })); continue; }
     const alias = hostAlias(host);
-    if (!alias) { out.push({ host, remote: true, reachable: false, error: 'it has no ssh name in the proj registry', files: 0, read: 0, pending: 0, sessions: 0, written: 0, removed: 0 }); continue; }
-    out.push(await collectHost(sshSource(host, alias), { deadline, known: ids, log: options.log }));
+    if (!alias) { out.push({ host, remote: true, reachable: false, error: 'it has no ssh name in the proj registry', ...none }); continue; }
+    out.push(await collectHost(sshSource(host, alias, options.listTimeoutMs), { deadline, known: ids, log: options.log }));
   }
   return out;
 }
