@@ -71,7 +71,7 @@ test('status, models and the agent’s own sessions for a folder', async () => {
   assert.deepEqual(status, { agent: 'codex', host: 'laptop', state: 'ready', version: '0.169.0', account: { kind: 'subscription', plan: 'plus' }, limits: { windows: [{ label: '5 hours', usedPercent: 40, resetsAt: 1794856885000 }], blocked: false } });
   // The Journal says who it is when it connects.
   const init = fake.received.find((m) => m.method === 'initialize')!;
-  assert.deepEqual(init.params, { clientInfo: { name: 'agentic_journal', title: 'Agentic Journal', version: '0.1.0' }, capabilities: { experimentalApi: false } });
+  assert.deepEqual(init.params, { clientInfo: { name: 'agentic_journal', title: 'Agentic Journal', version: '0.1.0' }, capabilities: { experimentalApi: true } });
   assert.ok(fake.received.some((m) => m.method === 'initialized' && m.id === undefined));
   assert.deepEqual((await hub.agentModels('codex', 'laptop')).map((m) => m.id), ['gpt-a']);
   // A thread listed twice is shown once.
@@ -199,13 +199,13 @@ test('the next turn, a steer, a stop, picks that changed, and an approval settle
   assert.deepEqual(log(linkId).findLast((e) => e.type === 'approval-resolved'), { ...log(linkId).findLast((e) => e.type === 'approval-resolved')!, decision: null, by: 'elsewhere' });
   void answer;
 
-  // A question only the Codex app can answer: shown, and only declinable here.
-  const question = fake.request('item/tool/requestUserInput', { threadId: 'th-1', turnId: 'turn-2', itemId: 'q', questions: [{ id: 'a', header: 'Pick', question: 'Which one?' }], isBlocking: true, autoResolutionMs: null });
+  // A question it waits on (request_user_input, Plan mode), skipped from here: no answers go back.
+  const question = fake.request('item/tool/requestUserInput', { threadId: 'th-1', turnId: 'turn-2', itemId: 'q', questions: [{ id: 'a', header: 'Pick', question: 'Which one?', isOther: false, isSecret: false, options: [{ label: 'One', description: '' }, { label: 'Two', description: '' }] }], isBlocking: true, autoResolutionMs: null });
   await until(() => hub.liveSnapshot(linkId)!.approvals.length === 1);
   const asked = hub.liveSnapshot(linkId)!.approvals[0]!;
-  assert.deepEqual([asked.elsewhere, asked.decisions], [true, ['cancel']]);
+  assert.deepEqual([asked.kind, asked.elsewhere, asked.decisions], ['question', undefined, ['deny', 'cancel']]);
   await assert.rejects(hub.answerApproval(linkId, asked.id, 'allow'), (e: unknown) => e instanceof hub.HubError && e.status === 400);
-  await hub.answerApproval(linkId, asked.id, 'cancel');
+  await hub.answerApproval(linkId, asked.id, 'deny');
   assert.deepEqual((await question).result, { answers: {} });
 
   await hub.interruptSession(linkId);

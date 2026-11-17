@@ -224,7 +224,7 @@ test('proxy mode carries the protocol over stdio', async () => {
     const pipe = Object.assign(Duplex.from({ readable: child.stdout, writable: child.stdin }), { setTimeout() { return this; }, setNoDelay() { return this; }, setKeepAlive() { return this; } });
     const rpc = await connectRpc(webSocketTransport({ label: 'proxy', url: 'ws://bridge/', createConnection: () => pipe as never }));
     const init = await rpc.request<any>('initialize', { clientInfo: { name: 'proxy-test', title: 'x', version: '0' } });
-    assert.equal(init.protocol, 2);
+    assert.equal(init.protocol, 3);
     assert.equal((await rpc.request<any>('status')).state, 'ready');
     rpc.close();
     pipe.destroy();

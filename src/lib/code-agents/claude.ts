@@ -15,8 +15,12 @@ import { machineName } from '@/lib/proj-hosts';
 const BRIDGE_NOT_FOUND = -32004;
 
 const CLIENT_INFO = { name: 'agentic_journal', title: 'Agentic Journal', version: '0.1.0' };
-/** 2: the `own` mode, its settings (`settings/own`) and signing in (`login/*`). */
-const BRIDGE_PROTOCOL = 2;
+/**
+ * 2: the `own` mode, its settings (`settings/own`) and signing in (`login/*`). 3: questions (AskUserQuestion and MCP
+ * forms as approvals of kind 'question', answered with `question/answer`). A bridge on 2 still works: it never asks.
+ */
+const BRIDGE_PROTOCOL = 3;
+const BRIDGE_PROTOCOL_MIN = 2;
 const MODELS_TTL_MS = 5 * 60_000;
 
 export const BRIDGE_NOT_RUNNING = 'The Claude Code bridge isn’t running on this device. Start it with `systemctl --user start agentic-journal-claude-bridge`.';
@@ -100,8 +104,8 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
       next.onNotification(onNotification);
       try {
         const init = await next.request<{ protocol?: number }>('initialize', { clientInfo: CLIENT_INFO }, { timeoutMs: 10_000 });
-        if (init?.protocol !== BRIDGE_PROTOCOL) {
-          throw new Error(`The Claude Code bridge${remote ? ` on ${machineName(host)}` : ''} speaks protocol ${String(init?.protocol)}; the Journal needs ${BRIDGE_PROTOCOL}. ${remote ? `Update it with \`scripts/install-claude-bridge.sh ${host}\`.` : 'Restart the bridge after a deploy.'}`);
+        if (typeof init?.protocol !== 'number' || init.protocol < BRIDGE_PROTOCOL_MIN || init.protocol > BRIDGE_PROTOCOL) {
+          throw new Error(`The Claude Code bridge${remote ? ` on ${machineName(host)}` : ''} speaks protocol ${String(init?.protocol)}; the Journal needs ${BRIDGE_PROTOCOL_MIN} to ${BRIDGE_PROTOCOL}. ${remote ? `Update it with \`scripts/install-claude-bridge.sh ${host}\`.` : 'Restart the bridge after a deploy.'}`);
         }
         next.notify('initialized', {});
       } catch (error) {
@@ -201,6 +205,20 @@ export function createClaudeAdapter(config: AdapterConfig): AgentAdapter {
       try {
         const c = await rpc();
         await c.request('approval/answer', { approvalId, decision });
+      } catch (error) {
+        if (error instanceof RpcError && error.code === BRIDGE_NOT_FOUND) throw new ApprovalGoneError();
+        throw error;
+      } finally {
+        answering.delete(approvalId);
+      }
+    },
+
+    async answerQuestion(approvalId, answers) {
+      if (!approvals.has(approvalId) || answering.has(approvalId)) throw new ApprovalGoneError();
+      answering.add(approvalId);
+      try {
+        const c = await rpc();
+        await c.request('question/answer', { approvalId, answers });
       } catch (error) {
         if (error instanceof RpcError && error.code === BRIDGE_NOT_FOUND) throw new ApprovalGoneError();
         throw error;

@@ -39,11 +39,21 @@ export function readPicks(raw: unknown): SessionPicks {
   return { model: text(r.model), effort: text(r.effort), mode: isPermissionMode(r.mode) ? r.mode : UNREADABLE_MODE };
 }
 
-const ASK_KINDS = ['command', 'file-change', 'tool', 'other'] as const;
+const ASK_KINDS = ['command', 'file-change', 'tool', 'question', 'other'] as const;
 function readAsking(raw: unknown): CodeSessionLink['asking'] {
   if (!raw || typeof raw !== 'object') return null;
   const { kind, title } = raw as Record<string, unknown>;
   return (ASK_KINDS as readonly unknown[]).includes(kind) && typeof title === 'string' ? { kind: kind as (typeof ASK_KINDS)[number], title: title.slice(0, 200) } : null;
+}
+
+/** Questions kept with a link (see CodeSessionLink.answered): ones that do not read as such are dropped. */
+function readAnswered(raw: unknown): CodeSessionLink['answered'] {
+  if (!Array.isArray(raw)) return undefined;
+  const out = raw.filter((e): e is NonNullable<CodeSessionLink['answered']>[number] => {
+    const item = e && typeof e === 'object' ? (e as { item?: unknown }).item as Record<string, unknown> | undefined : undefined;
+    return typeof (e as { turnId?: unknown })?.turnId === 'string' && !!item && item.kind === 'question' && typeof item.id === 'string' && Array.isArray(item.questions);
+  }).slice(-20);
+  return out.length ? out : undefined;
 }
 
 /** One stored link read back carefully; one that cannot be a link is dropped. */
@@ -70,6 +80,7 @@ function readLink(raw: unknown): CodeSessionLink | null {
     ...(readAsking(r.asking) ? { asking: readAsking(r.asking) } : {}),
     ...(r.adopted === true ? { adopted: true } : {}),
     ...(r.archived === true ? { archived: true } : {}),
+    ...(readAnswered(r.answered) ? { answered: readAnswered(r.answered) } : {}),
   };
 }
 

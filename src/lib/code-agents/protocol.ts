@@ -136,6 +136,12 @@ export interface CodeSessionLink {
   asking?: { kind: ApprovalKind; title: string } | null;
   adopted?: boolean;        // attached from the agent's own list rather than started here
   archived?: boolean;
+  /**
+   * Questions it waited on and what he answered, kept for an agent whose own history leaves them out (Codex keeps a
+   * request_user_input call only in its rollout file, not in thread/turns/list), so a page read anew still shows
+   * them. The latest 20; a secret answer is never kept.
+   */
+  answered?: { turnId: string; item: Extract<SessionItem, { kind: 'question' }> }[];
 }
 
 /** A link as the list shows it: with its live state. */
@@ -179,9 +185,123 @@ export interface PlanStep {
   status: 'pending' | 'running' | 'done';
 }
 
+// ---- Questions the agent asks him (Codex's request_user_input and its async form, Claude Code's AskUserQuestion,
+// an MCP server's form).
+
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+/**
+ * One question, as the pane shows it: a choice of options (one, or several with `multi`), with a free-text answer
+ * besides when `other` is set, or as the only way when there are no options.
+ */
+export interface AgentQuestion {
+  id: string;                // how its answer goes back: Codex's id, the question's place in the list, a form field's name
+  header?: string;           // a short chip ("Approach")
+  question: string;
+  options: QuestionOption[];
+  multi?: boolean;           // several options may be chosen
+  other?: boolean;           // a free-text answer may be given (Codex's "Other", the one Claude Code always adds)
+  secret?: boolean;          // the answer is a secret: typed hidden, never shown back
+  required?: boolean;        // a form field that must be filled
+  input?: 'text' | 'number' | 'integer';   // what a free-text answer must be (a form's number field)
+}
+
+/** His answer to one question: the options he chose (by label), and what he wrote in "Other". */
+export interface QuestionAnswer {
+  picked: string[];
+  other?: string;
+}
+export type QuestionAnswers = Record<string, QuestionAnswer>;
+
+/** One answer as words: the options chosen, then what he wrote, joined (Claude Code's own way for a multi-select). */
+export function answerText(answer: QuestionAnswer | undefined): string {
+  if (!answer) return '';
+  return [...answer.picked, answer.other?.trim() ?? ''].filter(Boolean).join(', ');
+}
+
+/** Whether every question that needs an answer has one. A question with options always needs one. */
+export function answersComplete(questions: AgentQuestion[], answers: QuestionAnswers): boolean {
+  return questions.every((q) => (q.options.length === 0 && !q.required) || answerText(answers[q.id]) !== '');
+}
+
+/**
+ * An MCP server's form (`requestedSchema`, a flat JSON Schema object of strings, numbers, booleans and enums, as MCP
+ * allows) as questions: an enum is a choice (an array of enums a multiple choice), a boolean Yes / No, a string or
+ * number a free-text answer. Null when the form has a field the pane cannot ask for.
+ */
+export function formQuestions(schema: unknown): AgentQuestion[] | null {
+  const s = schema && typeof schema === 'object' ? schema as { properties?: unknown; required?: unknown } : null;
+  const props = s?.properties && typeof s.properties === 'object' ? s.properties as Record<string, unknown> : null;
+  if (!props) return null;
+  const required = new Set(Array.isArray(s?.required) ? s.required.filter((r): r is string => typeof r === 'string') : []);
+  const out: AgentQuestion[] = [];
+  const text = (value: unknown) => (typeof value === 'string' ? value : '');
+  const choices = (field: Record<string, unknown>): QuestionOption[] | null => {
+    if (Array.isArray(field.oneOf)) return field.oneOf.map((o) => ({ label: text((o as { title?: unknown }).title) || text((o as { const?: unknown }).const) })).filter((o) => o.label);
+    if (Array.isArray(field.enum)) {
+      const names = Array.isArray(field.enumNames) ? field.enumNames : [];
+      return field.enum.map((v, i) => ({ label: text(names[i]) || String(v) }));
+    }
+    return null;
+  };
+  for (const [name, raw] of Object.entries(props)) {
+    if (!raw || typeof raw !== 'object') return null;
+    const field = raw as Record<string, unknown>;
+    const base = { id: name, header: text(field.title) || name, question: text(field.description) || text(field.title) || name, required: required.has(name) };
+    if (field.type === 'array') {
+      const items = field.items && typeof field.items === 'object' ? choices(field.items as Record<string, unknown>) ?? (Array.isArray((field.items as { anyOf?: unknown }).anyOf) ? choices({ oneOf: (field.items as { anyOf: unknown[] }).anyOf }) : null) : null;
+      if (!items) return null;
+      out.push({ ...base, options: items, multi: true });
+    } else if (field.type === 'boolean') {
+      out.push({ ...base, options: [{ label: 'Yes' }, { label: 'No' }] });
+    } else if (field.type === 'string' || field.type === 'number' || field.type === 'integer') {
+      const options = field.type === 'string' ? choices(field) : null;
+      out.push(options ? { ...base, options } : { ...base, options: [], other: true, ...(field.type !== 'string' ? { input: field.type } : {}) });
+    } else return null;
+  }
+  return out;
+}
+
+/** His answers to a form as the content MCP wants back: each field's value in its own type. */
+export function formContent(schema: unknown, questions: AgentQuestion[], answers: QuestionAnswers): Record<string, unknown> {
+  const props = ((schema as { properties?: Record<string, Record<string, unknown>> })?.properties) ?? {};
+  const content: Record<string, unknown> = {};
+  for (const q of questions) {
+    const a = answers[q.id];
+    const field = props[q.id] ?? {};
+    if (!a || answerText(a) === '') continue;
+    // A choice goes back as the value the form named (its const, or its enum entry), not the label shown.
+    const valueOf = (label: string, f: Record<string, unknown>): unknown => {
+      if (Array.isArray(f.oneOf)) return (f.oneOf.find((o) => (o as { title?: unknown }).title === label || (o as { const?: unknown }).const === label) as { const?: unknown } | undefined)?.const ?? label;
+      if (Array.isArray(f.enum)) {
+        const names = Array.isArray(f.enumNames) ? f.enumNames : [];
+        const at = names.indexOf(label);
+        return at >= 0 ? f.enum[at] : f.enum.find((v) => String(v) === label) ?? label;
+      }
+      return label;
+    };
+    if (field.type === 'array') {
+      const items = (field.items ?? {}) as Record<string, unknown>;
+      content[q.id] = a.picked.map((label) => valueOf(label, Array.isArray(items.anyOf) ? { oneOf: items.anyOf } : items));
+    } else if (field.type === 'boolean') content[q.id] = a.picked[0] === 'Yes';
+    else if (field.type === 'number' || field.type === 'integer') {
+      const n = Number((a.other ?? a.picked[0] ?? '').trim());
+      if (Number.isFinite(n)) content[q.id] = field.type === 'integer' ? Math.trunc(n) : n;
+    } else content[q.id] = a.picked.length ? valueOf(a.picked[0]!, field) : (a.other ?? '').trim();
+  }
+  return content;
+}
+
 export type SessionItem =
-  /** framed: the Journal sent the task's context in front of it (first-turn.ts); `text` is only what he typed. */
-  | (ItemBase & { kind: 'user'; text: string; framed?: boolean })
+  /**
+   * framed: the Journal sent the task's context in front of it (first-turn.ts); `text` is only what he typed.
+   * answers: this message is his reply to a question the agent asked without waiting (Codex's async question);
+   * `text` is then the answer in words, and each entry names the question item and the question it answers.
+   */
+  | (ItemBase & { kind: 'user'; text: string; framed?: boolean; answers?: { itemId: string; questionId: string; answer: string }[] })
   | (ItemBase & { kind: 'agent'; text: string })
   | (ItemBase & { kind: 'reasoning'; text: string })
   | (ItemBase & { kind: 'command'; command: string; cwd: string; output: string; exitCode: number | null; status: ItemStatus; durationMs: number | null })
@@ -189,6 +309,14 @@ export type SessionItem =
   | (ItemBase & { kind: 'tool'; name: string; input: string; result: string; status: ItemStatus })
   | (ItemBase & { kind: 'plan'; text: string; steps: PlanStep[]; explanation?: string })
   | (ItemBase & { kind: 'web-search'; query: string; status: ItemStatus })
+  /**
+   * Questions the agent put to him. via 'reply': it went on without waiting (Codex's async question); he answers by
+   * sending a message, which the pane makes for him from the card (the `reply` action). via 'ask': it waits on his
+   * answer, which comes through the waiting question (an ApprovalRequest of kind 'question'). `answers` is what he
+   * answered once known (by question id); `text` is the agent's own words for it, as plain text.
+   * status: running (waiting), done (answered), declined (he did not answer), failed.
+   */
+  | (ItemBase & { kind: 'question'; via: 'reply' | 'ask'; questions: AgentQuestion[]; text: string; answers?: QuestionAnswers | null; status: ItemStatus })
   | (ItemBase & { kind: 'notice'; level: 'info' | 'warning' | 'error'; text: string });
 
 export type ItemKind = SessionItem['kind'];
@@ -208,7 +336,8 @@ export interface SessionTurn {
 
 // ---- Approvals.
 
-export type ApprovalKind = 'command' | 'file-change' | 'tool' | 'other';
+/** question: the agent asks him something (it carries `questions`) and waits; he answers with the `answer` action. */
+export type ApprovalKind = 'command' | 'file-change' | 'tool' | 'question' | 'other';
 export type ApprovalDecision = 'allow' | 'allow-session' | 'deny' | 'cancel';
 export const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ['allow', 'allow-session', 'deny', 'cancel'];
 export const isApprovalDecision = (value: unknown): value is ApprovalDecision => typeof value === 'string' && (APPROVAL_DECISIONS as readonly string[]).includes(value);
@@ -224,8 +353,14 @@ export interface ApprovalRequest {
   detail?: string;           // why it asks (the reason, the agent's own words), the question; never the command again
   cwd?: string;
   files?: string[];
-  decisions: ApprovalDecision[];  // what can be answered from the Journal
+  decisions: ApprovalDecision[];  // what can be answered from the Journal (a question: deny = skip it, cancel = skip and stop)
   elsewhere?: boolean;       // only the agent's own app can allow it; the Journal can only decline
+  /** kind 'question': what it asks. Answered with the `answer` action; `decisions` say how it may be left unanswered. */
+  questions?: AgentQuestion[];
+  /** A page he is asked to open (an MCP server's sign-in, say); allow = he has done what it asks. */
+  link?: string;
+  /** A plan it wants approved before it starts (markdown), shown as the plan it is. */
+  plan?: string;
   at: number;                // ms
 }
 

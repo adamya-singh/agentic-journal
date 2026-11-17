@@ -7,7 +7,7 @@
 import React from 'react';
 import type {
   AgentKind, AgentLogin, AgentStatus, ApprovalDecision, ApprovalRequest, CodeSessionLink, DeviceInfo, DeviceStatus, ModelEntry, NativeSession, OwnSettings, Place, PlaceChoice,
-  RateLimitSummary, SessionEvent, SessionPicks, SessionState, SessionSummary, SessionTurn, TokenUsage,
+  QuestionAnswers, RateLimitSummary, SessionEvent, SessionPicks, SessionState, SessionSummary, SessionTurn, TokenUsage,
 } from '@/lib/code-agents/protocol';
 import { applySessionEvent } from '@/lib/code-sessions-ui';
 
@@ -23,10 +23,25 @@ const AGENTS_EVERY_MS = 15_000;
 /** Another device's, while he is choosing where a chat runs (a look there goes over ssh; the server keeps it a minute). */
 const DEVICE_AGENTS_EVERY_MS = 30_000;
 
+/**
+ * An answer that is not the Journal's own JSON comes from what stands in front of it: a 502 from Tailscale serve
+ * while the Journal restarts (a deploy), say. Said as that, not as a refusal.
+ */
+export function failureWords(status: number, json: { error?: unknown }): string {
+  if (typeof json.error === 'string' && json.error) return json.error;
+  if (status === 502 || status === 503 || status === 504) return 'The Journal isn’t answering just now (it may be restarting after a deploy). Nothing was sent; try again in a moment.';
+  return 'That did not go through.';
+}
+
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
+  let res: Response;
+  try {
+    res = await fetch(url, init);
+  } catch {
+    throw Object.assign(new Error('The Journal could not be reached. Nothing was sent; try again in a moment.'), { status: 0 });
+  }
   const json = await res.json().catch(() => ({}));
-  if (!res.ok || !json.success) throw Object.assign(new Error(json.error || 'That did not go through.'), { status: res.status });
+  if (!res.ok || !json.success) throw Object.assign(new Error(failureWords(res.status, json)), { status: res.status });
   return json.data as T;
 }
 const post = <T,>(body: object) => call<T>('/api/tasks/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -104,6 +119,8 @@ export interface CodeSessions {
   outbox: string | null;
   /** Approvals he answered, hidden while the answer is on its way. */
   answering: Set<string>;
+  /** Questions asked without waiting that he answered, while the answer is on its way (by item id). */
+  replying: Set<string>;
   error: string | null;
   clearError: () => void;
   waiting: number;
@@ -116,6 +133,10 @@ export interface CodeSessions {
   send: (text: string) => Promise<void>;
   stop: () => Promise<void>;
   approve: (approvalId: string, decision: ApprovalDecision) => Promise<void>;
+  /** His answers to a question the agent waits on. */
+  answer: (approvalId: string, answers: QuestionAnswers) => Promise<void>;
+  /** His answer to a question asked without waiting: sent as a message, the way its own app sends it. */
+  reply: (itemId: string, entries: { questionId: string; question: string; answer: string }[]) => Promise<boolean>;
   loadOlder: () => Promise<void>;
   setPicks: (picks: SessionPicks, confirmFull?: boolean) => Promise<void>;
   rename: (title: string) => Promise<boolean>;
@@ -207,6 +228,7 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
   const [stopping, setStopping] = React.useState(false);
   const [outbox, setOutbox] = React.useState<string | null>(null);
   const [answering, setAnswering] = React.useState<Set<string>>(() => new Set());
+  const [replying, setReplying] = React.useState<Set<string>>(() => new Set());
   const [error, setError] = React.useState<string | null>(null);
   const currentRef = React.useRef(current);
   currentRef.current = current;
@@ -485,6 +507,46 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     }
   }, [taskId, fail]);
 
+  const answer = React.useCallback(async (approvalId: string, answers: QuestionAnswers) => {
+    const linkId = currentRef.current;
+    if (!linkId) return;
+    setError(null);
+    setAnswering((was) => new Set(was).add(approvalId));
+    try {
+      await post({ action: 'answer', taskId, session: linkId, approvalId, answers });
+      setView((was) => (was ? { ...was, approvals: was.approvals.filter((a) => a.id !== approvalId) } : was));
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        setView((was) => (was ? { ...was, approvals: was.approvals.filter((a) => a.id !== approvalId) } : was));
+        setError('It was already answered somewhere else.');
+      } else {
+        fail(err, 'The answer did not reach it.');
+      }
+    } finally {
+      setAnswering((was) => { const next = new Set(was); next.delete(approvalId); return next; });
+    }
+  }, [taskId, fail]);
+
+  const reply = React.useCallback(async (itemId: string, entries: { questionId: string; question: string; answer: string }[]) => {
+    const linkId = currentRef.current;
+    if (!linkId || entries.length === 0) return false;
+    setError(null);
+    setReplying((was) => new Set(was).add(itemId));
+    // Shown as sent until the agent's copy of the message comes back (its text is the answers, one a line).
+    setOutbox(entries.map((e) => e.answer).join('\n'));
+    try {
+      await post<{ turnId: string }>({ action: 'reply', taskId, session: linkId, itemId, answers: entries });
+      void loadList();
+      return true;
+    } catch (err) {
+      setOutbox(null);
+      fail(err, 'The answer did not reach it.');
+      return false;
+    } finally {
+      setReplying((was) => { const next = new Set(was); next.delete(itemId); return next; });
+    }
+  }, [taskId, loadList, fail]);
+
   const loadOlder = React.useCallback(async () => {
     const v = viewRef.current;
     if (!v?.older || olderLoading) return;
@@ -606,11 +668,12 @@ export function useCodeSessions(taskId: string, watching: boolean, enabled = tru
     stopping,
     outbox,
     answering,
+    replying,
     error,
     clearError: () => setError(null),
     waiting: sessions.filter((s) => s.unread || s.state === 'needs-you').length,
     working: sessions.filter((s) => s.state === 'working').length,
-    open, close, choose, start, send, stop, approve, loadOlder, setPicks, rename, archive, setPlace, native, models, adopt,
+    open, close, choose, start, send, stop, approve, answer, reply, loadOlder, setPicks, rename, archive, setPlace, native, models, adopt,
     own, refreshAgents, loginRead, loginStart, loginCode, loginCancel,
     refresh: () => { void loadList(); },
   };

@@ -8,11 +8,11 @@ import React from 'react';
 import { copyText, SESSION_APP } from '@/components/horizon/CardSessions';
 import {
   AGENT_LABEL, DEFAULT_PICKS, PERMISSION_LABEL, PERMISSION_MODES,
-  type AgentKind, type ApprovalDecision, type ApprovalRequest, type ModelEntry, type OwnSettings, type PermissionMode, type RateLimitSummary, type SessionPicks, type SessionTurn,
+  type AgentKind, type ApprovalDecision, type ApprovalRequest, type ModelEntry, type OwnSettings, type PermissionMode, type QuestionAnswers, type RateLimitSummary, type SessionPicks, type SessionTurn,
 } from '@/lib/code-agents/protocol';
-import { limitsLine, ownWords, placeLine, resumeCommand, sessionPill } from '@/lib/code-sessions-ui';
+import { isInternalHref, limitsLine, ownWords, placeLine, questionReplies, resumeCommand, sessionPill } from '@/lib/code-sessions-ui';
 import { MAX_CHAT_MESSAGE } from '@/lib/task-chat';
-import { FileStep, Turn } from './SessionItems';
+import { AgentText, FileStep, QuestionContext, QuestionForm, Turn, type QuestionContextValue } from './SessionItems';
 import type { CodeSessions, SessionView } from './useCodeSessions';
 
 export const MODE_HELP: Record<PermissionMode, string> = {
@@ -102,18 +102,33 @@ export function LimitNote({ limits, nearOnly }: { limits: RateLimitSummary | nul
 }
 
 const DECISION_WORDS: Record<ApprovalDecision, string> = { allow: 'Allow', 'allow-session': 'Allow for this session', deny: 'Deny', cancel: 'Deny and stop' };
-const KIND_WORDS: Record<ApprovalRequest['kind'], string> = { command: 'command', 'file-change': 'files', tool: 'question', other: 'access' };
+const KIND_WORDS: Record<ApprovalRequest['kind'], string> = { command: 'command', 'file-change': 'files', tool: 'question', question: 'question', other: 'access' };
 
 /** One thing the agent asks. Answered here, it goes at once; the stream says when it is settled (maybe elsewhere first). */
-function AskCard({ ask, agent, turns, cwd, busy, onAnswer }: { ask: ApprovalRequest; agent: AgentKind; turns: SessionTurn[]; cwd: string; busy: boolean; onAnswer: (decision: ApprovalDecision) => void }) {
+function AskCard({ ask, agent, turns, cwd, busy, onAnswer, onQuestion }: { ask: ApprovalRequest; agent: AgentKind; turns: SessionTurn[]; cwd: string; busy: boolean; onAnswer: (decision: ApprovalDecision) => void; onQuestion: (answers: QuestionAnswers) => void }) {
   const label = AGENT_LABEL[agent];
+  if (ask.kind === 'question' && ask.questions?.length) {
+    // A question it waits on: chosen here, answered at once; or left unanswered (and the turn goes on, or stops).
+    return (
+      <div className="srk-ask" role="group" aria-label={`${label} asks: ${ask.title}`}>
+        <div className="h"><i aria-hidden="true" /><b>{label} asks</b><small>{ask.questions.length > 1 ? `${ask.questions.length} questions` : 'question'}</small></div>
+        {ask.detail && <p className="d">{ask.detail}</p>}
+        <QuestionForm questions={ask.questions} busy={busy} submit="Answer" onSubmit={onQuestion}>
+          {ask.decisions.includes('deny') && <button type="button" disabled={busy} onClick={() => onAnswer('deny')} title="Leave it unanswered; it goes on without your answer">Skip</button>}
+          {ask.decisions.includes('cancel') && <button type="button" className="quiet" disabled={busy} onClick={() => onAnswer('cancel')} title="Leave it unanswered, and stop the turn">Skip and stop</button>}
+        </QuestionForm>
+      </div>
+    );
+  }
   // A file change it asks for is the file-change item it is about: its files and their diffs.
   const item = ask.itemId ? turns.flatMap((t) => t.items).find((i) => i.id === ask.itemId) : undefined;
   const files = item?.kind === 'file-change' ? item.files : [];
   // The command comes whole in its own field: shown as it will run, all of it (the block scrolls), never cut.
   const command = ask.kind === 'command' && ask.command ? ask.command : undefined;
   const decisions = ask.elsewhere ? ask.decisions.filter((d) => d === 'deny' || d === 'cancel') : ask.decisions;
-  const words = (d: ApprovalDecision) => (ask.elsewhere ? (d === 'cancel' && decisions.includes('deny') ? 'Decline and stop' : 'Decline') : DECISION_WORDS[d]);
+  // A plan to approve, and a page to open, say their answers in their own words.
+  const own: Partial<Record<ApprovalDecision, string>> = ask.plan ? { allow: 'Approve the plan', deny: 'Keep planning' } : ask.link ? { allow: 'I’ve done it', deny: 'Decline' } : {};
+  const words = (d: ApprovalDecision) => (ask.elsewhere ? (d === 'cancel' && decisions.includes('deny') ? 'Decline and stop' : 'Decline') : own[d] ?? DECISION_WORDS[d]);
   return (
     <div className="srk-ask" role="group" aria-label={`${label} asks: ${ask.title}`}>
       <div className="h"><i aria-hidden="true" /><b>{label} asks</b><small>{KIND_WORDS[ask.kind]}</small></div>
@@ -121,6 +136,8 @@ function AskCard({ ask, agent, turns, cwd, busy, onAnswer }: { ask: ApprovalRequ
       {command === undefined && <p className="t">{ask.title}</p>}
       {command !== undefined && <pre className="srk-out srk-askcmd" aria-label="The command">{command}</pre>}
       {ask.detail && <p className="d">{ask.detail}</p>}
+      {ask.plan && <div className="srk-askplan" aria-label="The plan"><AgentText text={ask.plan} final /></div>}
+      {ask.link && <a className="srk-asklink" href={ask.link} {...(isInternalHref(ask.link) ? {} : { target: '_blank', rel: 'noopener noreferrer' })}>{ask.link}</a>}
       {ask.cwd && ask.cwd !== cwd && <span className="cwd">in {ask.cwd}</span>}
       {files.length > 0 && <div className="srk-steps">{files.map((file, i) => <FileStep key={i} file={file} cwd={cwd} status="running" startOpen={files.length === 1} />)}</div>}
       {!files.length && ask.files && ask.files.length > 0 && <p className="d">{ask.files.join('\n')}</p>}
@@ -300,6 +317,13 @@ export function SessionPane({ code, phone, autoFocus, closer }: { code: CodeSess
   const pill = view ? sessionPill({ state: view.state, unread: false }) : summary ? sessionPill(summary) : null;
   const asks = view ? view.approvals.filter((a) => !code.answering.has(a.id)) : [];
   const working = !!view && (view.state === 'working' || !!view.turnId);
+  // The log's question cards: his answers so far (from the messages that answer them) and how to send one.
+  const turns = view?.turns;
+  const replies = React.useMemo(() => questionReplies(turns ?? []), [turns]);
+  const approvals = view?.approvals;
+  const waiting = React.useMemo(() => new Set((approvals ?? []).filter((a) => a.kind === 'question' && a.itemId).map((a) => a.itemId!)), [approvals]);
+  const { reply, replying } = code;
+  const questions = React.useMemo<QuestionContextValue>(() => ({ replies, replying, waiting, working, reply: (itemId, entries) => void reply(itemId, entries) }), [replies, replying, waiting, working, reply]);
   const last = view?.turns.at(-1);
   const streaming = last?.status === 'running' && last.items.at(-1)?.kind === 'agent';
   const model = link?.picks.model ? view?.models.find((m) => m.id === link.picks.model)?.label ?? link.picks.model : null;
@@ -334,7 +358,9 @@ export function SessionPane({ code, phone, autoFocus, closer }: { code: CodeSess
             <button type="button" className="srp-chip srk-older" disabled={code.olderLoading} onClick={() => void code.loadOlder()}>{code.olderLoading ? 'Reading…' : 'Show earlier turns'}</button>
           )}
           {view && view.turns.length === 0 && !code.outbox && !working && <p className="srk-note">Nothing has been said in this session yet.</p>}
-          {view?.turns.map((turn) => <Turn key={turn.id} turn={turn} agent={agent} cwd={view.link.cwd} limits={view.limits} />)}
+          <QuestionContext.Provider value={questions}>
+            {view?.turns.map((turn) => <Turn key={turn.id} turn={turn} agent={agent} cwd={view.link.cwd} limits={view.limits} />)}
+          </QuestionContext.Provider>
           {code.outbox && <><span className="srk-who you">You · sending</span><div className="srk-m you out">{code.outbox}</div></>}
           {working && !streaming && asks.length === 0 && <div className="srk-dots" role="status" aria-label={`${label} is working`}><i /><i /><i /></div>}
           {view?.state === 'offline' && <p className="srk-note" role="status">{label} can’t be reached just now. The Journal keeps trying.</p>}
@@ -345,7 +371,7 @@ export function SessionPane({ code, phone, autoFocus, closer }: { code: CodeSess
       {view && asks.length > 0 && (
         <div className="srk-asks" aria-label={`${label} is waiting on you`}>
           {/* One card at a time, so the log keeps its room: the next comes up when this one is answered. */}
-          {asks.slice(0, 1).map((ask) => <AskCard key={ask.id} ask={ask} agent={agent} turns={view.turns} cwd={view.link.cwd} busy={code.answering.has(ask.id)} onAnswer={(d) => void code.approve(ask.id, d)} />)}
+          {asks.slice(0, 1).map((ask) => <AskCard key={ask.id} ask={ask} agent={agent} turns={view.turns} cwd={view.link.cwd} busy={code.answering.has(ask.id)} onAnswer={(d) => void code.approve(ask.id, d)} onQuestion={(a) => void code.answer(ask.id, a)} />)}
           {asks.length > 1 && <p className="srk-askmore" role="status">{asks.length - 1} more {asks.length === 2 ? 'question waits' : 'questions wait'} after this one.</p>}
         </div>
       )}

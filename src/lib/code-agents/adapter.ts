@@ -2,7 +2,7 @@
 // server; the Claude Code adapter will implement it over the Claude bridge. Everything agent-specific stays inside
 // the adapter: the hub only sees the Journal's own model (protocol.ts), keyed by the agent's own session ids.
 import type {
-  AgentKind, AgentStatus, ApprovalDecision, EventBody, ModelEntry, NativeSession, OwnSettings, RateLimitSummary, SessionPicks, SessionTurn,
+  AgentKind, AgentStatus, ApprovalDecision, EventBody, ModelEntry, NativeSession, OwnSettings, QuestionAnswers, RateLimitSummary, SessionPicks, SessionTurn,
 } from './protocol';
 
 /** How the agent itself describes a session's state, for turns the Journal did not start. */
@@ -66,11 +66,19 @@ export interface AgentAdapter {
   /** Joins a session so its events reach this connection. Needed before send on a session this connection has not joined. */
   resume(sessionId: string): Promise<ResumeResult>;
   history(sessionId: string, cursor?: string | null, limit?: number): Promise<HistoryPage>;
-  send(sessionId: string, text: string, picks: SessionPicks): Promise<{ turnId: string }>;
+  /** `trigger`: what started the turn, when it is not a message he typed (his answer to a question). */
+  send(sessionId: string, text: string, picks: SessionPicks, options?: { trigger?: string }): Promise<{ turnId: string }>;
   steer(sessionId: string, turnId: string, text: string): Promise<{ turnId: string }>;
   interrupt(sessionId: string, turnId: string): Promise<void>;
   /** Answers an approval this adapter asked for (by the approval's Journal id). Throws ApprovalGoneError when it is no longer waiting. */
   answer(approvalId: string, decision: ApprovalDecision): Promise<void>;
+  /** Answers a question this adapter asked (an approval of kind 'question'), by the questions' ids. Throws ApprovalGoneError like `answer`. */
+  answerQuestion(approvalId: string, answers: QuestionAnswers): Promise<void>;
+  /**
+   * The message that answers a question the agent asked without waiting (a 'question' item, via 'reply'), as the
+   * agent's own app writes it, and what to say started its turn. Agents without such questions leave it out.
+   */
+  questionReply?(itemId: string, entries: QuestionReplyEntry[]): { text: string; trigger?: string };
   rename(sessionId: string, title: string): Promise<void>;
   archive(sessionId: string): Promise<void>;
   /** What the agent's own settings come to here (for sessions in `cwd`, when given): what mode `own` runs with. */
@@ -80,6 +88,13 @@ export interface AgentAdapter {
   /** The code he pasted from the sign-in page (paste-code only). */
   loginCode?(loginId: string, code: string): Promise<void>;
   loginCancel(loginId: string): Promise<void>;
+}
+
+/** One answer to a question asked without waiting: which question (its id in the item), its words, the answer. */
+export interface QuestionReplyEntry {
+  questionId: string;
+  question: string;
+  answer: string;
 }
 
 export interface AdapterConfig {

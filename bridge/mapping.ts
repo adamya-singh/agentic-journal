@@ -3,12 +3,12 @@
 // changed, as protocol events) and for a turn read back from the transcript, so both get the same item ids:
 //   text and thinking blocks: `<API message id>:<block index>`; a tool call: its tool_use id; his message: its uuid.
 import type {
-  ApprovalDecision, ApprovalRequest, EventBody, FileEdit, ItemStatus, LimitWindow, ModelEntry, NativeSession, RateLimitSummary,
+  AgentQuestion, ApprovalDecision, ApprovalRequest, EventBody, FileEdit, ItemStatus, LimitWindow, ModelEntry, NativeSession, QuestionAnswers, RateLimitSummary,
   SessionItem, SessionTurn, TurnStatus,
 } from '../src/lib/code-agents/protocol.ts';
-import { clipLine, clipOutput, TITLE_MAX } from '../src/lib/code-agents/protocol.ts';
+import { answerText, clipLine, clipOutput, formQuestions, TITLE_MAX } from '../src/lib/code-agents/protocol.ts';
 import type {
-  SdkCanUseToolOptions, SdkContentBlock, SdkMessage, SdkModelInfo, SdkPermissionMode, SdkPermissionUpdate, SdkRateLimitInfo, SdkSessionInfo, SdkSessionMessage, SdkStreamEvent,
+  SdkAskUserQuestionInput, SdkCanUseToolOptions, SdkContentBlock, SdkElicitationRequest, SdkMessage, SdkModelInfo, SdkPermissionMode, SdkPermissionUpdate, SdkRateLimitInfo, SdkSessionInfo, SdkSessionMessage, SdkStreamEvent,
 } from './sdk-types.ts';
 
 const INPUT_MAX = 400;
@@ -174,6 +174,73 @@ export function fileEdits(name: string, input: Record<string, unknown>, cwd: str
   return [{ path: file, change, diff: clip([...head, ...body].join('\n'), DIFF_MAX) }];
 }
 
+// ---- Questions (AskUserQuestion).
+
+/** The questions of an AskUserQuestion call, each by its place in the list. Claude Code offers "Other" with each. */
+export function askQuestions(input: Record<string, unknown>): AgentQuestion[] {
+  const list = Array.isArray((input as SdkAskUserQuestionInput).questions) ? (input as SdkAskUserQuestionInput).questions! : [];
+  return list.map((q, i) => ({
+    id: String(i), question: str(q?.question), ...(str(q?.header) ? { header: str(q?.header) } : {}),
+    options: (Array.isArray(q?.options) ? q.options : []).map((o) => ({ label: str(o?.label), ...(str(o?.description) ? { description: str(o?.description) } : {}) })).filter((o) => o.label),
+    ...(q?.multiSelect === true ? { multi: true } : {}),
+    other: true,
+  }));
+}
+
+/** His answers as AskUserQuestion takes them: question text → the answer in words (a multi-select's labels joined by ", "). */
+export function askAnswers(questions: AgentQuestion[], answers: QuestionAnswers): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const q of questions) {
+    const text = answerText(answers[q.id]);
+    if (text) out[q.question] = text;
+  }
+  return out;
+}
+
+/**
+ * What he answered, read back from the tool's result: its own `answers` (live), else its text ("Your questions have
+ * been answered: "<question>"="<answer>", …" in CLI 2.1.x; "User has answered your questions: …" before). An answer
+ * that is one of the options is that option; anything else is what he wrote.
+ */
+export function askResultAnswers(questions: AgentQuestion[], text: string, own?: unknown): QuestionAnswers | null {
+  const given = own && typeof own === 'object' && (own as { answers?: unknown }).answers && typeof (own as { answers: unknown }).answers === 'object'
+    ? (own as { answers: Record<string, unknown> }).answers : null;
+  const out: QuestionAnswers = {};
+  for (const [i, q] of questions.entries()) {
+    let said: string | null = typeof given?.[q.question] === 'string' ? given[q.question] as string : null;
+    if (said === null) {
+      const key = `"${q.question}"="`;
+      const at = text.indexOf(key);
+      if (at < 0) continue;
+      const from = at + key.length;
+      // It runs to the next question's key, else to the closing words.
+      const next = questions.slice(i + 1).map((n) => text.indexOf(`", "${n.question}"="`, from)).find((n) => n >= 0);
+      const end = next ?? (() => { const close = text.lastIndexOf('". '); return close >= from ? close : text.lastIndexOf('"'); })();
+      if (end < from) continue;
+      said = text.slice(from, end);
+    }
+    const labels = q.options.map((o) => o.label);
+    if (labels.includes(said)) { out[q.id] = { picked: [said] }; continue; }
+    // A multi-select: its labels joined by ", ".
+    const parts = q.multi ? said.split(', ') : [];
+    if (parts.length > 1 && parts.every((p) => labels.includes(p))) out[q.id] = { picked: parts };
+    else out[q.id] = { picked: [], other: said };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** An MCP server's request for input, as the Journal asks it: a form as questions, a page to open as a link. */
+export function elicitationFor(request: SdkElicitationRequest): Omit<ApprovalRequest, 'id' | 'at' | 'turnId' | 'itemId'> {
+  const who = request.displayName || request.serverName;
+  const detail = [request.message, request.description].filter(Boolean).join('\n\n');
+  if (request.mode === 'url' && request.url) {
+    return { kind: 'other', title: request.title || `${who} asks you to open a page`, link: request.url, ...(detail ? { detail } : {}), decisions: ['allow', 'deny', 'cancel'] };
+  }
+  const questions = formQuestions(request.requestedSchema);
+  if (!questions) return { kind: 'tool', title: request.title || `${who} asks for input`, ...(detail ? { detail } : {}), decisions: ['deny', 'cancel'], elsewhere: true };
+  return { kind: 'question', title: request.title || `${who} asks for input`, ...(detail ? { detail } : {}), questions, decisions: ['deny', 'cancel'] };
+}
+
 // ---- Tool calls as items.
 
 /** What a tool call looks like when it starts. */
@@ -191,6 +258,12 @@ export function toolItem(block: SdkContentBlock, cwd: string, at: number | null)
       steps: todos.map((t) => ({ text: str(t.content) || str(t.activeForm), status: t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'running' : 'pending' })),
     };
   }
+  if (name === 'AskUserQuestion') {
+    const questions = askQuestions(input);
+    return { ...base, kind: 'question', via: 'ask', questions, text: questions.map((q) => q.question).join('\n'), answers: null, status: 'running' };
+  }
+  // The plan Claude asks to leave plan mode with: shown as the plan it is (markdown), not as a tool call.
+  if (name === 'ExitPlanMode' && str(input.plan)) return { ...base, kind: 'plan', text: str(input.plan), steps: [] };
   if (name === 'WebSearch') return { ...base, kind: 'web-search', query: str(input.query), status: 'running' };
   if (name === 'WebFetch') return { ...base, kind: 'web-search', query: str(input.url), status: 'running' };
   return { ...base, kind: 'tool', name: toolLabel(name), input: toolInputSummary(name, input), result: '', status: 'running' };
@@ -226,12 +299,16 @@ export function toolDone(item: SessionItem, block: SdkContentBlock, own: unknown
       return { ...item, ...ended, status, result: clip(text, RESULT_MAX) };
     case 'web-search':
       return { ...item, ...ended, status };
+    case 'question': {
+      const answers = status === 'done' ? askResultAnswers(item.questions, text, own) : null;
+      return { ...item, ...ended, status, answers };
+    }
     default:
       return { ...item, ...ended };
   }
 }
 
-const RUNNING_KINDS = new Set(['command', 'file-change', 'tool', 'web-search']);
+const RUNNING_KINDS = new Set(['command', 'file-change', 'tool', 'web-search', 'question']);
 const REFUSED_TEXT = /doesn['’]t want to proceed/;
 
 // ---- One turn, item by item.
@@ -415,7 +492,8 @@ export class TurnBuilder {
   finish(status: TurnStatus, error: string | null, limited: boolean, at: number | null): SessionTurn {
     for (const item of [...this.turn.items]) {
       if (!RUNNING_KINDS.has(item.kind) || (item as { status?: ItemStatus }).status !== 'running') continue;
-      this.put({ ...item, status: status === 'done' ? 'done' : 'failed', endedAt: at } as SessionItem, 'item-completed');
+      // A question still open when the turn ended was never answered.
+      this.put({ ...item, status: item.kind === 'question' ? 'declined' : status === 'done' ? 'done' : 'failed', endedAt: at } as SessionItem, 'item-completed');
     }
     this.turn.status = status;
     this.turn.error = error;
@@ -523,7 +601,19 @@ export function approvalFor(toolName: string, input: Record<string, unknown>, op
     };
   }
   if (toolName === 'ExitPlanMode') {
-    return { kind: 'other', title: 'Claude is ready to leave plan mode and start', detail: clip(str(input.plan) || why.join('\n\n'), 4000), cwd, decisions: ['allow', 'deny', 'cancel'] };
+    const plan = str(input.plan);
+    return {
+      kind: 'other', title: 'Claude is ready to leave plan mode and start',
+      ...(plan ? { plan: clip(plan, 20_000) } : why.length ? { detail: why.join('\n\n') } : {}), cwd, decisions: ['allow', 'deny', 'cancel'],
+    };
+  }
+  if (toolName === 'EnterPlanMode') {
+    // Claude asks to go into plan mode first (read and plan, change nothing, then ask to leave it with a plan).
+    return { kind: 'other', title: 'Claude wants to plan first, in plan mode', ...(why.length ? { detail: why.join('\n\n') } : {}), cwd, decisions: ['allow', 'deny', 'cancel'] };
+  }
+  if (toolName === 'AskUserQuestion') {
+    const questions = askQuestions(input);
+    return { kind: 'question', title: clipLine(questions[0]?.question || questions[0]?.header || 'Claude has a question for you', 120), questions, cwd, decisions: ['deny', 'cancel'] };
   }
   const summary = toolInputSummary(toolName, input);
   return {

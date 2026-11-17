@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import {
-  adoptSession, agentLogin, agentModels, agentOwnSettings, agentStatus, answerApproval, archiveSession, cancelLogin, HubError, interruptSession, markSessionSeen,
-  nativeSessions, refreshTask, renameSession, sendLoginCode, sendToSession, sessionDetail, sessionSummaries, setSessionPicks, startLogin, startSession, steerSession,
+  adoptSession, agentLogin, agentModels, agentOwnSettings, agentStatus, answerApproval, answerQuestion, archiveSession, cancelLogin, HubError, interruptSession, markSessionSeen,
+  nativeSessions, refreshTask, renameSession, replyToQuestion, sendLoginCode, sendToSession, sessionDetail, sessionSummaries, setSessionPicks, startLogin, startSession, steerSession,
 } from '@/lib/code-agents/hub';
 import { defaultPlace, isKnownDevice, listDevices, placesFor, thisHost, validatePlace } from '@/lib/code-agents/places';
 import { isRemote, probeDevice, publicStatus } from '@/lib/code-agents/ssh';
 import {
   AGENT_KINDS, APPROVAL_DECISIONS, DEFAULT_PICKS, PERMISSION_MODES,
-  type AgentKind, type AgentStatus, type DeviceStatus, type ModelEntry, type OwnSettings, type SessionPicks,
+  type AgentKind, type AgentStatus, type DeviceStatus, type ModelEntry, type OwnSettings, type QuestionAnswers, type SessionPicks,
 } from '@/lib/code-agents/protocol';
 import { readCodeSessions, readTaskPlace, setTaskPlace } from '@/lib/code-agents/store';
 import { fromThisAppStrict } from '@/lib/same-origin';
@@ -49,12 +49,26 @@ const loginId = z.string().min(1).max(200);
 /** The code the sign-in page shows him, pasted. Never logged, stored or sent back. */
 const loginCode = z.string().trim().min(1).max(2000);
 
+/** His answers to the questions of one ask, by question id: the options he chose, and what he wrote. */
+const AnswersSchema = z.record(z.string().min(1).max(200), z.object({
+  picked: z.array(z.string().min(1).max(500)).max(20),
+  other: z.string().max(TEXT_MAX).optional(),
+})).refine((a) => Object.keys(a).length <= 20) as unknown as z.ZodType<QuestionAnswers>;
+/** His answer to a question asked without waiting: each question's id in the item, its words, and his answer. */
+const ReplySchema = z.array(z.object({
+  questionId: z.string().min(1).max(40),
+  question: z.string().max(TEXT_MAX),
+  answer: z.string().trim().min(1).max(TEXT_MAX),
+})).min(1).max(20);
+
 const BodySchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('start'), taskId, agent, text, place: PlaceSchema.optional(), picks: PicksSchema.optional(), confirmFull }),
   z.object({ action: z.literal('send'), taskId, session, text, picks: PicksSchema.optional(), confirmFull }),
   z.object({ action: z.literal('steer'), taskId, session, text }),
   z.object({ action: z.literal('interrupt'), taskId, session }),
   z.object({ action: z.literal('approve'), taskId, session, approvalId: z.string().min(1).max(80), decision: z.enum(APPROVAL_DECISIONS as [string, ...string[]]) }),
+  z.object({ action: z.literal('answer'), taskId, session, approvalId: z.string().min(1).max(80), answers: AnswersSchema }),
+  z.object({ action: z.literal('reply'), taskId, session, itemId: z.string().min(1).max(200), answers: ReplySchema }),
   z.object({ action: z.literal('adopt'), taskId, agent, sessionId: z.string().min(1).max(200), host: z.string().min(1).max(40).optional(), picks: PicksSchema.optional(), confirmFull }),
   z.object({ action: z.literal('rename'), taskId, session, title: z.string().trim().min(1).max(120) }),
   z.object({ action: z.literal('archive'), taskId, session }),
@@ -203,6 +217,9 @@ export async function GET(request: NextRequest) {
  * { action: 'steer', taskId, session, text }                 add to the turn that runs → { turnId }
  * { action: 'interrupt', taskId, session }                   stop the turn that runs
  * { action: 'approve', taskId, session, approvalId, decision }   decision: allow | allow-session | deny | cancel
+ * { action: 'answer', taskId, session, approvalId, answers }    a question it waits on: { [questionId]: { picked, other? } }
+ * { action: 'reply', taskId, session, itemId, answers }         a question it asked without waiting: [{ questionId, question,
+ *     answer }], sent as the message its own app sends (a new turn, or into the turn that runs) → { turnId }
  * { action: 'adopt', taskId, agent, sessionId, host?, picks? }   attach one of the agent's own sessions → the link
  * { action: 'rename', taskId, session, title }               renamed in the agent too → the link
  * { action: 'archive', taskId, session }                     archived in the agent, off the task's list
@@ -285,6 +302,11 @@ export async function POST(request: NextRequest) {
       case 'approve':
         await answerApproval(link.id, body.approvalId, body.decision as (typeof APPROVAL_DECISIONS)[number]);
         return ok(null);
+      case 'answer':
+        await answerQuestion(link.id, body.approvalId, body.answers);
+        return ok(null);
+      case 'reply':
+        return ok(await replyToQuestion(link.id, body.itemId, body.answers));
       case 'rename':
         return ok(await renameSession(link.id, body.title));
       case 'archive':

@@ -100,7 +100,10 @@ test('a session: started, its first turn streamed, and a second turn on the same
   );
   assert.deepEqual(q.options.settingSources, ['user', 'project', 'local']);
   assert.deepEqual(q.options.systemPrompt, { type: 'preset', preset: 'claude_code' });
-  assert.deepEqual(q.options.disallowedTools, ['AskUserQuestion']);
+  // Every tool Claude Code offers is offered, its questions too (AskUserQuestion comes through canUseTool), and an
+  // MCP server's requests for input reach the Journal.
+  assert.equal(q.options.disallowedTools, undefined);
+  assert.equal(typeof q.options.onElicitation, 'function');
   assert.equal(q.options.env?.CLAUDE_CODE_ENTRYPOINT, 'agentic-journal');
   assert.equal(q.options.allowDangerouslySkipPermissions, undefined);
   // His message carries the turn's id, so the transcript and the live turn agree.

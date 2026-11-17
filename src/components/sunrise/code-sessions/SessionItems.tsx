@@ -2,13 +2,18 @@
 
 // The items of a coding session's turns as the chat pane draws them: what he said, what the agent said (markdown,
 // as it streams), and the steps of the work as one-line rows that open (a command and its output, a file and its
-// diff, a tool call's input and result, a search, a thought), the agent's plan as a checklist, and notices.
+// diff, a tool call's input and result, a search, a thought), the agent's plan as a checklist, notices, and the
+// questions it asks him as multiple-choice cards (answered here, they show what he chose).
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { AGENT_LABEL, type AgentKind, type FileEdit, type RateLimitSummary, type SessionItem, type SessionTurn } from '@/lib/code-agents/protocol';
 import {
-  commandOutcome, diffCounts, failureText, formatDuration, isInternalHref, parseDiff, prettyJson, shortPath, stepsSummary, toolInputLine, turnBlocks, type TurnBlock,
+  AGENT_LABEL, answersComplete, answerText,
+  type AgentKind, type AgentQuestion, type FileEdit, type QuestionAnswer, type QuestionAnswers, type RateLimitSummary, type SessionItem, type SessionTurn,
+} from '@/lib/code-agents/protocol';
+import {
+  commandOutcome, diffCounts, failureText, formatDuration, isInternalHref, parseDiff, prettyJson, replyEntries, shortPath, stepsSummary, toolInputLine, turnBlocks,
+  type QuestionReplies, type TurnBlock,
 } from '@/lib/code-sessions-ui';
 
 const DIFF_LINES_MAX = 1500;
@@ -34,6 +39,153 @@ export const AgentText = React.memo(function AgentText({ text, final }: { text: 
 });
 
 type Item<K extends SessionItem['kind']> = Extract<SessionItem, { kind: K }>;
+
+// ---- Questions.
+
+const stopKeys = (e: React.KeyboardEvent) => e.stopPropagation();
+
+/** What the log's question cards need from the pane: his answers so far, what can be answered, and how. */
+export interface QuestionContextValue {
+  replies: QuestionReplies;
+  /** Questions asked without waiting whose answer is on its way. */
+  replying: Set<string>;
+  /** Question items that wait on the card above the composer (an ask the agent holds its turn for). */
+  waiting: Set<string>;
+  /** A turn runs: an answer goes into it. */
+  working: boolean;
+  reply: (itemId: string, entries: { questionId: string; question: string; answer: string }[]) => void;
+}
+export const QuestionContext = React.createContext<QuestionContextValue | null>(null);
+
+/** A question's words: markdown, as the agent writes them (a long question carries its context). */
+function QuestionText({ text }: { text: string }) {
+  return <div className="srk-qtext"><ReactMarkdown remarkPlugins={[remarkGfm]} components={mdLink}>{text}</ReactMarkdown></div>;
+}
+
+/** One question: its options to choose from (one, or several), and a box for his own answer when it takes one. */
+function QuestionField({ q, n, count, answer, onChange, onEnter }: { q: AgentQuestion; n: number; count: number; answer: QuestionAnswer | undefined; onChange: (a: QuestionAnswer) => void; onEnter: () => void }) {
+  const a = answer ?? { picked: [] };
+  const pick = (label: string) => {
+    if (q.multi) onChange({ ...a, picked: a.picked.includes(label) ? a.picked.filter((l) => l !== label) : [...a.picked, label] });
+    // One choice: choosing an option takes the place of what he wrote.
+    else onChange({ picked: a.picked[0] === label ? [] : [label] });
+  };
+  const write = (text: string) => onChange(q.multi ? { ...a, other: text } : { picked: text.trim() ? [] : a.picked, other: text });
+  const writes = q.other || q.options.length === 0;
+  return (
+    <fieldset className="srk-q">
+      {(count > 1 || q.header) && (
+        <legend>{count > 1 && <span className="n">{n + 1} of {count}</span>}{q.header && <small>{q.header}</small>}</legend>
+      )}
+      <QuestionText text={q.question} />
+      {q.multi && q.options.length > 0 && <span className="hint">Choose any that apply.</span>}
+      {q.options.length > 0 && (
+        <div className="opts" role={q.multi ? 'group' : 'radiogroup'} aria-label={q.header || q.question}>
+          {q.options.map((o) => {
+            const on = a.picked.includes(o.label);
+            return (
+              <button key={o.label} type="button" role={q.multi ? 'checkbox' : 'radio'} aria-checked={on} className={`opt${on ? ' on' : ''}`} onClick={() => pick(o.label)}>
+                <i aria-hidden="true" className={q.multi ? 'box' : 'dot'} />
+                <span className="w"><b>{o.label}</b>{o.description && o.description.trim() !== o.label.trim() && <small>{o.description}</small>}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {writes && (
+        <input
+          className={`other${a.other?.trim() ? ' on' : ''}`}
+          type={q.secret ? 'password' : 'text'}
+          inputMode={q.input ? 'decimal' : undefined}
+          autoComplete="off"
+          value={a.other ?? ''}
+          placeholder={q.options.length ? 'Or write your own answer…' : q.secret ? 'Your answer (it stays hidden)' : 'Your answer…'}
+          aria-label={q.options.length ? `Your own answer to: ${q.header || q.question}` : `Your answer to: ${q.header || q.question}`}
+          onChange={(e) => write(e.target.value)}
+          onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); onEnter(); } }}
+          onKeyUp={stopKeys}
+        />
+      )}
+    </fieldset>
+  );
+}
+
+/** The questions of one ask, answered together: every question, then the answer button (and the ways to leave it). */
+export function QuestionForm({ questions, busy, submit, onSubmit, children }: { questions: AgentQuestion[]; busy: boolean; submit: string; onSubmit: (answers: QuestionAnswers) => void; children?: React.ReactNode }) {
+  const [answers, setAnswers] = React.useState<QuestionAnswers>({});
+  const complete = answersComplete(questions, answers) && Object.values(answers).some((a) => answerText(a) !== '');
+  const go = () => { if (complete && !busy) onSubmit(answers); };
+  return (
+    <form className="srk-qform" onSubmit={(e) => { e.preventDefault(); go(); }}>
+      {questions.map((q, n) => <QuestionField key={q.id} q={q} n={n} count={questions.length} answer={answers[q.id]} onEnter={go} onChange={(a) => setAnswers((was) => ({ ...was, [q.id]: a }))} />)}
+      <div className="acts">
+        <button type="submit" className="yes" disabled={!complete || busy}>{busy ? 'Sending…' : submit}</button>
+        {children}
+      </div>
+    </form>
+  );
+}
+
+/** Questions as they were answered: each option, the ones he chose ticked; what he wrote; or that it went unanswered. */
+export function AnsweredQuestions({ questions, answers, none }: { questions: AgentQuestion[]; answers: QuestionAnswers | null | undefined; none: string }) {
+  return (
+    <div className="srk-qdone">
+      {questions.map((q) => {
+        const a = answers?.[q.id];
+        const said = answerText(a);
+        return (
+          <div key={q.id} className="q">
+            {q.header && <small>{q.header}</small>}
+            <QuestionText text={q.question} />
+            {q.options.length > 0 && (
+              <ul className="opts">
+                {q.options.map((o) => <li key={o.label} className={a?.picked.includes(o.label) ? 'on' : ''}><i aria-hidden="true" /><span>{o.label}</span>{a?.picked.includes(o.label) && <em className="sr">(chosen)</em>}</li>)}
+              </ul>
+            )}
+            {a?.other?.trim() && <p className="mine"><span>Your answer</span>{q.secret ? '••••' : a.other.trim()}</p>}
+            {!said && <p className="none">{none}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** A question in the log: answerable here when the agent asked without waiting, else what was answered (or where). */
+function QuestionBlock({ item, agent }: { item: Item<'question'>; agent: AgentKind }) {
+  const ctx = React.useContext(QuestionContext);
+  const label = AGENT_LABEL[agent];
+  if (item.via === 'reply') {
+    const answers = ctx?.replies.answers.get(item.id);
+    if (!answers && ctx?.replies.open.has(item.id)) {
+      const busy = ctx.replying.has(item.id);
+      return (
+        <div className="srk-ask srk-qcard" role="group" aria-label={`${label} asks you`}>
+          <div className="h"><i aria-hidden="true" /><b>{label} asks</b><small>question</small></div>
+          <QuestionForm questions={item.questions} busy={busy} submit="Send answer" onSubmit={(a) => ctx.reply(item.id, replyEntries(item.questions, a))} />
+          <p className="else">{ctx.working ? 'It goes into the turn that runs now.' : `It goes to ${label} as your next message.`}</p>
+        </div>
+      );
+    }
+    return (
+      <div className="srk-qcard done" role="group" aria-label={`${label} asked`}>
+        <div className="h"><b>{label} asked</b><small>{answers ? 'answered' : 'not answered'}</small></div>
+        <AnsweredQuestions questions={item.questions} answers={answers} none={answers ? 'Not answered.' : 'Not answered: you wrote back instead.'} />
+      </div>
+    );
+  }
+  // It waits on his answer: the card is above the composer while it does.
+  if (item.status === 'running' && ctx?.waiting.has(item.id)) {
+    return <p className="srk-qwait" role="status"><i aria-hidden="true" />{label} asks you {item.questions.length > 1 ? `${item.questions.length} questions` : 'a question'}: answer it below.</p>;
+  }
+  const none = item.status === 'done' && !item.answers ? `Answered in the ${label} app.` : 'Not answered.';
+  return (
+    <div className="srk-qcard done" role="group" aria-label={`${label} asked`}>
+      <div className="h"><b>{label} asked</b><small>{item.answers ? 'answered' : item.status === 'running' ? 'waiting' : item.status === 'done' ? 'answered elsewhere' : 'not answered'}</small></div>
+      <AnsweredQuestions questions={item.questions} answers={item.answers} none={none} />
+    </div>
+  );
+}
 
 /** A file's unified diff, numbered, added lines green and removed ones red. */
 export function DiffView({ file }: { file: FileEdit }) {
@@ -196,7 +348,7 @@ function Plan({ item }: { item: Item<'plan'> }) {
     <div className="srk-plan" role="group" aria-label="The plan">
       <div className="h"><small>Plan</small>{item.steps.length > 0 && <span>{done} of {item.steps.length} done</span>}</div>
       {item.steps.length > 0 ? (
-        <ol>{item.steps.map((step, i) => <li key={i} className={step.status}><i aria-hidden="true" /><span>{step.text}</span></li>)}</ol>
+        <ol className="steps">{item.steps.map((step, i) => <li key={i} className={step.status}><i aria-hidden="true" /><span>{step.text}</span></li>)}</ol>
       ) : item.text ? <AgentText text={item.text} final={false} /> : null}
       {item.explanation && <p>{item.explanation}</p>}
     </div>
@@ -208,10 +360,11 @@ function Block({ block, agent, cwd, running }: { block: TurnBlock; agent: AgentK
     case 'user':
       return (
         <>
-          <span className="srk-who you">You{block.item.framed && <em title="The Journal sent the task’s brief in front of your first message"> · with the task’s brief</em>}</span>
+          <span className="srk-who you">You{block.item.framed && <em title="The Journal sent the task’s brief in front of your first message"> · with the task’s brief</em>}{block.item.answers?.length ? <em> · answered</em> : null}</span>
           <div className="srk-m you">{block.item.text}</div>
         </>
       );
+    case 'question': return <QuestionBlock item={block.item} agent={agent} />;
     case 'agent':
       return (
         <>

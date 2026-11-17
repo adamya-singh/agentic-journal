@@ -138,6 +138,34 @@ export interface SdkQueryOptions {
   /** More CLI flags, as `{flag: value}` (`--flag value`). */
   extraArgs?: Record<string, string | null>;
   stderr?: (data: string) => void;
+  /** An MCP server asks for input (a form, or a page to open). Without it, the SDK declines every one. */
+  onElicitation?: SdkOnElicitation;
+}
+
+/** sdk.d.ts `ElicitationRequest` (0.3.325). */
+export interface SdkElicitationRequest {
+  serverName: string;
+  message: string;
+  mode?: 'form' | 'url';
+  url?: string;
+  elicitationId?: string;
+  requestedSchema?: Record<string, unknown>;
+  title?: string;
+  displayName?: string;
+  description?: string;
+}
+export interface SdkElicitationResult { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> }
+export type SdkOnElicitation = (request: SdkElicitationRequest, options: { signal: AbortSignal; requestId?: string }) => Promise<SdkElicitationResult | null>;
+
+/**
+ * sdk-tools.d.ts `AskUserQuestionInput` (0.3.325): 1–4 questions of 2–4 options, Claude Code adding "Other" itself.
+ * The host answers by allowing the call with `answers` (question text → answer; a multi-select's labels joined by
+ * ", ") in `updatedInput`; the tool's result echoes them.
+ */
+export interface SdkAskUserQuestionInput {
+  questions?: { question?: string; header?: string; multiSelect?: boolean; options?: { label?: string; description?: string; preview?: string }[] }[];
+  answers?: Record<string, string>;
+  annotations?: Record<string, { preview?: string; notes?: string }>;
 }
 
 export interface SdkModelInfo {

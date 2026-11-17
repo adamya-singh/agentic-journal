@@ -4,14 +4,14 @@
 // is made again with a growing pause while anyone still needs it; sessions that were working are joined again.
 // One hub per server process, kept on globalThis, so each route bundle (and a dev hot reload) finds the same one
 // and no connection is made twice.
-import { ApprovalGoneError, type AdapterFactory, type AgentAdapter, type AdapterSink, type HistoryPage, type NativeState } from './adapter';
+import { ApprovalGoneError, type AdapterFactory, type AgentAdapter, type AdapterSink, type HistoryPage, type NativeState, type QuestionReplyEntry } from './adapter';
 import { createClaudeAdapter } from './claude';
 import { createCodexAdapter } from './codex';
 import { firstTurnText, typedTextOf } from './first-turn';
 import {
   AGENT_LABEL, clipLine, LAST_LINE_MAX, TITLE_MAX,
   type AgentKind, type AgentLogin, type AgentStatus, type ApprovalDecision, type ApprovalRequest, type CodeSessionLink, type EventBody, type ModelEntry,
-  type NativeSession, type OwnSettings, type Place, type RateLimitSummary, type SessionEvent, type SessionItem, type SessionPicks, type SessionState, type SessionSummary,
+  type NativeSession, type OwnSettings, type Place, type QuestionAnswers, type RateLimitSummary, type SessionEvent, type SessionItem, type SessionPicks, type SessionState, type SessionSummary,
   type SessionTurn, type TokenUsage,
 } from './protocol';
 import { RpcError } from './transport';
@@ -398,13 +398,19 @@ function ingest(live: Live, body: EventBody): void {
       break;
     case 'item-completed':
       noteLengths(live, body.turnId, body.item, true);
-      if (body.item.kind === 'agent' && body.item.text.trim()) {
-        const line = clipLine(body.item.text.replace(/[*_`#>]+/g, ''), LAST_LINE_MAX);
+      if ((body.item.kind === 'agent' || (body.item.kind === 'question' && body.item.via === 'reply')) && body.item.text.trim()) {
+        const said = body.item.kind === 'question' ? `Asks: ${body.item.questions[0]?.question ?? body.item.text}` : body.item.text;
+        const line = clipLine(said.replace(/[*_`#>]+/g, ''), LAST_LINE_MAX);
         changeCodeSession(live.linkId, (link) => { if (link.lastLine === line) return false; link.lastLine = line; });
       }
       if (body.item.kind === 'user') {
         const typed = typedTextOf(body.item.text);
         if (typed.framed) body = { ...body, item: { ...body.item, text: typed.text, framed: true } };
+      }
+      // A question it waited on, settled: Codex's own history leaves it out, so the link keeps it for the next read.
+      if (body.item.kind === 'question' && body.item.via === 'ask' && body.item.status !== 'running' && live.agent === 'codex') {
+        const entry = { turnId: body.turnId, item: body.item };
+        changeCodeSession(live.linkId, (link) => { link.answered = [...(link.answered ?? []).filter((e) => e.item.id !== entry.item.id), entry].slice(-20); });
       }
       break;
     case 'item-started':
@@ -627,7 +633,27 @@ export async function sessionDetail(linkId: string, cursor?: string | null): Pro
   } catch (error) {
     throw new HubError(502, `${AGENT_LABEL[live.agent]} could not read the session: ${message(error)}`);
   }
-  return { link: findCodeSession(linkId)?.link ?? link, ...page, seq, state: live.state, turnId: live.turnId, approvals: [...live.approvals.values()], tokens: live.tokens };
+  const current = findCodeSession(linkId)?.link ?? link;
+  return { link: current, ...withAnswered(page, current.answered), seq, state: live.state, turnId: live.turnId, approvals: [...live.approvals.values()], tokens: live.tokens };
+}
+
+/** The questions the link keeps, put back in their turns where the agent's history left them out, in time order. */
+function withAnswered(page: HistoryPage, answered: CodeSessionLink['answered']): HistoryPage {
+  if (!answered?.length) return page;
+  return {
+    ...page,
+    turns: page.turns.map((turn) => {
+      const mine = answered.filter((e) => e.turnId === turn.id && !turn.items.some((i) => i.id === e.item.id));
+      if (!mine.length) return turn;
+      const items = turn.items.slice();
+      for (const { item } of mine) {
+        const when = item.startedAt ?? item.endedAt;
+        const at = when ? items.findIndex((i) => (i.startedAt ?? 0) > when) : -1;
+        items.splice(at >= 0 ? at : items.length, 0, item);
+      }
+      return { ...turn, items };
+    }),
+  };
 }
 
 /** Starts a session for a task and sends its first turn behind the answer. Returns the new link. */
@@ -665,7 +691,7 @@ export async function startSession(input: { taskId: string; agent: AgentKind; pl
 }
 
 /** He writes in a session. A turn already running is steered instead, by the caller (steerSession). */
-export async function sendToSession(linkId: string, text: string, picks?: SessionPicks): Promise<{ turnId: string }> {
+export async function sendToSession(linkId: string, text: string, picks?: SessionPicks, options?: { trigger?: string }): Promise<{ turnId: string }> {
   const { live, link } = liveOfLink(linkId);
   if (live.turnId || live.sending) throw new HubError(409, `${AGENT_LABEL[live.agent]} is still working. Steer it, or stop it first.`);
   const c = await ready(live.agent, live.host);
@@ -676,7 +702,7 @@ export async function sendToSession(linkId: string, text: string, picks?: Sessio
   const at = nowIso();
   changeCodeSession(linkId, (l) => { l.touchedAt = at; l.seenAt = at; if (picks) l.picks = picks; });
   try {
-    const { turnId } = await c.adapter.send(live.sessionId, text, use);
+    const { turnId } = await c.adapter.send(live.sessionId, text, use, options);
     live.joined = true;
     if (live.sending) { live.sending = false; live.turnId ??= turnId; }
     settle(live);
@@ -724,6 +750,43 @@ export async function answerApproval(linkId: string, approvalId: string, decisio
     if (error instanceof ApprovalGoneError || !live.approvals.has(approvalId)) throw new HubError(404, 'That approval is no longer waiting.');
     throw new HubError(502, `The answer did not reach ${AGENT_LABEL[live.agent]}: ${message(error)}`);
   }
+}
+
+/** His answers to a question the agent waits on (an approval of kind 'question'). */
+export async function answerQuestion(linkId: string, approvalId: string, answers: QuestionAnswers): Promise<void> {
+  const { live } = liveOfLink(linkId);
+  const approval = live.approvals.get(approvalId);
+  if (!approval) throw new HubError(404, 'That question is no longer waiting.');
+  if (approval.kind !== 'question' || !approval.questions) throw new HubError(400, 'That is not a question.');
+  const known = new Set(approval.questions.map((q) => q.id));
+  if (Object.keys(answers).some((id) => !known.has(id))) throw new HubError(400, 'That answers a question it did not ask.');
+  for (const q of approval.questions) {
+    const a = answers[q.id];
+    if (!a) continue;
+    if (!q.multi && a.picked.length > 1) throw new HubError(400, 'That question takes one answer.');
+    if (a.picked.some((label) => !q.options.some((o) => o.label === label))) throw new HubError(400, 'That is not one of its choices.');
+    if (a.other?.trim() && !q.other) throw new HubError(400, 'That question takes one of its choices only.');
+  }
+  const c = await ready(live.agent, live.host);
+  try {
+    await c.adapter.answerQuestion(approvalId, answers);
+  } catch (error) {
+    if (error instanceof ApprovalGoneError || !live.approvals.has(approvalId)) throw new HubError(404, 'That question is no longer waiting.');
+    throw new HubError(502, `The answer did not reach ${AGENT_LABEL[live.agent]}: ${message(error)}`);
+  }
+}
+
+/**
+ * His answer to a question the agent asked without waiting (Codex's async question): sent as the message the agent's
+ * own app sends for it, as a new turn, or into the turn that runs.
+ */
+export async function replyToQuestion(linkId: string, itemId: string, entries: QuestionReplyEntry[]): Promise<{ turnId: string }> {
+  const { live } = liveOfLink(linkId);
+  const c = await ready(live.agent, live.host);
+  if (!c.adapter.questionReply) throw new HubError(400, `${AGENT_LABEL[live.agent]} does not ask questions that way.`);
+  const { text, trigger } = c.adapter.questionReply(itemId, entries);
+  if (live.turnId) return steerSession(linkId, text);
+  return sendToSession(linkId, text, undefined, trigger ? { trigger } : undefined);
 }
 
 export async function renameSession(linkId: string, title: string): Promise<CodeSessionLink> {

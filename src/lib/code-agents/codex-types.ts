@@ -1,5 +1,7 @@
 // The part of Codex's app-server protocol the Codex adapter uses, written by hand from the types that
-// `codex app-server generate-ts` produced for codex-cli 0.169.0 (v2 protocol). Only what codex.ts reads or sends;
+// `codex app-server generate-ts` produced for codex-cli 0.169.0 (v2 protocol; `--experimental` for the fields only an
+// experimental-API client gets, such as thread/resume's collaborationMode; the daemon reported 0.169.1 on 2026-11-17
+// with the same shapes). Only what codex.ts reads or sends;
 // fields it does not use are left out, and every field it reads is treated as possibly missing, since the app
 // server is labelled experimental and changes between versions. Regenerate and compare when Codex updates.
 
@@ -39,7 +41,8 @@ type Times = { startedAtMs?: number | null; completedAtMs?: number | null };
 export type CodexThreadItem = Times & (
   | { type: 'userMessage'; id: string; content: CodexUserInput[] }
   | { type: 'hookPrompt'; id: string; fragments: { text: string }[] }
-  | { type: 'agentMessage'; id: string; text: string }
+  /** delivery 'async' + questions: request_user_input_async, a question asked without waiting (text: its plain-text form). */
+  | { type: 'agentMessage'; id: string; text: string; phase?: string | null; delivery?: 'async' | null; questions?: CodexAsyncQuestion[] | null }
   | { type: 'functionCallOutput'; id: string; name: string; namespace: string | null; output: string | { type: string; text?: string }[] }
   | { type: 'plan'; id: string; text: string }
   | { type: 'reasoning'; id: string; summary: string[]; content: string[] }
@@ -57,6 +60,9 @@ export type CodexThreadItem = Times & (
   | { type: 'exitedReviewMode'; id: string; review: string }
   | { type: 'contextCompaction'; id: string }
 );
+
+/** A question asked with request_user_input_async (answered by a later user message). */
+export interface CodexAsyncQuestion { title: string; options: string[] | null }
 
 export type CodexTurnStatus = 'completed' | 'interrupted' | 'failed' | 'inProgress';
 
@@ -151,7 +157,8 @@ export interface CodexLoginCancelResult { status: 'canceled' | 'notFound' }
 export interface CodexModelListResult { data: CodexModel[]; nextCursor: string | null }
 export interface CodexThreadListResult { data: CodexThread[]; nextCursor: string | null }
 export interface CodexThreadStartResult { thread: CodexThread; model: string; reasoningEffort?: string | null; approvalPolicy?: unknown; sandbox?: unknown }
-export interface CodexThreadResumeResult { thread: CodexThread; model: string; reasoningEffort?: string | null; approvalPolicy?: unknown; sandbox?: unknown }
+/** collaborationMode: experimental (sent only to a client that opted into the experimental API). */
+export interface CodexThreadResumeResult { thread: CodexThread; model: string; reasoningEffort?: string | null; approvalPolicy?: unknown; sandbox?: unknown; collaborationMode?: { mode?: string | null } | null }
 export interface CodexTurnsListResult { data: CodexTurn[]; nextCursor: string | null; backwardsCursor: string | null }
 export interface CodexTurnStartResult { turn: CodexTurn }
 export interface CodexTurnSteerResult { turnId: string }
@@ -189,9 +196,17 @@ export interface CodexFileChangeApprovalParams {
   threadId: string; turnId: string; itemId: string;
   reason?: string | null; grantRoot?: string | null;
 }
-export interface CodexPermissionsApprovalParams { threadId: string; turnId: string; itemId: string; cwd: string; reason: string | null }
-export interface CodexUserInputParams { threadId: string; turnId: string; itemId: string; questions: { id: string; header: string; question: string }[] }
-export interface CodexElicitationParams { threadId: string; turnId: string | null; serverName: string; message: string; mode: string }
+/** Additional access a command asks for. Granted as asked (a subset of it would do too) or not at all. */
+export interface CodexPermissionProfile {
+  network?: { enabled: boolean | null } | null;
+  fileSystem?: { read?: string[] | null; write?: string[] | null; entries?: unknown[] } | null;
+}
+export interface CodexPermissionsApprovalParams { threadId: string; turnId: string; itemId: string; cwd: string; reason: string | null; permissions?: CodexPermissionProfile | null }
+/** request_user_input (Plan mode only): answered with `{answers: {[id]: {answers: string[]}}}`. */
+export interface CodexUserInputQuestion { id: string; header: string; question: string; isOther?: boolean; isSecret?: boolean; options?: { label: string; description: string }[] | null }
+export interface CodexUserInputParams { threadId: string; turnId: string; itemId: string; questions: CodexUserInputQuestion[]; isBlocking?: boolean; autoResolutionMs?: number | null }
+/** An MCP server asks for input: a form (`requestedSchema`) or a page to open (`url`). */
+export interface CodexElicitationParams { threadId: string; turnId: string | null; serverName: string; message: string; mode: 'form' | 'url' | 'openai/form' | 'openaiForm' | string; requestedSchema?: unknown; url?: string; elicitationId?: string }
 
 /** The answer to a command or file-change approval. */
 export type CodexApprovalDecision = 'accept' | 'acceptForSession' | 'decline' | 'cancel';

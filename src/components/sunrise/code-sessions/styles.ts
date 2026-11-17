@@ -176,8 +176,8 @@ export const CODE_SESSIONS_CSS = `
 .srk-plan .h{display:flex;align-items:baseline;gap:8px}
 .srk-plan .h small{font:500 9.5px var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--a)}
 .srk-plan .h span{font:10.5px var(--mono);color:#8a6a52}
-.srk-plan ol{list-style:none;margin:0;padding:0;display:grid;gap:3px}
-.srk-plan li{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.4;color:#22130a}
+.srk-plan ol.steps{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+.srk-plan ol.steps li{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.4;color:#22130a}
 .srk-plan li i{flex:none;width:13px;height:13px;margin-top:3px;border-radius:50%;border:1.5px solid rgba(60,30,10,.35);box-sizing:border-box}
 .srk-plan li.running i{border-color:var(--a);background:radial-gradient(circle,var(--a) 0 3px,transparent 3.5px);animation:srp-pulse 1.4s ease-in-out infinite}
 .srk-plan li.done{color:#8a6a52;text-decoration:line-through;text-decoration-color:rgba(60,30,10,.3)}
@@ -195,6 +195,8 @@ export const CODE_SESSIONS_CSS = `
 .srk-ask .d{margin:0;font-size:12.5px;color:#5b4230;white-space:pre-wrap;overflow-wrap:anywhere}
 .srk-ask .srk-out{max-height:140px}
 .srk-ask .cwd{font:10.5px var(--mono);color:#8a6a52;overflow-wrap:anywhere}
+/* A question needs its options and its answer button in view: it may take more of the pane than an approval. */
+.srk-asks:has(.srk-qform){flex:0 1 auto;min-height:0;max-height:62%}
 .srk-askmore{margin:0;font:500 11.5px var(--sans);color:#8a6a52;text-align:center}
 .srk-ask .srk-steps{background:#fffdfa}
 .srk-ask .acts{display:flex;flex-wrap:wrap;gap:6px}
@@ -206,6 +208,65 @@ export const CODE_SESSIONS_CSS = `
 .srp .srk-ask .acts button.quiet:hover:not(:disabled){color:#a3361a;border-color:transparent}
 .srp .srk-ask .acts button:disabled{opacity:.5;cursor:default}
 .srk-ask .else{margin:0;font-size:12.5px;color:#6a4a32}
+.srk-askplan{max-height:260px;overflow:auto;overscroll-behavior:contain;padding:8px 10px;border-radius:10px;background:#fffdfa;border:1px solid rgba(60,30,10,.1)}
+.srk-asklink{font:12px var(--mono);color:var(--a);overflow-wrap:anywhere}
+
+/* A question it asks: each question, its options as rows to choose, a box for his own answer. */
+.srk-qform{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.srk-q{margin:0;padding:0;border:0;min-width:0;display:grid;grid-template-columns:minmax(0,1fr);gap:7px}
+.srk-q legend{display:flex;align-items:center;gap:8px;padding:0;margin:0 0 2px}
+.srk-q legend .n{font:500 10px var(--mono);color:#8a6a52}
+.srk-q legend small,.srk-qdone .q>small{font:500 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:color-mix(in srgb,var(--a) 12%,#fff);color:var(--a)}
+.srk-qdone .q>small{justify-self:start}
+.srk-qtext{font:500 13.5px/1.45 var(--sans);color:#22130a;overflow-wrap:anywhere}
+.srk-qtext p{margin:0}
+.srk-qtext p+p{margin-top:6px}
+.srk-qtext code{font:12px var(--mono);background:rgba(120,70,30,.09);border-radius:5px;padding:1px 4px}
+.srk-qtext a{color:var(--a)}
+.srk-qtext ul,.srk-qtext ol{margin:4px 0;padding-left:18px}
+.srk-q .hint{font-size:11.5px;color:#8a6a52}
+.srk-q .opts{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
+.srp .srk-q .opt{display:flex;align-items:flex-start;gap:10px;width:100%;padding:8px 11px;border-radius:11px;border:1px solid rgba(60,30,10,.16);background:#fff;color:#22130a;font:inherit;text-align:left;cursor:pointer}
+.srp .srk-q .opt:hover{border-color:color-mix(in srgb,var(--a) 45%,#fff)}
+.srp .srk-q .opt.on{border-color:var(--a);background:color-mix(in srgb,var(--a) 7%,#fff);box-shadow:0 0 0 2px color-mix(in srgb,var(--a) 16%,transparent)}
+.srk-q .opt i{flex:none;width:15px;height:15px;margin-top:2px;border:1.5px solid rgba(60,30,10,.35);box-sizing:border-box;background:#fff}
+.srk-q .opt i.dot{border-radius:50%}
+.srk-q .opt i.box{border-radius:4px}
+.srk-q .opt.on i{border-color:var(--a)}
+.srk-q .opt.on i.dot{background:radial-gradient(circle,var(--a) 0 3.5px,#fff 4px)}
+.srk-q .opt.on i.box{background:var(--a) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 10 10'%3E%3Cpath d='M2 5.2l2 2 4-4.6' fill='none' stroke='white' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center}
+.srk-q .opt .w{display:grid;gap:1px;min-width:0}
+.srk-q .opt b{font:600 13px/1.35 var(--sans);overflow-wrap:anywhere}
+.srk-q .opt small{font-size:12px;line-height:1.4;color:#6a4a32;overflow-wrap:anywhere}
+.srk-q input.other{width:100%;min-width:0;height:34px;padding:0 12px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:13px var(--sans);outline:0;box-sizing:border-box}
+.srk-q input.other:focus,.srk-q input.other.on{border-color:var(--a)}
+/* In the log: a question it asked, answerable while it is open, then what he chose. */
+.srk-qcard{display:grid;grid-template-columns:minmax(0,1fr);gap:9px;padding:10px 12px;border-radius:14px;background:#fff;border:1px solid color-mix(in srgb,var(--a) 35%,transparent);box-shadow:0 10px 24px -20px rgba(120,60,10,.7)}
+.srk-qcard.done{gap:7px;background:rgba(255,255,255,.6);border-color:rgba(60,30,10,.12);box-shadow:none}
+.srk-qcard .h{display:flex;align-items:center;gap:8px}
+.srk-qcard .h i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--a);animation:srp-pulse 1.4s ease-in-out infinite}
+.srk-qcard .h b{font:600 13px var(--sans)}
+.srk-qcard.done .h b{font-weight:500;color:#6a4a32}
+.srk-qcard .h small{margin-left:auto;font:500 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;padding:2px 7px;border-radius:999px;background:rgba(34,19,10,.07);color:#6a4a32}
+.srk-qcard .else{margin:0;font-size:12px;color:#8a6a52}
+.srk-qdone{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.srk-qdone .q{display:grid;grid-template-columns:minmax(0,1fr);gap:5px}
+.srk-qcard.done .srk-qtext{font-weight:400;color:#5b4230;font-size:13px}
+.srk-qdone ul{list-style:none;margin:0;padding:0;display:grid;gap:3px}
+.srk-qdone li{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#a08268}
+.srk-qdone li i{flex:none;width:12px;height:12px;border-radius:50%;border:1.5px solid rgba(60,30,10,.22);box-sizing:border-box}
+.srk-qdone li.on{color:#22130a;font-weight:600}
+.srk-qdone li.on i{border-color:var(--a);background:var(--a) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath d='M1.4 4.1l1.7 1.7 3.5-3.9' fill='none' stroke='white' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat center}
+.srk-qdone .mine{margin:0;display:grid;gap:2px;padding:6px 10px;border-radius:10px;background:color-mix(in srgb,var(--a) 7%,#fff);font-size:13px;color:#22130a;white-space:pre-wrap;overflow-wrap:anywhere}
+.srk-qdone .mine span{font:500 9px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#8a6a52}
+.srk-qdone .none{margin:0;font-size:12px;font-style:italic;color:#8a6a52}
+.srk-qdone .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+.srk-qwait{margin:0;display:flex;align-items:center;gap:8px;font-size:12.5px;color:#5b4230}
+.srk-qwait i{flex:none;width:7px;height:7px;border-radius:50%;background:var(--a);animation:srp-pulse 1.4s ease-in-out infinite}
+.srk-qcard .acts{display:flex;flex-wrap:wrap;gap:6px}
+.srp .srk-qcard .acts button{height:32px;padding:0 14px;border-radius:999px;border:1px solid rgba(60,30,10,.2);background:#fff;color:#22130a;font:500 12.5px var(--sans);cursor:pointer}
+.srp .srk-qcard .acts button.yes{border-color:#120a05;background:linear-gradient(180deg,#4a3526,#22130a 55%,#170c06);color:#fff6ec;box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 0 #0c0603}
+.srp .srk-qcard .acts button:disabled{opacity:.5;cursor:default}
 
 /* The composer of a session: Stop while it works, and what is sent then steers the turn. */
 .srk-steer{margin:0;display:flex;align-items:center;gap:8px;font-size:12.5px;color:#5b4230}
@@ -242,7 +303,9 @@ export const CODE_SESSIONS_CSS = `
 .srp.cols-1 .srk-sline{min-height:40px;padding:8px 12px}
 .cols-1 .srk-open{padding:2px 12px 12px}
 .srp.cols-1 .srk-stepsum{min-height:40px;padding:8px 12px}
-.srp.cols-1 .srk-ask .acts button{height:44px;padding:0 16px;font-size:14.5px}
+.srp.cols-1 .srk-ask .acts button,.srp.cols-1 .srk-qcard .acts button{height:44px;padding:0 16px;font-size:14.5px}
+.srp.cols-1 .srk-q .opt{min-height:44px;padding:10px 12px}
+.cols-1 .srk-q input.other{height:44px;font-size:16px}
 .srp.cols-1 .srk-stop{height:44px}
 .srp.cols-1 .srk-more{width:44px;height:40px;margin:-8px -10px -8px 0}
 .srp.cols-1 .srk-linkish{padding:10px 0;margin:-10px 0}

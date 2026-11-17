@@ -12,26 +12,33 @@
 //     only the first sign: a change counts when the transcript ends with a message this bridge did not see.
 //   - "Allow for this session" rules are kept with the session for as long as the bridge runs, and given to every
 //     query opened for it again (they would be lost with the Claude Code process that was told them).
-//   - A permission prompt waits under the bridge's own approval id until a client answers it or the turn ends.
+//   - A permission prompt waits under the bridge's own approval id until a client answers it or the turn ends. So do
+//     Claude's questions (AskUserQuestion, answered with `question/answer`) and an MCP server's requests for input.
 import { spawn, type ChildProcess } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import type { NativeState } from '../src/lib/code-agents/adapter.ts';
 import type {
-  AgentStatus, ApprovalDecision, ApprovalRequest, EventBody, LimitWindow, SessionPicks, SessionTurn, TokenUsage, TurnStatus,
+  AgentStatus, ApprovalDecision, ApprovalRequest, EventBody, LimitWindow, QuestionAnswers, SessionPicks, SessionTurn, TokenUsage, TurnStatus,
 } from '../src/lib/code-agents/protocol.ts';
-import { isApprovalDecision, isExplicitMode, isPermissionMode, PERMISSION_MAPPING } from '../src/lib/code-agents/protocol.ts';
+import { formContent, isApprovalDecision, isExplicitMode, isPermissionMode, PERMISSION_MAPPING } from '../src/lib/code-agents/protocol.ts';
 import {
-  approvalFor, DENY_MESSAGE, historyTurns, isLimited, limitSummary, limitWindows, modelEntries, nativeSession, sessionRuleOptions, STOP_MESSAGE, TaskTracker, TurnBuilder,
+  approvalFor, askAnswers, DENY_MESSAGE, elicitationFor, historyTurns, isLimited, limitSummary, limitWindows, modelEntries, nativeSession, sessionRuleOptions, STOP_MESSAGE, TaskTracker, TurnBuilder,
 } from './mapping.ts';
 import type {
-  ClaudeSdk, SdkCanUseToolOptions, SdkMessage, SdkPermissionResult, SdkPermissionUpdate, SdkQuery, SdkQueryOptions, SdkUserInput,
+  ClaudeSdk, SdkCanUseToolOptions, SdkElicitationRequest, SdkElicitationResult, SdkMessage, SdkPermissionResult, SdkPermissionUpdate, SdkQuery, SdkQueryOptions, SdkUserInput,
 } from './sdk-types.ts';
 
-export const BRIDGE_VERSION = '0.2.0';
-/** 2: the `own` mode, `settings/own`, and signing in (`login/start`, `login/code`, `login/cancel`, `login/status`). */
-export const BRIDGE_PROTOCOL = 2;
+export const BRIDGE_VERSION = '0.3.0';
+/**
+ * 2: the `own` mode, `settings/own`, and signing in (`login/start`, `login/code`, `login/cancel`, `login/status`).
+ * 3: questions: Claude's AskUserQuestion and MCP servers' requests for input come as approvals of kind 'question'
+ * (with `questions`) or with a `link`, answered with `question/answer`; ExitPlanMode's plan as `plan`.
+ */
+export const BRIDGE_PROTOCOL = 3;
+/** Said when he leaves Claude's questions unanswered from the Journal. */
+const SKIP_MESSAGE = 'The user chose not to answer these questions from the Agentic Journal. Go on with your best judgment, or ask in your reply.';
 
 /** JSON-RPC error codes the bridge answers with. -32001 (busy, try again) is the transport's own. */
 export const BRIDGE_ERROR = {
@@ -166,6 +173,8 @@ interface Held {
   suggestions: SdkPermissionUpdate[];
   toolUseId: string | null;
   resolve(result: SdkPermissionResult): void;
+  /** An MCP server's request for input: what its form wants back, and how it is settled. */
+  elicitation?: { schema: unknown; done(result: SdkElicitationResult): void };
 }
 
 interface LiveTurn {
@@ -396,9 +405,10 @@ export function createBridge(deps: BridgeDeps): Bridge {
       ...await thinkingArgs(session.cwd),
       env: deps.env,
       canUseTool: (toolName, toolInput, opts) => canUseTool(session, toolName, toolInput, opts),
+      // Claude's questions (AskUserQuestion) reach the Journal through canUseTool and are answered there; so are an
+      // MCP server's forms and sign-in pages.
+      onElicitation: (request, opts) => onElicitation(session, request, opts),
       includePartialMessages: true,
-      // Its question form has nowhere to show in the Journal; Claude asks in its reply instead.
-      disallowedTools: ['AskUserQuestion'],
       stderr: (data) => { session.stderr = (session.stderr + data).slice(-2000); },
     };
     const q = sdk.query({ prompt: input, options });
@@ -559,6 +569,47 @@ export function createBridge(deps: BridgeDeps): Bridge {
     settle(session);
   });
 
+  /** An MCP server asks for input: held like a permission prompt, answered as a question (a form) or allowed (a page). */
+  const onElicitation = (session: Session, request: SdkElicitationRequest, opts: { signal: AbortSignal }): Promise<SdkElicitationResult> => new Promise((resolve) => {
+    const turn = ensureTurn(session, session.query);
+    const id = `ce${Date.now().toString(36)}${(approvalCounter++).toString(36)}`;
+    const asked: ApprovalRequest = { id, turnId: turn.id, itemId: null, ...elicitationFor(request), at: Date.now() };
+    let settled = false;
+    const done = (result: SdkElicitationResult) => { if (settled) return; settled = true; resolve(result); };
+    const held: Held = {
+      request: asked, toolName: `mcp:${request.serverName}`, input: {}, suggestions: [], toolUseId: null,
+      // Ended as a prompt is (the turn's end, Stop): declined, or cancelled when the turn is being stopped.
+      resolve: (result) => done(result.behavior === 'allow' ? { action: 'accept' } : { action: result.interrupt ? 'cancel' : 'decline' }),
+      elicitation: { schema: request.requestedSchema, done },
+    };
+    session.approvals.set(id, held);
+    opts.signal?.addEventListener('abort', () => {
+      if (!session.approvals.delete(id)) return;
+      done({ action: 'cancel' });
+      emit(session, { type: 'approval-resolved', approvalId: id, decision: null, by: 'elsewhere' });
+      settle(session);
+    }, { once: true });
+    emit(session, { type: 'approval-asked', approval: asked });
+    settle(session);
+  });
+
+  /** His answers to a question: Claude's (AskUserQuestion, allowed with them) or an MCP server's form (accepted with them). */
+  const answerQuestion = (approvalId: string, answers: QuestionAnswers) => {
+    for (const session of sessions.values()) {
+      const held = session.approvals.get(approvalId);
+      if (!held) continue;
+      const questions = held.request.questions;
+      if (!questions) throw new BridgeError(BRIDGE_ERROR.invalid, 'That is not a question.');
+      session.approvals.delete(approvalId);
+      if (held.elicitation) held.elicitation.done({ action: 'accept', content: formContent(held.elicitation.schema, questions, answers) });
+      else held.resolve({ behavior: 'allow', updatedInput: { ...held.input, answers: askAnswers(questions, answers) } });
+      emit(session, { type: 'approval-resolved', approvalId, decision: 'allow', by: 'journal' });
+      settle(session);
+      return;
+    }
+    throw new BridgeError(BRIDGE_ERROR.notFound, 'That question is no longer waiting.');
+  };
+
   const answer = (approvalId: string, decision: ApprovalDecision) => {
     for (const session of sessions.values()) {
       const held = session.approvals.get(approvalId);
@@ -586,7 +637,8 @@ export function createBridge(deps: BridgeDeps): Bridge {
       } else {
         if (held.toolUseId) turn?.builder.declined.add(held.toolUseId);
         if (decision === 'cancel' && turn) { turn.interrupting = true; turn.builder.stopping = true; }
-        held.resolve(decision === 'cancel' ? { behavior: 'deny', message: STOP_MESSAGE, interrupt: true } : { behavior: 'deny', message: DENY_MESSAGE });
+        const skipped = held.toolName === 'AskUserQuestion' ? SKIP_MESSAGE : DENY_MESSAGE;
+        held.resolve(decision === 'cancel' ? { behavior: 'deny', message: STOP_MESSAGE, interrupt: true } : { behavior: 'deny', message: skipped });
       }
       emit(session, { type: 'approval-resolved', approvalId, decision, by: 'journal' });
       settle(session);
@@ -862,6 +914,19 @@ export function createBridge(deps: BridgeDeps): Bridge {
       const decision = params.decision;
       if (!isApprovalDecision(decision)) throw new BridgeError(BRIDGE_ERROR.invalid, 'decision must be allow, allow-session, deny or cancel.');
       answer(needString(params, 'approvalId'), decision);
+      return {};
+    },
+
+    async 'question/answer'(_client, params) {
+      const raw = params.answers;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BridgeError(BRIDGE_ERROR.invalid, 'answers must be an object.');
+      const answers: QuestionAnswers = {};
+      for (const [id, a] of Object.entries(raw as Record<string, unknown>)) {
+        const picked = a && typeof a === 'object' && Array.isArray((a as { picked?: unknown }).picked) ? ((a as { picked: unknown[] }).picked).filter((p): p is string => typeof p === 'string') : [];
+        const other = a && typeof a === 'object' && typeof (a as { other?: unknown }).other === 'string' ? (a as { other: string }).other : undefined;
+        answers[id] = { picked, ...(other !== undefined ? { other } : {}) };
+      }
+      answerQuestion(needString(params, 'approvalId'), answers);
       return {};
     },
 

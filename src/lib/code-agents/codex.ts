@@ -12,12 +12,12 @@ import type {
   CodexFileChangeApprovalParams, CodexInitializeResult, CodexLoginCancelResult, CodexLoginStartResult, CodexModel, CodexModelListResult, CodexNotificationParams,
   CodexPermissionsApprovalParams, CodexRateLimitSnapshot, CodexRateLimitsReadResult, CodexSandboxMode, CodexSandboxPolicy,
   CodexThread, CodexThreadItem, CodexThreadListResult, CodexThreadResumeResult, CodexThreadStartResult, CodexThreadStatus,
-  CodexTurn, CodexTurnStartResult, CodexTurnSteerResult, CodexTurnsListResult, CodexUserInputParams,
+  CodexTurn, CodexTurnStartResult, CodexTurnSteerResult, CodexTurnsListResult, CodexUserInputParams, CodexUserInputQuestion, CodexPermissionProfile,
 } from './codex-types';
 import {
-  clipLine, clipOutput, isExplicitMode, PERMISSION_MAPPING, TITLE_MAX,
-  type AgentStatus, type ApprovalDecision, type ApprovalRequest, type ItemStatus, type LimitWindow, type ModelEntry,
-  type NativeSession, type OwnSettings, type RateLimitSummary, type SessionItem, type SessionPicks, type SessionTurn, type TurnStatus,
+  clipLine, clipOutput, formContent, formQuestions, isExplicitMode, PERMISSION_MAPPING, TITLE_MAX,
+  type AgentQuestion, type AgentStatus, type ApprovalDecision, type ApprovalRequest, type ItemStatus, type LimitWindow, type ModelEntry,
+  type NativeSession, type OwnSettings, type QuestionAnswers, type RateLimitSummary, type SessionItem, type SessionPicks, type SessionTurn, type TurnStatus,
 } from './protocol';
 import { expandHome, isRemote, probeDevice, REMOTE, sshCommand, sshPipe } from './ssh';
 import { connectRpc, RPC_METHOD_NOT_FOUND, RpcError, stdioJsonlTransport, unixSocketTransport, webSocketTransport, type MessageTransport, type RpcClient, type RpcId } from './transport';
@@ -159,22 +159,102 @@ export function unwrapShell(command: string): string {
   return out.trim() ? out : command;
 }
 
+// ---- Questions.
+
+/** The tool Codex asks a question with when it does not wait for the answer (its id is in the answer's message). */
+const ASYNC_QUESTION_TOOL = 'request_user_input_async';
+const REPLY_OPEN = '<send_user_message_question_reply>';
+const REPLY_CLOSE = '</send_user_message_question_reply>';
+/** What the Codex app says started the turn of such an answer (`turn_trigger` in its rollouts). */
+export const QUESTION_REPLY_TRIGGER = 'send_user_message_async_question';
+
+/** A question of request_user_input_async. Its options are labels only; a free-text answer is always allowed. */
+function asyncQuestion(q: { title: string; options: string[] | null }, index: number): AgentQuestion {
+  return { id: String(index), question: q.title ?? '', options: (q.options ?? []).filter((o) => typeof o === 'string' && o).map((label) => ({ label })), other: true };
+}
+
+/** A question of request_user_input (Plan mode), which waits for the answer. */
+export function userInputQuestion(q: CodexUserInputQuestion): AgentQuestion {
+  return {
+    id: q.id, question: q.question ?? '', ...(q.header ? { header: q.header } : {}),
+    options: (q.options ?? []).map((o) => ({ label: o.label, ...(o.description ? { description: o.description } : {}) })),
+    // With no options, the answer can only be written.
+    other: q.isOther === true || !(q.options ?? []).length,
+    ...(q.isSecret ? { secret: true } : {}),
+  };
+}
+
+/**
+ * His answer to an async question as the message the Codex app sends for it (seen in its rollouts, 0.169.0): each
+ * question named by `["request_user_input_async", <the question item's id>, <its place>]`, with its words and the answer.
+ */
+export function questionReplyText(itemId: string, entries: { questionId: string; question: string; answer: string }[]): string {
+  const list = entries.map((e) => ({ questionItemId: JSON.stringify([ASYNC_QUESTION_TOOL, itemId, Number(e.questionId) || 0]), question: e.question, answer: e.answer }));
+  return `${REPLY_OPEN}\n${JSON.stringify(list)}\n${REPLY_CLOSE}\n`;
+}
+
+/** The answers in such a message, or null when it is not one. */
+export function parseQuestionReply(text: string): { itemId: string; questionId: string; question: string; answer: string }[] | null {
+  const t = text.trim();
+  if (!t.startsWith(REPLY_OPEN) || !t.endsWith(REPLY_CLOSE)) return null;
+  try {
+    const list = JSON.parse(t.slice(REPLY_OPEN.length, t.length - REPLY_CLOSE.length).trim()) as unknown;
+    if (!Array.isArray(list)) return null;
+    const out: { itemId: string; questionId: string; question: string; answer: string }[] = [];
+    for (const entry of list as { questionItemId?: unknown; question?: unknown; answer?: unknown }[]) {
+      const ref = typeof entry?.questionItemId === 'string' ? JSON.parse(entry.questionItemId) as unknown : null;
+      if (!Array.isArray(ref) || typeof ref[1] !== 'string') continue;
+      out.push({ itemId: ref[1], questionId: String(ref[2] ?? 0), question: typeof entry.question === 'string' ? entry.question : '', answer: typeof entry.answer === 'string' ? entry.answer : '' });
+    }
+    return out.length ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What more a command asks to reach, in words. */
+function permissionsWords(profile: CodexPermissionProfile | null | undefined): string {
+  const parts: string[] = [];
+  if (profile?.network?.enabled) parts.push('Network access');
+  const fs = profile?.fileSystem;
+  if (fs?.write?.length) parts.push(`Write: ${fs.write.join(', ')}`);
+  if (fs?.read?.length) parts.push(`Read: ${fs.read.join(', ')}`);
+  if (!fs?.write?.length && !fs?.read?.length && fs?.entries?.length) parts.push(`Files: ${fs.entries.map((e) => (e && typeof e === 'object' && 'path' in e ? String((e as { path: unknown }).path) : JSON.stringify(e))).join(', ')}`);
+  return parts.join('\n');
+}
+
+/** What was asked, granted as asked: only the parts it asked for (a null part is left out). */
+function granted(profile: CodexPermissionProfile | null | undefined): Record<string, unknown> {
+  return {
+    ...(profile?.network ? { network: profile.network } : {}),
+    ...(profile?.fileSystem ? { fileSystem: profile.fileSystem } : {}),
+  };
+}
+
 /** One Codex thread item as a Journal item. Kinds Codex adds later become a short notice rather than being lost. */
 export function codexItem(item: CodexThreadItem): SessionItem {
   const base = { id: item.id, startedAt: item.startedAtMs ?? null, endedAt: item.completedAtMs ?? null };
   switch (item.type) {
-    case 'userMessage':
-      return {
-        ...base, kind: 'user',
-        text: (item.content ?? []).map((part) => {
-          if (part.type === 'text') return part.text;
-          if (part.type === 'localImage') return `[image: ${part.path}]`;
-          if (part.type === 'image') return '[image]';
-          if (part.type === 'skill' || part.type === 'mention') return `@${part.name}`;
-          return `[${part.type}]`;
-        }).join('\n'),
-      };
+    case 'userMessage': {
+      const text = (item.content ?? []).map((part) => {
+        if (part.type === 'text') return part.text;
+        if (part.type === 'localImage') return `[image: ${part.path}]`;
+        if (part.type === 'image') return '[image]';
+        if (part.type === 'skill' || part.type === 'mention') return `@${part.name}`;
+        return `[${part.type}]`;
+      }).join('\n');
+      // His answer to a question Codex asked without waiting: shown as the answer, tied to the question.
+      const reply = parseQuestionReply(text);
+      if (reply) return { ...base, kind: 'user', text: reply.map((r) => r.answer).join('\n'), answers: reply.map(({ itemId, questionId, answer }) => ({ itemId, questionId, answer })) };
+      return { ...base, kind: 'user', text };
+    }
     case 'agentMessage':
+      // A question asked with request_user_input_async: Codex goes on (or ends the turn) without waiting, and the
+      // answer comes as his next message. Its `text` is the same question as plain text (the question, then a bullet
+      // per option), for a client that cannot show it.
+      if (item.delivery === 'async' && item.questions?.length) {
+        return { ...base, kind: 'question', via: 'reply', questions: item.questions.map(asyncQuestion), text: item.text ?? '', answers: null, status: 'done' };
+      }
       return { ...base, kind: 'agent', text: item.text ?? '' };
     case 'reasoning':
       return { ...base, kind: 'reasoning', text: (item.summary?.length ? item.summary : item.content ?? []).join('\n\n') };
@@ -334,12 +414,19 @@ const policyWord = (policy: CodexAskForApproval | null | undefined): string | nu
 
 const CODEX_DECISION: Record<ApprovalDecision, CodexApprovalDecision> = { allow: 'accept', 'allow-session': 'acceptForSession', deny: 'decline', cancel: 'cancel' };
 
-interface HeldApproval { rpcId: RpcId; method: string; threadId: string }
+interface HeldApproval {
+  rpcId: RpcId; method: string; threadId: string; turnId: string | null;
+  questions?: AgentQuestion[];       // a question (request_user_input, an MCP form)
+  schema?: unknown;                  // an MCP form's own schema, for the values it wants back
+  itemId?: string;                   // the question's item in the log, ended with his answer
+  askedAt?: number;                  // when it was asked (ms): the item's start
+  permissions?: CodexPermissionProfile | null;
+}
 /**
  * What a thread runs with, as Codex last said (thread/start, thread/resume) or as the Journal last sent it: its
  * model, effort, approval policy and sandbox, and its folder (for config.toml's project layers).
  */
-interface Applied { model: string | undefined; effort: string | undefined; policy: CodexPolicy | undefined; cwd: string | undefined }
+interface Applied { model: string | undefined; effort: string | undefined; policy: CodexPolicy | undefined; cwd: string | undefined; collab?: string | undefined }
 type OwnConfig = { policy: CodexPolicy | undefined; own: OwnSettings; workspace: WorkspaceWrite | null };
 
 let approvalCounter = 0;
@@ -362,11 +449,17 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
   const ownCache = new Map<string, { at: number; config: OwnConfig }>();   // folder ('' for none) → config.toml's permissions
   const logins = new Set<string>();                       // sign-ins started on this connection, not ended yet
 
-  const askApproval = (rpcId: RpcId, method: string, threadId: string, approval: Omit<ApprovalRequest, 'id' | 'at'>) => {
+  const askApproval = (rpcId: RpcId, method: string, threadId: string, approval: Omit<ApprovalRequest, 'id' | 'at'>, extra: Partial<HeldApproval> = {}) => {
     const id = `cx${Date.now().toString(36)}${(approvalCounter++).toString(36)}`;
-    approvals.set(id, { rpcId, method, threadId });
+    approvals.set(id, { rpcId, method, threadId, turnId: approval.turnId, ...extra });
     byRpc.set(String(rpcId), id);
     sink.event(threadId, { type: 'approval-asked', approval: { ...approval, id, at: Date.now() } });
+  };
+
+  /** A waiting question's item in the log, ended: with his answers, or settled elsewhere (answers unknown), or declined. */
+  const endQuestion = (held: HeldApproval, answers: QuestionAnswers | null, status: ItemStatus) => {
+    if (!held.itemId || !held.questions || !held.turnId) return;
+    sink.event(held.threadId, { type: 'item-completed', turnId: held.turnId, item: { id: held.itemId, kind: 'question', via: 'ask', questions: held.questions, text: held.questions.map((q) => q.question).join('\n'), answers, status, startedAt: held.askedAt ?? null, endedAt: Date.now() } });
   };
 
   const onRequest = (rpc: RpcClient, id: RpcId, method: string, raw: unknown) => {
@@ -399,20 +492,49 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
         return;
       }
       case 'item/permissions/requestApproval': {
+        // More access for a command (network, folders outside the sandbox): granted as asked, for the turn or the session.
         const q = p as unknown as CodexPermissionsApprovalParams;
-        askApproval(id, method, q.threadId, { turnId: q.turnId ?? null, itemId: q.itemId ?? null, kind: 'other', title: 'Codex asks for more permissions', ...(q.reason ? { detail: q.reason } : {}), ...(q.cwd ? { cwd: q.cwd } : {}), decisions: ['deny'], elsewhere: true });
+        const wants = permissionsWords(q.permissions);
+        askApproval(id, method, q.threadId, {
+          turnId: q.turnId ?? null, itemId: q.itemId ?? null, kind: 'other', title: 'Codex asks for more access',
+          ...([q.reason, wants].filter(Boolean).length ? { detail: [q.reason, wants].filter(Boolean).join('\n\n') } : {}), ...(q.cwd ? { cwd: q.cwd } : {}),
+          decisions: ['allow', 'allow-session', 'deny', 'cancel'],
+        }, { permissions: q.permissions ?? null });
         return;
       }
       case 'item/tool/requestUserInput': {
+        // request_user_input, offered to the model in Plan mode only: it waits for the answer.
         const q = p as unknown as CodexUserInputParams;
-        askApproval(id, method, q.threadId, { turnId: q.turnId ?? null, itemId: q.itemId ?? null, kind: 'tool', title: 'Codex has a question for you', detail: (q.questions ?? []).map((x) => x.question).join('\n'), decisions: ['cancel'], elsewhere: true });
+        const questions = (q.questions ?? []).map(userInputQuestion);
+        const itemId = `ask-${q.itemId ?? String(id)}`;
+        const turnId = q.turnId ?? null;
+        // The question stays in the turn as an item, so what he answered is there to see after it is settled.
+        const askedAt = Date.now();
+        if (turnId) sink.event(q.threadId, { type: 'item-started', turnId, item: { id: itemId, kind: 'question', via: 'ask', questions, text: questions.map((x) => x.question).join('\n'), answers: null, status: 'running', startedAt: askedAt, endedAt: null } });
+        askApproval(id, method, q.threadId, {
+          turnId, itemId, kind: 'question', title: clipLine(questions[0]?.question || questions[0]?.header || 'Codex has a question for you', 120),
+          questions, decisions: ['deny', 'cancel'],
+        }, { questions, itemId, askedAt });
         return;
       }
       case 'mcpServer/elicitation/request': {
+        // An MCP server asks for something: a form (as questions), or a page to open (a sign-in).
         const q = p as unknown as CodexElicitationParams;
-        askApproval(id, method, q.threadId, { turnId: q.turnId ?? null, itemId: null, kind: 'tool', title: `${q.serverName} asks for input`, ...(q.message ? { detail: q.message } : {}), decisions: ['deny', 'cancel'], elsewhere: true });
+        const questions = q.mode === 'url' ? null : formQuestions(q.requestedSchema);
+        const base = { turnId: q.turnId ?? null, itemId: null, ...(q.message ? { detail: q.message } : {}) };
+        if (q.mode === 'url' && q.url) {
+          askApproval(id, method, q.threadId, { ...base, kind: 'other', title: `${q.serverName} asks you to open a page`, link: q.url, decisions: ['allow', 'deny', 'cancel'] });
+        } else if (questions) {
+          askApproval(id, method, q.threadId, { ...base, kind: 'question', title: `${q.serverName} asks for input`, questions, decisions: ['deny', 'cancel'] }, { questions, schema: q.requestedSchema });
+        } else {
+          askApproval(id, method, q.threadId, { ...base, kind: 'tool', title: `${q.serverName} asks for input`, decisions: ['deny', 'cancel'], elsewhere: true });
+        }
         return;
       }
+      case 'currentTime/read':
+        // The experimental API asks the client for the time (a turn's clock).
+        try { rpc.respond(id, { currentTimeAt: Math.floor(Date.now() / 1000) }); } catch { /* the connection is gone */ }
+        return;
       case 'execCommandApproval':
       case 'applyPatchApproval': {
         // The old protocol's approvals; v2 threads use the ones above. Shown, and only declinable here.
@@ -524,6 +646,7 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
         byRpc.delete(String(q.requestId));
         // One answered here is gone from the list already: this one the desktop app (or Codex) settled.
         sink.event(held.threadId, { type: 'approval-resolved', approvalId, decision: null, by: 'elsewhere' });
+        endQuestion(held, null, 'done');
         return;
       }
       case 'account/rateLimits/updated': {
@@ -569,7 +692,9 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
       next.onNotification(onNotification);
       next.onRequest((id, method, params) => onRequest(next, id, method, params));
       try {
-        const init = await next.request<CodexInitializeResult>('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: false } }, { timeoutMs: 10_000 });
+        // The experimental API: Codex's own apps use it, and without it a thread cannot be put in Plan mode, the one
+        // mode whose model is offered request_user_input (the question that waits for its answer).
+        const init = await next.request<CodexInitializeResult>('initialize', { clientInfo: CLIENT_INFO, capabilities: { experimentalApi: true } }, { timeoutMs: 10_000 });
         version = /\/(\d+\.\d+\.\d+)/.exec(init?.userAgent ?? '')?.[1];
         next.notify('initialized', {});
       } catch (error) {
@@ -637,7 +762,11 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
     joined.add(threadId);
     // What the thread runs with now, in Codex's own record: its last turn's model, effort, approval policy and sandbox
     // (a turn's picks stay with the thread, and the desktop app may have run one since).
-    applied.set(threadId, { model: answer.model || undefined, effort: answer.reasoningEffort || undefined, policy: policyOf(answer.approvalPolicy, answer.sandbox), cwd: answer.thread?.cwd || undefined });
+    applied.set(threadId, {
+      model: answer.model || undefined, effort: answer.reasoningEffort || undefined, policy: policyOf(answer.approvalPolicy, answer.sandbox), cwd: answer.thread?.cwd || undefined,
+      // Its collaboration mode (Plan or Default), which the experimental API reports; unknown from an older Codex.
+      collab: typeof answer.collaborationMode?.mode === 'string' ? answer.collaborationMode.mode : undefined,
+    });
     return answer;
   };
 
@@ -738,11 +867,11 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
       return { turns: (page?.data ?? []).map(codexTurn).reverse(), older: page?.nextCursor ?? null };
     },
 
-    async send(sessionId, text, picks: SessionPicks) {
+    async send(sessionId, text, picks: SessionPicks, options) {
       if (!joined.has(sessionId)) await join(sessionId);
       const c = await rpc();
       const had: Applied = applied.get(sessionId) ?? { model: undefined, effort: undefined, policy: undefined, cwd: undefined };
-      const params: Record<string, unknown> = { threadId: sessionId, input: [{ type: 'text', text, text_elements: [] }] };
+      const params: Record<string, unknown> = { threadId: sessionId, input: [{ type: 'text', text, text_elements: [] }], ...(options?.trigger ? { turnTrigger: options.trigger } : {}) };
       // Codex keeps a turn's overrides for the turns after it, so what the thread runs with is said whenever it is
       // not what he picked. No pick means Codex's default (config.toml's, as the picker names it), not whatever an
       // earlier pick left on the thread: saying nothing would keep that.
@@ -766,8 +895,16 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
         params.approvalPolicy = target.approvalPolicy;
         params.sandboxPolicy = sandboxPolicy(target.sandbox, workspace);
       }
+      // "Plan only" is Codex's own Plan mode too (a collaboration mode, kept for the turns after it, like the rest):
+      // there Codex plans before it acts and may ask him questions it waits on. Any other pick takes a thread the
+      // Journal or the Codex app left in Plan mode back to Default. The mode names the model and effort it runs with.
+      const collab = picks.mode === 'plan' ? 'plan' : 'default';
+      const collabModel = model ?? had.model;
+      if (collabModel && collab !== had.collab && (collab === 'plan' || had.collab === 'plan')) {
+        params.collaborationMode = { mode: collab, settings: { model: collabModel, reasoning_effort: effort ?? had.effort ?? null, developer_instructions: null } };
+      }
       const answer = await c.request<CodexTurnStartResult>('turn/start', params);
-      applied.set(sessionId, { model: model ?? had.model, effort: effort ?? had.effort, policy: target ?? had.policy, cwd: had.cwd });
+      applied.set(sessionId, { model: model ?? had.model, effort: effort ?? had.effort, policy: target ?? had.policy, cwd: had.cwd, collab: params.collaborationMode ? collab : had.collab });
       return { turnId: answer.turn.id };
     },
 
@@ -801,13 +938,15 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
           result = { decision: CODEX_DECISION[decision] };
           break;
         case 'item/permissions/requestApproval':
-          result = { permissions: {}, scope: 'turn' };       // nothing granted
+          // Allowed: what it asked for, for this turn or the rest of the session. Otherwise nothing is granted.
+          result = decision === 'allow' || decision === 'allow-session' ? { permissions: granted(held.permissions), scope: decision === 'allow-session' ? 'session' : 'turn' } : { permissions: {}, scope: 'turn' };
           break;
         case 'item/tool/requestUserInput':
+          // Not answered: no answers (Codex goes on without them). "Skip and stop" stops the turn too, below.
           result = { answers: {} };
           break;
         case 'mcpServer/elicitation/request':
-          result = { action: decision === 'cancel' ? 'cancel' : 'decline', content: null, _meta: null };
+          result = { action: decision === 'cancel' ? 'cancel' : decision === 'allow' ? 'accept' : 'decline', content: null, _meta: null };
           break;
         default:
           result = { decision: decision === 'cancel' ? 'abort' : { denied: { rejection: 'Declined from the Agentic Journal.' } } };
@@ -819,6 +958,39 @@ export function createCodexAdapter(config: AdapterConfig): AgentAdapter {
         throw error;
       }
       sink.event(held.threadId, { type: 'approval-resolved', approvalId, decision, by: 'journal' });
+      if (held.questions) {
+        endQuestion(held, null, 'declined');
+        if (decision === 'cancel' && held.method === 'item/tool/requestUserInput' && held.turnId) {
+          await c.request('turn/interrupt', { threadId: held.threadId, turnId: held.turnId }).catch(() => undefined);
+        }
+      }
+    },
+
+    async answerQuestion(approvalId, answers) {
+      const held = approvals.get(approvalId);
+      if (!held) throw new ApprovalGoneError();
+      if (!held.questions) throw new Error('That is not a question.');
+      const c = client;
+      if (!c || c.closed) throw new Error('The connection it was asked on is gone.');
+      approvals.delete(approvalId);
+      byRpc.delete(String(held.rpcId));
+      const result = held.method === 'mcpServer/elicitation/request'
+        ? { action: 'accept', content: formContent(held.schema, held.questions, answers), _meta: null }
+        // request_user_input: each question's answers as words: the options chosen, then what he wrote.
+        : { answers: Object.fromEntries(held.questions.map((q) => [q.id, { answers: [...(answers[q.id]?.picked ?? []), ...(answers[q.id]?.other?.trim() ? [answers[q.id]!.other!.trim()] : [])] }])) };
+      try {
+        c.respond(held.rpcId, result);
+      } catch (error) {
+        sink.event(held.threadId, { type: 'approval-resolved', approvalId, decision: null, by: 'lost' });
+        throw error;
+      }
+      sink.event(held.threadId, { type: 'approval-resolved', approvalId, decision: 'allow', by: 'journal' });
+      // A secret answer is not kept in the log.
+      endQuestion(held, Object.fromEntries(held.questions.map((q) => [q.id, q.secret ? { picked: [], other: '••••' } : answers[q.id] ?? { picked: [] }])), 'done');
+    },
+
+    questionReply(itemId, entries) {
+      return { text: questionReplyText(itemId, entries), trigger: QUESTION_REPLY_TRIGGER };
     },
 
     async rename(sessionId, title) {

@@ -4,9 +4,9 @@
 // sky's count of a task's chats with every agent named. Pure, with no node imports: the browser and the server
 // (sunrise/load.ts) both use it.
 import {
-  AGENT_LABEL, applyEvent, clipLine,
-  type AgentKind, type AgentStatus, type ApprovalKind, type CodeSessionLink, type EventBody, type FileEdit, type OwnSettings, type PlaceChoice, type RateLimitSummary,
-  type SessionItem, type SessionState, type SessionSummary, type SessionTurn,
+  AGENT_LABEL, answerText, applyEvent, clipLine,
+  type AgentKind, type AgentQuestion, type AgentStatus, type ApprovalKind, type CodeSessionLink, type EventBody, type FileEdit, type OwnSettings, type PlaceChoice,
+  type QuestionAnswers, type RateLimitSummary, type SessionItem, type SessionState, type SessionSummary, type SessionTurn,
 } from './code-agents/protocol';
 import type { ChatsGlance, ChatsTalk, ChatThreadSummary } from './task-chat';
 
@@ -56,7 +56,7 @@ export function sessionPill(s: { state: SessionState; unread?: boolean }): { wor
   return { word: 'Idle', tone: 'idle' };
 }
 
-const ASK_WORDS: Record<ApprovalKind, string> = { command: 'approve a command', 'file-change': 'approve file changes', tool: 'answer a question', other: 'approve more access' };
+const ASK_WORDS: Record<ApprovalKind, string> = { command: 'approve a command', 'file-change': 'approve file changes', tool: 'answer a question', question: 'answer a question', other: 'approve more access' };
 
 /** What an approval asks, in a few words: its own title ("Run npm test"), else what kind of thing it is. */
 export function askingWords(asking: { kind: ApprovalKind; title: string } | null | undefined): string {
@@ -105,6 +105,7 @@ export const isStep = (item: SessionItem) => STEP_KINDS.has(item.kind) || (item.
 
 export type TurnBlock =
   | { type: 'user'; item: Extract<SessionItem, { kind: 'user' }> }
+  | { type: 'question'; item: Extract<SessionItem, { kind: 'question' }> }
   | { type: 'agent'; item: Extract<SessionItem, { kind: 'agent' }>; final: boolean }
   | { type: 'steps'; id: string; items: SessionItem[] }
   | { type: 'plan'; item: Extract<SessionItem, { kind: 'plan' }> }
@@ -126,6 +127,7 @@ export function turnBlocks(turn: Pick<SessionTurn, 'items'>): TurnBlock[] {
       continue;
     }
     if (item.kind === 'user') blocks.push({ type: 'user', item });
+    else if (item.kind === 'question') { if (item.questions.length) blocks.push({ type: 'question', item }); }
     else if (item.kind === 'agent') blocks.push({ type: 'agent', item, final: false });
     else if (item.kind === 'plan') blocks.push({ type: 'plan', item });
     else if (item.kind === 'notice') blocks.push({ type: 'notice', item });
@@ -377,6 +379,48 @@ export function applySessionEvent(turns: SessionTurn[], event: EventBody): Sessi
 export function runningTurn(turns: SessionTurn[]): SessionTurn | null {
   const last = turns.at(-1);
   return last && last.status === 'running' ? last : null;
+}
+
+// ---- Questions the agent asked.
+
+/** What the pane knows of the questions asked without waiting: his answers to each (by item), and which can still be answered. */
+export interface QuestionReplies {
+  answers: Map<string, QuestionAnswers>;
+  /** Asked without waiting, not answered, and nothing said after it: answerable from its card. */
+  open: Set<string>;
+}
+
+/**
+ * His answers to the questions an agent asked without waiting (Codex's async questions), read from the messages that
+ * answer them, and which of those questions are still open: not answered, with no message of his after it (once he
+ * writes something else, the question is behind him, as in the agent's own app).
+ */
+export function questionReplies(turns: SessionTurn[]): QuestionReplies {
+  const answers = new Map<string, QuestionAnswers>();
+  const asked: { id: string; questions: AgentQuestion[]; at: number }[] = [];
+  let lastUser = -1;
+  let at = 0;
+  for (const turn of turns) {
+    for (const item of turn.items) {
+      at += 1;
+      if (item.kind === 'question' && item.via === 'reply') asked.push({ id: item.id, questions: item.questions, at });
+      if (item.kind !== 'user') continue;
+      lastUser = at;
+      for (const a of item.answers ?? []) {
+        const question = asked.find((q) => q.id === a.itemId)?.questions.find((q) => q.id === a.questionId);
+        const mine = answers.get(a.itemId) ?? {};
+        mine[a.questionId] = question?.options.some((o) => o.label === a.answer) ? { picked: [a.answer] } : { picked: [], other: a.answer };
+        answers.set(a.itemId, mine);
+      }
+    }
+  }
+  const open = new Set(asked.filter((q) => !answers.has(q.id) && q.at > lastUser).map((q) => q.id));
+  return { answers, open };
+}
+
+/** His answers to a question asked without waiting, as the entries of the message that answers it (empty ones left out). */
+export function replyEntries(questions: AgentQuestion[], answers: QuestionAnswers): { questionId: string; question: string; answer: string }[] {
+  return questions.map((q) => ({ questionId: q.id, question: q.question, answer: answerText(answers[q.id]) })).filter((e) => e.answer);
 }
 
 // ---- The sky: every agent's chats about a task.

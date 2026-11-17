@@ -67,7 +67,7 @@ browser ──GET/POST /api/tasks/sessions──────┐
 Files: `src/lib/code-agents/{protocol,transport,adapter,codex-types,codex,claude,hub,store,places,first-turn,ssh}.ts`,
 `src/lib/proj-hosts.ts` (the proj registry: hosts, aliases, projects; plain node, the session-index CLI uses it too),
 `src/app/api/tasks/sessions/route.ts`, `src/app/api/tasks/sessions/stream/route.ts`. Tests:
-`scripts/code-agents-{transport,model,hub,routes,own,login,ssh}.test.ts` with the fake app server
+`scripts/code-agents-{transport,model,hub,routes,own,login,ssh,questions}.test.ts` with the fake app server
 `scripts/code-agents-fake-codex.ts` (its `REAL` holds message shapes recorded from the real daemon). Claude Code: `src/lib/code-agents/claude.ts` and `bridge/*.ts`; tests
 `scripts/code-agents-claude-{model,bridge,adapter}.test.ts` with the stand-in SDK `scripts/code-agents-fake-claude-sdk.ts`.
 
@@ -89,12 +89,14 @@ Pure, JSON-only, importable from the browser.
   | own | not sent (config.toml's) | not sent (config.toml's) | not given (settings' `defaultMode`) |
   | ask | untrusted | workspace-write | default |
   | auto-edit | on-request | workspace-write | acceptEdits |
-  | plan | on-request | read-only | plan |
+  | plan | on-request | read-only, and Plan mode (collaboration mode) | plan |
   | full | never | danger-full-access | bypassPermissions |
 
-  Codex has a real "plan" collaboration mode only in its experimental API (not enabled); `plan` here is a
-  read-only sandbox. An explicit mode goes on `thread/start` as `approvalPolicy` + `sandbox`, and on a later
-  `turn/start` (only when it changed) as `approvalPolicy` + `sandboxPolicy`. Checked live: both override
+  Codex's "plan" is its Plan collaboration mode (experimental API, on since 2026-11-17, see "Questions") on top of
+  a read-only sandbox: `turn/start` carries `collaborationMode {mode:'plan', settings:{model, reasoning_effort,
+  developer_instructions:null}}` when the thread is not in it, and any other pick takes a thread in Plan mode back
+  with `mode:'default'` (Codex keeps it for later turns, like the rest). An explicit mode goes on `thread/start` as
+  `approvalPolicy` + `sandbox`, and on a later `turn/start` (only when it changed) as `approvalPolicy` + `sandboxPolicy`. Checked live: both override
   config.toml (which says `never` / `danger-full-access`); each turn's `turn_context` in the rollout shows the mode sent.
 
   **`own`, the agent's own settings** (added 2026-11-17, now the default for new sessions of both agents). The
@@ -144,12 +146,21 @@ Pure, JSON-only, importable from the browser.
   `file-change {files: [{path, change: add|delete|update, movedTo?, diff}], status}` ·
   `tool {name, input (summary), result (summary), status}` (MCP, dynamic tools, sub-agents, image tools) ·
   `plan {text, steps: [{text, status: pending|running|done}], explanation?}` · `web-search {query, status}` ·
+  `question {via: reply|ask, questions: AgentQuestion[], text, answers?, status}` (see "Questions") ·
   `notice {level: info|warning|error, text}` (compaction, review mode, retries, kinds Codex adds later).
+  A `user` item may carry `answers: [{itemId, questionId, answer}]`: his reply to a question asked without waiting.
+- `AgentQuestion { id, header?, question, options: [{label, description?}], multi?, other?, secret?, required?,
+  input?: text|number|integer }`; `QuestionAnswers = { [questionId]: { picked: string[], other?: string } }`.
+  `answerText`, `answersComplete`, `formQuestions(schema)` and `formContent(schema, questions, answers)` (an MCP
+  form as questions and back) are in protocol.ts, shared by the Codex adapter and the bridge.
   `ItemStatus = running | done | failed | declined`.
 - `SessionTurn { id, status: running|done|interrupted|failed, items, error, limited?, startedAt, endedAt, diff? }`.
   `limited` = failed on the usage or rate limit.
-- `ApprovalRequest { id, turnId, itemId, kind: command|file-change|tool|other, title, command?, detail?, cwd?, files?,
-  decisions: ApprovalDecision[], elsewhere?, at }`, `ApprovalDecision = allow | allow-session | deny | cancel`.
+- `ApprovalRequest { id, turnId, itemId, kind: command|file-change|tool|question|other, title, command?, detail?, cwd?,
+  files?, decisions: ApprovalDecision[], elsewhere?, questions?, link?, plan?, at }`, `ApprovalDecision = allow |
+  allow-session | deny | cancel`. Kind `question` carries `questions` and is answered with the `answer` action; its
+  `decisions` (deny = Skip, cancel = Skip and stop) are how it may be left unanswered. `link`: a page he is asked to
+  open (an MCP sign-in; allow = "I've done it"). `plan`: a plan to approve (markdown; Claude's ExitPlanMode).
   `title` is one clipped line; `command` is a command approval's whole command as it will run (a heredoc with blank
   lines too), shown whole in the card's scrolling code block; `detail` is why it asks (Codex's reason, Claude's
   description and decision reason), never the command again.
@@ -161,7 +172,9 @@ Pure, JSON-only, importable from the browser.
 - `AgentLogin { id, agent, host, method: device-code|paste-code, state: starting|waiting|checking|done|failed|cancelled,
   url?, code?, error?, startedAt, endedAt? }`: one sign-in (see "Signing in").
 - `NativeSession { sessionId, title, preview, cwd, createdAt, updatedAt, source?, linkedTo? }`.
-- `CodeSessionLink` (stored) and `SessionSummary = link + {state, unread, approvals}` (listed).
+- `CodeSessionLink` (stored) and `SessionSummary = link + {state, unread, approvals}` (listed). A link also keeps
+  `answered` (the latest 20 questions Codex waited on, with his answers, secrets masked), since Codex's own history
+  leaves them out; the hub puts them back into the history it serves (`withAnswered`).
 
 ### Events
 
@@ -248,6 +261,12 @@ own host names (see "Strict same-origin").
 { "action": "steer", "taskId", "session", "text" }                       // → { turnId }; 409 when nothing runs
 { "action": "interrupt", "taskId", "session" }                           // → null; the turn ends with turn-completed interrupted
 { "action": "approve", "taskId", "session", "approvalId", "decision": "allow" | "allow-session" | "deny" | "cancel" }
+{ "action": "answer", "taskId", "session", "approvalId", "answers": { "<questionId>": { "picked": ["…"], "other": "…" } } }
+                                                                         // a question it waits on; 400 for an option it did not
+                                                                         // offer, two picks on a single choice, an unknown id
+{ "action": "reply", "taskId", "session", "itemId", "answers": [{ "questionId", "question", "answer" }] }
+                                                                         // a question asked without waiting: sent as the message its
+                                                                         // own app sends → { turnId } (into the running turn, if one runs)
 { "action": "adopt", "taskId", "agent", "sessionId", "host"?, "picks"? } // attach a native session → the link; 409 if on another task;
                                                                          // 400 for an unknown host, before the agent is asked anything;
                                                                          // another device's folder is kept as `~/…`
@@ -295,9 +314,11 @@ interface AgentAdapter {
   start({ cwd, picks, title }): Promise<{ sessionId, title }>;
   resume(sessionId): Promise<{ state: NativeState, turnId, title, cwd }>;   // joins: events for it reach this connection
   history(sessionId, cursor?, limit?): Promise<{ turns (oldest first), older }>;
-  send(sessionId, text, picks): Promise<{ turnId }>;
+  send(sessionId, text, picks, options?: { trigger? }): Promise<{ turnId }>;   // trigger: Codex's turnTrigger
   steer(sessionId, turnId, text); interrupt(sessionId, turnId);
-  answer(approvalId, decision); rename(sessionId, title); archive(sessionId);
+  answer(approvalId, decision); answerQuestion(approvalId, answers);
+  questionReply?(itemId, entries): { text, trigger? };                     // the message that answers an async question
+  rename(sessionId, title); archive(sessionId);
   ownSettings(cwd?): Promise<OwnSettings>;                                 // what `own` comes to there
   loginStart(): Promise<{ loginId, method, url, code? }>;                  // its end comes through sink.login
   loginCode?(loginId, code); loginCancel(loginId);                         // loginCode: paste-code agents only
@@ -371,8 +392,8 @@ enable --now agentic-journal-claude-bridge` (linger is on for `openclaw`). Not i
   transcript exists until the first turn), `resume` for an existing one; `pathToClaudeCodeExecutable` = the
   installed `claude`; `settingSources: ['user','project','local']`; `systemPrompt: {type:'preset',
   preset:'claude_code'}`; `permissionMode` from the mode, none for `own` (`allowDangerouslySkipPermissions` only for `full`);
-  `model` / `effort` when picked; `includePartialMessages: true`; `canUseTool`; `disallowedTools:
-  ['AskUserQuestion']` (its question form has nowhere to show; Claude asks in its reply); `env` (below);
+  `model` / `effort` when picked; `includePartialMessages: true`; `canUseTool` (AskUserQuestion comes through it,
+  see "Questions"); `onElicitation` (an MCP server's form or sign-in page); no tool is disallowed; `env` (below);
   `extraArgs: {'thinking-display': 'summarized'}` unless his settings say `showThinkingSummaries: false` (through the
   SDK, Claude Code asks for thinking without its text and consults that setting only in its terminal, so without the
   flag the pane had no thinking to show; the flag changes only whether the text comes, not whether or how much Claude
@@ -423,16 +444,21 @@ enable --now agentic-journal-claude-bridge` (linger is on for `openclaw`). Not i
 - **Models:** `supportedModels()` on a short query with `persistSession: false` that runs no turn (works signed
   out), cached 10 min. The `default` row is dropped; the model it resolves to is marked `isDefault`.
 
-### Bridge protocol v2
+### Bridge protocol v3
 
-v2 (2026-11-17) adds the `own` mode, `settings/own` and the `login/*` requests; the adapter refuses a bridge that
-answers another protocol ("Restart the bridge after a deploy"), so an old bridge never reads `own` as something else.
+v2 (2026-11-17) added the `own` mode, `settings/own` and the `login/*` requests. v3 (2026-11-17, evening) adds
+questions: Claude's AskUserQuestion and an MCP server's requests for input come as approvals of kind `question`
+(with `questions`) or with a `link`, answered with `question/answer`; ExitPlanMode's plan comes as `plan`. The adapter
+takes a bridge on 2 or 3 (a v2 bridge never asks a question: it still disallows AskUserQuestion) and refuses any
+other ("Restart the bridge after a deploy"), so an old bridge never reads `own` as something else. **The installed
+bridges need the new code:** restart `agentic-journal-claude-bridge` on this laptop after a deploy, and reinstall the
+Mac's with `scripts/install-claude-bridge.sh mac` (until then the Mac's Claude Code sessions work but cannot ask).
 
 JSON-RPC without `"jsonrpc"`, one JSON message per WebSocket text frame, on the unix socket.
 
 | client → bridge request | params | result |
 |---|---|---|
-| `initialize` | `{ clientInfo: {name, title, version} }` | `{ version, protocol: 2, claudeVersion, pid }` |
+| `initialize` | `{ clientInfo: {name, title, version} }` | `{ version, protocol: 3, claudeVersion, pid }` |
 | `status` | – | `AgentStatus` (`host` is the machine's name; the adapter puts its own) |
 | `models` | – | `{ models: ModelEntry[] }` |
 | `sessions/list` | `{ cwd, limit? }` | `{ sessions: NativeSession[] }`: what `claude --resume` lists there (`includeProgrammatic: false`), not archived, newest first |
@@ -443,6 +469,7 @@ JSON-RPC without `"jsonrpc"`, one JSON message per WebSocket text frame, on the 
 | `turn/steer` | `{ sessionId, turnId, text }` | `{ turnId }` (the running turn's); his text is a user item in it |
 | `turn/interrupt` | `{ sessionId, turnId? }` | `{}` |
 | `approval/answer` | `{ approvalId, decision }` | `{}` |
+| `question/answer` | `{ approvalId, answers: { [questionId]: {picked, other?} } }` | `{}`; AskUserQuestion is allowed with `answers` (question text → his answer, a multi-select's labels and his own words joined by ", "), an MCP form accepted with its content (`-32602` for an approval that is no question) |
 | `session/rename` | `{ sessionId, title }` | `{}` (`renameSession`, plus `title-changed`) |
 | `session/archive` | `{ sessionId }` | `{}` (`archiveSession`); refused while a turn runs |
 | `settings/own` | `{ cwd? }` | `{ permissionMode: string \| null }`: settings' `defaultMode` for that folder (see the mode table) |
@@ -465,6 +492,11 @@ other. A session not in memory is looked up with `getSessionInfo(id)` across all
 folder (it reads only the transcript's head, and a long first message pushes the folder out), the bridge reads
 the first transcript line that has `cwd` (`transcriptCwd`), the one place it reads a transcript itself.
 
+Questions: AskUserQuestion `deny` (Skip) → `{behavior:'deny', message: "The user chose not to answer these questions
+from the Agentic Journal. Go on with your best judgment, or ask in your reply."}`; `cancel` → deny with `interrupt`.
+An MCP elicitation: `allow` (a page) → `accept`, `deny` → `decline`, `cancel` → `cancel`; the turn's end or Stop
+cancels it, the SDK's abort signal settles it elsewhere.
+
 Answers: `allow` → `{behavior:'allow', updatedInput}`; `allow-session` → also `updatedPermissions` = Claude
 Code's `suggestions` with `destination: 'session'` (never written to a settings file; offered only when there
 are suggestions and no `suppressAlwaysAllowRule`); `deny` → `{behavior:'deny', message}`; `cancel` → deny with
@@ -484,7 +516,9 @@ it says `update`); `TodoWrite` → plan; the task list (`TaskCreate`, `TaskUpdat
 per turn, `tasks:<turn id>`, holding the whole list as it stands (`TaskTracker`: a task is numbered from its result,
 `{task:{id}}` live, "Task #N created successfully: …" in the transcript; one tracker spans a session's turns, read
 from the transcript when a session is first run by this bridge); the calls themselves, `TaskList`/`TaskGet` and
-`ToolSearch` are not items (Claude Code's own apps do not show them); `WebSearch`/`WebFetch` → web-search; others (`mcp__server__tool` shown
+`ToolSearch` are not items (Claude Code's own apps do not show them); `AskUserQuestion` → question (via `ask`; its
+answers from the tool's own `answers` live, from its result's words in history: `"<question>"="<answer>"`);
+`ExitPlanMode` → plan with the plan's markdown as its text; `WebSearch`/`WebFetch` → web-search; others (`mcp__server__tool` shown
 `server.tool`, `Task`/`Agent`, `Read`, `Grep`, `Skill` …) → tool with a short input and the result clipped.
 Results marked with the bridge's deny text or "doesn't want to proceed" → `declined`, except while the turn is
 being stopped (live) or when the transcript's "[Request interrupted…]" follows (history): Claude Code ends a tool cut
@@ -505,7 +539,8 @@ stretch the stopped turn to its time either). The running turn in a history answ
   frame; JSON-RPC 2.0 without `"jsonrpc"`). `codex app-server proxy` only pipes bytes to it, so a client speaks
   WebSocket through it. The `ws` package connects directly: `ws+unix://<socket>:/`. `ws` is now a dependency and
   is kept out of the server bundle (`serverExternalPackages` in `next.config.ts`).
-- Sequence: `initialize {clientInfo:{name:'agentic_journal',…}, capabilities:{experimentalApi:false}}` →
+- Sequence: `initialize {clientInfo:{name:'agentic_journal',…}, capabilities:{experimentalApi:true}}` (false until
+  2026-11-17; see "Questions") →
   notification `initialized` → `account/read {refreshToken:false}` (ChatGPT plus) → `thread/start {cwd,
   approvalPolicy, sandbox}` → `thread/name/set` → `turn/start {threadId, input:[{type:'text', text,
   text_elements:[]}]}` → notifications `thread/started`, `thread/name/updated`, `thread/status/changed`,
@@ -527,9 +562,10 @@ stretch the stopped turn to its time either). The running turn in a history answ
   but both are honoured: the declined command ends `declined` and the turn goes on, and a command allowed for the
   session was not asked again in a later turn. The Journal ignores the list and offers all four. A file-change
   approval has only `reason` and `grantRoot`; its files are on the `fileChange` item that comes just before, and the
-  adapter copies their paths onto the approval so a page read anew can name them.) Shown as "answer in the Codex app" and only declinable here:
-  `item/permissions/requestApproval` (declined as `{permissions:{}, scope:'turn'}`), `item/tool/requestUserInput`
-  (`{answers:{}}`), `mcpServer/elicitation/request` (`{action:'decline'|'cancel'}`), and the old
+  adapter copies their paths onto the approval so a page read anew can name them.) Answered here too since
+  2026-11-17 (see "Questions"): `item/tool/requestUserInput`, `mcpServer/elicitation/request` (forms and pages),
+  `item/permissions/requestApproval` (granted as asked, `scope` turn or session), `currentTime/read`. Shown as "answer
+  in the Codex app" and only declinable here: an MCP form the pane cannot ask for, and the old
   `execCommandApproval`/`applyPatchApproval`. Others (`item/tool/call`, auth refresh, attestation) get a
   method-not-found error. `serverRequest/resolved` for an approval the Journal did not answer → resolved
   `elsewhere`.
@@ -714,6 +750,111 @@ against the fakes.
   bridge with a stand-in `claude` script that behaves as above), including that no code, link or token reaches the
   data folder or any log.
 
+## Questions (added 2026-11-17, evening)
+
+**What he saw.** In a Codex session from a task's chats (laptop, OpenClaw workspace, "Your Codex settings"), Codex
+wanted his approval of a plan. The Codex app shows that as a multiple-choice question; the Journal showed a paragraph,
+a bullet list "Approve plan / Change plan / Cancel", and then Codex's "Choose Approve plan above to begin."
+
+**Why** (thread `01a1eb9c-5257-7da1-a043-0c67b2b867c7`, rollout of 2026-11-17 22:58 UTC, read-only). gpt-6.1-sol in
+Default mode has two question tools (its `additional_tools`): `request_user_input` ("only available in Plan mode";
+waits for the answer) and `request_user_input_async` ("returns immediately without ending the turn … any reply
+arrives asynchronously as a new user message"). It called the async one; the output was `{"accepted":true}` and the
+turn went on. The app server reports it as an ordinary `agentMessage` item (id = the call id) with `delivery: 'async'`
+and `questions: [{title, options: string[]}]`, its `text` being the same question as plain text (question, then a
+bullet per option). Both fields are in the stable v2 protocol (`AgentMessageDelivery`, `AsyncUserInputQuestion`), and
+`thread/turns/list` returns them in history. codex.ts read only `text`, so the pane drew the fallback text. Nothing
+was wrong with the capability flag for this one: the async tool is offered with `experimentalApi:false` too.
+
+**How the Codex app answers** (its rollouts of Nov 7, 10 and 11): a new turn whose only input is
+`<send_user_message_question_reply>\n[{"questionItemId":"[\"request_user_input_async\",\"<call id>\",<n>]","question":"…","answer":"…"}]\n</send_user_message_question_reply>\n`,
+with `turnTrigger: 'send_user_message_async_question'` (in the stable `turn/start` params; the rollout's
+`turn_trigger`). The Journal now sends exactly that (`questionReplyText`), and reads such a user message back as his
+answer (`parseQuestionReply`: the user item's text is the answer, `answers` names the question).
+
+**The blocking question.** `item/tool/requestUserInput {threadId, turnId, itemId, questions: [{id, header, question,
+isOther, isSecret, options: [{label, description}] | null}], isBlocking, autoResolutionMs}` → `{answers: {[id]:
+{answers: string[]}}}` (`ToolRequestUserInput*`, marked EXPERIMENTAL in both the stable and `--experimental` output of
+`generate-ts` for 0.169.0; no multi-select). The model gets the tool only in Plan mode, a collaboration mode, which
+only `turn/start`'s experimental `collaborationMode` sets (`collaborationMode/list`: Plan, Default). So the Journal now
+initializes with `experimentalApi: true` and sends Plan mode for the "Plan only" pick (see the mode table). Seen live:
+the questions came with options and `isOther: true`; the rollout keeps the call and its output
+(`{"answers":{"placement":{"answers":["Under the title"]},…}}`), but `thread/turns/list` returns no item for it, so
+the link keeps answered ones (`answered`, secrets masked, the latest 20) and the hub puts them back into history by
+time. With the experimental API the daemon may also ask `currentTime/read` (answered with the time).
+
+**What the Journal does now.**
+- Codex async question → a `question` item (via `reply`), drawn as a card in the log; while open (not answered, nothing
+  he wrote after it) its options are buttons, with "Or write your own answer…" (the tool always allows one), and
+  **Send answer** posts `reply`; the hub sends the Codex app's message as a new turn, or steers the running turn with
+  it. Answered, the card ticks what he chose; his message reads "You · answered" with the answer.
+- Codex request_user_input, Claude Code's AskUserQuestion and an MCP server's form → an approval of kind `question`,
+  pinned above the composer (like an approval; the session reads Needs you): each question with its chip, its options
+  (radio, or checkboxes for Claude's multi-select) and descriptions, a free-text box where allowed (a password box
+  for a secret), **Answer**, **Skip** (deny) and **Skip and stop** (cancel). Several questions are answered together.
+  The log shows the question as an item ("asks you a question: answer it below"), and after it the answered card.
+- Claude Code: AskUserQuestion is no longer disallowed. The real CLI (2.1.326, own mode = default) calls `canUseTool`
+  for it; the bridge holds it and answers `{behavior:'allow', updatedInput: {...input, answers: {<question>: <answer>}}}`
+  (a multi-select's labels joined by ", "; his own words as the answer, after any picks), as sdk-tools.d.ts
+  `AskUserQuestionInput.answers` says. Skip denies with words Claude reads ("chose not to answer … use your best
+  judgment"). MCP elicitations come through `onElicitation`.
+- MCP forms: `formQuestions` maps a flat schema (string, number, integer, boolean, enum, oneOf, enumNames, array of
+  enums) to questions and `formContent` maps his answers back to typed values; a form with any other field is shown
+  as "answer it in the app" (decline only). A URL elicitation is an approval with `link` ("I've done it" = accept).
+- Codex `item/permissions/requestApproval` is answerable: Allow grants what it asked for the turn, Allow for this
+  session for the session (`{permissions, scope}`); its detail says what (network, read and write folders).
+
+**Live check (2026-11-17, throwaway `next dev` on 3111, copied data, `OPENCLAW_WORKSPACE_DIR=…/journal-spike`, a
+scratch bridge on its own socket; real Chrome and WebKit iPhone 15).** Codex 0.169.1 daemon, gpt-6.1-sol, low effort:
+- Async (own mode), thread `01a1ebd4-f1ea-7dd1-ae56-ea1e9646548b`: Codex asked "Which greeting should the README of
+  this folder open with?" (Hello / Hi there / Good morning) as `request_user_input_async`; the pane drew the card; "Hi
+  there" + Send answer started a turn whose rollout says `turn_trigger: send_user_message_async_question` and whose input
+  is the Codex app's reply shape; Codex answered "You chose “Hi there.”"; after a reload the card read answered with
+  Hi there ticked. Thread `01a1ebdd-d3a7-7943-af84-934500b2ab7b` ("Phone check", Green) the same at iPhone size.
+- Plan mode, thread `01a1ebd6-ad13-7371-ad4e-672adea59e11`: the rollout's `collaboration_mode` was `plan`; two
+  questions in one request_user_input (Greeting, Placement), answered from the pinned card; Codex's plan used both.
+  A second turn asked about an emoji ("A sun"): after a reload the answered card is in its turn, before the plan.
+- Claude Code (Haiku 5.5, low, own), session `3f258494-98c9-44d4-a4ec-49011f2cb9e3`: AskUserQuestion with a single
+  and a multi-select question; Good morning + An emoji + My name answered from the pinned card; Claude: "You want the
+  greeting "Good morning", with an emoji and your name added."; after a reload the answers read back from the
+  transcript. A second session, `71c2f1c3-f602-4672-a20d-3cc93bd6d907` ("Phone check": Cherry, then Leek), at iPhone size.
+- Not checked live: Skip / Skip and stop against the real agents (fakes only), MCP elicitations (no MCP server here
+  asks), permissions requests, a secret question, the Codex desktop app showing the Journal's answer.
+
+**Audit: what each agent can ask, and what the Journal does with it** (Codex `generate-ts` 0.169.0 stable and
+`--experimental`; SDK 0.3.325 `BUILTIN_TOOL_NAMES` and options):
+
+| request / item / tool | before | now |
+|---|---|---|
+| Codex `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` | answered | unchanged |
+| Codex `item/tool/requestUserInput` (Plan mode) | "answer in the Codex app", decline only | question card, answered |
+| Codex `agentMessage` with `delivery: async` (request_user_input_async) | plain text | question card, answered by reply |
+| Codex `mcpServer/elicitation/request` | decline only | form → question card; url → link; other forms decline only |
+| Codex `item/permissions/requestApproval` | decline only | allow (turn) / allow for session / deny |
+| Codex `currentTime/read` (experimental) | – | answered with the time |
+| Codex `item/tool/call` | method not found | left: only for dynamic tools a client registers; the Journal registers none |
+| Codex `account/chatgptAuthTokens/refresh` | method not found | left: only for clients that hold ChatGPT tokens themselves |
+| Codex `attestation/generate` | method not found | left: sent only to a client that declares `requestAttestation` |
+| Codex `execCommandApproval`, `applyPatchApproval` (v1) | decline only | left: v2 threads do not send them |
+| Codex items: all 19 `ThreadItem` types | mapped | unchanged (an `agentMessage` may now be a question) |
+| Codex notifications left unread | – | `item/reasoning/textDelta`, `item/mcpToolCall/progress`, `item/fileChange/outputDelta`, `model/rerouted`, `thread/*` housekeeping, realtime, hooks, guardian and Windows sandbox: no item to show or not this pane's |
+| Claude `AskUserQuestion` | disallowed | question card, answered |
+| Claude `ExitPlanMode` | approval, plan as plain text | the plan as a plan item (markdown) and in the approval ("Approve the plan" / "Keep planning") |
+| Claude `EnterPlanMode` | "Use EnterPlanMode" | approval titled "Claude wants to plan first, in plan mode" |
+| Claude MCP elicitation (`onElicitation`) | declined by the SDK | form → question card; url → link |
+| Claude `TodoWrite`, `TaskCreate`/`TaskUpdate` | plan item | unchanged |
+| Claude `onUserDialog` / `supportedDialogKinds` (`refusal_fallback_prompt`) | none declared | left: the CLI falls back to its no-dialog behaviour; no kind is documented that the pane should draw |
+| Claude `SendUserMessage`, `SendUserFile`, `PushNotification`, `Monitor`, cron and worktree tools | tool rows | left as tool rows: not offered to SDK sessions here, or nothing to answer |
+
+**"That did not go through."** The pane said this whenever an answer had no JSON `error` (`call` in
+useCodeSessions.ts): the Journal's own errors always carry one, so it came from something in front of it. At
+18:00:59 the production deploy stopped `agentic-journal.service` (`deploy-production.sh` started 18:00:50, `next build`
+18:01:29), and from 18:01:21 Tailscale serve logged `proxy error: dial tcp 127.0.0.1:3000: connect: connection
+refused` (a 502 with no body); the Journal logged nothing about the send and the thread has no turn after 22:58:59
+UTC (17:58:59), so his message never reached Codex. Now a 502/503/504 without the Journal's JSON reads "The Journal
+isn't answering just now (it may be restarting after a deploy). Nothing was sent; try again in a moment." (draft
+kept), and a failed fetch says the Journal could not be reached.
+
 ## Stage 0: Claude Code findings
 
 From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/claude`) and the Stage 2 live checks.
@@ -770,9 +911,9 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
 
 ## Open items
 
-- Codex, checked live (see above): deltas, approvals, steer, interrupt, diffs, usage, per-turn sandbox. Still not
-  seen: `turn/plan/updated` (needs the experimental API or another model), `item/permissions/requestApproval`,
-  `item/tool/requestUserInput`, MCP elicitations.
+- Codex, checked live (see above): deltas, approvals, steer, interrupt, diffs, usage, per-turn sandbox, async
+  questions, request_user_input in Plan mode. Still not seen: `turn/plan/updated` (the experimental API is on now;
+  not seen yet), `item/permissions/requestApproval`, MCP elicitations (tested against the fakes only).
 - Codex's sandbox does not work on this laptop (see the mode table): bubblewrap is blocked by AppArmor's
   unprivileged-userns restriction, so "Edit freely" still asks before each command and edit, and in "Plan only" an
   escalation he allows runs with no sandbox at all. The pane does not say so: there is no cheap, sure way to tell
@@ -785,7 +926,8 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
   until then the deploy gate trusts `workingSince` for up to 3 h.
 - Model "default" means Codex's default (config.toml), not whatever the thread last ran: a session adopted from the
   Codex app that ran another model moves to the default on its first turn from the Journal unless a model is picked.
-- Codex `plan` mode is approximated by a read-only sandbox until the experimental collaboration mode is used.
+- Codex `plan` mode is Codex's Plan collaboration mode now. The Codex app's "Implement this plan" button has no
+  counterpart: he picks another mode and asks it to go ahead.
 - The `serverExternalPackages: ['ws']` production build has not been tried on its own (production was deployed with
   it in b3642ca, and its stream and Codex turns work there: see "The stream through Tailscale").
 - Claude Code, after the live check: a real `claude auth login` completed from the pane, `compact_boundary` and
@@ -802,6 +944,10 @@ From the Stage 0 spike (2026-11-16, SDK 0.3.325, CLI 2.1.302 at `~/.local/bin/cl
 - Claude bridge: not installed as a service yet; `bridge/` needs `npm install --omit=optional` on each device. A
   bridge restart ends running turns as failed (history shows the partial turn as done). A session open in a
   Claude app at the same moment is not detected (see "Changed elsewhere").
+- Questions (see "Questions"): a session whose last word is an open async question reads Idle in the list (it is no
+  approval; the list's line says "Asks: …" until the agent's next message), as Codex's own state does. Skip / Skip and
+  stop, MCP elicitations, permissions requests and a secret question were checked against the fakes only. The installed
+  Claude bridges need the v3 code (this laptop: restart the service after a deploy; the Mac: reinstall).
 - Other devices: see the open items at the end of "Other devices".
 
 ## Chat pane (Stage 3)
@@ -815,7 +961,11 @@ errors it polls the detail instead). Components: `CodeRows.tsx` (list row, folde
 who is signed in, place, picks, first message, "Continue an existing session"), `SignIn.tsx` (signing in to an
 agent on this device), `SessionPane.tsx` (head, log, approvals pinned above
 the composer one at a time with "N more wait after this one", so the log keeps its room; Stop/steer, picks, which sit
-in one row on a phone), `SessionItems.tsx` (items as blocks: steps grouped, diffs, plan), `styles.ts`.
+in one row on a phone), `SessionItems.tsx` (items as blocks: steps grouped, diffs, plan, question cards), `styles.ts`.
+A question it waits on is pinned like an approval (`QuestionForm`: options as radio or checkbox rows with their
+descriptions, "Or write your own answer…", Answer / Skip / Skip and stop; it may take up to 62% of the pane and
+shrinks before the composer would be pushed off); a question asked without waiting is a card in the log, answerable
+there while it is open (`questionReplies`: not answered and nothing he wrote after it), then shows what he chose.
 
 An agent's markdown never loads an image: an image shows as a link with its alt text (a reply could otherwise send
 what it read to any server through an image's address, past Codex's own network block). A link opens in a new tab
@@ -1016,7 +1166,7 @@ there with that device's own Codex or Claude Code, its login and its transcripts
   end with it), except when `CODEX_HOME` is in Windows' folder under WSL (`/mnt/c/…`): then nothing is started and it
   says so (see the PC below).
 - **Claude Code:** `ssh <alias> <bridge>/run proxy` (the bridge's own `proxy` mode, byte for byte to its socket), so
-  the same bridge protocol v2 over WebSocket. The look tells apart "not installed" (install it with
+  the same bridge protocol (v3 now) over WebSocket. The look tells apart "not installed" (install it with
   `scripts/install-claude-bridge.sh <host>`), "installed, not running" (start its service) and running. The bridge's
   "on this device" in its reasons becomes the device's name.
 - **Folders:** another device's place is kept as its proj file writes it (`~/projects/x`); the adapters expand `~`
