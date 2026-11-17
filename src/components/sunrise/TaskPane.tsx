@@ -35,6 +35,9 @@ import { BROWSER_SURFACE_CSS, BrowserSurface, type OpenedTab } from './BrowserSu
 import { CHATS_CSS, ChatsPanel, MiniChat, useTaskChats } from './WorkspaceChats';
 import { FILE_SURFACE_CSS, FileSurface } from './FileSurface';
 import { SESSIONS_PANEL_CSS, TaskSessions } from './WorkspaceSessions';
+import { CODE_SESSIONS_CSS } from './code-sessions/styles';
+import { useCodeSessions } from './code-sessions/useCodeSessions';
+import { codeLinkOf } from '@/lib/code-sessions-ui';
 import { TASK_WORK_CSS, TaskWorkStrip, useTaskWork } from './TaskWorkStrip';
 
 const BRIEF_AND_WORK_CSS = `
@@ -561,7 +564,7 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
-export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + FILE_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS;
+export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + FILE_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS + CODE_SESSIONS_CSS;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
@@ -1355,7 +1358,8 @@ function readZooms(key: string): Record<string, number> {
 interface LayoutPrefs { brief?: boolean | undefined; chats?: boolean | undefined; briefW?: number | undefined; chatW?: number | undefined }
 const LAYOUT_KEY = 'sr-ws-layout';
 const BRIEF_W = { start: 290, min: 240, max: 440 } as const;
-const CHAT_W = { min: 360, max: 820 } as const;
+// The chats are wide enough for a coding session's diffs and command output; a width he dragged before still holds.
+const CHAT_W = { min: 360, max: 1100 } as const;
 const within = (value: number, lo: number, hi: number) => Math.round(Math.max(lo, Math.min(hi, value)));
 function readLayout(): LayoutPrefs {
   try {
@@ -1494,7 +1498,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   // always keeps room of its own.
   const pane = paneWidthFor(sky);
   const briefW = Math.min(prefs.briefW ?? BRIEF_W.start, Math.max(BRIEF_W.min, pane - 520 - (chatsOpen ? CHAT_W.min : 0)));
-  const chatW = Math.min(prefs.chatW ?? within(pane * 0.31, 400, 600), Math.max(320, pane - 520 - (briefOpen ? briefW : 0)));
+  const chatW = Math.min(prefs.chatW ?? within(pane * 0.35, 420, 720), Math.max(320, pane - 520 - (briefOpen ? briefW : 0)));
   const drag = (side: 'brief' | 'chats') => (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -1784,9 +1788,22 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
   }, [selected, pages, hasWork, filePage]);
   const chats = useTaskChats(taskId, phone ? tab === 'chat' : chatsOpen);
-  // Opened from the bubble under the task: that chat is the one showing.
-  const openChat = chats.open;
-  React.useEffect(() => { if (startThread) openChat(startThread); }, [startThread, openChat]);
+  // The task's Codex and Claude Code sessions, in the same list (an action card's workspace has none).
+  const code = useCodeSessions(taskId, phone ? tab === 'chat' : chatsOpen, !taskId.startsWith('card:'));
+  // Opened from the bubble under the task: that chat (or coding session) is the one showing.
+  // Only when the chat asked for changes: chats.open is a new function on every draw.
+  const openers = React.useRef({ chat: chats.open, session: code.open, closeSession: code.close });
+  openers.current = { chat: chats.open, session: code.open, closeSession: code.close };
+  React.useEffect(() => {
+    if (!startThread) return;
+    const linkId = codeLinkOf(startThread);
+    if (linkId) openers.current.session(linkId);
+    else {
+      // An open coding session would stay in front of the OpenClaw chat: it is closed first.
+      openers.current.closeSession();
+      openers.current.chat(startThread);
+    }
+  }, [startThread]);
   // What OpenClaw is doing about each surface, as far as the chats say: a chat whose last request was sent from
   // it has a turn out, or an answer he has not looked at. Nothing more is known, and nothing more is said.
   const activity = React.useMemo(() => {
@@ -1944,7 +1961,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     </button>
   );
   // The Chat tab says when a chat waits on him (OpenClaw answered and he has not looked) or has a turn out.
-  const chatBusy = chats.working > 0 || !!chats.thread?.pending;
+  const chatBusy = chats.working > 0 || !!chats.thread?.pending || code.working > 0;
+  const chatWaits = chats.waiting + code.waiting;
 
   return (
     <div ref={root} className={`srp ws cols-${cols} scene-${scene}${rest.length === 2 ? ' desk' : ''}${phone ? ` on-${tab}${keyboard ? ' kb' : ''}` : ` wide${briefOpen ? ' brief-on' : ''}${chatsOpen ? ' chats-on' : ''}`}`} style={{ '--a': hue.a, '--glow': hue.glow, '--sky': hue.sky } as React.CSSProperties}>
@@ -1977,9 +1995,9 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <span className="lbl">Work only</span><span aria-hidden="true">⤢</span>
           </button>
           <button type="button" className="srw-ico" aria-pressed={chatsOpen} onClick={() => showChats(!chatsOpen)} title="OpenClaw: what it waits on you for, and your chats about this task">
-            {waitsOnYou + chats.waiting > 0 ? <i className="srw-dot" aria-hidden="true" /> : chatBusy ? <i className="srw-dot working" aria-hidden="true" /> : null}
+            {waitsOnYou + chatWaits > 0 ? <i className="srw-dot" aria-hidden="true" /> : chatBusy ? <i className="srw-dot working" aria-hidden="true" /> : null}
             OpenClaw
-            {waitsOnYou + chats.waiting > 0 && <em className="waiting" role="img" aria-label={`${waitsOnYou + chats.waiting} waiting on you`}>{waitsOnYou + chats.waiting}</em>}
+            {waitsOnYou + chatWaits > 0 && <em className="waiting" role="img" aria-label={`${waitsOnYou + chatWaits} waiting on you`}>{waitsOnYou + chatWaits}</em>}
           </button>
           <button type="button" className="srw-ico" onClick={onClose} aria-label="Close">✕</button>
         </header>
@@ -2188,7 +2206,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
           )}
         </div>
         {!phone && live}
-        {!phone && !chatsOpen && <MiniChat chats={chats} about={about} onOpen={() => showChats(true)} />}
+        {!phone && !chatsOpen && <MiniChat chats={chats} code={code} about={about} onOpen={() => showChats(true)} />}
       </div>
       {!phone && chatsOpen && (
         <div className="srw-grip c" role="separator" aria-orientation="vertical" aria-label="Drag to make OpenClaw’s side wider or narrower. Double-click for its usual width."
@@ -2207,8 +2225,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                   )} />
               </div>
             )}
-            <ChatsPanel chats={chats} about={about} autoFocus={cols > 1} phone={phone} onShowSurface={showSurface} onClose={phone ? undefined : () => showChats(false)}
-              below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded} />} />
+            <ChatsPanel chats={chats} code={code} about={about} autoFocus={cols > 1} phone={phone} onShowSurface={showSurface} onClose={phone ? undefined : () => showChats(false)}
+              below={<TaskSessions taskId={taskId} chatKeys={chatKeys} ready={chats.loaded && code.loaded} codeSessions={code.sessions} onContinue={code.enabled ? (app, sessionId, host) => code.adopt(app, sessionId, host) : undefined} />} />
           </div>
         </aside>
       )}
@@ -2219,8 +2237,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
               {label}
               {id === 'brief' && waitsOnYou > 0 && <em role="img" aria-label={`OpenClaw waits on you for ${waitsOnYou}`}>{waitsOnYou}</em>}
-              {id === 'chat' && (chats.waiting > 0
-                ? <em role="img" aria-label={`${chats.waiting} waiting on you`}>{chats.waiting}</em>
+              {id === 'chat' && (chatWaits > 0
+                ? <em role="img" aria-label={`${chatWaits} waiting on you`}>{chatWaits}</em>
                 : chatBusy ? <i className="srw-dot working" role="img" aria-label="OpenClaw is working" /> : null)}
             </button>
           ))}

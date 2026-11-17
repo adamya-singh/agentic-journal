@@ -10,6 +10,8 @@ import { readHookWorkRecords } from '../hook-work/store';
 import { readAllChatThreads, settleStaleChatTurns } from '../brief-chat/store';
 import { syncChatThreadsSoon } from '../brief-chat/sync';
 import { chatsGlance, chatsTalk } from '@/lib/task-chat';
+import { readAllCodeSessions } from '@/lib/code-agents/store';
+import { skyChats, skyTalk } from '@/lib/code-sessions-ui';
 
 export type { SunriseData };
 
@@ -18,15 +20,17 @@ export function loadSunrise(now = new Date()): SunriseData {
   const horizon = loadHorizon();
   const ids = [...new Set([...horizon.holds, ...horizon.items, ...horizon.further, ...horizon.undated, ...horizon.wants].map((item) => item.id))];
   const forms: Record<string, FormSpec> = {};
-  // A task's form also says how many chats it has, and whether OpenClaw is waiting on him in one.
+  // A task's form also says how many chats it has, and whether OpenClaw (or a coding agent) is waiting on him in one.
   settleStaleChatTurns(now);
   const chats = readAllChatThreads();
   // What was said in those sessions outside the Journal is fetched behind this read, each thread at most once a
   // minute, so the next read counts an answer that is waiting on him.
   for (const taskId of ids) if (chats[taskId]) syncChatThreadsSoon(chats[taskId]);
+  // Its coding sessions (Codex, Claude Code) count too, from what the links store keeps of them (no agent is asked).
+  const code = readAllCodeSessions();
   for (const [taskId, brief] of loadTaskBriefs(ids, now)) {
-    const glance = chatsGlance(chats[taskId]);
-    const talk = chatsTalk(chats[taskId]);
+    const glance = skyChats(chatsGlance(chats[taskId]), code[taskId], now.getTime());
+    const talk = skyTalk(chatsTalk(chats[taskId]), code[taskId], now.getTime());
     forms[taskId] = { ...formSpecFor(brief), ...(glance.count > 0 ? { chats: glance } : {}), ...(talk ? { talk } : {}) };
   }
 

@@ -3,6 +3,7 @@
 // many chats he has with OpenClaw about it, whether one waits on him, and that a click opens it.
 // It is the form the engine already grows on hover (forms.ts fullForm, level 2), so nothing floats over the sky.
 // Only what the Journal has is drawn; all text goes in through textContent.
+import {chatsState} from '@/lib/code-sessions-ui'
 import {iconOf} from '@/lib/shapes/render'
 import type {FormSpec} from '@/lib/sunrise/form-spec'
 import type {FormThing} from './forms'
@@ -24,13 +25,14 @@ function stepOf(spec: FormSpec) {
   return rows?.kind === 'rows' ? rows.items.find(row => row.done !== true)?.text ?? '' : ''
 }
 
-/** What the foot says about his chats: "2 chats", and "1 waiting on you" or "OpenClaw is answering" when so. */
+/**
+ * What the foot says about his chats (with OpenClaw, Codex and Claude Code alike): "2 chats", and "1 waiting on you",
+ * "OpenClaw is answering", "Codex is working" or "Claude Code needs you" when so.
+ */
 export function chatsLine(chats: FormSpec['chats']): {count: string, state: string, waiting: boolean} | null {
   if (chats === undefined || chats.count === 0) return null
   const count = `${chats.count} chat${chats.count === 1 ? '' : 's'}`
-  if (chats.waiting > 0) return {count, state: chats.count === 1 ? 'waiting on you' : `${chats.waiting} waiting on you`, waiting: true}
-  if (chats.working > 0) return {count, state: 'OpenClaw is answering', waiting: false}
-  return {count, state: '', waiting: false}
+  return {count, state: chatsState(chats), waiting: chats.waiting > 0}
 }
 
 /** Done and Let go for an overdue task's opened form. The engine reads the press from `data-act`. */

@@ -10,6 +10,12 @@ import remarkGfm from 'remark-gfm';
 import { canThinkAt, hasModel, modelInUse, modelName, thinkingName, type OpenClawModel, type OpenClawModels } from '@/lib/openclaw-models';
 import { openClawChatUrl } from '@/lib/openclaw-ui';
 import { MAX_CHAT_MESSAGE, type ChatState, type ChatSurfaceRef, type ChatThreadSummary, type ChatThreadView, type TaskChatMessage } from '@/lib/task-chat';
+import { AGENT_LABEL } from '@/lib/code-agents/protocol';
+import { askingWords, isInternalHref, mergeChatRows, sessionActivityAt, type ChatRow } from '@/lib/code-sessions-ui';
+import { AgentMark, CodeMiniChat, CodeSessionRow } from './code-sessions/CodeRows';
+import { NewChat } from './code-sessions/NewChat';
+import { SessionPane } from './code-sessions/SessionPane';
+import type { CodeSessions } from './code-sessions/useCodeSessions';
 
 export const CHATS_CSS = `
 .srk{display:flex;flex-direction:column;min-height:0;height:100%;font:13.5px/1.45 var(--sans);color:#22130a}
@@ -407,7 +413,7 @@ export function ChatComposer({ chats, about, oneLine, autoFocus, touch, onShowSu
   );
 }
 
-const mdLink = { a: ({ href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props} {...(href?.startsWith('/') ? {} : { target: '_blank', rel: 'noopener noreferrer' })} /> };
+const mdLink = { a: ({ href, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a href={href} {...props} {...(isInternalHref(href) ? {} : { target: '_blank', rel: 'noopener noreferrer' })} /> };
 
 /**
  * One message of a chat. Drawn again only when it changed: the panel redraws on every key typed in the composer
@@ -432,8 +438,10 @@ const ChatMessage = React.memo(function ChatMessage({ message: m, onShowSurface 
  * The chats panel: the list, or the one chat that is open. `phone` is the whole Chat tab of a phone's workspace:
  * a new chat can always be started, and the composer leaves Enter for new lines.
  */
-export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onClose, below }: {
+export function ChatsPanel({ chats, code, about, autoFocus, phone, onShowSurface, onClose, below }: {
   chats: TaskChats; about: ChatSurfaceRef | null; autoFocus: boolean; phone?: boolean; onShowSurface: (about: ChatSurfaceRef) => void; onClose?: () => void;
+  /** The task's Codex and Claude Code sessions: listed with the chats, started from New chat, opened here. */
+  code?: CodeSessions;
   below?: React.ReactNode;        // what follows the chats in the list (the sessions that worked on the task)
 }) {
   const logRef = React.useRef<HTMLDivElement>(null);
@@ -459,21 +467,33 @@ export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onCl
     return () => { log.removeEventListener('scroll', onScroll); watch?.disconnect(); };
   }, [shown]);
   const closer = onClose && <button type="button" className="srk-back" onClick={onClose} aria-label="Fold the chats away">Hide</button>;
-  const fresh = <button type="button" className="srp-chip" onClick={chats.startNew}>+ New chat</button>;
+  // With coding agents, New chat first asks which agent; OpenClaw's own new chat is one press from there.
+  const coding = !!code?.enabled;
+  const fresh = <button type="button" className="srp-chip" onClick={coding ? () => { chats.back(); code!.choose(true); } : chats.startNew}>+ New chat</button>;
+
+  if (code?.choosing) return <NewChat code={code} taskId={code.taskId} phone={phone} closer={closer} onOpenClaw={() => { code.choose(false); chats.startNew(); }} />;
+  if (code?.current) return <SessionPane code={code} phone={phone} autoFocus={autoFocus} closer={closer} />;
 
   if (chats.current === null) {
+    // One list: OpenClaw's chats and the coding sessions, the most recent first, each with its agent's mark.
+    const rows: ChatRow[] = coding ? mergeChatRows(chats.threads, code!.sessions) : chats.threads.map((thread) => ({ kind: 'openclaw', id: thread.id, at: thread.updatedAt, thread }));
     return (
-      <div className="srk" role="region" aria-label="Chats with OpenClaw about this task">
+      <div className="srk" role="region" aria-label="Chats about this task">
         <div className="srk-head">
           <h3>Chats</h3>
-          {chats.threads.length > 0 && <span className="n">{chats.threads.length}</span>}
+          {rows.length > 0 && <span className="n">{rows.length}</span>}
           <span className="sp" />
-          {(phone || chats.threads.length > 0) && fresh}
+          {(phone || rows.length > 0 || coding) && fresh}
           {closer}
         </div>
         <div className="srk-list">
-          {chats.threads.map((t) => (
-            <div key={t.id} className="srk-row">
+          {coding && code!.error && <p className="srk-err" role="alert">{code!.error}</p>}
+          {rows.map((row) => {
+            if (row.kind === 'code') return <CodeSessionRow key={row.id} session={row.session} when={chatWhen(sessionActivityAt(row.session))} places={code!.places} onOpen={() => code!.open(row.session.id)} />;
+            const t = row.thread;
+            return (
+            <div key={t.id} className={`srk-row${coding ? ' srk-arow' : ''}`}>
+              {coding && <AgentMark agent="openclaw" />}
               <button type="button" className="srk-rowmain" onClick={() => chats.open(t.id)}>
                 <span className="t"><b>{t.title}</b><i className={`srk-pill ${t.state}`} style={{ fontStyle: 'normal' }}>{STATE_WORDS[t.state]}</i></span>
                 {t.last && <span className="l">{t.lastRole === 'openclaw' ? 'OpenClaw: ' : 'You: '}{t.last}</span>}
@@ -483,10 +503,11 @@ export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onCl
                 {t.mergedFrom && <span title={`This chat was in “${t.mergedFrom}” before that task was merged into this one`}>from “{t.mergedFrom.length > 44 ? `${t.mergedFrom.slice(0, 43)}…` : t.mergedFrom}”</span>}
               </span>
             </div>
-          ))}
-          {chats.loaded && chats.threads.length === 0 && (
+            );
+          })}
+          {chats.loaded && (code?.loaded ?? true) && rows.length === 0 && (
             <div className="srk-empty">
-              <p>No chats about this task yet. Ask anything, or tell OpenClaw what to do: it gets the brief with your first message, and the page you are on.</p>
+              <p>No chats about this task yet. Ask anything, or tell OpenClaw what to do: it gets the brief with your first message, and the page you are on.{coding && ' New chat can start a Claude Code or Codex session instead.'}</p>
               <div className="srk-sugg">
                 {CHAT_SUGGESTIONS.map((s) => <button key={s} type="button" disabled={chats.sending} onClick={() => void chats.send(s, about)}>{s}</button>)}
               </div>
@@ -541,20 +562,29 @@ export function ChatsPanel({ chats, about, autoFocus, phone, onShowSurface, onCl
  * Under the surface while the chats are folded away: the same composer in one line, and what the current chat is
  * doing. The orb opens the chats.
  */
-export function MiniChat({ chats, about, onOpen }: { chats: TaskChats; about: ChatSurfaceRef | null; onOpen: () => void }) {
+export function MiniChat({ chats, code, about, onOpen }: { chats: TaskChats; code?: CodeSessions; about: ChatSurfaceRef | null; onOpen: () => void }) {
   const { thread } = chats;
+  const sessions = code?.enabled ? code.sessions : [];
+  const count = chats.threads.length + sessions.length;
+  // A coding session is the open one: the strip is about it, and its composer writes to it.
+  if (code?.enabled && code.current) return <CodeMiniChat code={code} count={count} onOpen={onOpen} />;
   const last = thread?.messages[thread.messages.length - 1];
+  const asking = sessions.find((s) => s.state === 'needs-you');
+  const busy = sessions.find((s) => s.state === 'working');
   const status = chats.error ? chats.error
     : thread?.pending ? 'OpenClaw is answering…'
       : thread?.error ? thread.error
         : thread && last?.role === 'openclaw' ? `OpenClaw: ${last.text.replace(/[*_`#>]+/g, '').replace(/\s+/g, ' ').slice(0, 160)}`
-          : chats.waiting > 0 ? `OpenClaw answered in ${chats.waiting === 1 ? 'a chat' : `${chats.waiting} chats`}.` : null;
-  const count = chats.threads.length;
+          : chats.waiting > 0 ? `OpenClaw answered in ${chats.waiting === 1 ? 'a chat' : `${chats.waiting} chats`}.`
+            : asking ? `${AGENT_LABEL[asking.agent]} needs you: ${askingWords(asking.asking)}`
+              : busy ? `${AGENT_LABEL[busy.agent]} is working on “${busy.title}”…` : null;
+  const working = chats.working > 0 || !!thread?.pending || !!busy;
+  const waiting = chats.waiting > 0 || !!code?.waiting;
   return (
     <div className="srk-mini">
       {status && <div className="st" role="status"><span>{status}</span><button type="button" onClick={onOpen}>Open</button></div>}
       <div className="srk-box">
-        <button type="button" className={`srk-orb${chats.working > 0 || thread?.pending ? ' working' : chats.waiting > 0 ? ' waiting' : ''}`} onClick={onOpen} aria-label={`Open the chats${count ? ` (${count})` : ''}`} title="Chats with OpenClaw">
+        <button type="button" className={`srk-orb${working ? ' working' : waiting ? ' waiting' : ''}`} onClick={onOpen} aria-label={`Open the chats${count ? ` (${count})` : ''}`} title="Chats about this task">
           {count > 0 && <em>{count}</em>}
         </button>
         <ChatComposer chats={chats} about={about} oneLine />

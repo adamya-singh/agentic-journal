@@ -1,0 +1,33 @@
+# A systemd USER unit (like openclaw-gateway.service), not a system one: Claude Code keeps its login and
+# transcripts under the user's home and runs as the user. Install, start and check it with:
+#   (cd /home/openclaw/projects/agentic-journal/bridge && npm install --omit=optional)
+#   systemctl --user link /home/openclaw/projects/agentic-journal/systemd/agentic-journal-claude-bridge.service
+#   systemctl --user enable --now agentic-journal-claude-bridge
+#   systemctl --user status agentic-journal-claude-bridge; journalctl --user -u agentic-journal-claude-bridge
+# Needs `claude auth login` done on this device (check: env -i HOME=$HOME PATH=$PATH claude auth status).
+# It is separate from agentic-journal.service on purpose: a Journal deploy or restart does not end a running turn;
+# the Journal reconnects to the socket and picks the session up again. Restart it after the bridge's code changes.
+[Unit]
+Description=Agentic Journal: Claude Code bridge (runs Claude Code sessions for the task workspace)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/openclaw/projects/agentic-journal
+Environment=HOME=/home/openclaw
+Environment=PATH=/home/openclaw/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NODE_ENV=production
+# Optional settings: CLAUDE_BRIDGE_SOCKET, CLAUDE_CLI_PATH, CLAUDE_BRIDGE_IDLE_MS, and CLAUDE_BRIDGE_OAUTH_TOKEN (a
+# token from `claude setup-token`, passed to Claude Code as its login). Keep that file mode 600.
+EnvironmentFile=-/home/openclaw/.config/agentic-journal/claude-bridge.env
+ExecStart=/usr/bin/env node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON bridge/claude-bridge.ts serve
+Restart=on-failure
+RestartSec=5
+# SIGTERM ends running turns as failed and removes the socket; the Claude Code children go with the unit.
+KillMode=mixed
+TimeoutStopSec=30
+MemoryMax=4G
+UMask=0077
+
+[Install]
+WantedBy=default.target

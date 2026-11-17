@@ -1150,7 +1150,7 @@ export class SunriseEngine {
     msg.type = 'button'
     msg.className = 'tk-msg'
     msg.dataset['thread'] = talk.waiting.threadId
-    msg.setAttribute('aria-label', `OpenClaw is waiting on you in ${talk.waiting.title}. Open the chat`)
+    msg.setAttribute('aria-label', `${talk.waiting.who ?? 'OpenClaw'} is waiting on you in ${talk.waiting.title}. Open the chat`)
     const dot = document.createElement('i')
     const said = document.createElement('span')
     said.textContent = talk.waiting.text

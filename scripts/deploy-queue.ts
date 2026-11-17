@@ -5,7 +5,7 @@
 //   npm run deploy:cancel   drop the queued deploy
 // `check` is what agentic-journal-deploy-queue.timer runs every 5 minutes.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chats, playing, read, waitReasons, write, type LastRun, type Queued } from '../src/lib/deploy-queue.ts';
+import { chats, codeTurns, playing, read, waitReasons, write, type LastRun, type Queued } from '../src/lib/deploy-queue.ts';
 
 const now = () => new Date().toISOString();
 const head = () => execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -14,7 +14,7 @@ const ago = (iso: string) => `${Math.round((Date.now() - Date.parse(iso)) / 60_0
 async function check() {
   const queued = read<Queued>('queued');
   if (!queued) return 0;
-  const reasons = waitReasons(new Date(), await playing(), await chats());
+  const reasons = waitReasons(new Date(), await playing(), await chats(), codeTurns());
   // Looking takes up to two minutes. Read the request again, so a cancel or a newer request made
   // meanwhile is not written over with the copy read before the look.
   const current = read<Queued>('queued');
@@ -60,7 +60,7 @@ if (command === 'queue') {
     at = now();
   write('queued', { ...queued, firstRequestedAt: queued?.firstRequestedAt || at, lastRequestedAt: at });
   console.log(
-    'Deploy queued. It runs once nothing has played and no OpenClaw chat has been active for 15 minutes,\n' +
+    'Deploy queued. It runs once nothing has played and no OpenClaw chat or coding session has been active for 15 minutes,\n' +
       'and deploys whatever is checked out then. Follow it with: npm run deploy:status',
   );
 } else if (command === 'cancel') {

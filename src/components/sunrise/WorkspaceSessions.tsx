@@ -3,7 +3,9 @@
 // "Sessions that worked on this", under a task's chats in its workspace: the OpenClaw, Claude Code and Codex
 // sessions the session index links to the task, each with its way back in. The rows, "Not this" and "+ Link a
 // session" are the same index and the same API the brief cards use (/api/session-index, target task:<id>).
-// A chat of this task that is also in the index is not listed again: the chat list above owns it.
+// A chat of this task that is also in the index is not listed again: the chat list above owns it, and so is a Codex
+// or Claude Code session already linked to the task as one of its chats. Any other indexed Codex or Claude Code
+// session can be continued here: it joins the task's chats.
 // With no index on this server it says so, and does not pretend to know that no session exists.
 import React from 'react';
 import { copyText, SESSION_APP, sessionDates } from '@/components/horizon/CardSessions';
@@ -72,8 +74,12 @@ function lastSent(iso: string | null): string {
   return hours < 48 ? `${Math.max(hours, 1)}h ago` : new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-function Row({ row, onNot }: { row: SessionRow; onNot: (row: SessionRow) => void }) {
+type Continue = (app: 'codex' | 'claude-code', sessionId: string, host: string) => Promise<boolean>;
+
+function Row({ row, onNot, onContinue }: { row: SessionRow; onNot: (row: SessionRow) => void; onContinue?: Continue }) {
   const [copied, setCopied] = React.useState(false);
+  const [bringing, setBringing] = React.useState(false);
+  const coding = row.app === 'codex' || row.app === 'claude-code' ? row.app : null;
   const app = SESSION_APP[row.app];
   const meta = [app.name, row.machine, sessionDates(row), row.turns ? `${row.turns} turn${row.turns === 1 ? '' : 's'}` : ''].filter(Boolean);
   return (
@@ -94,6 +100,12 @@ function Row({ row, onNot }: { row: SessionRow; onNot: (row: SessionRow) => void
                 {copied ? 'Copied' : 'Copy resume command'}
               </button>
             ) : null}
+        {coding && onContinue && (
+          <button type="button" className="srs-go" disabled={bringing} title={`Bring it into this task’s chats and carry on with it here, in ${app.name} itself`}
+            onClick={() => { setBringing(true); void onContinue(coding, row.uid.slice(row.uid.indexOf(':') + 1), row.host).finally(() => setBringing(false)); }}>
+            {bringing ? 'Bringing it…' : 'Continue here'}
+          </button>
+        )}
         <button type="button" className="srs-not" onClick={() => onNot(row)} title="Take it off this task; it will not come back by itself">Not this</button>
       </span>
     </li>
@@ -142,7 +154,13 @@ function Picker({ target, hidden, onLinked, onClose }: { target: string; hidden:
  * The sessions of one task. `chatKeys` are the OpenClaw session keys of the task's own chats, which are left out
  * here; nothing is drawn until the chats are `ready`, so a chat never shows twice even for a moment.
  */
-export function TaskSessions({ taskId, chatKeys, ready }: { taskId: string; chatKeys: string[]; ready: boolean }) {
+export function TaskSessions({ taskId, chatKeys, ready, codeSessions = [], onContinue }: {
+  taskId: string; chatKeys: string[]; ready: boolean;
+  /** The task's Codex and Claude Code chats, left out here. */
+  codeSessions?: { agent: string; sessionId: string }[];
+  /** Brings an indexed Codex or Claude Code session into the task's chats. */
+  onContinue?: Continue;
+}) {
   const target = `task:${taskId}`;
   const valid = TASK_ID.test(taskId);
   const [view, setView] = React.useState<SessionsView | null>(null);
@@ -181,7 +199,8 @@ export function TaskSessions({ taskId, chatKeys, ready }: { taskId: string; chat
     );
   }
   const own = new Set(chatKeys);
-  const isChat = (row: SessionRow) => !!row.key && own.has(row.key);
+  const linked = new Set(codeSessions.map((s) => `${s.agent}:${s.sessionId}`));
+  const isChat = (row: SessionRow) => (!!row.key && own.has(row.key)) || linked.has(row.uid);
   const rows = view.rows.filter((row) => !isChat(row));
   const listed = new Set(view.rows.map((row) => row.uid));
   const not = (row: SessionRow) => {
@@ -192,7 +211,7 @@ export function TaskSessions({ taskId, chatKeys, ready }: { taskId: string; chat
   return (
     <section className="srs" aria-label="Sessions that worked on this task">
       {head(rows.length)}
-      {rows.length > 0 ? <ul className="srs-list">{rows.map((row) => <Row key={row.uid} row={row} onNot={not} />)}</ul>
+      {rows.length > 0 ? <ul className="srs-list">{rows.map((row) => <Row key={row.uid} row={row} onNot={not} onContinue={onContinue} />)}</ul>
         : <p className="srs-note">None of the {view.indexed.toLocaleString()} indexed sessions is linked to this task{view.rows.length > 0 ? ' besides its chats above' : ''}.</p>}
       {picking && <Picker target={target} hidden={(row) => listed.has(row.uid) || isChat(row)} onLinked={(got) => { setView(got); setPicking(false); }} onClose={() => setPicking(false)} />}
       <div className="srs-foot">

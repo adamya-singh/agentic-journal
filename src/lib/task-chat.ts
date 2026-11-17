@@ -317,7 +317,8 @@ export function settleStalePending(thread: Pick<TaskChatThread, 'pendingSince' |
   return true;
 }
 
-function briefContext(brief: TaskBrief): string {
+/** The task as the Journal knows it, in plain lines: what a chat's first turn carries (also a coding session's, lib/code-agents/first-turn.ts). */
+export function briefContext(brief: TaskBrief): string {
   const w = brief.when;
   const lines = [`Task: ${brief.title}`];
   lines.push(`Kind: ${brief.kind}${brief.course ? ` · ${brief.course.name}${brief.course.code ? ` (${brief.course.code})` : ''}` : ` · ${brief.group}`}`);

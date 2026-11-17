@@ -50,14 +50,10 @@ export const WORKSPACE_MARK = '[Workspace of this task';
 
 const api = 'http://127.0.0.1:3000/api/tasks/workspace';
 
-/** How the workspace works and how to read and change it. Said once per chat. */
-function workspaceRules(taskId: string): string[] {
-  const { blocks, body, text } = workLimits;
+/** How to read the workspace and change it through the Journal's local API: for OpenClaw's chats and coding sessions alike. */
+export function workspaceApiHelp(taskId: string): string[] {
   const file = `/tmp/workspace-${taskId.slice(0, 8)}.json`;
   return [
-    'You are in the chat of this task’s workspace in the Journal. He sees the workspace beside this chat: one tab per real file of the task (a "file" block: a PDF shown page by page as it is, with what he will say under each page; a document; an image), a Work tab (the other blocks, which he works in: a doc, a checklist, a letter and so on) and one tab per web page of the task, shown in your browser.',
-    'The Work tab is where the work for this task lives, and you and he work in the same copy. When he asks you to write, draft, fill in, fix or continue something that is in the Work tab or belongs there (the slides, the outline, the letter, the answers), put it INTO the Work tab, then say in a line or two what you changed. Never leave the work only in this chat, and never only in a file of your own. He sees your change within a few seconds, without reloading. This needs no asking: it is what he asks for when he asks for the work.',
-    'A draft to react to may be shown in the chat first when he asks for options or a proposal; once he says go ahead, it goes into the Work tab.',
     'Read the workspace as it stands (his latest edits included) before you change it:',
     `curl -s '${api}?id=${taskId}'`,
     'Change it by writing the JSON body to a file and posting the file, so quotes survive the shell:',
@@ -67,6 +63,17 @@ function workspaceRules(taskId: string): string[] {
     `{"taskId":"${taskId}","action":"remove-block","id":"<block id>"}`,
     `{"taskId":"${taskId}","action":"open-tab","url":"https://..."}  add a web page as a tab of the workspace`,
     `{"taskId":"${taskId}","action":"close-tab","url":"https://..."} take off a tab that was added (the task’s own links stay)`,
+  ];
+}
+
+/** How the workspace works and how to read and change it. Said once per chat. */
+function workspaceRules(taskId: string): string[] {
+  const { blocks, body, text } = workLimits;
+  return [
+    'You are in the chat of this task’s workspace in the Journal. He sees the workspace beside this chat: one tab per real file of the task (a "file" block: a PDF shown page by page as it is, with what he will say under each page; a document; an image), a Work tab (the other blocks, which he works in: a doc, a checklist, a letter and so on) and one tab per web page of the task, shown in your browser.',
+    'The Work tab is where the work for this task lives, and you and he work in the same copy. When he asks you to write, draft, fill in, fix or continue something that is in the Work tab or belongs there (the slides, the outline, the letter, the answers), put it INTO the Work tab, then say in a line or two what you changed. Never leave the work only in this chat, and never only in a file of your own. He sees your change within a few seconds, without reloading. This needs no asking: it is what he asks for when he asks for the work.',
+    'A draft to react to may be shown in the chat first when he asks for options or a proposal; once he says go ahead, it goes into the Work tab.',
+    ...workspaceApiHelp(taskId),
     'The answer is the workspace after the change; "problems" names anything that was dropped or cut, so read it. Keep what he wrote unless he asks you to change it: change the block you are working on ("block") rather than rewriting all of them, and keep a block’s id when you change it.',
     `Blocks, each {"kind":"...","id":"<short stable name>",...}, at most ${blocks}: doc (label?, body: markdown, at most ${body} characters) · checklist (label?, body: "- [ ]" / "- [x]" lines) · letter (to, subject, body) · problem (label?, prompt, given?, work) · fields (label?, items: [{label, value, needs?, hint?}]) · choices (prompt, options: [{title, detail?, points?}], picked?) · slides (items: [{title, body?, notes?}], at: the slide to show) · timer (label, seconds, steps?) · reading (title, by?, href?, excerpt?). A slide’s body and notes, a problem’s prompt and a field’s value hold at most ${text} characters each. No bracketed fill-in slots like [Insert quote]: write the real thing or leave the line open.`,
     `- file (path: inside ~/.openclaw/workspace, label?, notes?: what he will say, one string per page, at most ${fileLimits.note} characters each): a real file, shown as it is.`,

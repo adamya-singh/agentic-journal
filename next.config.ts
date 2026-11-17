@@ -2,6 +2,9 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || '.next',
+  // ws (the coding-agent hub's connection to Codex, src/lib/code-agents/transport.ts) is loaded from node_modules as
+  // it is: bundled by webpack, its optional native helpers resolve wrongly and sending a frame throws.
+  serverExternalPackages: ['ws'],
   // The Journal shares this host with OpenClaw; reduce compiler memory and limit build workers.
   // One worker: with two, each worker's own heap pushed builds past the deploy's 7 GB cap (2026-10-18).
   experimental: { webpackMemoryOptimizations: true, cpus: 1 },

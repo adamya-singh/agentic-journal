@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { backendDataDir } from '../backend-data.ts';
+import { resumeCommand } from './resume.ts';
 import { indexExists, openIndex, type SessionRecord } from './store.ts';
 import type { SessionApp, SessionRow, SessionTarget, SessionsView } from './types.ts';
 
@@ -50,8 +51,6 @@ function journalIds() {
   return { ids, cardTask };
 }
 
-const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-
 export function toRow(s: SessionRecord, tier: SessionRow['tier'], why: string, now = Date.now()): SessionRow {
   const row: SessionRow = {
     uid: s.uid, app: s.app as SessionApp, host: s.host, machine: machineName(s.host),
@@ -60,8 +59,7 @@ export function toRow(s: SessionRecord, tier: SessionRow['tier'], why: string, n
   };
   if (s.app === 'openclaw' && s.key) row.key = s.key;
   else if (s.app === 'claude-code' && s.bridge) row.href = `https://claude.ai/code/${encodeURIComponent(s.bridge)}`;
-  else if (s.app === 'claude-code') row.resume = `cd ${shq(s.cwd || '~')} && claude --resume ${s.id}`;
-  else if (s.app === 'codex') row.resume = `cd ${shq(s.cwd || '~')} && codex resume ${s.id}`;
+  else if (s.app === 'claude-code' || s.app === 'codex') row.resume = resumeCommand(s.app, s.cwd, s.id);
   return row;
 }
 
