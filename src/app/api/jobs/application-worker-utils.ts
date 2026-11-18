@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import {
   findOpenClawCronJob,
   isOpenClawCliAvailable,
@@ -42,6 +43,59 @@ export async function wakeJobApplicationWorkerIfEnabled(): Promise<WorkerControl
     return null;
   }
   return triggerJobApplicationWorker();
+}
+
+/** Seconds since the machine booted, or null where /proc is not available. */
+function machineUptimeSeconds(): number | null {
+  try {
+    const seconds = Number.parseFloat(fs.readFileSync('/proc/uptime', 'utf-8').split(' ')[0]);
+    return Number.isFinite(seconds) ? seconds : null;
+  } catch {
+    return null;
+  }
+}
+
+const AFTER_REBOOT_WINDOW_SECONDS = 15 * 60;
+const AFTER_REBOOT_ATTEMPTS = 10;
+const AFTER_REBOOT_RETRY_MS = 2 * 60 * 1000;
+
+/**
+ * A pause lasts until the machine's next reboot (it reboots every day at 05:00). In October 2026 the
+ * worker stayed paused for 18 days because nobody pressed Start again. Called once when the Journal
+ * starts: if the machine has just booted, the worker is switched back on and woken. A Journal restart
+ * without a reboot (a deploy) leaves a pause alone. OpenClaw's gateway can come up after the Journal,
+ * so a failed wake is tried again for about twenty minutes. JOB_WORKER_RESUME_ON_BOOT_DISABLED=1 turns this off.
+ */
+export async function resumeJobApplicationWorkerAfterReboot(
+  options: { uptimeSeconds?: number | null; retryMs?: number } = {},
+): Promise<{ resumed: boolean; woken: boolean; reason?: string }> {
+  if (process.env.JOB_WORKER_RESUME_ON_BOOT_DISABLED === '1') return { resumed: false, woken: false, reason: 'disabled' };
+  const uptime = options.uptimeSeconds === undefined ? machineUptimeSeconds() : options.uptimeSeconds;
+  if (uptime === null || uptime > AFTER_REBOOT_WINDOW_SECONDS) {
+    return { resumed: false, woken: false, reason: 'not a reboot' };
+  }
+  // Start would refuse in these cases too; switching the worker on could not make it run.
+  if (!getJobApplicationReadiness().ready) return { resumed: false, woken: false, reason: 'resumes missing' };
+  if (readJobApplicationsStore().enabledApplicationCategories.length === 0) {
+    return { resumed: false, woken: false, reason: 'no category selected' };
+  }
+  const resumed = await mutateJobApplicationsStore((store) => {
+    if (store.workerEnabled) return false;
+    store.workerEnabled = true;
+    return true;
+  });
+  if (resumed) console.log('Job application worker was paused; switched back on after the reboot.');
+  for (let attempt = 1; attempt <= AFTER_REBOOT_ATTEMPTS; attempt += 1) {
+    // Paused again by hand while we were retrying: leave it.
+    if (!readJobApplicationsStore().workerEnabled) return { resumed, woken: false, reason: 'paused again' };
+    const worker = await wakeJobApplicationWorkerIfEnabled();
+    if (!worker) return { resumed, woken: false, reason: 'nothing to apply to' };
+    if (worker.success) return { resumed, woken: true };
+    if (attempt < AFTER_REBOOT_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, options.retryMs ?? AFTER_REBOOT_RETRY_MS));
+    }
+  }
+  return { resumed, woken: false, reason: 'OpenClaw did not answer' };
 }
 
 export async function triggerJobApplicationWorker(): Promise<WorkerControlResult> {

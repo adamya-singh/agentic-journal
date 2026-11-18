@@ -32,6 +32,7 @@ export async function register(): Promise<void> {
 
   const {
     ensureJobApplicationWorkerCron, reconcileAndWakeJobApplicationWorker, syncJobEmailUpdatesCron,
+    resumeJobApplicationWorkerAfterReboot,
   } = await import('./app/api/jobs/application-worker-utils');
   ensureJobApplicationWorkerCron().then((result) => {
     if (!result.success) console.error('Job application cron reconcile failed:', result.error);
@@ -39,6 +40,10 @@ export async function register(): Promise<void> {
   reconcileAndWakeJobApplicationWorker().catch((error) => {
     console.error('Startup job application reconcile failed:', error);
   });
+  // After the daily reboot a paused worker is started again (a pause is not meant to outlive the day).
+  setTimeout(() => {
+    resumeJobApplicationWorkerAfterReboot().catch((error) => console.error('Job worker resume after reboot failed:', error));
+  }, 60_000).unref();
   syncJobEmailUpdatesCron().then((result) => {
     if (!result.success) console.error('Job email updates cron reconcile failed:', result.error);
   }).catch((error) => console.error('Job email updates cron reconcile failed:', error));
