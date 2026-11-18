@@ -70,6 +70,7 @@ before(async () => {
     enabledApplicationCategories: ['spring-internship', 'new-grad'],
     applications: {},
     answerBank: [],
+    documents: {},
     reviewItems: [],
     emailUpdates: { enabled: true, pending: [], processed: {} },
   });
@@ -906,7 +907,7 @@ describe('job application state', () => {
     );
   });
 
-  test('uses the exact 24-hour draft boundary without resetting after partial work', () => {
+  test('an application that blocks on questions is draftable at once, and partial work does not move that', () => {
     const application: import('../src/lib/types').JobApplicationRecord = {
       listingId: 'boundary', status: 'in-progress' as const, resumeVariant: 'swe' as const,
       attemptCount: 1, statusHistory: [], createdAt: now, updatedAt: now,
@@ -914,11 +915,15 @@ describe('job application state', () => {
     };
     store.setApplicationStatus(application, 'awaiting-user-input', now);
     assert.equal(application.awaitingInputSince, now);
-    assert.equal(application.autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+    assert.equal(application.autoCompleteEligibleAt, now);
     store.setApplicationStatus(application, 'awaiting-user-input', '2026-07-20T18:00:00.000Z');
-    assert.equal(application.autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+    assert.equal(application.autoCompleteEligibleAt, now);
+    assert.equal(store.isApplicationClaimable(application, new Date(now)), true);
+    // "+1 day" still holds a draft back.
+    application.autoCompleteEligibleAt = '2026-07-21T12:00:00.000Z';
     assert.equal(store.isApplicationClaimable(application, new Date('2026-07-21T11:59:59.999Z')), false);
     assert.equal(store.isApplicationClaimable(application, new Date('2026-07-21T12:00:00.000Z')), true);
+    assert.equal(store.JOB_APPLICATION_REVIEW_WINDOW_MS, 24 * 60 * 60 * 1000);
   });
 
   test('formats and deduplicates exact prefixed Google Doc entries', () => {
@@ -1569,7 +1574,7 @@ describe('job application state', () => {
     assert.equal(view.applications['saved-new'].questions[0].answerScreenshot?.width, 640);
   });
 
-  test('upgrades schema 2 autopilot stamps to the one-day draft delay exactly once', () => {
+  test('upgrades schema 2 autopilot stamps to the current draft delay exactly once', () => {
     const file = path.join(jobsDir, 'applications.json');
     const original = readFileSync(file, 'utf8');
     try {
@@ -1580,7 +1585,7 @@ describe('job application state', () => {
       };
       writeFileSync(file, JSON.stringify({ ...raw, schemaVersion: 2 }), 'utf8');
       assert.equal(store.readJobApplicationsStore().schemaVersion, 3);
-      assert.equal(store.readJobApplicationsStore().applications['saved-new'].autoCompleteEligibleAt, '2026-07-21T12:00:00.000Z');
+      assert.equal(store.readJobApplicationsStore().applications['saved-new'].autoCompleteEligibleAt, now);
       writeFileSync(file, JSON.stringify({ ...raw, schemaVersion: 3 }), 'utf8');
       assert.equal(store.readJobApplicationsStore().applications['saved-new'].autoCompleteEligibleAt, '2026-07-23T12:00:00.000Z');
     } finally {

@@ -27,7 +27,7 @@ test('repair preserves workflow state, retains evidence, and rejects stale or un
       reviewHoldSince: timestamp, submittedAt: timestamp };
     const original = { schemaVersion: 3, workerEnabled: false,
       enabledApplicationCategories: ['spring-internship', 'new-grad'], applications: { [listingId]: application },
-      answerBank: [], reviewItems: [], emailUpdates: { enabled: false, pending: [], processed: {} } };
+      answerBank: [], documents: {}, reviewItems: [], emailUpdates: { enabled: false, pending: [], processed: {} } };
     const storePath = path.join(directory, 'applications.json');
     fs.writeFileSync(storePath, JSON.stringify(original));
     const rows = [{ listingId, questionId: question.id, oldScreenshotId: question.answerScreenshot.id,

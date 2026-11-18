@@ -78,11 +78,14 @@ export async function register(): Promise<void> {
     runWideNetImportIfDue().catch((error) => console.error('Wide net check failed:', error));
   };
   setTimeout(topUpWideNet, 120_000).unref();
+  // Once a day, from 09:00: which applications are drafted and when each sends itself.
+  const { notifyApplicationsReadyForReview } = await import('./app/api/jobs/applications/review-notify');
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {
       console.error('Scheduled job application reconcile failed:', error);
     });
     topUpWideNet();
+    void notifyApplicationsReadyForReview();
     wakePreviews();
     reconcileTasks();
   }, RECONCILE_INTERVAL_MS);

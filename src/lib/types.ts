@@ -501,8 +501,22 @@ export interface JobApplicationsStoreData {
   enabledApplicationCategories: JobApplicationCategory[];
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
+  /** Files Adamya has given once for every application that asks for them. */
+  documents: JobApplicationDocuments;
   reviewItems: JobApplicationReviewItem[];
   emailUpdates: JobEmailUpdatesState;
+}
+
+/** A standing file: `answer` is the same `file:<uploadId>/<name>` reference a file question's answer holds. */
+export interface JobApplicationDocument {
+  answer: string;
+  fileName: string;
+  savedAt: string;
+}
+
+export interface JobApplicationDocuments {
+  /** Unofficial undergraduate transcript. */
+  transcript?: JobApplicationDocument;
 }
 
 export interface JobApplicationReadiness {
@@ -545,6 +559,7 @@ export interface JobApplicationsViewData {
   eligibleBacklog: number;
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
+  documents: JobApplicationDocuments;
   reviewItems: JobApplicationReviewItem[];
   emailUpdates: JobEmailUpdatesView;
   schedulerHealth: {

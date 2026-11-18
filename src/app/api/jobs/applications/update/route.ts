@@ -10,7 +10,7 @@ import {
   JOB_APPLICATION_FAILURE_LIMIT,
   recordApplicationFailure,
   resetApplicationFailureStreak,
-  answerFromBank,
+  answerFromMemory,
   closeDanglingScreenshotCapture,
   confirmSubmissionFromEmployerEmail,
   createActionQuestion,
@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
           }
         }
         // Anything Adamya already answered for the same question is not asked again.
-        for (const question of application.questions) answerFromBank(question, store.answerBank, now);
+        for (const question of application.questions) answerFromMemory(question, store, now);
         if (!parsed.data.retainLease && application.questions.some((question) => question.resolution === 'pending')) {
           closeDanglingScreenshotCapture(application, 'Stopped for questions', now);
           setApplicationStatus(application, 'awaiting-user-input', now);

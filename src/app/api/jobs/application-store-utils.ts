@@ -31,6 +31,7 @@ import type {
   JobApplicationSubmissionEvidence,
   JobApplicationReviewItem,
   JobApplicationScreenshotCapture,
+  JobApplicationDocuments,
   JobApplicationsStoreData,
   JobApplicationsViewData,
   JobApplicationStatus,
@@ -63,10 +64,11 @@ const LEASE_DURATION_MS = 30 * 60 * 1000;
 /** Failed runs in a row before OpenClaw stops and asks for help. */
 export const JOB_APPLICATION_FAILURE_LIMIT = 3;
 const ERROR_HISTORY_LIMIT = 10;
-// Autopilot drafts the remaining answers a day after an application blocks,
-// then holds them in the review queue for up to two more days before submitting.
-export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 24 * 60 * 60 * 1000;
-export const JOB_APPLICATION_REVIEW_WINDOW_MS = 48 * 60 * 60 * 1000;
+// Autopilot drafts the remaining answers as soon as an application blocks on questions it may answer
+// (no waiting for Adamya first, since 2026-11-18), then holds the drafts in the review queue for at
+// most a day before submitting. "+1 day" on a card still pushes either date back.
+export const JOB_APPLICATION_AUTO_COMPLETE_DELAY_MS = 0;
+export const JOB_APPLICATION_REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 2 * 60 * 1000;
 
 export const JOB_APPLICATION_RESUME_FILES = {
@@ -121,6 +123,7 @@ export function getEmptyJobApplicationsStore(): JobApplicationsStoreData {
     enabledApplicationCategories: [...DEFAULT_ENABLED_APPLICATION_CATEGORIES],
     applications: {},
     answerBank: [],
+    documents: {},
     reviewItems: [],
     emailUpdates: getEmptyEmailUpdatesState(),
   };
@@ -180,6 +183,7 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
     ),
     applications,
     answerBank,
+    documents: normalizeDocuments(parsed.documents),
     reviewItems,
     emailUpdates: normalizeEmailUpdatesState(parsed.emailUpdates),
   };
@@ -285,6 +289,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     eligibleBacklog,
     applications,
     answerBank: store.answerBank,
+    documents: store.documents,
     reviewItems: store.reviewItems.map((item) => {
       if (item.status !== 'pending') return item;
       const question = store.applications[item.listingId]?.questions.find((candidate) => candidate.id === item.questionId);
@@ -894,6 +899,59 @@ export function answerFromBank(
   return true;
 }
 
+const TRANSCRIPT_WORDING = /\btranscripts?\b/i;
+const GRADUATE_WORDING = /\b(?:graduate|grad school|master['’]?s|m\.?s\.?|ph\.?d|doctoral)\b/i;
+const UNDERGRADUATE_WORDING = /\b(?:undergraduate|undergrad|bachelor['’]?s|b\.?s\.?)\b/i;
+
+/**
+ * Which standing document a file question asks for. A transcript upload is his undergraduate
+ * transcript unless the field is for graduate studies only ("Graduate Transcript"), which he has none of.
+ */
+export function standingDocumentFor(
+  question: Pick<JobApplicationQuestion, 'kind' | 'prompt'>,
+): 'transcript' | 'graduate-transcript' | null {
+  if (question.kind !== 'file' || !TRANSCRIPT_WORDING.test(question.prompt)) return null;
+  return GRADUATE_WORDING.test(question.prompt) && !UNDERGRADUATE_WORDING.test(question.prompt)
+    ? 'graduate-transcript'
+    : 'transcript';
+}
+
+/**
+ * Answers a pending upload from a standing document: a transcript field gets the saved transcript,
+ * and an optional graduate-transcript field is skipped (he is an undergraduate). A required
+ * graduate transcript is left for him.
+ */
+export function answerFromDocuments(
+  question: JobApplicationQuestion,
+  documents: JobApplicationDocuments,
+  now: string,
+): boolean {
+  if (question.resolution !== 'pending') return false;
+  const wanted = standingDocumentFor(question);
+  if (wanted === 'graduate-transcript' && !question.required) {
+    question.resolution = 'skipped';
+    question.answeredAt = now;
+    delete question.answer;
+    return true;
+  }
+  const document = wanted === 'transcript' ? documents.transcript : undefined;
+  if (!document || !applicationFileExists(document.answer)) return false;
+  question.answer = document.answer;
+  question.resolution = 'answered';
+  question.answeredAt = now;
+  question.fromAnswerBank = true;
+  return true;
+}
+
+/** Everything the Journal can answer without asking: confirmed answers, then standing documents. */
+export function answerFromMemory(
+  question: JobApplicationQuestion,
+  store: Pick<JobApplicationsStoreData, 'answerBank' | 'documents'>,
+  now: string,
+): boolean {
+  return answerFromBank(question, store.answerBank, now) || answerFromDocuments(question, store.documents, now);
+}
+
 /**
  * Applications waiting only on questions the answer bank now settles go back
  * to the worker. Runs after Adamya saves answers (one answer can unblock many
@@ -903,7 +961,7 @@ export function releaseApplicationsAnsweredByBank(store: JobApplicationsStoreDat
   const released: string[] = [];
   for (const application of Object.values(store.applications)) {
     if (application.status !== 'awaiting-user-input' || application.lease || application.reviewHoldSince) continue;
-    const filled = application.questions.filter((question) => answerFromBank(question, store.answerBank, now));
+    const filled = application.questions.filter((question) => answerFromMemory(question, store, now));
     if (filled.length === 0) continue;
     application.updatedAt = now;
     if (application.questions.some((question) => question.resolution === 'pending')) continue;
@@ -2200,6 +2258,18 @@ function normalizeAnswer(value: unknown): JobApplicationAnswer | undefined {
   if (typeof value === 'string') return value;
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value;
   return undefined;
+}
+
+function normalizeDocuments(value: unknown): JobApplicationDocuments {
+  const transcript = isRecord(value) && isRecord(value.transcript) ? value.transcript : null;
+  if (!transcript || !parseFileAnswer(transcript.answer)) return {};
+  return {
+    transcript: {
+      answer: transcript.answer as string,
+      fileName: normalizeString(transcript.fileName) || parseFileAnswer(transcript.answer)!.fileName,
+      savedAt: normalizeString(transcript.savedAt),
+    },
+  };
 }
 
 function normalizeEnabledApplicationCategories(value: unknown): JobApplicationCategory[] {
