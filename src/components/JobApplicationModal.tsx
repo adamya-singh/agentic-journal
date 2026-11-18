@@ -103,6 +103,8 @@ export function JobApplicationModal({
   const browserOpenRef = React.useRef(false);
   browserOpenRef.current = browserOpen;
   const manualSteps = pendingQuestions.filter((question) => question.kind === 'action');
+  // Nothing to answer, only things to do: the wording below says "step", not "question".
+  const onlyManualSteps = manualSteps.length > 0 && manualSteps.length === pendingQuestions.length;
 
   const backdropArmedRef = React.useRef(false);
 
@@ -405,20 +407,19 @@ export function JobApplicationModal({
                 <option value="mle">Machine learning</option>
               </select>
             </label>
-            <div className="text-sm text-slate-600 dark:text-slate-300">
-              <p>
-                <span className="font-semibold">Attempts:</span> {application.attemptCount}
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold">Updated:</span>{' '}
-                {formatDateTime(application.updatedAt)}
-              </p>
+            <div className="text-sm">
+              <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 tabular-nums">
+                <dt className="text-slate-500 dark:text-slate-400">Attempts</dt>
+                <dd className="font-medium text-slate-800 dark:text-slate-100">{application.attemptCount}</dd>
+                <dt className="text-slate-500 dark:text-slate-400">Updated</dt>
+                <dd className="font-medium text-slate-800 dark:text-slate-100">{formatDateTime(application.updatedAt)}</dd>
+              </dl>
               {(application.canonicalApplicationUrl || listing.link) && (
                 <a
                   href={application.canonicalApplicationUrl || listing.link}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 font-medium text-indigo-600 dark:text-indigo-300"
+                  className="mt-2 inline-flex items-center gap-1 font-medium text-indigo-600 hover:underline dark:text-indigo-300"
                 >
                   Open application <ExternalLink className="h-3.5 w-3.5" />
                 </a>
@@ -555,11 +556,15 @@ export function JobApplicationModal({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="font-semibold text-slate-900 dark:text-slate-100">
-                  Remaining questions
+                  {onlyManualSteps
+                    ? manualSteps.length === 1 ? 'The step OpenClaw needs from you' : 'The steps OpenClaw needs from you'
+                    : 'Remaining questions'}
                 </h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  Optional questions must be answered or explicitly skipped.
-                </p>
+                {pendingQuestions.some((question) => !question.required) && (
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                    Optional questions must be answered or explicitly skipped.
+                  </p>
+                )}
               </div>
               {pendingQuestions.some((question) => question.suggestion) && (
                 <button
@@ -641,9 +646,11 @@ export function JobApplicationModal({
           <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-slate-200 bg-white/95 px-5 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {unresolvedQuestions.length > 0
-                ? `${unresolvedQuestions.length} question${unresolvedQuestions.length === 1 ? '' : 's'} still unanswered`
+                ? onlyManualSteps
+                  ? `${unresolvedQuestions.length} step${unresolvedQuestions.length === 1 ? '' : 's'} still to do`
+                  : `${unresolvedQuestions.length} question${unresolvedQuestions.length === 1 ? '' : 's'} still unanswered`
                 : pendingQuestions.length > 0
-                  ? 'All questions answered — saving resumes the worker'
+                  ? onlyManualSteps ? 'Saving sends the application back to OpenClaw' : 'All questions answered. Saving resumes the worker'
                   : redoQuestions.length > 0
                     ? 'Nothing needed from you while OpenClaw redrafts'
                     : ''}
@@ -656,7 +663,7 @@ export function JobApplicationModal({
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" />}
               {unresolvedQuestions.length > 0
-                ? `Save answers (${unresolvedQuestions.length} remaining)`
+                ? onlyManualSteps ? `Save (${unresolvedQuestions.length} step${unresolvedQuestions.length === 1 ? '' : 's'} left)` : `Save answers (${unresolvedQuestions.length} remaining)`
                 : pendingQuestions.length === 0 && redoQuestions.length > 0
                   ? 'Save resume choice'
                   : 'Save & resume application'}
@@ -942,6 +949,12 @@ function pageSegmentCount(capture: JobApplicationScreenshotCapture, pageNumber: 
   return capture.screenshots.filter((screenshot) => screenshot.pageNumber === pageNumber).length;
 }
 
+// One look for every choice row and text field in the window.
+const CHOICE_ROW =
+  'flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 has-[:checked]:bg-indigo-50 has-[:checked]:text-slate-900 dark:text-slate-200 dark:hover:bg-slate-800/60 dark:has-[:checked]:bg-indigo-950/40 dark:has-[:checked]:text-slate-50';
+const TEXT_FIELD =
+  'w-full rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 max-sm:text-base dark:border-slate-700 dark:bg-slate-950';
+
 function QuestionField({
   question,
   listingId,
@@ -965,10 +978,10 @@ function QuestionField({
       disabled={skipped}
     >
       <legend className="px-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
-        {question.prompt} {question.required ? <span className="text-red-500">*</span> : null}
+        {question.prompt} {question.required ? <span className="text-red-500" aria-label="required">*</span> : null}
       </legend>
       {question.helpText && (
-        <p className="mb-3 text-xs text-slate-500 dark:text-slate-400">{question.helpText}</p>
+        <p className="mb-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">{question.helpText}</p>
       )}
       {question.occurrences && question.occurrences > 1 && (
         <p className="mb-3 inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
@@ -1002,11 +1015,11 @@ function QuestionField({
         </p>
       )}
       {question.kind === 'single-select' && question.options ? (
-        <div className="space-y-2">
+        <div className="-mx-2">
           {question.options.map((option) => (
             <label
               key={option.value}
-              className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200"
+              className={CHOICE_ROW}
             >
               <input
                 type="radio"
@@ -1014,20 +1027,20 @@ function QuestionField({
                 value={option.value}
                 checked={value === option.value}
                 onChange={() => onChange(option.value)}
-                className="mt-0.5"
+                className="mt-0.5 accent-indigo-600"
               />
               {option.label}
             </label>
           ))}
         </div>
       ) : question.kind === 'multi-select' && question.options ? (
-        <div className="space-y-2">
+        <div className="-mx-2">
           {question.options.map((option) => {
             const selected = Array.isArray(value) ? value : [];
             return (
               <label
                 key={option.value}
-                className="flex items-start gap-2 text-sm text-slate-700 dark:text-slate-200"
+                className={CHOICE_ROW}
               >
                 <input
                   type="checkbox"
@@ -1039,7 +1052,7 @@ function QuestionField({
                         : selected.filter((item) => item !== option.value),
                     )
                   }
-                  className="mt-0.5"
+                  className="mt-0.5 accent-indigo-600"
                 />
                 {option.label}
               </label>
@@ -1064,24 +1077,56 @@ function QuestionField({
           onChange={onChange}
           onClear={() => onChange('')}
         />
-      ) : question.multiline || question.kind === 'action' ? (
+      ) : question.kind === 'action' ? (
+        // A step he does himself, not a question: one press marks it done, and the box is only for a note.
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => onChange(hasAnswer(value) ? '' : 'Done')}
+              aria-pressed={hasAnswer(value)}
+              className={`inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium ${
+                hasAnswer(value)
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
+                  : 'border-slate-300 text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800'
+              }`}
+            >
+              <CheckCircle2 className="h-4 w-4" /> {hasAnswer(value) ? 'Marked as done' : 'I’ve done this'}
+            </button>
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {hasAnswer(value) ? 'Save to send the application back to OpenClaw.' : 'Do it in OpenClaw’s browser above, then mark it here.'}
+            </span>
+          </div>
+          <label className="block text-xs font-medium text-slate-500 dark:text-slate-400">
+            Note for OpenClaw (optional)
+            <textarea
+              value={typeof value === 'string' && value !== 'Done' ? value : ''}
+              onChange={(event) => onChange(event.target.value)}
+              rows={2}
+              placeholder="What you did, or why it could not be done"
+              className={`mt-1 ${TEXT_FIELD} py-2`}
+            />
+          </label>
+        </div>
+      ) : question.multiline ? (
         <textarea
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
           rows={3}
-          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-950"
+          className={`${TEXT_FIELD} py-2`}
         />
       ) : (
         <input
           value={typeof value === 'string' ? value : ''}
           onChange={(event) => onChange(event.target.value)}
-          className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm max-sm:text-base dark:border-slate-700 dark:bg-slate-950"
+          className={`h-10 ${TEXT_FIELD}`}
         />
       )}
       {!question.required && (
-        <label className="mt-3 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+        <label className="mt-3 flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
           <input
             type="checkbox"
+            className="accent-indigo-600"
             checked={skipped}
             onChange={(event) => onSkip(event.target.checked)}
           />{' '}

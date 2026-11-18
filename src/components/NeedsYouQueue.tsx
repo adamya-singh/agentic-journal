@@ -23,6 +23,8 @@ interface QueueRow {
   archived: boolean;
   pendingCount: number;
   requiredCount: number;
+  /** Every pending item is something he does himself (a captcha, a sign-in), not a question. */
+  stepsOnly: boolean;
   blockedSince: string;
   eligibleAt?: string;
   autoCompletable: boolean;
@@ -75,6 +77,7 @@ export function NeedsYouQueue({ listings, applications, onOpen, onExtend }: Need
         archived: listing.status === 'archived',
         pendingCount: pending.length,
         requiredCount: pending.filter((question) => question.required).length,
+        stepsOnly: pending.every((question) => question.kind === 'action'),
         blockedSince: blockedEntry?.changedAt ?? application.updatedAt,
         eligibleAt: application.autoCompleteEligibleAt,
         autoCompletable:
@@ -109,7 +112,7 @@ export function NeedsYouQueue({ listings, applications, onOpen, onExtend }: Need
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
                 <CompanyLogo company={row.company} link={row.link} />
                 <span className="kind" style={{ ['--k' as string]: 'var(--now)' }}>
-                  {row.pendingCount} question{row.pendingCount === 1 ? '' : 's'}
+                  {row.pendingCount} {row.stepsOnly ? 'step' : 'question'}{row.pendingCount === 1 ? '' : 's'}{row.stepsOnly ? ' for you' : ''}
                 </span>
               </div>
               <button type="button" onClick={() => onOpen(row.listingId)} style={{ minWidth: 0 }}>
@@ -143,7 +146,7 @@ export function NeedsYouQueue({ listings, applications, onOpen, onExtend }: Need
                     </button>
                   )}
                   <button type="button" onClick={() => onOpen(row.listingId)} className="btn sm pri">
-                    Answer
+                    {row.stepsOnly ? 'Open' : 'Answer'}
                   </button>
                 </span>
               </div>
