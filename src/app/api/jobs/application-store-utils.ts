@@ -13,6 +13,7 @@ import {
 import * as fs from 'fs';
 import * as path from 'path';
 import { jobsDataDir } from '@/lib/backend-data';
+import { deployHoldsWorker } from '@/lib/deploy-hold';
 import type {
   AssessmentPreview,
   JobApplicationCategory,
@@ -403,6 +404,10 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
     if (taskWorkLeaseLive()) {
       return null;
     }
+    // A queued deploy is about to stop the gateway; an application started now would be cut off.
+    if (deployHoldsWorker()) {
+      return null;
+    }
 
     const now = new Date();
     const activeLease = Object.values(store.applications).some(
@@ -658,7 +663,7 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
 
 export function hasActionableJobApplications(): boolean {
   const store = readJobApplicationsStore();
-  if (!store.workerEnabled || store.enabledApplicationCategories.length === 0) {
+  if (!store.workerEnabled || store.enabledApplicationCategories.length === 0 || deployHoldsWorker()) {
     return false;
   }
   const now = new Date();

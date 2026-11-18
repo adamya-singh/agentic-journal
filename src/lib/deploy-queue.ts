@@ -1,9 +1,9 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { tasksDataDir } from './backend-data.ts';
+import { jobsDataDir, tasksDataDir } from './backend-data.ts';
+import { deployStateDir } from './deploy-hold.ts';
 import { stackConfig } from './media/stack-config.ts';
 import { jellyCall } from './media/stack-clients.ts';
 
@@ -20,6 +20,8 @@ export interface Queued {
   lastRequestedAt: string;
   checkedAt?: string;
   waitingOn?: string[];
+  /** Set once the deploy is otherwise ready: the application worker starts nothing new (deploy-hold.ts). */
+  quietSince?: string;
 }
 export interface LastRun {
   startedAt: string;
@@ -48,9 +50,7 @@ export interface CodeTurn {
   settledAt?: string | null;
 }
 
-const stateDir = () =>
-  process.env.DEPLOY_QUEUE_DIR ||
-  path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), '.local/state'), 'agentic-journal');
+const stateDir = deployStateDir;
 const file = (name: string) => path.join(stateDir(), name);
 export function read<T>(name: 'queued' | 'last'): T | undefined {
   try {
@@ -103,6 +103,23 @@ export function waitReasons(now: Date, playing: Playing[] | Error, chats: Chat[]
         reasons.push(`${name} was active ${Math.round((now.getTime() - settled) / 60_000)} min ago`);
     }
   return reasons;
+}
+
+/**
+ * When the job application OpenClaw is in the middle of must be over (its lease's end), or null
+ * when it is not filling one. The deploy stops the gateway, so it waits for this.
+ */
+export function applicationInProgressUntil(now: Date): string | null | Error {
+  try {
+    const store = JSON.parse(fs.readFileSync(path.join(jobsDataDir(), 'applications.json'), 'utf8'));
+    const ends = Object.values(store?.applications ?? {})
+      .map((application) => (application as { lease?: { expiresAt?: string } }).lease?.expiresAt ?? '')
+      .filter((expiresAt) => Date.parse(expiresAt) > now.getTime())
+      .sort();
+    return ends.at(-1) ?? null;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : (e as Error);
+  }
 }
 
 export async function playing(): Promise<Playing[] | Error> {

@@ -5,11 +5,50 @@
 //   npm run deploy:cancel   drop the queued deploy
 // `check` is what agentic-journal-deploy-queue.timer runs every 5 minutes.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chats, codeTurns, playing, read, waitReasons, write, type LastRun, type Queued } from '../src/lib/deploy-queue.ts';
+import {
+  applicationInProgressUntil, chats, codeTurns, playing, read, waitReasons, write, type LastRun, type Queued,
+} from '../src/lib/deploy-queue.ts';
 
 const now = () => new Date().toISOString();
 const head = () => execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
 const ago = (iso: string) => `${Math.round((Date.now() - Date.parse(iso)) / 60_000)} min ago`;
+
+const GATEWAY = 'openclaw-gateway';
+const userctl = (...args: string[]) => spawnSync('systemctl', ['--user', ...args], { encoding: 'utf8' });
+
+/**
+ * The build needs about 6 GB and the OpenClaw gateway holds 3 to 5, so a queued deploy stops the
+ * gateway for the build (Adamya, 2026-11-18) and gives the build the raised memory caps that every
+ * deploy since Nov 13 has needed. The gateway and its browser come back whether or not the build passed.
+ */
+function deployWithGatewayStopped(): number | null {
+  const wasRunning = userctl('is-active', '--quiet', GATEWAY).status === 0;
+  if (wasRunning) {
+    console.log('Stopping the OpenClaw gateway for the build.');
+    userctl('stop', GATEWAY);
+  }
+  try {
+    return spawnSync('bash', ['scripts/deploy-production.sh'], {
+      stdio: 'inherit',
+      env: { NEXT_BUILD_MEMORY_HIGH: '7G', NEXT_BUILD_MEMORY_MAX: '8G', NEXT_BUILD_SWAP_MAX: '3G', ...process.env },
+    }).status;
+  } finally {
+    if (wasRunning) restoreGateway();
+  }
+}
+
+/** Start the gateway again, then its browser, which a gateway restart takes down. The gateway needs up to a few minutes. */
+function restoreGateway() {
+  console.log('Starting the OpenClaw gateway again.');
+  userctl('start', GATEWAY);
+  const openclaw = process.env.OPENCLAW_CLI_PATH || 'openclaw';
+  for (let attempt = 0; attempt < 24; attempt += 1) {
+    spawnSync('sleep', ['15']);
+    const browser = spawnSync(openclaw, ['browser', '--browser-profile', 'openclaw', 'start'], { encoding: 'utf8', timeout: 60_000 });
+    if (browser.status === 0) return console.log('OpenClaw gateway and browser are back.');
+  }
+  console.error('The OpenClaw gateway was started, but its browser did not come back within six minutes.');
+}
 
 async function check() {
   const queued = read<Queued>('queued');
@@ -20,16 +59,34 @@ async function check() {
   const current = read<Queued>('queued');
   if (!current) return 0;
   if (reasons.length) {
-    write('queued', { ...current, checkedAt: now(), waitingOn: reasons });
+    // In use again: the worker need not stay quiet for a deploy that is not about to run.
+    write('queued', { ...current, checkedAt: now(), waitingOn: reasons, quietSince: undefined });
     console.log(`Deploy waiting: ${reasons.join('; ')}`);
     return 0;
   }
+  // Ready apart from OpenClaw's own work. From here the application worker starts nothing new
+  // (deploy-hold.ts); the one it is filling is allowed to finish, since the build stops the gateway.
+  const quietSince = current.quietSince || now();
+  const busyUntil = applicationInProgressUntil(new Date());
+  if (busyUntil) {
+    const reason = busyUntil instanceof Error
+      ? `cannot read job applications (${busyUntil.message})`
+      : `OpenClaw is finishing a job application (over by ${new Date(busyUntil).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}); it starts no new one until the deploy is done`;
+    write('queued', { ...current, checkedAt: now(), waitingOn: [reason], quietSince });
+    console.log(`Deploy waiting: ${reason}`);
+    return 0;
+  }
+  write('queued', { ...current, checkedAt: now(), waitingOn: [], quietSince });
   const startedAt = now(),
     commit = head();
   console.log(`Nothing in use; deploying ${commit}.`);
-  const { status } = spawnSync('bash', ['scripts/deploy-production.sh'], { stdio: 'inherit' });
+  const status = deployWithGatewayStopped();
   // 75: a deploy started by hand holds the deploy lock. Leave the request for the next look.
-  if (status === 75) return 0;
+  if (status === 75) {
+    const waiting = read<Queued>('queued');
+    if (waiting) write('queued', { ...waiting, quietSince: undefined });
+    return 0;
+  }
   write('last', { startedAt, finishedAt: now(), head: commit, exitCode: status } satisfies LastRun);
   // Keep a request that came in while this deploy ran; it may need code this build missed.
   if (read<Queued>('queued')?.lastRequestedAt === queued.lastRequestedAt) write('queued', undefined);
@@ -60,7 +117,8 @@ if (command === 'queue') {
     at = now();
   write('queued', { ...queued, firstRequestedAt: queued?.firstRequestedAt || at, lastRequestedAt: at });
   console.log(
-    'Deploy queued. It runs once nothing has played and no OpenClaw chat or coding session has been active for 15 minutes,\n' +
+    'Deploy queued. It runs once nothing has played and no OpenClaw chat or coding session has been active for 15 minutes\n' +
+      'and OpenClaw is between job applications. It stops the OpenClaw gateway for the build, starts it again after,\n' +
       'and deploys whatever is checked out then. Follow it with: npm run deploy:status',
   );
 } else if (command === 'cancel') {

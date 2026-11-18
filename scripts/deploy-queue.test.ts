@@ -38,3 +38,40 @@ test('the 05:00 reboot window and unreadable sources hold a deploy back', () => 
   assert.equal(waitReasons(noon, new Error('Jellyfin request failed (401).'), []).length, 1);
   assert.equal(waitReasons(noon, [], new Error('spawn openclaw ENOENT')).length, 1);
 });
+
+test('a deploy that is ready to run holds the application worker, and a stale hold lapses', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const { deployHoldsWorker, DEPLOY_HOLD_MAX_MS } = await import('../src/lib/deploy-hold.ts');
+  const { applicationInProgressUntil, read, write } = await import('../src/lib/deploy-queue.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'deploy-hold-'));
+  const before = { queue: process.env.DEPLOY_QUEUE_DIR, jobs: process.env.JOB_APPLICATION_JOBS_DIR };
+  process.env.DEPLOY_QUEUE_DIR = root;
+  process.env.JOB_APPLICATION_JOBS_DIR = path.join(root, 'jobs');
+  try {
+    const requested = { firstRequestedAt: noon.toISOString(), lastRequestedAt: noon.toISOString() };
+    assert.equal(deployHoldsWorker(noon.getTime()), false);
+    write('queued', requested);
+    assert.equal(deployHoldsWorker(noon.getTime()), false, 'a queued deploy that is still waiting on him does not hold the worker');
+    write('queued', { ...requested, quietSince: noon.toISOString() });
+    assert.equal(read<{ quietSince?: string }>('queued')?.quietSince, noon.toISOString());
+    assert.equal(deployHoldsWorker(noon.getTime() + 60_000), true);
+    assert.equal(deployHoldsWorker(noon.getTime() + DEPLOY_HOLD_MAX_MS), false);
+    write('queued', undefined);
+    assert.equal(deployHoldsWorker(noon.getTime()), false);
+
+    // The application in progress: the latest live lease, none once they have all ended.
+    assert.equal(applicationInProgressUntil(noon), null);
+    fs.mkdirSync(process.env.JOB_APPLICATION_JOBS_DIR, { recursive: true });
+    const lease = (minutes: number) => ({ lease: { expiresAt: new Date(noon.getTime() + minutes * 60_000).toISOString() } });
+    fs.writeFileSync(path.join(process.env.JOB_APPLICATION_JOBS_DIR, 'applications.json'),
+      JSON.stringify({ applications: { done: lease(-5), running: lease(20), idle: {} } }));
+    assert.equal(applicationInProgressUntil(noon), new Date(noon.getTime() + 20 * 60_000).toISOString());
+    assert.equal(applicationInProgressUntil(new Date(noon.getTime() + 21 * 60_000)), null);
+  } finally {
+    if (before.queue === undefined) delete process.env.DEPLOY_QUEUE_DIR; else process.env.DEPLOY_QUEUE_DIR = before.queue;
+    if (before.jobs === undefined) delete process.env.JOB_APPLICATION_JOBS_DIR; else process.env.JOB_APPLICATION_JOBS_DIR = before.jobs;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
