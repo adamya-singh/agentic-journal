@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { RefreshCw, Search } from 'lucide-react';
+import { JOB_TRACK_LABELS, type JobTrack } from '@/lib/types';
 import {
   relativeTime,
   type Chip as ChipModel,
@@ -37,7 +38,7 @@ export function OverviewFilterBar({
   filters: OverviewFilters;
   onChange: (patch: Partial<OverviewFilters>) => void;
   onClear: () => void;
-  options: { resumes: string[]; families: string[]; categories: string[] };
+  options: { resumes: string[]; families: string[]; categories: string[]; tracks: JobTrack[] };
   scope: { submitted: number; records: number; merged: number };
   chips: ChipModel[];
   onRemoveChip: (key: ChipModel['key']) => void;
@@ -96,6 +97,19 @@ export function OverviewFilterBar({
         {optional('Resume', 'resume', options.resumes)}
         {optional('Family', 'family', options.families)}
         {optional('Category', 'category', options.categories)}
+        {options.tracks.length > 1 && (
+          <label className="ov-pf">
+            Search
+            <select value={filters.track} onChange={(e) => onChange({ track: e.target.value as OverviewFilters['track'] })}>
+              <option value="">Both</option>
+              {options.tracks.map((track) => (
+                <option key={track} value={track}>
+                  {JOB_TRACK_LABELS[track]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="ov-pf ov-q">
           <Search className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span className="sr-only">Search</span>

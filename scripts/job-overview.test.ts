@@ -35,6 +35,7 @@ const listing: JobListing = {
   companySummary: '',
   location: 'NY',
   applicationCategories: ['new-grad'],
+  track: 'focus',
   status: 'applied',
   salary: '',
   link: 'https://example.com/jobs/123/apply',

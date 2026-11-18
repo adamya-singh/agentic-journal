@@ -20,32 +20,39 @@ export const JobListingSourceSchema = z.object({
   link: z.string().url(),
 });
 
-const NotesWithProsAndConsSchema = z
-  .string()
-  .min(1)
-  .refine((value) => /pros:/i.test(value) && /cons:/i.test(value), {
-    message: 'notes must include brief Pros: and Cons: sections from the perspective of life goals',
-  });
+export const JobTrackSchema = z.enum(['focus', 'wide']);
 
-export const JobListingFieldsSchema = z.object({
+/** North Star postings are judged for fit, so their notes carry Pros and Cons. Wide-net ones are not judged. */
+export const NOTES_NEED_PROS_AND_CONS =
+  'notes must include brief Pros: and Cons: sections from the perspective of life goals';
+export function notesHaveProsAndCons(notes: string): boolean {
+  return /pros:/i.test(notes) && /cons:/i.test(notes);
+}
+
+const JobListingFieldsObject = z.object({
   company: z.string().min(1),
   companySummary: z.string().min(1),
   positionTitle: z.string().min(1),
   location: z.string().min(1),
   applicationCategories: JobApplicationCategoriesSchema,
+  track: JobTrackSchema.default('focus'),
   status: JobListingStatusSchema.default('saved'),
   salary: z.string().min(1),
   link: z.string().url(),
   source: JobListingSourceSchema,
-  notes: NotesWithProsAndConsSchema,
+  notes: z.string().min(1),
   postedDate: PostedDateSchema.optional(),
   postedDateText: PostedDateTextSchema.optional(),
 });
 
-export const UpdateJobListingFieldsSchema = JobListingFieldsSchema.partial()
-  .extend({
-    notes: NotesWithProsAndConsSchema.optional(),
-  })
+export const JobListingFieldsSchema = JobListingFieldsObject.refine(
+  (data) => data.track === 'wide' || notesHaveProsAndCons(data.notes),
+  { message: NOTES_NEED_PROS_AND_CONS, path: ['notes'] },
+);
+
+// Whether new notes need Pros and Cons depends on the stored posting's track; the update route checks.
+export const UpdateJobListingFieldsSchema = JobListingFieldsObject.partial()
+  .extend({ track: JobTrackSchema.optional() })
   .refine((data) => Object.keys(data).length > 0, {
     message: 'At least one field must be provided',
   });
@@ -78,6 +85,7 @@ export function normalizeJobListingFields(
     'positionTitle',
     'location',
     'status',
+    'track',
     'salary',
     'link',
     'notes',

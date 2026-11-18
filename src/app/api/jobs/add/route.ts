@@ -33,6 +33,7 @@ export async function POST(request: NextRequest) {
       positionTitle: parsed.data.positionTitle,
       location: parsed.data.location,
       applicationCategories: parsed.data.applicationCategories,
+      track: parsed.data.track,
       status: parsed.data.status,
       salary: parsed.data.salary,
       link: parsed.data.link,

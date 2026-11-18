@@ -345,7 +345,7 @@ export function buildClaimQueuePreview(
       if (!isApplicationClaimable(application, now)) {
         return [];
       }
-      const priority = application.resumeRequestedAt ? 0 : listing.status === 'starred' ? 1 : 2;
+      const priority = claimPriority(application, listing);
       const dateValue = Date.parse(listing.postedDate ?? listing.savedAt ?? listing.createdAt);
       return [{ listing, priority, dateValue: Number.isNaN(dateValue) ? 0 : dateValue }];
     })
@@ -355,8 +355,22 @@ export function buildClaimQueuePreview(
       listingId: candidate.listing.id,
       rank: index + 1,
       reason:
-        candidate.priority === 0 ? 'resume-requested' : candidate.priority === 1 ? 'starred' : 'saved',
+        candidate.priority === 0 ? 'resume-requested' : candidate.listing.status === 'starred' ? 'starred' : 'saved',
+      track: candidate.listing.track,
     }));
+}
+
+/**
+ * Claim order, lowest first: an application Adamya resumed, then North Star postings (starred
+ * before saved), then the wide net (starred before saved). The wide net never delays a North
+ * Star application; it uses the worker's spare time.
+ */
+export function claimPriority(
+  application: Pick<JobApplicationRecord, 'resumeRequestedAt'>,
+  listing: Pick<JobListing, 'status' | 'track'>,
+): number {
+  if (application.resumeRequestedAt) return 0;
+  return (listing.track === 'wide' ? 3 : 1) + (listing.status === 'starred' ? 0 : 1);
 }
 
 export async function claimNextJobApplication(): Promise<ClaimedJobApplication | null> {
@@ -391,7 +405,7 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
         if (!isApplicationClaimable(application, now)) {
           return [];
         }
-        const priority = application.resumeRequestedAt ? 0 : listing.status === 'starred' ? 1 : 2;
+        const priority = claimPriority(application, listing);
         const dateValue = Date.parse(listing.postedDate ?? listing.savedAt ?? listing.createdAt);
         return [
           { listing, application, priority, dateValue: Number.isNaN(dateValue) ? 0 : dateValue },

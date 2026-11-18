@@ -76,6 +76,7 @@ function normalizeJobListing(listing: StoredJobListing): JobListing {
     positionTitle: normalizeString(listing.positionTitle),
     location: normalizeString(listing.location),
     applicationCategories: normalizeApplicationCategories(listing),
+    track: listing.track === 'wide' ? 'wide' : 'focus',
     status: normalizeStatus(listing.status),
     salary: normalizeString(listing.salary),
     link,

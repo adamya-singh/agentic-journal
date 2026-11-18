@@ -73,6 +73,14 @@ export type JobApplicationCategory =
   | 'spring-internship'
   | 'summer-internship'
   | 'new-grad';
+/**
+ * Which search a posting came from. `focus` is the selective North Star search; `wide` is the
+ * wide net (every SWE and MLE posting we can find). Both run through the same pipeline; the
+ * worker takes focus postings first.
+ */
+export type JobTrack = 'focus' | 'wide';
+export const JOB_TRACKS: JobTrack[] = ['focus', 'wide'];
+export const JOB_TRACK_LABELS: Record<JobTrack, string> = { focus: 'North Star', wide: 'Wide net' };
 export type LegacyJobType = 'fall-coop' | 'spring-coop' | 'new-grad';
 export type JobListingStatus = 'saved' | 'starred' | 'applied' | 'archived';
 
@@ -93,6 +101,7 @@ export interface JobListing {
   positionTitle: string;
   location: string;
   applicationCategories: JobApplicationCategory[];
+  track: JobTrack;
   status: JobListingStatus;
   salary: string;
   link: string;
@@ -523,6 +532,7 @@ export interface JobApplicationQueuePreviewEntry {
   listingId: string;
   rank: number;
   reason: 'resume-requested' | 'starred' | 'saved';
+  track: JobTrack;
 }
 
 export interface JobApplicationsViewData {

@@ -6,7 +6,7 @@ import type { JobApplicationRecord, JobListing } from '../src/lib/types';
 function listing(id: string, overrides: Partial<JobListing> = {}): JobListing {
   return {
     id, company: id, companySummary: '', positionTitle: 'Engineer', location: 'NYC',
-    applicationCategories: ['new-grad'], status: 'saved', salary: '', link: '', source: { name: 'x', link: '' },
+    applicationCategories: ['new-grad'], track: 'focus', status: 'saved', salary: '', link: '', source: { name: 'x', link: '' },
     notes: '', savedAt: '2026-10-01T00:00:00Z', statusHistory: [], createdAt: '2026-10-01T00:00:00Z',
     updatedAt: '2026-10-01T00:00:00Z', ...overrides,
   };

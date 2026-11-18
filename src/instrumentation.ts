@@ -67,10 +67,17 @@ export async function register(): Promise<void> {
     void runTaskSortIfDue().then((result) => { if (result.decision === 'sorted') void wakeTaskWorker(); });
     void notifyNeedsYou();
   };
+  // The wide net: every few hours, top the queue of unjudged SWE/MLE postings up from the public feed.
+  const { runWideNetImportIfDue } = await import('./app/api/jobs/wide-net/store');
+  const topUpWideNet = () => {
+    runWideNetImportIfDue().catch((error) => console.error('Wide net check failed:', error));
+  };
+  setTimeout(topUpWideNet, 120_000).unref();
   const interval = setInterval(() => {
     reconcileAndWakeJobApplicationWorker().catch((error) => {
       console.error('Scheduled job application reconcile failed:', error);
     });
+    topUpWideNet();
     wakePreviews();
     reconcileTasks();
   }, RECONCILE_INTERVAL_MS);

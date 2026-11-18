@@ -25,6 +25,8 @@ export default function JobsPage() {
     cancelJobApplication,
     updateJobEmailUpdates,
     extendJobApplicationAutopilot,
+    refreshJobListings,
+    refreshJobApplications,
   } = useJobBoardState({ refetchOnFocus: true, pollWhileActive: true });
 
   // Prune local answer drafts for applications that are no longer awaiting input.
@@ -70,6 +72,7 @@ export default function JobsPage() {
           onApplicationCancel={cancelJobApplication}
           onEmailUpdate={updateJobEmailUpdates}
           onExtendAutopilot={extendJobApplicationAutopilot}
+          onListingsChanged={() => { void refreshJobListings({ silent: true }); void refreshJobApplications({ silent: true }); }}
         />
       </div>
     </div>

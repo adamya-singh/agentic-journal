@@ -34,6 +34,7 @@ import {
   timingRows,
 } from '@/lib/job-overview-view';
 import { useOverviewData } from '@/lib/useOverviewData';
+import { JOB_TRACKS } from '@/lib/types';
 import { useOverviewFilters } from '@/lib/useOverviewFilters';
 
 const PAGE_SIZE = 50;
@@ -79,6 +80,7 @@ export default function JobsOverview() {
       resumes: unique(rows.map((r) => r.resume)),
       families: unique(rows.map((r) => r.family)),
       categories: unique(rows.flatMap((r) => r.categories)),
+      tracks: JOB_TRACKS.filter((track) => rows.some((r) => r.track === track)),
     }),
     [rows],
   );

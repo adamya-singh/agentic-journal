@@ -161,6 +161,7 @@ export function overview(
       location: metadata.location,
       source: metadata.source.name,
       categories: metadata.applicationCategories,
+      track: metadata.track ?? 'focus',
       family: roleFamily(metadata.positionTitle),
       resume: snap?.resumeVariant ?? a?.resumeVariant ?? 'Unknown',
       resumeHash: snap?.resumeHash ?? 'Unknown historical version',

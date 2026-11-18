@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readJobListings, writeJobListings } from '../job-store-utils';
-import { isRecord, normalizeJobListingFields, UpdateJobListingFieldsSchema } from '../route-utils';
+import {
+  isRecord, normalizeJobListingFields, notesHaveProsAndCons, NOTES_NEED_PROS_AND_CONS, UpdateJobListingFieldsSchema,
+} from '../route-utils';
 import { wakeJobApplicationWorkerIfEnabled } from '../application-worker-utils';
 
 export async function POST(request: NextRequest) {
@@ -62,6 +64,15 @@ export async function POST(request: NextRequest) {
 
     if (updatedListing.postedDateText === undefined) {
       delete updatedListing.postedDateText;
+    }
+
+    // New notes on a North Star posting, or a posting moved into North Star, must say why it fits.
+    if (
+      updatedListing.track === 'focus' &&
+      (parsed.data.notes !== undefined || (parsed.data.track === 'focus' && currentListing.track !== 'focus')) &&
+      !notesHaveProsAndCons(updatedListing.notes)
+    ) {
+      return NextResponse.json({ success: false, error: NOTES_NEED_PROS_AND_CONS }, { status: 400 });
     }
 
     data.listings[listingIndex] = updatedListing;

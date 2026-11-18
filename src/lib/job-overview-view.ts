@@ -1,4 +1,5 @@
-import type { JobEmployerStage, JobEmployerUpdate } from './types';
+import { JOB_TRACK_LABELS, JOB_TRACKS } from './types';
+import type { JobEmployerStage, JobEmployerUpdate, JobTrack } from './types';
 import {
   easternInput,
   elapsed,
@@ -144,6 +145,7 @@ export type OverviewFilters = {
   resume: string;
   family: string;
   category: string;
+  track: '' | JobTrack; // North Star or Wide net
   search: string;
   outcome: '' | OutcomeKey;
   status: TableStatus; // table only
@@ -164,6 +166,7 @@ export const DEFAULT_FILTERS: OverviewFilters = {
   resume: '',
   family: '',
   category: '',
+  track: '',
   search: '',
   outcome: '',
   status: 'submitted',
@@ -177,6 +180,7 @@ const QUERY_KEYS: Record<keyof OverviewFilters, string> = {
   resume: 'resume',
   family: 'family',
   category: 'category',
+  track: 'track',
   search: 'q',
   outcome: 'outcome',
   status: 'status',
@@ -198,6 +202,8 @@ export function filtersFromQuery(params: URLSearchParams): OverviewFilters {
       if (STATUSES.includes(v as TableStatus)) f.status = v as TableStatus;
     } else if (key === 'outcome') {
       if (OUTCOME_KEYS.includes(v as OutcomeKey)) f.outcome = v as OutcomeKey;
+    } else if (key === 'track') {
+      if (JOB_TRACKS.includes(v as JobTrack)) f.track = v as JobTrack;
     } else if (key === 'start' || key === 'end' || key === 'day') {
       if (DAY.test(v)) f[key] = v;
     } else f[key] = v.slice(0, 200);
@@ -229,6 +235,7 @@ export function activeChips(f: OverviewFilters, cited: Cited): Chip[] {
   if (f.resume) chips.push({ key: 'resume', label: `Resume: ${f.resume}` });
   if (f.family) chips.push({ key: 'family', label: f.family });
   if (f.category) chips.push({ key: 'category', label: f.category });
+  if (f.track) chips.push({ key: 'track', label: JOB_TRACK_LABELS[f.track] });
   if (f.search.trim()) chips.push({ key: 'search', label: `“${f.search.trim()}”` });
   if (f.outcome) chips.push({ key: 'outcome', label: OUTCOME_LABELS[f.outcome] });
   if (f.day) chips.push({ key: 'day', label: `Activity on ${f.day}` });
@@ -293,6 +300,7 @@ export function deriveView(
       (!f.resume || r.resume === f.resume) &&
       (!f.family || r.family === f.family) &&
       (!f.category || r.categories.includes(f.category as never)) &&
+      (!f.track || r.track === f.track) &&
       (!q || `${r.company} ${r.role}`.toLowerCase().includes(q)),
   );
   const { from, to } = periodBounds(f, now);

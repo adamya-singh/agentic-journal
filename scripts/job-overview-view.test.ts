@@ -38,6 +38,7 @@ const listing = (id: string, status: JobListing['status'] = 'applied'): JobListi
   companySummary: '',
   location: 'NY',
   applicationCategories: ['new-grad'],
+  track: 'focus',
   status,
   salary: '',
   link: `https://example.com/jobs/${id}`,

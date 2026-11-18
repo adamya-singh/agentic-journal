@@ -31,10 +31,13 @@ import type {
   JobListing,
   JobListingStatus,
   JobListingsData,
+  JobTrack,
 } from '@/lib/types';
+import { JOB_TRACK_LABELS, JOB_TRACKS } from '@/lib/types';
 import { JobApplicationModal } from './JobApplicationModal';
 import type { JobApplicationResponseInput } from './JobApplicationModal';
 import { AnswerBankPanel } from './AnswerBankPanel';
+import { WideNetPanel } from './WideNetPanel';
 import { NeedsYouQueue } from './NeedsYouQueue';
 import { WorkerStatusPanel } from './WorkerStatusPanel';
 import { ApplicationReviewPanel } from './ApplicationReviewPanel';
@@ -79,6 +82,8 @@ interface JobListingsProps {
   onEmailUpdate?: (request: JobEmailUpdateRequest) => Promise<void>;
   /** Pushes an application's next autopilot date (draft or auto-submit) back by a day. */
   onExtendAutopilot?: (listingId: string) => Promise<void>;
+  /** The wide net saved postings; reload the box. */
+  onListingsChanged?: () => void;
 }
 
 const APPLICATION_CATEGORY_LABELS: Record<JobApplicationCategory, string> = {
@@ -107,6 +112,7 @@ const ACTIVE_STATUS_OPTIONS: Array<{
 ];
 
 const STAGE_STORAGE_KEY = 'jobs.board.stage';
+const TRACK_STORAGE_KEY = 'jobs.board.track';
 const PAGE_SIZE = 50;
 
 /** One sentence under the table title saying what the selected stage holds. */
@@ -231,10 +237,12 @@ export function JobListings({
   onApplicationCancel,
   onEmailUpdate,
   onExtendAutopilot,
+  onListingsChanged,
 }: JobListingsProps) {
   const [pendingListingId, setPendingListingId] = React.useState<string | null>(null);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [stage, setStageState] = React.useState<JobBoardStage>('queued');
+  const [track, setTrackState] = React.useState<JobTrack>('focus');
   const [query, setQuery] = React.useState('');
   const [limit, setLimit] = React.useState(PAGE_SIZE);
   const [openRowId, setOpenRowId] = React.useState<string | null>(null);
@@ -247,11 +255,15 @@ export function JobListings({
 
   // Deep link from the Overview: /jobs?application=<listingId> opens that record.
   React.useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get('application');
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('application');
     if (id) setSelectedApplicationId(id);
     try {
       const saved = window.localStorage.getItem(STAGE_STORAGE_KEY);
       if (saved && (JOB_BOARD_STAGES as string[]).includes(saved)) setStageState(saved as JobBoardStage);
+      // /jobs?track=wide links straight to the wide net; otherwise the last one looked at.
+      const linked = params.get('track');
+      if (linked === 'wide' || (linked !== 'focus' && window.localStorage.getItem(TRACK_STORAGE_KEY) === 'wide')) setTrackState('wide');
     } catch {}
   }, []);
 
@@ -269,9 +281,38 @@ export function JobListings({
     if (scroll) postingsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  const setTrack = (next: JobTrack) => {
+    setTrackState(next);
+    setLimit(PAGE_SIZE);
+    setOpenRowId(null);
+    try {
+      window.localStorage.setItem(TRACK_STORAGE_KEY, next);
+    } catch {}
+  };
+
+  // The board shows one search at a time: everything below the worker panel is that search's
+  // postings only. The worker itself is shared, so its panel sees both.
   const allListings = React.useMemo(() => data?.listings ?? [], [data]);
-  const records = React.useMemo(() => applications?.applications ?? {}, [applications]);
-  const stages = React.useMemo(() => groupJobBoardStages(allListings, records), [allListings, records]);
+  const trackCounts = React.useMemo(() => {
+    const counts: Record<JobTrack, number> = { focus: 0, wide: 0 };
+    for (const listing of allListings) counts[listing.track === 'wide' ? 'wide' : 'focus'] += 1;
+    return counts;
+  }, [allListings]);
+  const listings = React.useMemo(
+    () => allListings.filter((listing) => (listing.track === 'wide' ? 'wide' : 'focus') === track),
+    [allListings, track],
+  );
+  const trackApplications = React.useMemo(() => {
+    if (!applications) return null;
+    const ids = new Set(listings.map((listing) => listing.id));
+    return {
+      ...applications,
+      applications: Object.fromEntries(Object.entries(applications.applications).filter(([id]) => ids.has(id))),
+      reviewItems: applications.reviewItems.filter((item) => ids.has(item.listingId)),
+    };
+  }, [applications, listings]);
+  const records = React.useMemo(() => trackApplications?.applications ?? {}, [trackApplications]);
+  const stages = React.useMemo(() => groupJobBoardStages(listings, records), [listings, records]);
 
   // Review queue split: answers on unsent applications block a submission;
   // answers on sent ones are an optional spot-check.
@@ -280,7 +321,7 @@ export function JobListings({
     const auditApps = new Set<string>();
     const auditByListing = new Map<string, number>();
     let auditAnswers = 0;
-    for (const item of applications?.reviewItems ?? []) {
+    for (const item of trackApplications?.reviewItems ?? []) {
       const record = records[item.listingId];
       const sent = Boolean(record?.submittedAt || item.submittedAt || record?.status === 'closed');
       if (item.status === 'pending') {
@@ -297,7 +338,7 @@ export function JobListings({
       }
     }
     return { blocking: blocking.size, auditApps: auditApps.size, auditAnswers, auditByListing };
-  }, [applications, records]);
+  }, [trackApplications, records]);
 
   // Same rows NeedsYouQueue lists: drafts held only for review live in the review panel.
   const questionCount = stages.needs.filter((listing) => {
@@ -307,6 +348,20 @@ export function JobListings({
   const emailCount = applications?.emailUpdates.pending.length ?? 0;
   const waitingCount = questionCount + review.blocking + emailCount;
   const unstartedQueued = stages.queued.filter((listing) => records[listing.id]?.status === 'unstarted').length;
+  const enabledCategoryList = applications?.enabledApplicationCategories ?? [];
+  // Counted here, not taken from the server, because the server counts both searches together.
+  const eligibleBacklog = stages.queued.filter(
+    (listing) =>
+      records[listing.id]?.status === 'unstarted' &&
+      listing.applicationCategories.some((category) => enabledCategoryList.includes(category)),
+  ).length;
+  const categoryCounts = (category: JobApplicationCategory) =>
+    listings.filter(
+      (listing) =>
+        (listing.status === 'saved' || listing.status === 'starred') &&
+        records[listing.id] &&
+        listing.applicationCategories.includes(category),
+    ).length;
 
   const normalizedQuery = query.trim().toLowerCase();
   const stageListings = normalizedQuery
@@ -387,7 +442,7 @@ export function JobListings({
     needs: review.blocking
       ? `${questionCount} with questions · ${review.blocking} to approve`
       : `${questionCount} with questions`,
-    queued: applications ? `${applications.eligibleBacklog} in a category you apply to` : '',
+    queued: applications ? `${eligibleBacklog} in a category you apply to` : '',
     applying: 'open now or between attempts',
     submitted: 'waiting on employers',
     heard: `${heardCounts.moving} moving · ${heardCounts.rejected} rejected`,
@@ -401,6 +456,21 @@ export function JobListings({
         <style>{MISSION_JOBS_CSS + BOARD_CSS}</style>
         <div className="mi-top">
           <h1 className="mi-title" style={{ margin: 0 }}>Applications <i>board</i></h1>
+          <div className="seg" role="group" aria-label="Search" style={{ marginRight: 'auto' }}>
+            {JOB_TRACKS.map((candidate) => (
+              <button
+                key={candidate}
+                type="button"
+                aria-pressed={track === candidate}
+                title={candidate === 'focus'
+                  ? 'Postings picked because they move you toward your North Star'
+                  : 'Every software and ML posting we can find, not judged for fit'}
+                onClick={() => setTrack(candidate)}
+              >
+                {JOB_TRACK_LABELS[candidate]} <small>{loading && !data ? '…' : trackCounts[candidate]}</small>
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className="btn sm"
@@ -467,11 +537,11 @@ export function JobListings({
                 >
                   <span className="dot" aria-hidden="true" />
                   {APPLICATION_CATEGORY_LABELS[category]}
-                  <small>{applications?.categoryCounts[category] ?? 0}</small>
+                  <small>{applications ? categoryCounts(category) : 0}</small>
                 </button>
               ))}
               <span className="hint" style={{ marginLeft: 'auto', fontSize: 12.5 }}>The worker only starts postings in a lit category.</span>
-              {applications && applications.workerEnabled && applications.eligibleBacklog === 0 && unstartedQueued > 0 && (
+              {applications && applications.workerEnabled && eligibleBacklog === 0 && unstartedQueued > 0 && (
                 <p className="warn" style={{ margin: 0 }}>
                   None of the {unstartedQueued} queued postings are in a category you apply to, so the worker has nothing new to start.
                 </p>
@@ -480,6 +550,7 @@ export function JobListings({
                 <p className="warn" style={{ margin: 0 }}>Missing: {applications.readiness.missingFiles.join(', ')}</p>
               )}
             </fieldset>
+            {track === 'wide' && <WideNetPanel onListingsChanged={onListingsChanged} onError={setActionError} />}
           </section>
 
           <div className="split">
@@ -499,7 +570,7 @@ export function JobListings({
               )}
               <ApplicationReviewPanel
                 scope="blocking"
-                applications={applications ?? null}
+                applications={trackApplications}
                 onResolve={onApplicationReview}
                 onRedo={onApplicationReviewRedo}
                 onConfirmAll={onApplicationReviewConfirmAll}
@@ -509,8 +580,8 @@ export function JobListings({
               />
               <EmailUpdatesPanel listings={allListings} applications={applications ?? null} onUpdate={onEmailUpdate} />
               <NeedsYouQueue
-                listings={allListings}
-                applications={applications ?? null}
+                listings={listings}
+                applications={trackApplications}
                 onOpen={openApplication}
                 onExtend={onExtendAutopilot}
               />
@@ -578,7 +649,7 @@ export function JobListings({
             <section aria-label="Spot-check sent answers" className="glass" style={{ padding: 16 }}>
               <ApplicationReviewPanel
                 scope="audit"
-                applications={applications ?? null}
+                applications={trackApplications}
                 onResolve={onApplicationReview}
                 onRedo={onApplicationReviewRedo}
                 onConfirmAll={onApplicationReviewConfirmAll}
