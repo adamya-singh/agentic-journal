@@ -208,7 +208,7 @@ systemctl --user daemon-reload
 systemctl --user enable "$SERVICE" >/dev/null 2>&1
 if [ "$START" = 1 ]; then systemctl --user restart "$SERVICE"; sleep 2; echo "service \$(systemctl --user is-active "$SERVICE" 2>&1)"; else echo "service written, not started"; fi
 EOF
-)" || die "the service could not be set up on $WHERE: $RESULT"
+)" || die "the service could not be set up on $WHERE: ${RESULT:-no message (see the error above)}"
 else
   RESULT="$(on_device <<EOF
 set -eu
@@ -232,14 +232,47 @@ cat > "\$plist" <<PLIST
 </dict></plist>
 PLIST
 if [ "$START" = 1 ]; then
-  launchctl bootout "gui/\$(id -u)/$LAUNCHD_LABEL" >/dev/null 2>&1 || true
-  launchctl bootstrap "gui/\$(id -u)" "\$plist"
-  echo "service loaded"
+  dom="gui/\$(id -u)"; svc="\$dom/$LAUNCHD_LABEL"; log="\$HOME/Library/Logs/agentic-journal-claude-bridge.log"
+  # launchctl bootout returns before launchd has finished removing the service (it waits for the bridge to stop);
+  # a bootstrap in that window fails with "5: Input/output error". So wait until it is really gone (30 s at most).
+  if launchctl print "\$svc" >/dev/null 2>&1; then
+    out="\$(launchctl bootout "\$svc" 2>&1)" || true
+    i=0
+    while launchctl print "\$svc" >/dev/null 2>&1; do
+      i=\$((i + 1))
+      [ "\$i" -le 150 ] || { echo "the running bridge did not go away within 30 s of launchctl bootout\${out:+ (\$out)}"; exit 1; }
+      sleep 0.2
+    done
+    echo "old service gone after \$((i / 5)).\$((i % 5 * 2)) s"
+  fi
+  n=0
+  until err="\$(launchctl bootstrap "\$dom" "\$plist" 2>&1)"; do
+    n=\$((n + 1))
+    [ "\$n" -lt 5 ] || { echo "launchctl bootstrap failed 5 times: \$(printf '%s' "\$err" | tr '\n' ' ')"; exit 1; }
+    sleep 1
+  done
+  [ "\$n" = 0 ] || echo "bootstrap worked on try \$((n + 1))"
+  # Running means launchd shows it so with a pid (10 s at most).
+  i=0; state=""; pid=""
+  while [ "\$i" -lt 50 ]; do
+    info="\$(launchctl print "\$svc" 2>&1 || true)"
+    state="\$(printf '%s\n' "\$info" | awk -F' = ' '\$1 == "\tstate" { print \$2; exit }')"
+    pid="\$(printf '%s\n' "\$info" | awk -F' = ' '\$1 == "\tpid" { print \$2; exit }')"
+    [ "\$state" = running ] && [ -n "\$pid" ] && break
+    i=\$((i + 1)); sleep 0.2
+  done
+  if [ "\$state" = running ] && [ -n "\$pid" ]; then
+    echo "service running (pid \$pid)"
+  else
+    code="\$(printf '%s\n' "\$info" | awk -F' = ' '\$1 == "\tlast exit code" { print \$2; exit }')"
+    echo "the service is loaded but not running (state \${state:-unknown}, last exit code \${code:-unknown}); its log \$log ends: \$(tail -n 3 "\$log" 2>/dev/null | tr '\n' ' ')"
+    exit 1
+  fi
 else
   echo "service written, not loaded"
 fi
 EOF
-)" || die "the service could not be set up on $WHERE: $RESULT"
+)" || die "the service could not be set up on $WHERE: ${RESULT:-no message (see the error above)}"
 fi
 say "$RESULT"
 say "done. Claude Code must be signed in on $WHERE: run \`claude auth login\` there, or press Sign in in the Journal's new-chat form."

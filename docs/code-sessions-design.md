@@ -1200,7 +1200,11 @@ as is) and not Windows' node under WSL, npm, `claude`, and `systemctl --user` (L
 `~/.local/share/agentic-journal/claude-bridge`), `npm install --omit=optional` there (kept from the last install when
 the lock file is the same), swaps it in, writes `<prefix>/run` (the node it found, `run serve|proxy`), and writes and
 (re)starts `agentic-journal-claude-bridge.service` (systemd user unit, `CLAUDE_CLI_PATH` and PATH from the checks) or
-`com.agentic-journal.claude-bridge` (launchd agent). Says plainly and stops for: Windows itself, Linux/WSL without
+`com.agentic-journal.claude-bridge` (launchd agent). On macOS a reinstall boots the old agent out, waits until
+`launchctl print` no longer finds it (bootout returns before launchd has removed it, and a bootstrap in that window
+fails with "5: Input/output error"; 30 s at most), bootstraps with up to 5 tries a second apart, then waits up to 10 s
+for `state = running` with a pid, and otherwise fails with launchctl's own message or the state, last exit code and log
+tail (fixed 2026-11-17; two reinstalls in a row on the Mac each ended running). Says plainly and stops for: Windows itself, Linux/WSL without
 systemd --user, old node, no key login. This laptop's own bridge runs from the repo under the same unit name, so here
 only `--local --prefix … --no-service`. Tested locally only: `--dry-run`, argument errors, and a real
 `--local --prefix <scratch> --no-service` install (3.6 s), whose `run serve` answered `initialize` (protocol 2) and
