@@ -1,3 +1,4 @@
+import type { CandidateFacts } from './candidate-facts';
 // Shared types for task and journal systems
 
 // ============ Task Types ============
@@ -503,6 +504,8 @@ export interface JobApplicationsStoreData {
   answerBank: JobApplicationAnswerBankEntry[];
   /** Files Adamya has given once for every application that asks for them. */
   documents: JobApplicationDocuments;
+  /** What he confirmed once about eligibility; absent until he has. */
+  candidateFacts?: CandidateFacts;
   reviewItems: JobApplicationReviewItem[];
   emailUpdates: JobEmailUpdatesState;
 }
@@ -560,6 +563,7 @@ export interface JobApplicationsViewData {
   applications: Record<string, JobApplicationRecord>;
   answerBank: JobApplicationAnswerBankEntry[];
   documents: JobApplicationDocuments;
+  candidateFacts?: CandidateFacts;
   reviewItems: JobApplicationReviewItem[];
   emailUpdates: JobEmailUpdatesView;
   schedulerHealth: {

@@ -7,7 +7,6 @@ import type { JobApplicationQuestion, JobApplicationRecord } from '@/lib/types';
 import { SUBMISSION_CONFIRM_PROMPT } from '@/lib/job-application-cancellation';
 import { readJobListings } from '../../job-store-utils';
 import {
-  JOB_APPLICATION_FAILURE_LIMIT,
   recordApplicationFailure,
   resetApplicationFailureStreak,
   answerFromMemory,
@@ -24,7 +23,7 @@ import {
   holdApplicationForReview,
   isAwaitingSubmissionConfirmation,
   isSubmissionBlockedByReview,
-  JOB_APPLICATION_RETRY_DELAYS_MS,
+  retryOrAskForHelp,
   mergeApplicationQuestions,
   mutateJobApplicationsStore,
   releaseApplicationLease,
@@ -344,21 +343,12 @@ export async function POST(request: NextRequest) {
           parsed.data.error,
           now,
         );
-        application.questions = mergeApplicationQuestions(
-          application.questions.filter(
-            (question) => question.prompt !== 'Screenshot capture needs help',
-          ),
-          [
-            createActionQuestion({
-              prompt: 'Screenshot capture needs help',
-              helpText: `Submission was not attempted because the worker could not save every filled application page. ${parsed.data.error}`,
-              pageUrl: parsed.data.pageUrl,
-              now,
-            }),
-          ],
-        );
-        setApplicationStatus(application, 'awaiting-user-input', now);
+        // A page that would not capture is a failed run like any other: try again later, and ask
+        // only after the retries are used up. (It used to park the application at once.)
+        const message = `Submission was not attempted because the worker could not save every filled application page. ${parsed.data.error}`;
+        const streak = recordApplicationFailure(application, { code: 'screenshot-capture-failed', message, source: 'worker' }, now);
         releaseApplicationLease(application);
+        retryOrAskForHelp(application, streak, message, now);
       }
 
       if (parsed.data.action === 'submitted') {
@@ -424,25 +414,9 @@ export async function POST(request: NextRequest) {
           { code: parsed.data.code, message: parsed.data.message, source: 'worker' },
           now,
         );
-        const retryIndex = Math.min(streak - 1, JOB_APPLICATION_RETRY_DELAYS_MS.length - 1);
         closeDanglingScreenshotCapture(application, parsed.data.message, now);
         releaseApplicationLease(application);
-        if (streak >= JOB_APPLICATION_FAILURE_LIMIT) {
-          application.questions = mergeApplicationQuestions(application.questions, [
-            createActionQuestion({
-              prompt: 'Automation needs help with this application',
-              helpText: parsed.data.message,
-              required: true,
-              now,
-            }),
-          ]);
-          setApplicationStatus(application, 'awaiting-user-input', now);
-        } else {
-          application.nextRetryAt = new Date(
-            Date.now() + JOB_APPLICATION_RETRY_DELAYS_MS[retryIndex],
-          ).toISOString();
-          setApplicationStatus(application, 'in-progress', now);
-        }
+        retryOrAskForHelp(application, streak, parsed.data.message, now);
       }
 
       if (parsed.data.action === 'awaiting-action') {

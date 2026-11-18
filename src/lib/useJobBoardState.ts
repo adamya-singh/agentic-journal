@@ -95,6 +95,7 @@ export function useJobBoardState(
         applications: data.applications,
         answerBank: Array.isArray(data.answerBank) ? data.answerBank : [],
         documents: data.documents ?? {},
+        candidateFacts: data.candidateFacts,
         reviewItems: Array.isArray(data.reviewItems) ? data.reviewItems : [],
         emailUpdates: normalizeEmailUpdatesView(data.emailUpdates),
         schedulerHealth: data.schedulerHealth,

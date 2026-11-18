@@ -4,6 +4,7 @@ import React from 'react';
 import { Building2, Check, Globe, Loader2, Pencil, Trash2, X } from 'lucide-react';
 import type { JobApplicationAnswerBankEntry, JobApplicationAnswerScope } from '@/lib/types';
 import { ApplicationDocuments } from './ApplicationDocuments';
+import { StandingFacts } from './StandingFacts';
 
 const FILE_ANSWER_PATTERN =
   /^file:([0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/([A-Za-z0-9._-]{1,100})$/i;
@@ -239,6 +240,7 @@ export function AnswerBankPanel({ onClose }: { onClose?: () => void } = {}) {
       )}
       {open && (
         <div className="mt-2">
+          <StandingFacts />
           <ApplicationDocuments />
           {error && <p className="mb-2 text-sm text-red-600 dark:text-red-300">{error}</p>}
           {entries === null && !error && (

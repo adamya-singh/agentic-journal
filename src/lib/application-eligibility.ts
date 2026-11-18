@@ -1,3 +1,4 @@
+import { eligibilityConflict, type CandidateFacts } from './candidate-facts';
 import type { JobApplicationQuestion } from './types';
 
 // Explicitly corrected by Adamya on October 3, 2026. This context accompanies
@@ -16,12 +17,17 @@ export function isEligibilityQuestion(question: Pick<JobApplicationQuestion, 'pr
   return /eligib|only open|must (?:have|be)|minimum requirement|graduat|degree|bachelor|master['’]?s|enroll|student status|work authoriz|authorized to work|sponsor|visa|citizen|security clearance|able to (?:start|work)|available to (?:start|work)|willing to (?:relocate|work)|open to working|at least .{0,25}(?:years|experience)/i.test(text);
 }
 
-/** Generated eligibility decisions must be reviewed; time cannot grant consent. */
-export function needsEligibilityReview(question: JobApplicationQuestion): boolean {
+/**
+ * A generated eligibility answer that the review deadline cannot send for him. Without standing
+ * facts that is every one of them. With them (candidate-facts.ts) it is only an answer that
+ * contradicts a fact; the rest go out with the ordinary drafts.
+ */
+export function needsEligibilityReview(question: JobApplicationQuestion, facts?: CandidateFacts): boolean {
   return isEligibilityQuestion(question)
     && (question.resolution === 'auto-resolved' || Boolean(question.generatedAnswer))
     && question.resolution !== 'pending'
-    && JSON.stringify(question.eligibilityReviewedAnswer) !== JSON.stringify(question.answer);
+    && JSON.stringify(question.eligibilityReviewedAnswer) !== JSON.stringify(question.answer)
+    && (!facts || eligibilityConflict(question, facts) !== null);
 }
 
 /** A draft Adamya sent back for a redo waits for his review; the deadline cannot waive it. */
@@ -31,8 +37,8 @@ export function needsRedoReview(question: JobApplicationQuestion): boolean {
     && JSON.stringify(question.eligibilityReviewedAnswer) !== JSON.stringify(question.answer);
 }
 
-export function needsExplicitReview(question: JobApplicationQuestion): boolean {
-  return needsEligibilityReview(question) || needsRedoReview(question);
+export function needsExplicitReview(question: JobApplicationQuestion, facts?: CandidateFacts): boolean {
+  return needsEligibilityReview(question, facts) || needsRedoReview(question);
 }
 
 export function hasStaleGraduationContext(question: Pick<JobApplicationQuestion, 'prompt' | 'answer' | 'generatedAnswer'>): boolean {

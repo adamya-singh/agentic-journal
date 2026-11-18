@@ -1,7 +1,8 @@
-// One Telegram message a day listing the applications OpenClaw has drafted and is holding for Adamya's review, with
-// when each sends itself. Sent at the first five-minute tick from 09:00 with something held, never in quiet hours,
-// at most once a local day; a failed send is retried on later ticks, three tries a day. JOB_REVIEW_NOTIFY_DISABLED=1
-// turns it off.
+// Up to two Telegram messages a day listing the applications OpenClaw has drafted and is holding for Adamya's
+// review, with when each sends itself. The first goes at the first five-minute tick from 09:00 with something held;
+// the second from 17:00, and only if something is held that the first did not mention (drafts are held for a day, so
+// this is what tells him about the ones written after the morning message). Never in quiet hours. A failed send is
+// retried on later ticks, four tries a day. JOB_REVIEW_NOTIFY_DISABLED=1 turns it off.
 import * as fs from 'fs';
 import * as path from 'path';
 import { needsExplicitReview } from '@/lib/application-eligibility';
@@ -9,15 +10,18 @@ import { jobsDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import { journalOriginFor } from '@/lib/same-origin';
 import { localDay, quietHours } from '@/lib/task-work';
 import { telegramAvailable, telegramSend, telegramSendArgs, telegramTarget } from '@/lib/telegram';
+import type { CandidateFacts } from '@/lib/candidate-facts';
 import type { JobApplicationRecord, JobListing } from '@/lib/types';
 import { readJobApplicationsStore } from '../application-store-utils';
 import { readJobListings } from '../job-store-utils';
 
-export const REVIEW_NOTIFY_FROM_HOUR = 9;
-const TRIES_PER_DAY = 3;
+/** Local hours from which the day's first and second message may go. */
+export const REVIEW_NOTIFY_HOURS = [9, 17] as const;
+const TRIES_PER_DAY = 4;
 const MAX_LINES = 8;
 
-interface ReviewNotifyState { lastSentAt?: string; tries?: { date: string; count: number } }
+/** One local day's sends: how many went, which applications they named, and how many tries were used. */
+export interface ReviewNotifyState { day?: string; sent?: number; told?: string[]; tries?: number }
 const stateFile = () => path.join(jobsDataDir(), 'review-notify.json');
 function readState(): ReviewNotifyState {
   try {
@@ -28,6 +32,7 @@ function readState(): ReviewNotifyState {
 }
 
 export interface HeldApplication {
+  listingId: string;
   company: string;
   role: string;
   /** When it sends itself; absent when an answer needs his approval first, which no deadline waives. */
@@ -39,6 +44,7 @@ export interface HeldApplication {
 export function heldForReview(
   applications: Record<string, JobApplicationRecord>,
   listings: JobListing[],
+  facts?: CandidateFacts,
 ): HeldApplication[] {
   const byId = new Map(listings.map((listing) => [listing.id, listing]));
   const held: HeldApplication[] = [];
@@ -52,8 +58,9 @@ export function heldForReview(
     ) {
       continue;
     }
-    const toApprove = application.questions.filter(needsExplicitReview).length;
+    const toApprove = application.questions.filter((question) => needsExplicitReview(question, facts)).length;
     held.push({
+      listingId: listing.id,
       company: listing.company,
       role: listing.positionTitle,
       toApprove,
@@ -88,17 +95,21 @@ export function buildReviewMessage(held: HeldApplication[], origin: string, now:
   return lines.join('\n');
 }
 
-export type ReviewNotifyDecision = 'send' | 'disabled' | 'quiet' | 'sent-today' | 'tries-used' | 'nothing';
+export type ReviewNotifyDecision = 'send' | 'disabled' | 'quiet' | 'sent-today' | 'too-early' | 'tries-used' | 'nothing';
 
-/** Pure: whether the day's message goes now. */
-export function decideReviewNotify(input: { now: Date; disabled: boolean; state: ReviewNotifyState; held: number }): ReviewNotifyDecision {
-  const { now, state } = input;
+/** Pure: whether a message goes now. `held` is what is waiting for review at this moment. */
+export function decideReviewNotify(input: { now: Date; disabled: boolean; state: ReviewNotifyState; held: string[] }): ReviewNotifyDecision {
+  const { now } = input;
   if (input.disabled) return 'disabled';
-  if (quietHours(now) || now.getHours() < REVIEW_NOTIFY_FROM_HOUR) return 'quiet';
-  const today = localDay(now);
-  if (state.lastSentAt && localDay(new Date(state.lastSentAt)) === today) return 'sent-today';
-  if (state.tries?.date === today && state.tries.count >= TRIES_PER_DAY) return 'tries-used';
-  return input.held === 0 ? 'nothing' : 'send';
+  if (quietHours(now) || now.getHours() < REVIEW_NOTIFY_HOURS[0]) return 'quiet';
+  const today = input.state.day === localDay(now) ? input.state : {};
+  const sent = today.sent ?? 0;
+  if (sent >= REVIEW_NOTIFY_HOURS.length) return 'sent-today';
+  if (now.getHours() < REVIEW_NOTIFY_HOURS[sent]) return 'too-early';
+  if ((today.tries ?? 0) >= TRIES_PER_DAY) return 'tries-used';
+  // A second message repeats nothing: it goes only for applications the first did not name.
+  const told = new Set(today.told ?? []);
+  return input.held.some((listingId) => !told.has(listingId)) ? 'send' : 'nothing';
 }
 
 export interface ReviewNotifyDeps {
@@ -119,27 +130,34 @@ export async function notifyApplicationsReadyForReview(
   inFlight = true;
   try {
     const disabled = process.env.JOB_REVIEW_NOTIFY_DISABLED === '1';
-    const state = readState();
+    const today = localDay(now);
+    const saved = readState();
+    const state: ReviewNotifyState = saved.day === today ? saved : { day: today };
     // The clock and the day's count first; the stores are read only when a message could go.
-    const early = decideReviewNotify({ now, disabled, state, held: 1 });
+    const early = decideReviewNotify({ now, disabled, state, held: ['?'] });
     if (early !== 'send') return { decision: early };
-    const held = heldForReview(readJobApplicationsStore().applications, readJobListings().listings);
-    const decision = decideReviewNotify({ now, disabled, state, held: held.length });
+    const store = readJobApplicationsStore();
+    const held = heldForReview(store.applications, readJobListings().listings, store.candidateFacts);
+    const decision = decideReviewNotify({ now, disabled, state, held: held.map((item) => item.listingId) });
     if (decision !== 'send') return { decision };
     const target = deps.available() ? await deps.target() : null;
     if (!target) return { decision: 'no-telegram' };
 
     const message = buildReviewMessage(held, journalOriginFor(true), now);
-    const today = localDay(now);
     // Counted before it goes, so a send that hangs still uses one of the day's tries.
-    writeJsonFileAtomic(stateFile(), { ...state, tries: { date: today, count: (state.tries?.date === today ? state.tries.count : 0) + 1 } });
+    const trying = { ...state, tries: (state.tries ?? 0) + 1 };
+    writeJsonFileAtomic(stateFile(), trying);
     try {
       await deps.send(telegramSendArgs(target, message));
     } catch (error) {
       console.error('Job review notify: send failed:', error instanceof Error ? error.message : error);
       return { decision: 'failed' };
     }
-    writeJsonFileAtomic(stateFile(), { ...readState(), lastSentAt: now.toISOString() });
+    writeJsonFileAtomic(stateFile(), {
+      ...trying,
+      sent: (state.sent ?? 0) + 1,
+      told: [...new Set([...(state.told ?? []), ...held.map((item) => item.listingId)])],
+    });
     return { decision: 'sent', message };
   } catch (error) {
     console.error('Job review notify failed:', error instanceof Error ? error.message : error);

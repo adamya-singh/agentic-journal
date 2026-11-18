@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto';
 import { makeSnapshot } from '@/lib/job-overview';
 import { isAwaitingSubmissionConfirmation } from '@/lib/job-email-updates';
 import { DateSourceSchema } from '@/lib/employment-dates';
+import { describeCandidateFacts, normalizeCandidateFacts, type CandidateFacts } from '@/lib/candidate-facts';
 import { defaultAnswerScope, normalizeCompanyName } from '@/lib/job-answer-scope';
 import {
   hasStaleGraduationContext,
@@ -61,8 +62,12 @@ const APPLICATION_FILES_DIR =
 const DEFAULT_RESUME_DIR = '/home/openclaw/.openclaw/workspace/job-applications/resumes';
 const RESUME_DIR = process.env.JOB_APPLICATION_RESUME_DIR || DEFAULT_RESUME_DIR;
 const LEASE_DURATION_MS = 30 * 60 * 1000;
-/** Failed runs in a row before OpenClaw stops and asks for help. */
-export const JOB_APPLICATION_FAILURE_LIMIT = 3;
+/**
+ * Failed runs in a row before OpenClaw stops and asks for help. Was 3 (about two and a half hours),
+ * which parked applications over a provider outage or one bad page; now the retries below run
+ * first, about two days of them.
+ */
+export const JOB_APPLICATION_FAILURE_LIMIT = 7;
 const ERROR_HISTORY_LIMIT = 10;
 // Autopilot drafts the remaining answers as soon as an application blocks on questions it may answer
 // (no waiting for Adamya first, since 2026-11-18), then holds the drafts in the review queue for at
@@ -87,11 +92,16 @@ export const DEFAULT_ENABLED_APPLICATION_CATEGORIES: JobApplicationCategory[] = 
   'new-grad',
 ];
 
+/** The wait after each failure in a row: quick tries first, then spaced out. They add up to just under two days. */
 export const JOB_APPLICATION_RETRY_DELAYS_MS = [
   5 * 60 * 1000,
   30 * 60 * 1000,
-  120 * 60 * 1000,
+  2 * 60 * 60 * 1000,
+  8 * 60 * 60 * 1000,
+  12 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000,
 ] as const;
+export const AUTOMATION_HELP_PROMPT = 'Automation needs help with this application';
 
 export const JOB_APPLICATION_SCREENSHOT_MAX_BYTES = 25 * 1024 * 1024;
 // Per-screenshot dimension gates: long pages must be uploaded as viewport
@@ -109,7 +119,7 @@ const OPAQUE_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export interface ClaimedJobApplication {
-  candidateContext: typeof JOB_APPLICATION_CANDIDATE_CONTEXT;
+  candidateContext: typeof JOB_APPLICATION_CANDIDATE_CONTEXT & { standingFacts?: string[] };
   listing: JobListing;
   application: JobApplicationRecord;
   leaseToken: string;
@@ -184,6 +194,7 @@ export function readJobApplicationsStore(): JobApplicationsStoreData {
     applications,
     answerBank,
     documents: normalizeDocuments(parsed.documents),
+    ...(normalizeCandidateFacts(parsed.candidateFacts) ? { candidateFacts: normalizeCandidateFacts(parsed.candidateFacts) } : {}),
     reviewItems,
     emailUpdates: normalizeEmailUpdatesState(parsed.emailUpdates),
   };
@@ -290,6 +301,7 @@ export function buildJobApplicationsView(): JobApplicationsViewData {
     applications,
     answerBank: store.answerBank,
     documents: store.documents,
+    ...(store.candidateFacts ? { candidateFacts: store.candidateFacts } : {}),
     reviewItems: store.reviewItems.map((item) => {
       if (item.status !== 'pending') return item;
       const question = store.applications[item.listingId]?.questions.find((candidate) => candidate.id === item.questionId);
@@ -347,7 +359,7 @@ export function buildClaimQueuePreview(
     )
     .flatMap((listing) => {
       const application = store.applications[listing.id] ?? createVirtualApplication(listing);
-      if (!isApplicationClaimable(application, now)) {
+      if (!isApplicationClaimable(application, now, store.candidateFacts)) {
         return [];
       }
       const priority = claimPriority(application, listing);
@@ -407,7 +419,7 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
       )
       .flatMap((listing) => {
         const application = store.applications[listing.id] ?? createVirtualApplication(listing);
-        if (!isApplicationClaimable(application, now)) {
+        if (!isApplicationClaimable(application, now, store.candidateFacts)) {
           return [];
         }
         const priority = claimPriority(application, listing);
@@ -457,7 +469,11 @@ export async function claimNextJobApplication(): Promise<ClaimedJobApplication |
 
     store.applications[selected.listing.id] = application;
     return {
-      candidateContext: JOB_APPLICATION_CANDIDATE_CONTEXT,
+      // His standing facts go with every claim, so drafts state them instead of guessing.
+      candidateContext: {
+        ...JOB_APPLICATION_CANDIDATE_CONTEXT,
+        ...(store.candidateFacts ? { standingFacts: describeCandidateFacts(store.candidateFacts) } : {}),
+      },
       listing: selected.listing,
       application,
       leaseToken,
@@ -518,6 +534,36 @@ export function recordApplicationFailure(
     },
   ].slice(-ERROR_HISTORY_LIMIT);
   return streak;
+}
+
+/**
+ * What follows a failed run, once it is recorded (recordApplicationFailure, which gave `streak`)
+ * and its lease released: wait and try again, or, with the retries used up, ask Adamya. Returns
+ * when the next try is due, if there is one.
+ */
+export function retryOrAskForHelp(
+  application: JobApplicationRecord,
+  streak: number,
+  message: string,
+  now: string,
+): string | undefined {
+  if (streak >= JOB_APPLICATION_FAILURE_LIMIT) {
+    application.questions = mergeApplicationQuestions(application.questions, [
+      createActionQuestion({
+        prompt: AUTOMATION_HELP_PROMPT,
+        helpText: `${message} OpenClaw tried ${streak} times over two days before asking.`,
+        required: true,
+        now,
+      }),
+    ]);
+    setApplicationStatus(application, 'awaiting-user-input', now);
+    return undefined;
+  }
+  application.nextRetryAt = new Date(
+    Date.parse(now) + JOB_APPLICATION_RETRY_DELAYS_MS[Math.min(streak - 1, JOB_APPLICATION_RETRY_DELAYS_MS.length - 1)],
+  ).toISOString();
+  setApplicationStatus(application, 'in-progress', now);
+  return application.nextRetryAt;
 }
 
 /** A run produced a real outcome, or Adamya stepped in: failures no longer run in a row. */
@@ -600,24 +646,9 @@ export async function reconcileStaleJobApplicationLeases(): Promise<StaleLeaseRe
         ]);
         setApplicationStatus(application, 'awaiting-user-input', nowIso);
         reconciled.push({ listingId: application.listingId });
-      } else if (streak >= JOB_APPLICATION_FAILURE_LIMIT) {
-        application.questions = mergeApplicationQuestions(application.questions, [
-          createActionQuestion({
-            prompt: 'Automation needs help with this application',
-            helpText: application.lastError!.message,
-            required: true,
-            now: nowIso,
-          }),
-        ]);
-        setApplicationStatus(application, 'awaiting-user-input', nowIso);
-        reconciled.push({ listingId: application.listingId });
       } else {
-        const retryIndex = Math.min(streak - 1, JOB_APPLICATION_RETRY_DELAYS_MS.length - 1);
-        application.nextRetryAt = new Date(
-          now.getTime() + JOB_APPLICATION_RETRY_DELAYS_MS[retryIndex],
-        ).toISOString();
-        setApplicationStatus(application, 'in-progress', nowIso);
-        reconciled.push({ listingId: application.listingId, nextRetryAt: application.nextRetryAt });
+        const nextRetryAt = retryOrAskForHelp(application, streak, application.lastError!.message, nowIso);
+        reconciled.push({ listingId: application.listingId, ...(nextRetryAt ? { nextRetryAt } : {}) });
       }
     }
 
@@ -651,6 +682,7 @@ export function hasActionableJobApplications(): boolean {
     return isApplicationClaimable(
       store.applications[listing.id] ?? createVirtualApplication(listing),
       now,
+      store.candidateFacts,
     );
   });
 }
@@ -739,7 +771,7 @@ export function holdApplicationForReview(
     ).toISOString();
   }
   if (Date.parse(application.autoSubmitEligibleAt) <= Date.parse(now)
-    && !application.questions.some(needsExplicitReview)) {
+    && !application.questions.some((question) => needsExplicitReview(question, store.candidateFacts))) {
     return null;
   }
   application.reviewHoldSince = now;
@@ -755,7 +787,7 @@ export function isSubmissionBlockedByReview(
   now: Date,
 ): boolean {
   return Boolean(
-    application.questions.some(needsExplicitReview) ||
+    application.questions.some((question) => needsExplicitReview(question, store.candidateFacts)) ||
     (application.autoSubmitEligibleAt &&
       Date.parse(application.autoSubmitEligibleAt) > now.getTime() &&
       hasPendingReviewItems(store, application.listingId)),
@@ -943,13 +975,37 @@ export function answerFromDocuments(
   return true;
 }
 
-/** Everything the Journal can answer without asking: confirmed answers, then standing documents. */
+/**
+ * An optional cover letter, as an upload or a text box, is left out rather than asked for
+ * (Adamya, 2026-11-18). A required one still waits for him.
+ */
+export function skipOptionalCoverLetter(question: JobApplicationQuestion, now: string): boolean {
+  if (
+    question.resolution !== 'pending' ||
+    question.required ||
+    (question.kind !== 'file' && question.kind !== 'text') ||
+    !/\bcover letter\b/i.test(question.prompt)
+  ) {
+    return false;
+  }
+  question.resolution = 'skipped';
+  question.answeredAt = now;
+  delete question.answer;
+  delete question.suggestion;
+  return true;
+}
+
+/** Everything the Journal settles without asking: confirmed answers, standing documents, optional cover letters. */
 export function answerFromMemory(
   question: JobApplicationQuestion,
   store: Pick<JobApplicationsStoreData, 'answerBank' | 'documents'>,
   now: string,
 ): boolean {
-  return answerFromBank(question, store.answerBank, now) || answerFromDocuments(question, store.documents, now);
+  return (
+    answerFromBank(question, store.answerBank, now) ||
+    answerFromDocuments(question, store.documents, now) ||
+    skipOptionalCoverLetter(question, now)
+  );
 }
 
 /**
@@ -1677,14 +1733,14 @@ function chooseResumeVariant(listing: JobListing): 'swe' | 'mle' {
   return mlePattern.test(text) ? 'mle' : 'swe';
 }
 
-export function isApplicationClaimable(application: JobApplicationRecord, now: Date): boolean {
+export function isApplicationClaimable(application: JobApplicationRecord, now: Date, facts?: CandidateFacts): boolean {
   if (
     application.status === 'submitted' ||
     application.status === 'closed'
   ) {
     return false;
   }
-  if (application.questions.some(needsExplicitReview)) return false;
+  if (application.questions.some((question) => needsExplicitReview(question, facts))) return false;
   if (
     application.status === 'awaiting-user-input' &&
     (!application.autoCompleteEligibleAt ||

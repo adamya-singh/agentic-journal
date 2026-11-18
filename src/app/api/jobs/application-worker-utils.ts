@@ -98,6 +98,19 @@ export async function resumeJobApplicationWorkerAfterReboot(
   return { resumed, woken: false, reason: 'OpenClaw did not answer' };
 }
 
+/**
+ * The worker's cron switches itself off when it finds nothing to do, and a retry that comes due
+ * later needs someone to switch it back on. One-shot wake crons do that when a run schedules
+ * them; this is the net under them, run on the periodic reconcile: if something is claimable and
+ * the cron is off, wake it. It does nothing while the cron is on, since that already ticks every minute.
+ */
+export async function wakeJobApplicationWorkerIfAsleep(): Promise<void> {
+  const store = readJobApplicationsStore();
+  if (!store.workerEnabled || !getJobApplicationReadiness().ready || !hasActionableJobApplications()) return;
+  const lookup = await readWorkerJob();
+  if (lookup.job && !lookup.job.enabled) await triggerJobApplicationWorker();
+}
+
 export async function triggerJobApplicationWorker(): Promise<WorkerControlResult> {
   const lookup = await ensureWorkerJob();
   if (lookup.error) {
@@ -242,6 +255,7 @@ export async function reconcileAndWakeJobApplicationWorker(): Promise<void> {
     }
     const { reconciled } = await reconcileStaleJobApplicationLeases();
     if (reconciled.length === 0) {
+      await wakeJobApplicationWorkerIfAsleep();
       return;
     }
     console.error(

@@ -352,11 +352,12 @@ describe('job application state', () => {
   });
 
   test('uses retry delays and validates both resume PDFs', () => {
-    assert.deepEqual(store.JOB_APPLICATION_RETRY_DELAYS_MS, [
-      5 * 60 * 1000,
-      30 * 60 * 1000,
-      120 * 60 * 1000,
-    ]);
+    const hour = 60 * 60 * 1000;
+    assert.deepEqual(store.JOB_APPLICATION_RETRY_DELAYS_MS, [hour / 12, hour / 2, 2 * hour, 8 * hour, 12 * hour, 24 * hour]);
+    // Every failure before the limit has a wait of its own.
+    assert.equal(store.JOB_APPLICATION_RETRY_DELAYS_MS.length, store.JOB_APPLICATION_FAILURE_LIMIT - 1);
+    const total = store.JOB_APPLICATION_RETRY_DELAYS_MS.reduce((sum, wait) => sum + wait, 0);
+    assert.ok(total > 44 * hour && total <= 48 * hour, 'Adamya is asked after about two days of failing');
     assert.deepEqual(store.getJobApplicationReadiness().missingFiles, []);
     assert.equal(store.getJobApplicationReadiness().ready, true);
   });
@@ -608,14 +609,17 @@ describe('job application state', () => {
       ).status,
       200,
     );
+    // A page that would not capture is retried like any failed run, not handed to Adamya at once.
     const application = store.readJobApplicationsStore().applications.starred;
-    assert.equal(application.status, 'awaiting-user-input');
+    assert.equal(application.status, 'in-progress');
     assert.equal(application.lease, undefined);
     assert.equal(application.incompleteScreenshotCapture?.screenshots.length, 1);
     assert.match(application.incompleteScreenshotCapture?.error ?? '', /three capture attempts/);
-    assert.ok(
-      application.questions.some((question) => question.prompt === 'Screenshot capture needs help'),
-    );
+    assert.equal(application.failureStreak, 1);
+    assert.equal(application.lastError?.code, 'screenshot-capture-failed');
+    assert.ok(application.nextRetryAt && Date.parse(application.nextRetryAt) > Date.now());
+    assert.equal(application.questions.length, 0);
+    assert.equal(store.isSubmissionBlockedByReview(store.readJobApplicationsStore(), application, new Date()), false);
   });
 
   test('serializes concurrent atomic application updates', async () => {
@@ -729,13 +733,13 @@ describe('job application state', () => {
         createdAt: now,
         updatedAt: now,
       };
-      // Third dead run in a row -> escalates to the user.
+      // The last dead run the retries allow -> escalates to the user.
       data.applications.starred = {
         listingId: 'starred',
         status: 'in-progress',
         resumeVariant: 'swe',
-        attemptCount: 5,
-        failureStreak: 2,
+        attemptCount: 8,
+        failureStreak: 6,
         statusHistory: [{ status: 'in-progress', changedAt: now }],
         questions: [],
         lease: staleLease('2020-01-01T00:00:00.000Z'),
