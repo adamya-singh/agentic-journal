@@ -1285,14 +1285,16 @@ export const SEED: ExperimentStore = {
     {
       "id": "53",
       "when": "2026-11-19",
-      "day": "Nov 19 →",
+      "day": "Nov 19–21",
       "order": 53,
       "direction": "probes",
-      "status": "running",
+      "status": "finding",
       "question": "Do skills stack, combine and get cheaper in order?",
-      "answer": "Queued behind the sweep. This tests whether a curriculum can build one skill on another.",
+      "answer": "Two skills stack in one policy and combine in an episode it never saw. Order does not matter for this pair.",
       "numbers": [
-        "43 queued jobs"
+        "follow gain +0.74 / +0.91",
+        "pickups kept 72% / 79% (bar 80%)",
+        "order lead −0.00 and +0.02 (bar 0.10)"
       ],
       "details": "Three questions: can one policy hold both skills, do both work in one episode, and does having one make the next cheaper to learn.",
       "buildsOn": [

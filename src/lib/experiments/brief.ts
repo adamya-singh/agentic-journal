@@ -4,6 +4,7 @@
 // no list, are never due and are never done or let go.
 import type { BriefTaskRef, TaskBrief } from '../task-brief.ts';
 import { readStore } from './store.ts';
+import { readWriteup, writeupSummary } from './writeups.ts';
 import { STATUS_WORDS, type Experiment } from './types.ts';
 
 const PREFIX = 'exp-';
@@ -36,6 +37,9 @@ export function experimentBrief(taskId: string, now = new Date()): TaskBrief | n
   const found = find(taskId);
   if (!found) return null;
   const { experiment: e, all, direction } = found;
+  const writeup = readWriteup(e.id);
+  // What a chat is told of the experiment: his notes, kept short so the write-up after them is never the part cut.
+  const told = [e.notes.trim().slice(0, 500), writeup ? writeupSummary(e.id, writeup) : ''].filter(Boolean).join('\n\n');
   const related = (other: Experiment, rel: string) => ({ taskId: experimentTaskId(other.id), short: clip(`${other.id} · ${other.question}`, 60), rel, day: other.day, state: 'done' as const, src: 'rule' as const });
   return {
     id: taskId, listType: 'want-to-do', kind: 'build', title: e.question, short: clip(e.question, 44), group: direction, course: null,
@@ -59,6 +63,6 @@ export function experimentBrief(taskId: string, now = new Date()): TaskBrief | n
       ...(e.details ? [{ title: 'Details', markdown: e.details, src: 'rule' as const }] : []),
       ...(e.notes.trim() ? [{ title: 'Your notes', markdown: e.notes, src: 'notes' as const }] : []),
     ],
-    history: [], notesMarkdown: e.notes.trim() || null, images: [], generatedAt: now.toISOString(), hook: null, agent: null,
+    history: [], notesMarkdown: told || null, images: [], generatedAt: now.toISOString(), hook: null, agent: null,
   };
 }

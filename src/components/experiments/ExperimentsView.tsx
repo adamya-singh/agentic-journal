@@ -16,8 +16,41 @@ import { EXPERIMENTS_CSS } from './experiments-css';
 import { mountScenesIn } from './scenes';
 import { ExperimentHistory } from './ExperimentHistory';
 import { ExperimentPane } from './ExperimentPane';
+import { RunTab, UnderstandTab, useWriteup } from './ExperimentWork';
+import type { Experiment } from '@/lib/experiments/types';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
+
+type Change = (body: Record<string, unknown>) => Promise<string | void>;
+
+/** The workspace of one experiment: the one a task gets, opening on the experiment's own two tabs. */
+function ExperimentWorkspace({ experiment, view, onGoto, onChange, onClose, onChanged }: {
+  experiment: Experiment; view: View; onGoto: (id: string) => void; onChange: Change; onClose: () => void; onChanged: () => void;
+}) {
+  const writeup = useWriteup(experiment.id);
+  const asker = React.useRef<((text: string) => void) | null>(null);
+  const ask = React.useCallback((text: string) => asker.current?.(text), []);
+  return (
+    // The work surfaces and the chats with OpenClaw are kept under the experiment's id. What the record knows (its
+    // picture, its result, his notes, groups and flag) heads the brief.
+    <TaskPane
+      taskId={`exp-${experiment.id}`}
+      data={view.sunrise}
+      record
+      briefHead={<ExperimentPane experiment={experiment} view={view} onGoto={onGoto} onChange={onChange} />}
+      sheets={[
+        { id: 'understand', label: 'Understand it', node: <UnderstandTab experiment={experiment} writeup={writeup} onChange={onChange} onAsk={ask} /> },
+        { id: 'run', label: 'Run and watch', tag: experiment.status === 'running' ? 'running' : undefined, node: <RunTab experiment={experiment} writeup={writeup} onAsk={ask} /> },
+      ]}
+      asker={asker}
+      onClose={onClose}
+      onGoto={(id) => onGoto(id.replace(/^exp-/, ''))}
+      onChanged={onChanged}
+      onLetGo={() => {}}
+      onUndo={() => {}}
+    />
+  );
+}
 
 export function ExperimentsView() {
   const skyRef = React.useRef<HTMLDivElement>(null);
@@ -127,20 +160,7 @@ export function ExperimentsView() {
           engine.slots.cap,
         )}
         {engine && view && opened && createPortal(
-          // The same workspace a task opens to: the work surfaces and the chats with OpenClaw, kept under the
-          // experiment's id. What the record knows (its picture, its result, his notes, groups and flag) heads the brief.
-          <TaskPane
-            key={open}
-            taskId={open!}
-            data={view.sunrise}
-            record
-            briefHead={<ExperimentPane experiment={opened} view={view} onGoto={openExperiment} onChange={change} />}
-            onClose={() => engineRef.current?.closeTask()}
-            onGoto={(id) => openExperiment(id.replace(/^exp-/, ''))}
-            onChanged={load}
-            onLetGo={() => {}}
-            onUndo={() => {}}
-          />,
+          <ExperimentWorkspace key={open} experiment={opened} view={view} onGoto={openExperiment} onChange={change} onClose={() => engineRef.current?.closeTask()} onChanged={load} />,
           engine.slots.pane,
         )}
         {engine && view && error && <span className="xs-err" role="alert">{error}</span>}

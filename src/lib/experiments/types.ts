@@ -63,3 +63,41 @@ export interface ExperimentsView {
   sky: Record<string, number>;        // id -> ring, for the ones on the sky
   sunrise: SunriseData;               // the sky as Sunrise's engine reads it; there an experiment's id is "exp-<number>"
 }
+
+// ---- The write-up of one experiment: what its workspace shows in "Understand it" and "Run and watch".
+export const PREDICTION_RESULTS = ['held', 'failed', 'half', 'open'] as const;
+export const PREDICTION_WORDS: Record<typeof PREDICTION_RESULTS[number], string> = { held: 'Held', failed: 'Failed', half: 'Half', open: 'Not yet known' };
+export const STAGE_STATES = ['done', 'trouble', 'running', 'waiting'] as const;
+
+export interface WriteupPart {
+  title: string;                       // "Do the two skills stack in one policy?"
+  why: string;
+  did: string;
+  predictions: { text: string; result: typeof PREDICTION_RESULTS[number] }[];   // written down before the run
+  table: { head: string[]; rows: { cells: string[]; mark: '' | 'baseline' | 'ours' }[] } | null;   // a number needs its baseline in the same table
+  conclusion: string;
+}
+export interface Writeup {
+  // Understand it
+  question: string;                    // the short version: what it asks,
+  measure: string;                     // what is measured,
+  outcome: string;                     // and what came out
+  setup: string;                       // what a new intern needs to know first
+  parts: WriteupPart[];
+  trust: { text: string; ok: boolean }[];   // fair-comparison checks (ok) and limits (not ok)
+  meaning: string;                     // what it means for the decision
+  lesson: string;                      // the one lesson
+  next: { title: string; why: string }[];   // follow-ups, each one press from being an experiment
+  log: string;                         // the research-log entry, as markdown
+  // Run and watch
+  run: {
+    state: string;                     // "Finished" or "Running: order, 9 of 18 trainers"
+    line: string;                      // "Nov 21 · 6 of 6 stages · nothing left in the queue"
+    watch: { title: string; note: string; href: string }[];   // videos and curves; href may be ''
+    command: string;                   // how to run it live on the training machine
+    stages: { name: string; note: string; state: typeof STAGE_STATES[number] }[];
+    housekeeping: { text: string; ok: boolean }[];
+    files: { path: string; note: string }[];
+  };
+  updated: string;                     // ISO time it was last written
+}

@@ -63,6 +63,74 @@ export const EXPERIMENTS_CSS = `
 .xp-form .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .xp-err{margin:0;color:#a3361a;font-size:13px}
 
+/* The two tabs of an experiment's workspace: a page to read, on the workspace's white. */
+.xw{max-width:820px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;color:#22130a;font:14.5px/1.55 var(--sans);--xa:#a8541c}
+.xw p{margin:0;max-width:74ch}
+.xw section{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:10px}
+.xw h4{margin:0;font:400 21px/1.2 var(--serif);text-wrap:balance}
+.xw-dim{color:#7a6656;font-size:13.5px}
+.xw-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+.xw-lab{font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--xa)}
+.xw-short{background:#faf3ea;border-radius:12px;padding:14px 16px;display:grid;gap:8px}
+.xw-step{margin:0;display:grid;grid-template-columns:104px minmax(0,1fr);gap:6px 14px}
+.xw-step.rule{border-top:1px solid rgba(34,19,10,.14);padding-top:10px}
+.xw-step dt{font:600 10px/1.9 var(--mono);letter-spacing:.09em;text-transform:uppercase;color:var(--xa)}
+.xw-step dd{margin:0;min-width:0}
+.xw-preds{display:flex;flex-wrap:wrap;gap:4px 14px}
+.xw-st{font:600 9.5px var(--mono);font-style:normal;letter-spacing:.08em;text-transform:uppercase;border:1px solid currentColor;border-radius:5px;padding:1px 6px;white-space:nowrap}
+.xw-st.held{color:#22794f}.xw-st.failed{color:#b8322a}.xw-st.half{color:#9a6a08}.xw-st.open{color:#7a6656}
+.xw-tw{overflow-x:auto;max-width:100%}
+.xw table{border-collapse:collapse;font-size:13px}
+.xw thead th{font:600 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#7a6656;text-align:left;padding:6px 14px 6px 0;white-space:nowrap}
+.xw tbody th,.xw td{border-top:1px solid rgba(34,19,10,.14);padding:7px 14px 7px 0;text-align:left;font-weight:400;white-space:nowrap}
+.xw td{font:12.5px var(--mono);font-variant-numeric:tabular-nums}
+.xw tr.baseline>*{color:#7a6656}
+.xw tr.ours>*{background:#faf0fb}
+.xw tr.ours>th{font-weight:500}
+.xw-call{border-left:3px solid var(--xa);padding:2px 0 2px 13px}
+.xw-check{list-style:none;margin:0;padding:0;display:grid;gap:5px}
+.xw-check li{display:grid;grid-template-columns:20px minmax(0,1fr);position:relative}
+.xw-check i{font-style:normal;font-weight:700;color:#22794f}
+.xw-check .no i{color:#9a6a08}
+.xw-next{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
+.xw-next>div{border:1px solid rgba(34,19,10,.16);border-radius:12px;padding:12px 14px;display:grid;gap:6px;align-content:start}
+.xw-next b{font:400 17px/1.2 var(--serif)}
+.xw-next span{font-size:13px;color:#7a6656}
+.xw-acts{display:flex;flex-wrap:wrap;gap:8px}
+.xw-b,.xw-chip{font:500 12.5px var(--sans);color:#22130a;background:#fff;border:1px solid rgba(34,19,10,.25);border-radius:999px;padding:5px 13px;cursor:pointer}
+.xw-b.go{background:#22130a;color:#fff6ec;border-color:#22130a}
+.xw-b:hover,.xw-chip:hover,.xw-b:focus-visible,.xw-chip:focus-visible{border-color:var(--xa);outline:none}
+.xw-err{color:#a3361a;font-size:13px}
+.xw-fold{border-top:1px solid rgba(34,19,10,.14);margin-top:10px;padding-top:12px}
+.xw-fold summary{cursor:pointer;font:400 19px/1.2 var(--serif)}
+.xw-fold summary small{font:600 9.5px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#7a6656;margin-left:8px}
+.xw-fold>*+*{margin-top:10px}
+.xw-md p+p{margin-top:8px}
+.xw-none{border:1px dashed rgba(34,19,10,.3);border-radius:12px;padding:14px 16px;display:grid;gap:8px}
+.xw-none p{font-size:13.5px;color:#5b4230}
+.xw-asks{display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-top:1px solid rgba(34,19,10,.14);margin-top:10px;padding-top:12px}
+.xw-asks>span{font:600 10px var(--mono);letter-spacing:.09em;text-transform:uppercase;color:#7a6656;margin-right:4px}
+.xw-status{display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline;background:#eef5ef;border-radius:12px;padding:11px 15px}
+.xw-status b{font:600 11px var(--mono);letter-spacing:.09em;text-transform:uppercase}
+.xw-status.live{background:#fdf1dc}
+.xw-stale{border:1px dashed #b7860b;color:#8a6508;border-radius:10px;padding:8px 12px;font-size:13px}
+.xw-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.xw-tile{display:grid;gap:3px;align-content:end;min-height:92px;border-radius:10px;padding:10px 12px;background:radial-gradient(120% 100% at 50% 35%,#161c2c,#06080d 75%);color:#f3efe7;text-decoration:none}
+.xw-tile b{font:600 13px var(--sans)}
+.xw-tile small{font:10.5px/1.35 var(--mono);color:#a9b4c4}
+a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offset:2px}
+.xw-cmd{margin:0;background:#0d1018;color:#f3efe7;border-radius:10px;padding:10px 13px;font:12.5px/1.5 var(--mono);overflow-x:auto;white-space:pre}
+.xw-stages{list-style:none;margin:0;padding:0}
+.xw-stages li{display:grid;grid-template-columns:18px 150px minmax(0,1fr);gap:4px 10px;align-items:baseline;border-top:1px solid rgba(34,19,10,.14);padding:8px 0}
+.xw-stages i{width:9px;height:9px;border-radius:50%;background:#22794f;align-self:center}
+.xw-stages .trouble i{background:#9a6a08}.xw-stages .running i{background:#d9822b;box-shadow:0 0 0 4px rgba(217,130,43,.22)}.xw-stages .waiting i{background:transparent;border:1.5px solid #a9998a}
+.xw-stages b{font:600 12.5px var(--mono)}
+.xw-files{list-style:none;margin:0;padding:0;display:grid;gap:5px;font-size:13px}
+.xw-files li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline}
+.xw-files code{font:12px var(--mono);overflow-wrap:anywhere}
+.xw-files span{color:#7a6656}
+@media (max-width:600px){.xw-step{grid-template-columns:minmax(0,1fr);gap:0 0}.xw-step dd{margin-bottom:6px}.xw-stages li{grid-template-columns:18px minmax(0,1fr)}.xw-stages li>span{grid-column:2}}
+
 .xh{position:relative;background:linear-gradient(180deg,#17110d,#0b0807 420px);color:#f3efe7;font-family:var(--sans);--serif:var(--font-instrument-serif),'Instrument Serif',Georgia,serif;--sans:var(--font-geist-sans),Geist,system-ui,sans-serif;--mono:var(--font-geist-mono),'Geist Mono',ui-monospace,monospace}
 .xh-head{display:grid;gap:10px;padding:22px max(16px,env(safe-area-inset-right,0px)) 6px max(16px,env(safe-area-inset-left,0px));max-width:1180px;margin:0 auto}
 .xh-head h2{margin:0;font:400 30px/1.1 var(--serif)}

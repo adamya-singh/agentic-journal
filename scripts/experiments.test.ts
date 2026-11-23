@@ -6,6 +6,7 @@ import path from 'node:path';
 import { ExperimentError, addDirection, addExperiment, readStore, removeExperiment, setDirectionActive, updateExperiment } from '../src/lib/experiments/store.ts';
 import { activeDirections, experimentsView, skyRings } from '../src/lib/experiments/sunrise.ts';
 import { experimentBrief, experimentIdOf, experimentRef } from '../src/lib/experiments/brief.ts';
+import { readWriteup, writeWriteup } from '../src/lib/experiments/writeups.ts';
 
 let dir: string, previous: string | undefined;
 beforeEach(() => {
@@ -38,22 +39,22 @@ test('the sky holds what is in play: running nearest the sun, then flagged, then
   assert.deepEqual([...active].sort(), ['calib', 'main', 'probes', 'robust']);
   const rings = skyRings(store);
   assert.equal(rings['51'], 0);
-  assert.equal(rings['53'], 0);
   assert.equal(rings['47'], 1);
   assert.equal(rings['36'], undefined);
   assert.equal(rings['48'], 2);   // main's latest result
-  assert.equal(rings['52'], 2);   // probes' latest that is not running
+  assert.equal(rings['53'], 2);   // probes' latest result
+  assert.equal(rings['52'], 3);   // and its one before, from the last two weeks
   assert.ok(Object.keys(rings).length <= 16);
 });
 
 test('the view gives Sunrise one item per experiment on the sky, in its direction\'s slice, and a form for every experiment', () => {
   const view = experimentsView(readStore(), new Date('2026-11-22T12:00:00Z'));
   assert.equal(view.sunrise.horizon.items.length, Object.keys(view.sky).length);
-  const running = view.sunrise.horizon.items.find((item) => item.id === 'exp-53')!;
+  const running = view.sunrise.horizon.items.find((item) => item.id === 'exp-51')!;
   assert.equal(running.zone, 'ignition');
-  assert.equal(running.group, 'What did it learn?');
+  assert.equal(running.group, 'Robust to the real arm');
   assert.equal(Object.keys(view.sunrise.forms).length, 54);
-  assert.equal(view.sunrise.forms['exp-53']!.filling, true);
+  assert.equal(view.sunrise.forms['exp-51']!.filling, true);
   // Every form leads with its 3D picture, so on the sky it is drawn as a tile around it.
   assert.equal(view.sunrise.forms['exp-36']!.shape, 'tile');
   assert.deepEqual(view.sunrise.forms['exp-36']!.parts[0], { kind: 'media', look: 'scene:bullseye', from: 0 });
@@ -69,7 +70,7 @@ test('taking a direction off the sky removes its experiments from it; null goes 
   setDirectionActive('probes', false);
   assert.equal(skyRings(readStore())['53'], undefined);
   setDirectionActive('probes', null);
-  assert.equal(skyRings(readStore())['53'], 0);
+  assert.equal(skyRings(readStore())['53'], 2);
   setDirectionActive('vla', true);
   assert.equal(skyRings(readStore())['40'], 2);
 });
@@ -116,4 +117,34 @@ test('the workspace is told an experiment is there: a ref and a brief under "exp
   assert.equal(brief.flags.length, 1);
   assert.deepEqual(brief.related.filter((r) => r.rel === 'builds on').map((r) => r.taskId), ['exp-35', 'exp-34']);
   assert.deepEqual(brief.related.filter((r) => r.rel === 'led to').map((r) => r.taskId), ['exp-37', 'exp-41', 'exp-42']);
+});
+
+test('a write-up is kept beside the record, checked, and told to OpenClaw in short', () => {
+  // The seeded one is there before anything is written, and an experiment without one has none.
+  assert.equal(readWriteup('53')?.parts.length, 3);
+  assert.equal(readWriteup('36'), null);
+  assert.match(experimentBrief('exp-53')?.notesMarkdown ?? '', /## Write-up[\s\S]*No order effect[\s\S]*writeup\?id=53/);
+
+  const saved = writeWriteup('36', {
+    question: 'Why does it miss?', outcome: 'It never looks again.',
+    parts: [{ title: 'Does the second look correct?', predictions: [{ text: 'The error halves', result: 'failed' }],
+      table: { head: ['Policy', 'Error'], rows: [{ cells: ['baseline', '11.4 mm'], mark: 'baseline' }, { cells: ['ours', '11.2 mm'], mark: 'ours' }] }, conclusion: 'It does not.' }],
+    run: { state: 'Finished', stages: [{ name: 'eval', state: 'done' }] },
+  });
+  assert.equal(saved?.parts[0]?.why, '');
+  assert.deepEqual(saved?.run.watch, []);
+  assert.equal(readWriteup('36')?.run.stages[0]?.name, 'eval');
+  assert.equal(fs.existsSync(path.join(dir, 'experiments', 'writeups.json')), true);
+  // His notes come first and the write-up is not the part cut.
+  updateExperiment('36', { notes: 'n'.repeat(900) });
+  const told = experimentBrief('exp-36')?.notesMarkdown ?? '';
+  assert.ok(told.length < 1500 && told.includes('It does not.'));
+
+  assert.throws(() => writeWriteup('99', {}), (e: unknown) => e instanceof ExperimentError && e.status === 404);
+  assert.throws(() => writeWriteup('36', { parts: [{ title: 'x', table: { head: ['a', 'b'], rows: [{ cells: ['only one'] }] } }] }), /1 cells and the table has 2 columns/);
+  assert.throws(() => writeWriteup('36', { run: { watch: [{ title: 'video', href: 'javascript:alert(1)' }] } }), /http/);
+  assert.throws(() => writeWriteup('36', { verdict: 'good' }), ExperimentError);
+  // Removing one, a seeded one too, leaves the experiment with none.
+  assert.equal(writeWriteup('53', null), null);
+  assert.equal(readWriteup('53'), null);
 });

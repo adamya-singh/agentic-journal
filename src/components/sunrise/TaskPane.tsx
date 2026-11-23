@@ -1387,7 +1387,7 @@ function opensFor(sky: number, prefs: LayoutPrefs): { brief: boolean; chats: boo
 // A phone shows one part of the workspace at a time; these are the tabs at its foot.
 const PHONE_TABS = [['brief', 'Brief'], ['work', 'Work'], ['chat', 'Chat']] as const;
 
-export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo, startTab, startThread, onTab, briefHead, record = false }: {
+export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo, startTab, startThread, onTab, briefHead, record = false, sheets, asker }: {
   taskId: string;
   data: SunriseData;
   onClose: () => void;
@@ -1405,6 +1405,10 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   briefHead?: React.ReactNode;
   /** The workspace is on a record, not a task (an experiment): it is never done, let go or given a date, and its brief stays open. */
   record?: boolean;
+  /** Tabs of the page's own, before the work's: what an experiment's write-up says and how it ran. The workspace opens on the first. */
+  sheets?: { id: string; label: string; tag?: string; node: React.ReactNode }[];
+  /** Filled with a way to put a question to OpenClaw in a new chat of this workspace, for buttons inside `sheets`. */
+  asker?: React.MutableRefObject<((text: string) => void) | null>;
 }) {
   const [brief, setBrief] = React.useState<TaskBrief | null | undefined>(undefined);   // undefined while loading
   const [work, setWork] = React.useState<ResolvedWork | null | undefined>(undefined);
@@ -1687,6 +1691,9 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   }, [zoomKey]);
   // He has not chosen a tab until he presses one: until then the task shows where it would open by itself.
   const [picked, setPicked] = React.useState<string | null>(null);
+  // One of the page's own tabs is showing (null: one of the work's).
+  const [sheetId, setSheetId] = React.useState<string | null>(sheets?.[0]?.id ?? null);
+  const sheet = sheets?.find((one) => one.id === sheetId) ?? null;
   const settled = brief !== undefined && work !== undefined;
   const selectedId = picked !== null && surfaces.some((surface) => surface.id === picked) ? picked : settled ? defaultSurfaceId(surfaces, hasWork) : 'work';
   const selected = surfaces.find((surface) => surface.id === selectedId) ?? surfaces[0];
@@ -1768,6 +1775,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const [opened, setOpened] = React.useState<Record<string, OpenedTab>>({});
   const [pages, setPages] = React.useState<Record<string, { url: string; title: string }>>({});
   const choose = React.useCallback((id: string) => {
+    setSheetId(null);
     setPicked(id);
     if (id.startsWith('web:')) setArmed((was) => (was[id] ? was : { ...was, [id]: true }));
   }, []);
@@ -1790,13 +1798,19 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   }, [surfaces, pages, choose, taskId, closed, keepClosed]);
   // ---- The chats. What he is on goes with every message.
   const about = React.useMemo<ChatSurfaceRef | null>(() => {
-    if (!selected) return null;
+    if (!selected || sheet) return null;
     if (selected.kind === 'work') return hasWork ? { kind: 'work', label: selected.label } : null;
     if (selected.kind === 'file') return { kind: 'file', label: selected.label, block: selected.block, ...(fileKind(selected.path) === 'pdf' ? { page: filePage[selected.id] ?? 1 } : {}) };
     const page = pages[selected.id];
     return { kind: 'web', label: page?.title || selected.label, url: page?.url || selected.url };
-  }, [selected, pages, hasWork, filePage]);
+  }, [selected, sheet, pages, hasWork, filePage]);
   const chats = useTaskChats(taskId, phone ? tab === 'chat' : chatsOpen);
+  // A button in one of the page's own tabs asks OpenClaw something: a new chat opens with the question written, for him to send.
+  React.useEffect(() => {
+    if (!asker) return;
+    asker.current = (text) => { showChats(true); chats.startNew(); chats.setDraft(text); };
+    return () => { asker.current = null; };
+  });
   // The task's Codex and Claude Code sessions, in the same list (an action card's workspace has none).
   const code = useCodeSessions(taskId, phone ? tab === 'chat' : chatsOpen, !taskId.startsWith('card:'));
   // Opened from the bubble under the task: that chat (or coding session) is the one showing.
@@ -1930,6 +1944,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
     const json = await post('/api/tasks/hook-work', { taskId, action: 'save', blocks }).catch(() => null);
     if (json?.success) {
       setWork((json.data as ResolvedWork | null) ?? { title: short, href: null, blocks, edited: true, baseHash: null, newer: null, startedAt: null, rev: 1, by: 'you' });
+      setSheetId(null);
       setPicked('work');
     }
   };
@@ -2094,13 +2109,22 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       <div className="srw-mid">
         <div className="srw-tabs">
           <div ref={tablist} className="srw-tablist" role="tablist" aria-label="What is open for this task">
-            {surfaces.map((surface) => {
+            {sheets?.map((one) => (
+              <span key={one.id} role="presentation" className="srw-tabwrap">
+                <button type="button" role="tab" className="srw-tab" aria-selected={one.id === sheet?.id} onClick={() => setSheetId(one.id)}>
+                  {one.tag && <small>{one.tag}</small>}
+                  <span>{one.label}</span>
+                </button>
+              </span>
+            ))}
+            {/* Beside the page's own tabs, the work's tab waits until there is work in it. */}
+            {surfaces.filter((surface) => !(sheets?.length && surface.kind === 'work' && !hasWork)).map((surface) => {
               const name = surface.kind === 'web' ? pages[surface.id]?.title || surface.label : surface.kind === 'file' || hasWork ? surface.label : 'Work';
               const state = activity[surface.id]?.state;
               const web = surface.kind === 'web' ? surface : null;
               return (
                 <span key={surface.id} role="presentation" className={`srw-tabwrap${web ? ' closes' : ''}`}>
-                  <button type="button" role="tab" className="srw-tab" aria-selected={surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.kind === 'file' ? `~/.openclaw/workspace/${surface.path}` : surface.label} onClick={() => choose(surface.id)}
+                  <button type="button" role="tab" className="srw-tab" aria-selected={!sheet && surface.id === selectedId} title={surface.kind === 'web' ? surface.url : surface.kind === 'file' ? `~/.openclaw/workspace/${surface.path}` : surface.label} onClick={() => choose(surface.id)}
                     onAuxClick={web ? (event) => { if (event.button === 1) { event.preventDefault(); closeTab(web); } } : undefined}
                     onKeyDown={web ? (event) => { if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); closeTab(web); } } : undefined}>
                     <small>{surface.kind === 'web' ? 'web' : surface.kind === 'file' ? surface.tag : lead ? WORK_TAGS[lead.kind] : 'work'}</small>
@@ -2112,7 +2136,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
               );
             })}
           </div>
-          {!phone && selected && (
+          {!phone && selected && !sheet && (
             <span className={`srw-zoom${zoom !== 1 ? ' on' : ''}`} role="group" aria-label="Zoom of this tab">
               <button type="button" onClick={() => changeZoom(selected.id, (from) => zoomStep(from, -1))} disabled={zoom <= ZOOM_MIN} aria-label="Zoom this tab out" title="Zoom this tab out (Ctrl or ⌘ and −, over the tab)">−</button>
               <button type="button" className="pct" onClick={() => changeZoom(selected.id, () => 1)} disabled={zoom === 1} aria-label={`This tab is at ${Math.round(zoom * 100)}%. Back to 100%.`} title="Back to 100% (Ctrl or ⌘ and 0, over the tab)">{Math.round(zoom * 100)}%</button>
@@ -2130,8 +2154,10 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <button type="button" className="srw-ico" onClick={() => setAdding(true)} aria-label="Open another page in OpenClaw’s browser" title="Open a page in OpenClaw’s browser">+</button>
           )}
         </div>
-        <div ref={surfaceBox} className="srw-surface" role="tabpanel" aria-label={selected?.label}>
-          {selected?.kind === 'web' ? (
+        <div ref={surfaceBox} className="srw-surface" role="tabpanel" aria-label={sheet?.label ?? selected?.label}>
+          {sheet ? (
+            <div className="srw-work">{sheet.node}</div>
+          ) : selected?.kind === 'web' ? (
             <BrowserSurface
               key={selected.id}
               surface={selected}
@@ -2228,7 +2254,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
       {chatsShown && (
         <aside className="srw-chats" style={phone ? undefined : { width: chatW }} aria-label="OpenClaw: what it waits on you for, and your chats">
           <div className="srw-claw">
-            {!phone && !taskId.startsWith('card:') && (
+            {/* A record is not a task: it can't be handed to OpenClaw's task work. */}
+            {!phone && !record && !taskId.startsWith('card:') && (
               <div className="srw-needs">
                 <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} folded={needsFolded}
                   extra={waitsOnYou > 0 && (

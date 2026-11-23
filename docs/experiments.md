@@ -16,6 +16,29 @@
   the experiment's brief, and `workspaceRef` (brief/build.ts) lets the work and workspace stores accept its id.
   Experiments are not tasks: they are on no list and cannot be handed to OpenClaw's task work, done or let go.
 
+## Write-ups
+
+An experiment's workspace opens on two tabs of its own (`ExperimentWork.tsx`, given to `TaskPane` as `sheets`):
+
+- **Understand it** reads top to bottom in the order the `experiment-analyze-explain` skill explains a result: the
+  short version (question, what is measured, outcome), the setup, one block per part (why, what we did, what was
+  predicted and whether it held, a table with its baseline rows, the conclusion), "Can I trust it?", what it means
+  and what next (each follow-up is one press from being an experiment), and the research-log entry, folded.
+- **Run and watch** has the status line, links to videos and curves, the command to run it live, the stages,
+  housekeeping and the files.
+
+The work's own tab appears beside them once there is work in it; web tabs open as before. The "Ask OpenClaw"
+buttons open a new chat with the question written in it, for him to send.
+
+The content is the experiment's write-up (`Writeup` in `lib/experiments/types.ts`), kept in
+`experiments/writeups.json` (`lib/experiments/writeups.ts`; `seed-writeups.ts` has experiment 53's). Whoever
+analysed the run writes it: `PUT /api/experiments/writeup` with `{id, writeup}` replaces the whole write-up
+(`writeup: null` removes it), `GET /api/experiments/writeup?id=53` reads it. Every field may be left out. A table's
+rows are `{cells, mark}` with `mark` `'baseline'`, `'ours'` or `''`; a prediction's `result` is `held`, `failed`,
+`half` or `open`; a stage's `state` is `done`, `trouble`, `running` or `waiting`; a `watch` link is http(s) or empty.
+An experiment with no write-up shows what the record says and a request to copy for whoever will write it. A chat's
+first turn carries the write-up's outcome and conclusions (`writeupSummary`).
+
 Every experiment has a 3D picture (`picture`, a key of `scene-library.js`) and may name the network it trained
 (`model`). `scenes.ts` draws them all with one off-screen WebGL renderer, copied onto 2D canvases, and only while
 they are on screen. On the sky a form's picture is a `media` part whose look is `scene:<key>`: `lib/shapes/render.ts`
