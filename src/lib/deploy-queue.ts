@@ -107,7 +107,7 @@ export function waitReasons(now: Date, playing: Playing[] | Error, chats: Chat[]
 
 /**
  * When the job application OpenClaw is in the middle of must be over (its lease's end), or null
- * when it is not filling one. The deploy stops the gateway, so it waits for this.
+ * when it is not filling one. The deploy takes the Journal down for a few minutes, so it waits for this.
  */
 export function applicationInProgressUntil(now: Date): string | null | Error {
   try {

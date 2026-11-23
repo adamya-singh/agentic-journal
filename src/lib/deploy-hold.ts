@@ -3,8 +3,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 // The one piece of the deploy queue the Journal itself reads (the rest is src/lib/deploy-queue.ts,
-// run by scripts/deploy-queue.ts). A queued deploy stops OpenClaw's gateway for the build, which
-// would cut a job application off mid-form. So once a deploy is otherwise ready to go it sets
+// run by scripts/deploy-queue.ts). A deploy takes the Journal down for a few minutes, which would cut
+// a job application off from it mid-form (the gateway itself keeps running since 2026-11-23). So once a deploy is otherwise ready to go it sets
 // `quietSince`, and from then until it finishes the application worker starts nothing new.
 
 /** A hold older than this is a deploy that died without clearing it; the worker carries on. */

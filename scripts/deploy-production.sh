@@ -208,7 +208,7 @@ fi
 echo
 echo "Building Next.js (keeping .next/cache for incremental webpack builds)..."
 # Since the data dir stopped leaking into Next's file traces (see src/lib/backend-data.ts), a cold build
-# compiles in ~1.5 minutes with a 3 GB heap; 4 GB leaves headroom. Before that fix, builds traced ~145k
+# stays well inside a 4 GB heap. Before that fix, builds traced ~145k
 # Omi audio files per route and ran out of heap at 7 GB (2026-10-08).
 # Drop the cache if it grows past ~4 GB.
 if [[ -d "${ROOT_DIR}/.next/cache" ]] && (( $(du -sm "${ROOT_DIR}/.next/cache" | cut -f1) > 4096 )); then
@@ -222,8 +222,10 @@ mkdir -p "$PREVIOUS_BUILD_DIR" "${ROOT_DIR}/.next"
 find "${ROOT_DIR}/.next" -mindepth 1 -maxdepth 1 ! -name cache -exec mv -t "$PREVIOUS_BUILD_DIR" {} +
 
 # Combine a bounded heap with Next's compiler memory optimizations on the shared host.
-# The caps can be raised for one deploy when the build outgrows them and the host has room (the OpenClaw
-# gateway stopped): NEXT_BUILD_MEMORY_HIGH, NEXT_BUILD_MEMORY_MAX, NEXT_BUILD_SWAP_MAX.
+# The build peaks near 1.6 GB (2026-11-23) and runs beside the OpenClaw gateway: no deploy stops the gateway.
+# If a build is killed under these caps, something is making it read the whole project again; find that
+# (a path.resolve(<unknown>, 'name') the file tracer globs for, or Tailwind scanning outside the @source
+# folders in globals.css) before raising NEXT_BUILD_MEMORY_HIGH, NEXT_BUILD_MEMORY_MAX or NEXT_BUILD_SWAP_MAX.
 if [[ "${EUID}" -ne 0 ]] && command -v systemd-run >/dev/null 2>&1 && systemctl --user show-environment >/dev/null 2>&1; then
   systemd-run --user --wait --pipe --collect \
     -p "WorkingDirectory=${ROOT_DIR}" -p OOMScoreAdjust=800 \
