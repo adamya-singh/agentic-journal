@@ -6,7 +6,7 @@
   `src/lib/experiments/sunrise.ts` reads it. The sun is today. Each active direction of work is a slice. Running
   experiments sit nearest the sun, then the ones flagged for follow-up, then each direction's latest result, then
   other results from the last two weeks. The engine holds 16 things, so the sky holds at most that many.
-- **Under the horizon** (`ExperimentHistory.tsx`) is everything else, newest at the top and the project's start at
+- **Under the horizon** (`ExperimentHistory.tsx`) is the whole record: the experiments on the sky first, above a bar, then everything else, newest at the top and the project's start at
   the bottom, one line per direction beside the timeline.
 - Pressing an experiment anywhere opens the same workspace a task gets (`TaskPane`, with `record`): the Work
   surfaces, web tabs and chats with OpenClaw, kept under the id `exp-<number>`. The head of its brief is

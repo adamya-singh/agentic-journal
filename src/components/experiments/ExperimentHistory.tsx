@@ -2,7 +2,8 @@
 
 // Under the horizon: the record going down into the past, newest at the top, the project's start at the bottom.
 // The timeline runs straight down from under the sun. Each direction is a line beside it, joined to the timeline
-// where the direction began; the ones on the sky carry on up to the horizon.
+// where the direction began; the ones on the sky carry on up to the horizon. The experiments on the sky are here
+// too, first, above a bar: under the bar is everything else.
 import React from 'react';
 import { STATUS_WORDS, type Experiment, type ExperimentsView } from '@/lib/experiments/types';
 import { HUES, STATUS_COLOURS } from './experiments-css';
@@ -23,7 +24,9 @@ export function ExperimentHistory({ view, onOpen, onChange }: {
   const scroller = React.useRef<HTMLDivElement>(null);
 
   const layout = React.useMemo(() => {
-    const history = view.experiments.filter((e) => view.sky[e.id] === undefined).reverse();   // newest first
+    const newest = [...view.experiments].reverse();
+    const onSky = newest.filter((e) => view.sky[e.id] !== undefined);
+    const history = [...onSky, ...newest.filter((e) => view.sky[e.id] === undefined)];
     const lanes = view.directions.filter((d) => history.some((e) => e.direction === d.id)).sort((a, b) => Number(b.active) - Number(a.active) || a.order - b.order);
     // Lanes alternate sides of the timeline, nearest first, so the directions on the sky sit under it.
     const side = new Map<string, number>();
@@ -36,9 +39,15 @@ export function ExperimentHistory({ view, onOpen, onChange }: {
     const months: { month: string; y: number }[] = [];
     const lastY = new Map<string, number>();
     const firstY = new Map<string, number>();
-    const cards = history.map((e) => {
-      const m = e.when.slice(0, 7);
-      if (m !== month) { if (month !== null) cursor += 34; months.push({ month: m, y: cursor }); cursor += 30; month = m; }
+    let bar: number | null = null;
+    const cards = history.map((e, index) => {
+      // The ones on the sky come in no month's order (a flagged one can be old), so months are named under the bar only.
+      if (index === onSky.length && index > 0) {
+        bar = Math.max(...lastY.values()) + CARD_H + 30;
+        cursor = bar + 40;
+      }
+      const m = index < onSky.length ? null : e.when.slice(0, 7);
+      if (m !== null && m !== month) { if (month !== null) cursor += 34; months.push({ month: m, y: cursor }); cursor += 30; month = m; }
       const y = Math.max(cursor, (lastY.get(e.direction) ?? -Infinity) + STEP);
       lastY.set(e.direction, y);
       if (!firstY.has(e.direction)) firstY.set(e.direction, y);
@@ -46,7 +55,7 @@ export function ExperimentHistory({ view, onOpen, onChange }: {
       return { e, x: laneX(e.direction), y };
     });
     const height = cursor + CARD_H + 230;
-    return { lanes, cards, months, centre, width, height, laneX, lastY, firstY, count: history.length };
+    return { lanes, cards, months, centre, width, height, laneX, lastY, firstY, bar: bar as number | null, count: history.length, sky: onSky.length };
   }, [view]);
 
   // Open with the timeline in the middle.
@@ -71,7 +80,7 @@ export function ExperimentHistory({ view, onOpen, onChange }: {
     <section className="xh" aria-label="The experiment history, newest first">
       <div className="xh-head">
         <h2>Under the horizon. <em>{layout.count} experiments back to {first ? monthName(first.when.slice(0, 7)) : 'the start'}.</em></h2>
-        <p>Newest at the top, the project&rsquo;s start at the bottom. Press a direction to put it on the sky or take it off; press an experiment to open it.</p>
+        <p>{layout.sky > 0 ? `The ${layout.sky} on the sky come first, above the bar. Under it, newest` : 'Newest'} at the top, the project&rsquo;s start at the bottom. Press a direction to put it on the sky or take it off; press an experiment to open it.</p>
         <div className="xh-dirs">
           {view.directions.map((d) => (
             <button key={d.id} type="button" className="xh-dir" aria-pressed={d.active} style={{ '--c': HUES[d.hue % 10] } as React.CSSProperties}
@@ -122,6 +131,11 @@ export function ExperimentHistory({ view, onOpen, onChange }: {
           {layout.lanes.map((lane) => (
             <span key={lane.id} className="xh-name" style={{ left: layout.laneX(lane.id), '--c': HUES[lane.hue % 10] } as React.CSSProperties}>{lane.name}<small>{lane.count}</small></span>
           ))}
+          {layout.bar !== null && (
+            <div className="xh-bar" style={{ top: layout.bar }} role="separator" aria-label="Above: the experiments on the sky. Below: the rest of the record.">
+              <span style={{ left: layout.centre }}><b>↑ On the sky</b><i />The rest of the record ↓</span>
+            </div>
+          )}
           {layout.months.map(({ month, y }) => <span key={month} className="xh-month" style={{ left: layout.centre, top: y + 4 }}>{monthName(month)}</span>)}
           {layout.cards.map(({ e, x, y }) => {
             const lane = view.directions.find((d) => d.id === e.direction);

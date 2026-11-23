@@ -151,6 +151,10 @@ a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offs
 .xh-field svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .xh-name{position:absolute;top:14px;transform:translateX(-50%);font:400 19px/1 var(--serif);color:var(--c);white-space:nowrap;text-shadow:0 1px 8px #0b0807}
 .xh-name small{font:10.5px var(--mono);color:#a9998a;margin-left:6px}
+.xh-bar{position:absolute;left:0;right:0;height:0;border-top:2px solid #ffd2a8;box-shadow:0 0 18px 2px rgba(255,170,90,.35)}
+.xh-bar span{position:absolute;top:0;transform:translate(-50%,-50%);display:inline-flex;align-items:center;gap:10px;font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#e9dcc6;background:#17110d;border:1px solid #ffd2a8;border-radius:999px;padding:4px 14px;white-space:nowrap}
+.xh-bar b{color:#ffd2a8;font-weight:600}
+.xh-bar i{width:1px;height:11px;background:rgba(233,220,198,.4)}
 .xh-month{position:absolute;transform:translate(-50%,-50%);font:600 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:#e9dcc6;background:#17110d;border:1px solid rgba(233,220,198,.25);border-radius:999px;padding:2px 10px;white-space:nowrap}
 .xh-card{position:absolute;display:grid;grid-template-columns:64px minmax(0,1fr);gap:9px;align-items:start;text-align:left;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:#1a140f;color:#f3efe7;padding:8px 10px 8px 8px;cursor:pointer;overflow:hidden;box-shadow:0 8px 22px rgba(0,0,0,.35)}
 .xh-card:hover,.xh-card:focus-visible{border-color:var(--c);outline:none;background:#211912}
