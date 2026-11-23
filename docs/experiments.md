@@ -8,8 +8,13 @@
   other results from the last two weeks. The engine holds 16 things, so the sky holds at most that many.
 - **Under the horizon** (`ExperimentHistory.tsx`) is everything else, newest at the top and the project's start at
   the bottom, one line per direction beside the timeline.
-- Pressing an experiment anywhere opens it in Sunrise's workspace (`ExperimentPane.tsx`): notes, groups, the
-  follow-up flag, its outcome and its fields. `/experiments?open=36` opens one directly.
+- Pressing an experiment anywhere opens the same workspace a task gets (`TaskPane`, with `record`): the Work
+  surfaces, web tabs and chats with OpenClaw, kept under the id `exp-<number>`. The head of its brief is
+  `ExperimentPane.tsx`: the 3D picture, the result, the network, notes, groups, the follow-up flag, its outcome and
+  its fields. `/experiments?open=36` opens one directly.
+- The workspace's services learn of an experiment through `lib/experiments/brief.ts`: `loadTaskBrief` answers with
+  the experiment's brief, and `workspaceRef` (brief/build.ts) lets the work and workspace stores accept its id.
+  Experiments are not tasks: they are on no list and cannot be handed to OpenClaw's task work, done or let go.
 
 Every experiment has a 3D picture (`picture`, a key of `scene-library.js`) and may name the network it trained
 (`model`). `scenes.ts` draws them all with one off-screen WebGL renderer, copied onto 2D canvases, and only while

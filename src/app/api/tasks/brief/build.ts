@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { experimentBrief, experimentRef } from '@/lib/experiments/brief';
 import * as path from 'path';
 import type { Task } from '@/lib/types';
 import { journalDataDir } from '@/lib/backend-data';
@@ -65,6 +66,14 @@ export function openTaskRefs(): BriefTaskRef[] {
 }
 
 /**
+ * What a workspace is opened on: an open task, or an experiment (lib/experiments/brief.ts). The workspace's own
+ * stores (its work, its tabs) ask this; everything about lists, dates and OpenClaw's task work asks openTaskRefs.
+ */
+export function workspaceRef(taskId: string): BriefTaskRef | null {
+  return openTaskRefs().find((r) => r.task.id === taskId) ?? experimentRef(taskId);
+}
+
+/**
  * The rule-built briefs for several tasks, before OpenClaw's layer, by task id. Tasks that aren't open are left
  * out. Everything the rules read (the journal's day files, the completed index, the job stores) is read once.
  */
@@ -103,6 +112,9 @@ export function loadRuleBrief(taskId: string, now = new Date(), tasks = openTask
 
 /** The brief as the Horizon shows it: the rules' brief with OpenClaw's layer merged in. */
 export function loadTaskBrief(taskId: string, now = new Date()): TaskBrief | null {
+  // An experiment opens to the same workspace as a task; its brief comes from the experiment record.
+  const experiment = experimentBrief(taskId, now);
+  if (experiment) return experiment;
   const tasks = openTaskRefs();
   const brief = loadRuleBrief(taskId, now, tasks);
   if (!brief) return null;

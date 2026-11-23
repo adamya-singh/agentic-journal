@@ -4,13 +4,13 @@ import { nextWorkRecord, resolveWork, workHash, type ResolvedWork } from '@/lib/
 import type { WorkBlock } from '@/lib/shapes/work';
 import { deriveSurfaces } from '@/lib/task-surfaces';
 import { workspaceView, type WorkspacePeek, type WorkspaceView } from '@/lib/task-workspace';
-import { loadTaskBrief, openTaskRefs } from '../brief/build';
+import { loadTaskBrief, workspaceRef } from '../brief/build';
 import { mutateHookWorkRecords, readHookWorkRecord } from '../hook-work/store';
 import { readPastedTabs } from '../workspace-tabs/store';
 
 /** The workspace of an open task as it stands, or null when no open task has the id. */
 export function loadWorkspace(taskId: string): { view: WorkspaceView; work: ResolvedWork | null } | null {
-  const ref = openTaskRefs().find((r) => r.task.id === taskId);
+  const ref = workspaceRef(taskId);
   if (!ref) return null;
   const brief = loadTaskBrief(taskId);
   const work = resolveWork(brief?.hook?.work ?? null, readHookWorkRecord(taskId), ref.task.text);

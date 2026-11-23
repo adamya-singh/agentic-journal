@@ -8,6 +8,9 @@ import { createPortal } from 'react-dom';
 import { Instrument_Serif } from 'next/font/google';
 import type { SunriseEngine } from '@/components/sunrise/engine';
 import { SUNRISE_CSS } from '@/components/sunrise/sunrise-css';
+import { PANE_CSS, TaskPane } from '@/components/sunrise/TaskPane';
+import { BRIEF_CSS } from '@/components/horizon/TaskBriefCard';
+import { CHAT_CSS } from '@/components/horizon/BriefChat';
 import { SKY_RINGS, type ExperimentsView as View } from '@/lib/experiments/types';
 import { EXPERIMENTS_CSS } from './experiments-css';
 import { mountScenesIn } from './scenes';
@@ -51,7 +54,7 @@ export function ExperimentsView() {
       if (!json.success) return json.error || 'That did not save. Try again.';
       setView(json.data as View);
       if (body.op === 'remove') engineRef.current?.closeTask();
-      if (body.op === 'create' && json.experiment?.id) engineRef.current?.openTask(json.experiment.id as string);
+      if (body.op === 'create' && json.experiment?.id) engineRef.current?.openTask(`exp-${json.experiment.id as string}`);
     } catch {
       return 'That did not save: the Journal did not answer.';
     }
@@ -63,7 +66,7 @@ export function ExperimentsView() {
       const programs = await loadPrograms();
       if (disposed || !skyRef.current) return;
       const made = new Engine(skyRef.current, programs, { onOpen: setOpen, onTray: () => {}, onToggleDaily: () => {} }, {
-        ringNames: SKY_RINGS, sunWord: 'TODAY', single: true, pictures: true, paneWidth: 600,
+        ringNames: SKY_RINGS, sunWord: 'TODAY', single: true, pictures: true,
         quiet: ['Nothing in play.', 'Add an experiment, or put a direction on the sky from the list under the horizon.'],
         note: () => {
           const now = viewRef.current;
@@ -100,21 +103,22 @@ export function ExperimentsView() {
     if (!engine || !view || linked.current) return;
     linked.current = true;
     const id = new URLSearchParams(location.search).get('open');
-    if (id && view.experiments.some((e) => e.id === id)) engine.openTask(id);
+    if (id && view.experiments.some((e) => e.id === id)) engine.openTask(`exp-${id}`);
   }, [engine, view]);
 
   const openExperiment = React.useCallback((id: string) => {
     skyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    engineRef.current?.openTask(id);
+    engineRef.current?.openTask(`exp-${id}`);
   }, []);
-  const opened = open && view ? view.experiments.find((e) => e.id === open) ?? null : null;
+  // On the sky and in the workspace an experiment goes by "exp-<number>".
+  const opened = open && view ? view.experiments.find((e) => `exp-${e.id}` === open) ?? null : null;
   // An open experiment that is gone (deleted somewhere else) closes.
   React.useEffect(() => { if (open && view && !opened) engineRef.current?.closeTask(); }, [open, view, opened]);
 
   return (
     <>
       <section className={`sr-hero ${serif.variable}`} aria-label="Experiments in play">
-        <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + EXPERIMENTS_CSS }} />
+        <style dangerouslySetInnerHTML={{ __html: SUNRISE_CSS + BRIEF_CSS + CHAT_CSS + PANE_CSS + EXPERIMENTS_CSS }} />
         <div ref={skyRef} className="sr-sky" tabIndex={0} aria-label="Experiments on rings, one slice per direction. Press one to open it. Escape closes." />
         {!engine && <div className="sr-loading">{error || 'Loading the experiments…'}</div>}
         {engine && error && !view && <div className="sr-loading">{error}</div>}
@@ -123,7 +127,20 @@ export function ExperimentsView() {
           engine.slots.cap,
         )}
         {engine && view && opened && createPortal(
-          <ExperimentPane key={opened.id} experiment={opened} view={view} onClose={() => engineRef.current?.closeTask()} onGoto={openExperiment} onChange={change} />,
+          // The same workspace a task opens to: the work surfaces and the chats with OpenClaw, kept under the
+          // experiment's id. What the record knows (its picture, its result, his notes, groups and flag) heads the brief.
+          <TaskPane
+            key={open}
+            taskId={open!}
+            data={view.sunrise}
+            record
+            briefHead={<ExperimentPane experiment={opened} view={view} onGoto={openExperiment} onChange={change} />}
+            onClose={() => engineRef.current?.closeTask()}
+            onGoto={(id) => openExperiment(id.replace(/^exp-/, ''))}
+            onChanged={load}
+            onLetGo={() => {}}
+            onUndo={() => {}}
+          />,
           engine.slots.pane,
         )}
         {engine && view && error && <span className="xs-err" role="alert">{error}</span>}

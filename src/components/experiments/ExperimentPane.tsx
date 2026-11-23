@@ -1,7 +1,7 @@
 'use client';
 
-// One experiment, opened in Sunrise's workspace: what it asked and found, what it built on and led to, and his
-// own notes, groups and follow-up flag. Everything saves through `onChange`, which answers with an error or nothing.
+// What the record knows about one experiment, at the head of its workspace's brief: its 3D picture, what it asked
+// and found, the network it trained, what it built on and led to, and his own notes, groups and follow-up flag. Everything saves through `onChange`, which answers with an error or nothing.
 import React from 'react';
 import { EXPERIMENT_STATUSES, MODELS, STATUS_WORDS, type Experiment, type ExperimentsView } from '@/lib/experiments/types';
 import { HUES, STATUS_COLOURS } from './experiments-css';
@@ -11,10 +11,9 @@ import { PICTURES } from './scenes';
 type Change = (body: Record<string, unknown>) => Promise<string | void>;
 const split = (text: string) => text.split(',').map((part) => part.trim()).filter(Boolean);
 
-export function ExperimentPane({ experiment: e, view, onClose, onGoto, onChange }: {
+export function ExperimentPane({ experiment: e, view, onGoto, onChange }: {
   experiment: Experiment;
   view: ExperimentsView;
-  onClose: () => void;
   onGoto: (id: string) => void;
   onChange: Change;
 }) {
@@ -83,9 +82,7 @@ export function ExperimentPane({ experiment: e, view, onClose, onGoto, onChange 
           <span className="xp-dir" style={{ '--a': HUES[(direction?.hue ?? 9) % 10] } as React.CSSProperties}><i />{direction?.name ?? 'No direction'}</span>
           <span className="xp-st" style={{ '--s': STATUS_COLOURS[e.status] } as React.CSSProperties}>{STATUS_WORDS[e.status]}</span>
           {e.flagged && <span className="xp-fl">Needs follow-up</span>}
-          <button type="button" className="xp-x" onClick={onClose}>Close</button>
         </div>
-        <h2>{e.question}</h2>
         {e.answer !== '' && <p className="xp-a">{e.answer}</p>}
         {e.numbers.length > 0 && <ul className="xp-n">{e.numbers.map((n) => <li key={n}>{n}</li>)}</ul>}
         {e.details !== '' && <p className="xp-d">{e.details}</p>}

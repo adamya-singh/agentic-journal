@@ -16,8 +16,10 @@ export const EXPERIMENTS_CSS = `
 .xs-add:hover,.xs-add:focus-visible{border-color:#ffd2a8;outline:none}
 .xs-err{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);z-index:31;font:12.5px var(--sans);color:#ffd9d2;background:rgba(60,14,10,.9);border:1px solid rgba(255,140,120,.5);border-radius:999px;padding:6px 14px}
 
-.xp{position:absolute;inset:0;overflow:auto;background:linear-gradient(180deg,#fff9f0,#fbefdf);color:#22130a;font:14px/1.5 var(--sans);--a:#c2551b}
-.xp-in{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:14px 22px 26px}
+/* The journal's brief, chat and done components were drawn for Dawn's night sky; they read these (as on home). */
+.sr-hero{--hz-ink:#f3efe7;--hz-dim:#a9b4c4;--hz-em:#ffd2a8;--hz-serif:var(--font-instrument-serif),'Instrument Serif',serif;--hz-sans:var(--font-geist-sans),Geist,sans-serif;--hz-mono:var(--font-geist-mono),'Geist Mono',monospace}
+.xp{color:#22130a;font:14px/1.5 var(--sans);--a:#c2551b;min-width:0}
+.xp-in{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;padding:0 0 18px}
 .xp-stage{aspect-ratio:16/8;border-radius:12px;touch-action:pan-y;cursor:grab}
 .xp-stage.wide{aspect-ratio:2.5/1;min-width:640px;cursor:default}
 .xp-wide{overflow-x:auto;border-radius:12px}
@@ -30,7 +32,7 @@ export const EXPERIMENTS_CSS = `
 .xp-fl{font:600 10.5px var(--mono);letter-spacing:.06em;text-transform:uppercase;background:#c2410c;color:#fff;border-radius:5px;padding:2px 7px}
 .xp-x{margin-left:auto;font:500 12px var(--sans);color:#7a6656;background:none;border:1px solid rgba(60,30,10,.2);border-radius:999px;padding:3px 12px;cursor:pointer}
 .xp-x:hover,.xp-x:focus-visible{border-color:#e07a3a;color:#22130a;outline:none}
-.xp h2{margin:0;font:400 30px/1.08 var(--serif);letter-spacing:-.01em;text-wrap:balance}
+.xp h2{margin:0;font:400 25px/1.1 var(--serif);letter-spacing:-.01em;text-wrap:balance}
 .xp-a{margin:0;font-size:15.5px}
 .xp-n{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
 .xp-n li{font:500 12px var(--mono);background:rgba(194,85,27,.1);border-radius:6px;padding:2px 8px}

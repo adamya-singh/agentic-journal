@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { mergeWork, nextWorkRecord, readBlocks, resolveWork, WORK_BODY_MAX } from '@/lib/hook-work';
 import { parseBlocks } from '@/lib/shapes/work';
-import { loadTaskBrief, openTaskRefs } from '../brief/build';
+import { loadTaskBrief, workspaceRef } from '../brief/build';
 import { mutateHookWorkRecords, readHookWorkRecord } from './store';
 
 function resolved(taskId: string, title: string) {
@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
   const taskId = request.nextUrl.searchParams.get('id');
   if (!taskId) return NextResponse.json({ success: false, error: 'Missing id' }, { status: 400 });
   try {
-    const ref = openTaskRefs().find((r) => r.task.id === taskId);
+    const ref = workspaceRef(taskId);
     if (!ref) return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
     return NextResponse.json({ success: true, data: resolved(taskId, ref.task.text) });
   } catch (error) {
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     if (action === 'save' && (!Array.isArray(blocks) || JSON.stringify(blocks).length > WORK_BODY_MAX)) {
       return NextResponse.json({ success: false, error: `blocks must be a list of at most ${WORK_BODY_MAX} characters` }, { status: 400 });
     }
-    const ref = openTaskRefs().find((r) => r.task.id === taskId);
+    const ref = workspaceRef(taskId);
     if (!ref) return NextResponse.json({ success: false, error: 'Task not found' }, { status: 404 });
 
     let merged = false;

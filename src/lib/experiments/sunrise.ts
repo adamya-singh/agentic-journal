@@ -9,6 +9,9 @@ import type { FormSpec } from '../sunrise/form-spec.ts';
 import type { SunriseData } from '../sunrise/data.ts';
 import { STATUS_WORDS, type Direction, type Experiment, type ExperimentStore, type ExperimentsView } from './types.ts';
 
+// On the sky and in the workspace an experiment goes by "exp-<number>" (lib/experiments/brief.ts reads the same id).
+const taskId = (id: string) => `exp-${id}`;
+
 const SKY_MAX = 16;
 const RECENT_DAYS = 14;
 const ACTIVE_DAYS = 21;
@@ -69,11 +72,12 @@ export function experimentForm(e: Experiment, direction: Direction | undefined, 
   if (e.numbers.length > 0) parts.push({ kind: 'chips', items: e.numbers.slice(0, 4).map((n) => clip(n, 40)) });
   if (e.notes.trim() !== '') parts.push({ kind: 'quote', text: clip(e.notes, 160), by: 'your note' });
   return {
-    id: e.id, listType: 'want-to-do', shape: 'tile', icon: e.status === 'running' ? 'timer' : e.status === 'worked' ? 'check' : e.status === 'finding' ? 'spark' : 'chart',
+    id: taskId(e.id), listType: 'want-to-do', shape: 'tile', icon: e.status === 'running' ? 'timer' : e.status === 'worked' ? 'check' : e.status === 'finding' ? 'spark' : 'chart',
     kind: `${direction?.name ?? 'No direction'} · ${STATUS_WORDS[e.status].toLowerCase()}`, name, next,
     what: clip(e.answer || e.details || 'No result yet.', 240), did: [],
     say: [name.replace(/[.…]*$/, ''), e.status === 'running' ? 'Running now.' : clip(e.answer, 120)],
-    parts, ready: true, hasWork: false, filling: e.status === 'running',
+    // Not ready in Sunrise's sense: OpenClaw has started nothing here, so the workspace credits it with nothing.
+    parts, ready: false, hasWork: false, filling: e.status === 'running',
   };
 }
 
@@ -83,7 +87,7 @@ export function experimentsView(store: ExperimentStore, now: Date): ExperimentsV
   const active = activeDirections(store);
   const sky = skyRings(store);
   const forms: Record<string, FormSpec> = {};
-  for (const e of experiments) forms[e.id] = experimentForm(e, directionOf.get(e.direction), sky[e.id]);
+  for (const e of experiments) forms[taskId(e.id)] = experimentForm(e, directionOf.get(e.direction), sky[e.id]);
   const items: HorizonItem[] = [];
   for (const ring of [0, 1, 2, 3]) {
     // Within a ring the newest sits nearest the sun.
@@ -92,7 +96,7 @@ export function experimentsView(store: ExperimentStore, now: Date): ExperimentsV
       const through = here.length < 2 ? 0.4 : 0.12 + 0.76 * index / (here.length - 1);
       const name = directionOf.get(e.direction)?.name ?? 'Other';
       items.push({
-        id: e.id, listType: 'want-to-do', title: e.question, short: clip(e.question, 44), label: name, group: name,
+        id: taskId(e.id), listType: 'want-to-do', title: e.question, short: clip(e.question, 44), label: name, group: name,
         weight: 5 - ring, due: '', implied: false, hours: ringHours(ring, through), zone: ZONES[ring]!, day: e.day, left: '',
       });
     });

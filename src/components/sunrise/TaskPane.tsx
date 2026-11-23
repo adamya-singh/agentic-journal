@@ -1387,7 +1387,7 @@ function opensFor(sky: number, prefs: LayoutPrefs): { brief: boolean; chats: boo
 // A phone shows one part of the workspace at a time; these are the tabs at its foot.
 const PHONE_TABS = [['brief', 'Brief'], ['work', 'Work'], ['chat', 'Chat']] as const;
 
-export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo, startTab, startThread, onTab }: {
+export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, onUndo, startTab, startThread, onTab, briefHead, record = false }: {
   taskId: string;
   data: SunriseData;
   onClose: () => void;
@@ -1401,6 +1401,10 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   startThread?: string;
   /** The phone's tab as it changes, for the address; a wide screen, with no tabs, says 'work'. */
   onTab?: (tab: 'brief' | 'work' | 'chat') => void;
+  /** Drawn at the head of the brief: what the page itself knows about the thing (an experiment's picture, notes and flag). */
+  briefHead?: React.ReactNode;
+  /** The workspace is on a record, not a task (an experiment): it is never done, let go or given a date, and its brief stays open. */
+  record?: boolean;
 }) {
   const [brief, setBrief] = React.useState<TaskBrief | null | undefined>(undefined);   // undefined while loading
   const [work, setWork] = React.useState<ResolvedWork | null | undefined>(undefined);
@@ -1417,14 +1421,19 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
   const [sky, setSky] = React.useState(() => (typeof window === 'undefined' ? 1800 : window.innerWidth));
   const cols = colsFor(sky);
   const [prefs, setPrefs] = React.useState<LayoutPrefs>(() => (typeof window === 'undefined' ? {} : readLayout()));
-  const [briefOpen, setBriefOpen] = React.useState(() => opensFor(sky, prefs).brief);
-  const [chatsOpen, setChatsOpen] = React.useState(() => opensFor(sky, prefs).chats);
+  // A record's brief is where its own page puts what it knows, so it opens whenever there is room beside the work.
+  const opensOn = (width: number) => {
+    const usual = opensFor(width, prefs);
+    return record ? { brief: width >= 700, chats: colsFor(width) === 3 && usual.chats } : usual;
+  };
+  const [briefOpen, setBriefOpen] = React.useState(() => opensOn(sky).brief);
+  const [chatsOpen, setChatsOpen] = React.useState(() => opensOn(sky).chats);
   const [surfaceWidth, setSurfaceWidth] = React.useState(0);
   React.useLayoutEffect(() => {
     const el = root.current?.closest<HTMLElement>('.sr-sky');
     if (!el) return;
     const first = el.clientWidth;
-    const opens = opensFor(first, prefs);
+    const opens = opensOn(first);
     setSky(first);
     setBriefOpen(opens.brief);
     setChatsOpen(opens.chats);
@@ -1985,11 +1994,13 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
           {when?.where && <span className="srp-where">{when.where}</span>}
           <span className="sp" />
           {error && <p className="srp-err" role="alert">{error}</p>}
-          <span className="srp-acts">
-            <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
-              title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
-            <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
-          </span>
+          {!record && (
+            <span className="srp-acts">
+              <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}
+                title="No longer worth doing. Takes it off your lists without counting it as done.">Let go</button>
+              <button type="button" className="doneb" onClick={() => void done()} disabled={busy}>{busy ? 'Saving…' : 'Done'}</button>
+            </span>
+          )}
           <i className="rule" aria-hidden="true" />
           <button type="button" className="srw-ico" aria-pressed={workOnly} onClick={toggleWorkOnly} title={workOnly ? 'Bring the sides back' : 'Fold the brief and OpenClaw away: the work alone'}>
             <span className="lbl">Work only</span><span aria-hidden="true">⤢</span>
@@ -2017,7 +2028,8 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
             <div className="srp-col">
               <section className="srp-say">
                 <div>
-                  <span className="srp-who" role="status">
+                  {/* A record's brief opens with what its own page knows (briefHead); OpenClaw has said nothing about it. */}
+                  <span className="srp-who" role="status" hidden={record}>
                     OpenClaw
                     {a?.status === 'running' && <em>is reading Canvas, email and your journal for this…</em>}
                     {a?.status === 'queued' && <em>will look at this shortly</em>}
@@ -2028,7 +2040,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                   {phone && !taskId.startsWith('card:') && <TaskWorkStrip taskId={taskId} work={taskWork} onMarkDone={done} />}
                   {phone && <h2>{headline}</h2>}
                   {says && form && form.name !== headline && <p className="srp-note">{form.name}</p>}
-                  {why && <p className="why">{why}</p>}
+                  {why && !record && <p className="why">{why}</p>}
                   {form && form.did.length > 0 && (
                     <ul className="srp-trail" aria-label="OpenClaw already">
                       {(allDid ? form.did : form.did.slice(0, 2)).map((d, i) => <li key={d} style={{ animationDelay: `${0.3 + i * 0.12}s` }}>{d}</li>)}
@@ -2046,7 +2058,7 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                       </span>
                     </div>
                   )}
-                  {undated && (
+                  {undated && !record && (
                     <div className="srp-when">
                       No date yet. When?
                       <button type="button" className="srp-chip" onClick={() => void setWhen(dayFrom(0))}>Today</button>
@@ -2057,13 +2069,14 @@ export function TaskPane({ taskId, data, onClose, onGoto, onChanged, onLetGo, on
                   )}
                 </div>
               </section>
+              {briefHead}
               {shown.length > 0 && <Facts parts={shown} />}
               {brief && <Asides brief={brief} warnings onActionDone={actionDone} />}
               {brief ? <More brief={brief} what={says ? form?.what ?? '' : ''} onGoto={onGoto} onActionDone={actionDone} />
                 : <p className="srp-note">{brief === undefined ? 'Gathering what the Journal knows…' : 'Could not load what the Journal knows about this task.'}</p>}
             </div>
           </div>
-          {phone && (
+          {phone && !record && (
             <footer className="srw-foot srp-acts">
               {error && <p className="srp-err" role="alert" style={{ margin: '0 auto 0 0' }}>{error}</p>}
               <button type="button" onClick={() => onLetGo({ id: taskId, listType, short, title })} disabled={busy}

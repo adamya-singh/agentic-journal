@@ -61,5 +61,5 @@ export interface ExperimentsView {
   directions: (Direction & { active: boolean; count: number })[];
   experiments: Experiment[];          // all of them, oldest first
   sky: Record<string, number>;        // id -> ring, for the ones on the sky
-  sunrise: SunriseData;               // the sky as Sunrise's engine reads it
+  sunrise: SunriseData;               // the sky as Sunrise's engine reads it; there an experiment's id is "exp-<number>"
 }
