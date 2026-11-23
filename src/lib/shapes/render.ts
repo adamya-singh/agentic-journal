@@ -92,6 +92,14 @@ const clockText = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Mat
 
 // A picture's stand-in, drawn from its look. A real image would be an <img> here.
 function mediaArt(look: string, progress: number | undefined) {
+  // A live picture: the page that owns this look ("scene:bench") finds the canvas by its data-scene and draws on it.
+  if (look.startsWith('scene:')) {
+    const live = el('div', 'art look-scene')
+    const canvas = document.createElement('canvas')
+    canvas.dataset['scene'] = look.slice(6)
+    live.append(canvas)
+    return live
+  }
   const box = el('div', `art look-${['video', 'chart', 'slides'].includes(look) ? look : 'image'}`)
   if (look === 'slides') {
     for (const kind of ['wind', 'arcs', 'tree']) {

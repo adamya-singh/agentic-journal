@@ -50,6 +50,28 @@ export type EngineHost = {
   /** One task was dragged onto another and let go there: he may want the two merged. `at` is where, in window coordinates. */
   onMerge?(fromId: string, intoId: string, at: {x: number, y: number}): void
 }
+/**
+ * What a page other than home changes about the sky. The Experiments page uses all of these: its rings are not
+ * stretches of the calendar, its sun is today, and it has one side only.
+ */
+export type EngineOptions = {
+  /** The four rings' names, nearest the sun first: a name and the small line under it. Four more name the outer rings. */
+  ringNames?: readonly (readonly [string, string])[]
+  /** The word on the sun ("YOU" at home). */
+  sunWord?: string
+  /** Every form on the rings is drawn in its own shape, with its picture, however little it matters now. */
+  pictures?: boolean
+  /** One sky only: the sun is not a button and there is no far side to turn to. */
+  single?: boolean
+  /** What the headline says when nothing leads: the words, then the line after them. */
+  quiet?: readonly [string, string]
+  /** The small line under the headline, read each time the sky is laid out. */
+  note?: () => string
+  /** How wide the workspace opens, in px (960 at home). */
+  paneWidth?: number
+  /** What a screen reader is told the sky is. */
+  label?: string
+}
 /** Where the rings put a task and the slices, in Horizon Dawn's own units (dawn-svg.ts's 1200 × 630 drawing). */
 export type SpaceLayout = {spots: {item: HorizonItem, x: number, y: number}[], sectors: {group: string, a0: number, a1: number, mid: number}[]}
 
@@ -139,6 +161,7 @@ export class SunriseEngine {
   private readonly root: HTMLElement
   private readonly host: EngineHost
   private readonly programs: Programs
+  private readonly options: EngineOptions
   private readonly abort = new AbortController()
   private readonly observer: ResizeObserver
   private readonly timers = new Set<number>()
@@ -254,17 +277,18 @@ export class SunriseEngine {
   // once it has moved (null while it is still only a press), and the task it is over.
   private drag: {id: string, name: string, el: HTMLElement, start: {x: number, y: number}, chip: HTMLElement | null, over: {id: string, name: string, el: HTMLElement} | null} | null = null
 
-  constructor(root: HTMLElement, programs: Programs, host: EngineHost) {
+  constructor(root: HTMLElement, programs: Programs, host: EngineHost, options: EngineOptions = {}) {
     this.root = root
     this.programs = programs
     this.host = host
+    this.options = options
     const {signal} = this.abort
     const div = (className: string) => { const node = document.createElement('div'); node.className = className; return node }
 
     this.flat = document.createElementNS(svgNS, 'svg')
     this.flat.setAttribute('class', 'sr-flat')
     this.flat.setAttribute('role', 'img')
-    this.flat.setAttribute('aria-label', 'Tasks on rings by how soon they are due, one slice per subject')
+    this.flat.setAttribute('aria-label', options.label ?? 'Tasks on rings by how soon they are due, one slice per subject')
     this.threads = document.createElementNS(svgNS, 'svg')
     this.threads.setAttribute('class', 'sr-threads')
     this.threads.setAttribute('aria-hidden', 'true')
@@ -475,6 +499,7 @@ export class SunriseEngine {
     // again to come back. The dailies list is under the sun: press the week's streak.
     this.sunButton.addEventListener('click', event => {
       event.stopPropagation()
+      if (this.options.single === true) return
       this.turn(!this.farSide)
     }, {signal})
     this.streakEl.addEventListener('click', event => {
@@ -1190,7 +1215,7 @@ export class SunriseEngine {
   private pillWidth(thing: Thing) { return this.textWidth(this.pillLabel(thing), thing.level > 0 ? 600 : 500) + 20 }
   // The few tasks that matter most (level 2) get their full form with its picture. The rest are compact: what it
   // is, its name and its next step. The rings have room for only a few full forms near the sun.
-  private isCompact(thing: Thing) { return thing.level < 2 }
+  private isCompact(thing: Thing) { return this.options.pictures === true ? false : thing.level < 2 }
   private ownSize(thing: Thing, compact = this.isCompact(thing)): readonly [number, number] {
     const key = `${thing.id}|${compact}`
     let size = this.formSizes.get(key)
@@ -1963,9 +1988,9 @@ export class SunriseEngine {
     const names = [
       ...this.farSide
         ? [['Now', 'fits a bet'], ['This period', 'build days'], ['After finals', 'parked'], ['Someday', 'no date']]
-        : [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']],
-      ['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`],
-      ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later'],
+        : this.options.ringNames?.slice(0, 4) ?? [['Ignition', 'next 48h'], ['Climb', 'this week'], ['Altitude', 'next week'], ['Orbit', 'later']],
+      ...this.options.ringNames !== undefined && this.options.ringNames.length >= 8 ? this.options.ringNames.slice(4, 8) : [['Month', `to ${monthDay(new Date(now + farDays[0] * 864e5))}`], ['Season', `to ${monthDay(new Date(now + farDays[1] * 864e5))}`],
+      ['Year', `to ${new Date(now + farDays[2] * 864e5).toLocaleDateString('en-US', {month: 'short', year: 'numeric'})}`], ['Beyond', 'later']],
       ['No date', 'whenever'],
     ]
     const stars = [...this.motes.values()].some(mote => mote.kind === 'nodate' && mote.at !== null)
@@ -2048,12 +2073,15 @@ export class SunriseEngine {
     } else if (horizon.holds.length > 0) {
       html = `Clear the ground first. <em>${horizon.holds.length} overdue.</em>`
     } else {
-      html = 'Clear skies. <em>Nothing needs you right now.</em>'
+      const [quiet, after] = this.options.quiet ?? ['Clear skies.', 'Nothing needs you right now.']
+      html = `${escapeText(quiet)} <em>${escapeText(after)}</em>`
     }
     if (h1.dataset['html'] !== html) { h1.innerHTML = html; h1.dataset['html'] = html }
     const dailies = this.dailies()
     const parts = [`${horizon.cleared.length} cleared this week${horizon.letGoThisWeek > 0 ? `, ${horizon.letGoThisWeek} let go` : ''}`]
     if (dailies.length > 0) parts.push(`${dailies.filter(daily => daily.done).length} of ${dailies.length} dailies`)
+    // A page with its own line under the headline (EngineOptions.note) says that instead.
+    if (this.options.note !== undefined) { p.textContent = this.options.note(); p.dataset['html'] = ''; return }
     if (!this.narrow || dailies.length === 0) { p.textContent = parts.join(' · '); p.dataset['html'] = ''; return }
     // A phone's ground has no room for the week's streak: the dailies open from their count here instead.
     const line = `${escapeText(parts[0]!)} · <button type="button" class="sr-dl" aria-label="Your dailies: ${escapeText(parts[1]!)}">${escapeText(parts[1]!)}</button>`
@@ -2120,7 +2148,7 @@ export class SunriseEngine {
       if (daily.done) s += `<path d="${path}" fill="none" stroke="#ffb37a" stroke-width="7" stroke-linecap="round" opacity=".8" filter="url(#sr-dglow)"/>`
       s += `<path d="${path}" fill="none" stroke="${daily.done ? '#fff6ec' : 'rgba(255,236,214,.38)'}" stroke-width="${(4.5 * Math.min(1, ss + 0.2)).toFixed(1)}" stroke-linecap="round"/>`
     })
-    s += `<text x="${X}" y="${Y - (count > 0 ? 29 : 20) * ss}" text-anchor="middle" class="you" font-size="${ss > 0.8 ? 10 : 8}">${this.farSide ? 'TODAY' : 'YOU'}</text>`
+    s += `<text x="${X}" y="${Y - (count > 0 ? 29 : 20) * ss}" text-anchor="middle" class="you" font-size="${ss > 0.8 ? 10 : 8}">${this.farSide ? 'TODAY' : escapeText(this.options.sunWord ?? 'YOU')}</text>`
     if (count > 0 && ss > 0.8) s += `<text x="${X}" y="${Y - 12 * ss}" text-anchor="middle" class="dcount">${doneCount === count ? 'ALL DONE' : `${doneCount} OF ${count} DAILY`}</text>`
     // Under the sun: the ground going down, the rings carried on below the horizon, and the sun's glow in it.
     const under = this.underK > 0 ? this.underK : kx
@@ -2154,9 +2182,10 @@ export class SunriseEngine {
     const {width: W, height: H} = this.stage
     if (this.narrow) return {left: 8, top: 8, width: W - 16, height: H - 16}
     // A card to decide is one column; a task opens to the whole window, less a rim of sky: the work and OpenClaw
-    // side by side, and its brief when there is room (TaskPane's paneWidthFor says the same width).
+    // side by side, and its brief when there is room (TaskPane's paneWidthFor says the same width). A page that
+    // asks for a narrower workspace (EngineOptions.paneWidth) gets one, as tall as a task's.
     const rim = card ? 16 : 12
-    const width = card ? Math.min(500, W - 32) : W - 2 * rim
+    const width = card ? Math.min(500, W - 32) : Math.min(this.options.paneWidth ?? Infinity, W - 2 * rim)
     // A task's workspace ends where the window does: under the page's bar the sky can reach below what is in view.
     const seen = card ? H : Math.max(480, Math.min(H, window.innerHeight - Math.max(0, this.root.getBoundingClientRect().top)))
     const edge = card ? 14 : rim
@@ -2231,7 +2260,7 @@ export class SunriseEngine {
       this.streakEl.style.top = `${Y + (this.narrow ? 12 : 30)}px`
     }
     const r = this.last.sunR
-    this.sunButton.hidden = this.open !== null
+    this.sunButton.hidden = this.open !== null || this.options.single === true
     const sunLabel = this.farSide ? 'Today' : `Far side · ${this.cards.length}`
     this.sunButton.setAttribute('aria-label', this.farSide ? 'Turn back to today' : `Turn to the far side: ${this.cards.length} to decide`)
     if (this.sunButton.dataset['label'] !== sunLabel) { this.sunButton.dataset['label'] = sunLabel; this.sunButton.innerHTML = `<span class="l">${sunLabel}</span>` }
