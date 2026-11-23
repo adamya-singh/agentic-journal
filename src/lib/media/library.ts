@@ -156,7 +156,8 @@ export async function scan(now = Date.now()) {
   const root = libraryRoot();
   for (const d of [...LIBRARY_DIRS, READY]) fs.mkdirSync(path.join(root, d), { recursive: true, mode: 0o700 });
   const rels: string[] = [];
-  walk(path.resolve(root), path.resolve(root), rels, path.resolve(stackConfig().dataRoot, 'library'));
+  // join on a resolved dir: resolve(<unknown>, 'library') makes Next's file tracer glob the whole project (see compass/read.ts).
+  walk(path.resolve(root), path.resolve(root), rels, path.join(path.resolve(stackConfig().dataRoot), 'library'));
   return withLibrary((l) => {
     const seen = new Set<string>();
     const res = { added: 0, settled: 0, removed: 0 };

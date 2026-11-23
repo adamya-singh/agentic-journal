@@ -489,8 +489,11 @@ export function readPeriod(
   today: string = todayInNewYork(),
 ): PeriodDetail | null {
   if (!PERIOD_ID_RE.test(id)) return null;
-  const base = path.resolve(dir, 'short-term', 'periods');
-  const full = path.resolve(base, id);
+  // join on a resolved dir, not resolve(dir, ...): Next's file tracer reads resolve(<unknown>, 'short-term',
+  // 'periods') as "<project>/**/*/short-term/periods" and globs the whole project for it at build time. With the
+  // data dir under the project (312k files) that glob held 3.6 GB and production builds were killed (2026-11-23).
+  const base = path.join(path.resolve(dir), 'short-term', 'periods');
+  const full = path.join(base, id);
   if (!full.startsWith(base + path.sep)) return null;
   const current = readShortTermCompass(dir, today);
   const files = readPeriodFiles(dir, id, today);

@@ -1,4 +1,12 @@
-@import 'tailwindcss';
+/* Tailwind is told where the classes are. Left to find them itself it scans the whole project, and every folder it
+   looked in is handed to webpack to watch: src (with the data dir and the backend's node_modules under it) and any
+   stray worktree under .claude. Webpack then stats and hashes all of it, reading the files into memory: 2.8 GB of
+   buffers in a production build on the laptop, which killed it (2026-11-23). */
+@import 'tailwindcss' source(none);
+@source './';
+@source '../components';
+@source '../cedar';
+@source '../lib';
 @import 'tw-animate-css';
 
 @custom-variant dark (&:is(.dark *));
