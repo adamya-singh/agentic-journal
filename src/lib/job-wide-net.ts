@@ -1,11 +1,12 @@
 import type { JobListing } from '@/lib/types';
 
 /**
- * The wide net: entry-level SWE and MLE postings from the public SimplifyJobs new-grad feed, for
- * good software jobs outside the North Star search. This file is the pure first cut (which feed
- * entries are worth judging, New York and the Bay Area first); OpenClaw then judges each one
- * (job-wide-net-judge.ts) and only the ones it passes are saved. The fetch, the store and the
- * schedule live in src/app/api/jobs/wide-net.
+ * The job search's intake. Every posting any search finds comes through here: the public
+ * SimplifyJobs new-grad feed, which the Journal reads itself, and whatever OpenClaw's daily search
+ * (Jobright, SpeedyApply, company boards) found and did not keep. This file is the pure first cut
+ * (which postings are worth judging, New York and the Bay Area first); OpenClaw then judges each
+ * one against both searches (job-wide-net-judge.ts): North Star, the wide net, or turned down.
+ * The fetch, the store and the schedule live in src/app/api/jobs/wide-net.
  */
 
 export const WIDE_NET_FEED_URL =
@@ -36,6 +37,18 @@ export interface WideNetFeedEntry {
   date_posted?: unknown;
   degrees?: unknown;
   sponsorship?: unknown;
+}
+
+/** A posting a search found and hands in to be judged, as OpenClaw's daily search does with what it did not keep. */
+export interface WideNetOffer {
+  company: string;
+  title: string;
+  /** As the posting writes it; several places are separated by ";". */
+  location: string;
+  link: string;
+  /** Where it was found: Jobright, SpeedyApply, a company board. */
+  source: string;
+  postedDate?: string;
 }
 
 /** Where a posting is: New York or the Bay Area, remote in the US, or anywhere else in the US. */
@@ -131,6 +144,53 @@ function cleanLink(link: string): string {
  * recent, and not already in `existing` (the box under either track, any status, plus the postings
  * already turned down). New York and the Bay Area first, then newest first, at most `limit`.
  */
+export type OfferOutcome = 'accepted' | 'duplicate' | 'not-software' | 'level' | 'outside-us';
+
+/**
+ * The same first cut for postings a search hands in: software or ML by its title, entry level, in
+ * the US, and not already in `existing` (the box, the turned down, and the ones still waiting to
+ * be judged). An offer has no feed category, age or clearance mark; the judge reads the rest.
+ */
+export function selectOfferedCandidates(
+  offers: WideNetOffer[],
+  existing: Pick<JobListing, 'company' | 'positionTitle' | 'link'>[],
+): { candidates: WideNetCandidate[]; outcomes: OfferOutcome[] } {
+  const links = new Set(existing.map((listing) => linkKey(listing.link)));
+  const roles = new Set(existing.map(roleKey));
+  const candidates: WideNetCandidate[] = [];
+  const outcomes = offers.map((offer): OfferOutcome => {
+    const company = offer.company.trim();
+    const title = offer.title.trim();
+    if (!ROLE.test(title) || NOT_THE_ROLE.test(title)) return 'not-software';
+    if (NOT_ENTRY_LEVEL.test(title)) return 'level';
+    const usLocations = offer.location.split(/\s*[;|]\s*/).map((place) => place.trim()).filter(isUsLocation);
+    if (usLocations.length === 0) return 'outside-us';
+    const candidate: WideNetCandidate = {
+      company,
+      companySummary: 'Company description not available yet.',
+      positionTitle: title,
+      location: usLocations.length > 3
+        ? `${usLocations.slice(0, 3).join('; ')} +${usLocations.length - 3} more`
+        : usLocations.join('; '),
+      applicationCategories: ['new-grad'],
+      track: 'wide',
+      status: 'saved',
+      salary: 'not listed',
+      link: cleanLink(offer.link),
+      source: { name: offer.source.trim() || 'Unknown', link: cleanLink(offer.link) },
+      notes: `Found on ${offer.source.trim() || 'a search'}.`,
+      ...(offer.postedDate && /^\d{4}-\d{2}-\d{2}$/.test(offer.postedDate) ? { postedDate: offer.postedDate } : {}),
+      place: placeOf(usLocations),
+    };
+    if (links.has(linkKey(candidate.link)) || roles.has(roleKey(candidate))) return 'duplicate';
+    links.add(linkKey(candidate.link));
+    roles.add(roleKey(candidate));
+    candidates.push(candidate);
+    return 'accepted';
+  });
+  return { candidates, outcomes };
+}
+
 export function selectWideNetCandidates(
   feed: WideNetFeedEntry[],
   existing: Pick<JobListing, 'company' | 'positionTitle' | 'link'>[],
@@ -216,9 +276,12 @@ export function selectWideNetCandidates(
 
 export interface WideNetRun {
   at: string;
-  /** How the run started: the schedule, or the "Find more now" button. */
-  trigger: 'schedule' | 'manual';
+  /** How the run started: the schedule, the "Find more now" button, or a search handing postings in. */
+  trigger: 'schedule' | 'manual' | 'offer';
+  /** Postings saved to the wide net. */
   added: number;
+  /** Postings the judge put in the North Star search instead. */
+  addedToFocus?: number;
   /** Postings OpenClaw judged in this run and turned down. */
   turnedDown?: number;
   /** Postings sent to OpenClaw that came back without a verdict; the next check sends them again. */
@@ -236,6 +299,8 @@ export interface WideNetTurnedDown {
   location: string;
   link: string;
   place: WideNetPlace;
+  /** Where it was found. */
+  source?: string;
   postedDate?: string;
   /** One line about the company, when OpenClaw gave one. */
   about?: string;
@@ -251,4 +316,6 @@ export interface WideNetState {
   lastRun?: WideNetRun;
   /** By link key. */
   turnedDown?: Record<string, WideNetTurnedDown>;
+  /** Postings a search handed in that are still waiting to be judged, by link key. */
+  offered?: Record<string, WideNetCandidate>;
 }

@@ -3,9 +3,10 @@ import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { jobsDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import {
-  linkKey, roleKey, selectWideNetCandidates,
+  linkKey, roleKey, selectOfferedCandidates, selectWideNetCandidates,
   WIDE_NET_FEED_URL, WIDE_NET_JUDGE_PER_RUN, WIDE_NET_QUEUE_TARGET, WIDE_NET_SOURCE, WIDE_NET_TURNED_DOWN_KEEP_DAYS,
-  type WideNetCandidate, type WideNetFeedEntry, type WideNetRun, type WideNetState, type WideNetTurnedDown,
+  type OfferOutcome, type WideNetCandidate, type WideNetFeedEntry, type WideNetOffer, type WideNetRun, type WideNetState,
+  type WideNetTurnedDown,
 } from '@/lib/job-wide-net';
 import { deployHoldsWorker } from '@/lib/deploy-hold';
 import type { JobListing } from '@/lib/types';
@@ -26,6 +27,7 @@ export function readWideNetState(): WideNetState {
       enabled: parsed.enabled !== false,
       ...(parsed.lastRun ? { lastRun: parsed.lastRun } : {}),
       ...(parsed.turnedDown && typeof parsed.turnedDown === 'object' ? { turnedDown: parsed.turnedDown } : {}),
+      ...(parsed.offered && typeof parsed.offered === 'object' ? { offered: parsed.offered } : {}),
     };
   } catch {
     return { enabled: true };
@@ -76,8 +78,9 @@ const known = (listings: JobListing[], turnedDown: Record<string, WideNetTurnedD
 ];
 
 /**
- * Top the wide-net queue up: pick postings from the feed, have OpenClaw judge them, save the ones
- * it passes and remember the ones it turns down. One run at a time; a failed run is recorded, not thrown.
+ * One check: take the postings searches handed in and the new ones in the feed, have OpenClaw judge
+ * them, save the ones it puts in a search and remember the ones it turns down. One run at a time;
+ * a failed run is recorded, not thrown.
  */
 export function runWideNetImport(
   trigger: WideNetRun['trigger'],
@@ -88,18 +91,31 @@ export function runWideNetImport(
     const at = new Date().toISOString();
     let run: WideNetRun;
     let turnedDown = keptTurnedDown(readWideNetState().turnedDown, Date.now());
+    const settled = new Set<string>();
     try {
       if (!judge.available()) throw new Error('OpenClaw is not available to judge postings, so nothing was added');
-      const feed = await loadFeed();
-      const before = readJobListings().listings;
-      const { candidates, skipped } = selectWideNetCandidates(feed, known(before, turnedDown), {
-        now: Date.now(),
-        limit: WIDE_NET_QUEUE_TARGET - countWideNetWaiting(before) > 0 ? WIDE_NET_JUDGE_PER_RUN : 0,
+      // A feed that is down does not hold up what the searches handed in.
+      let feedError: string | undefined;
+      const feed = await loadFeed().catch((error) => {
+        feedError = error instanceof Error ? error.message : 'The SimplifyJobs feed could not be read';
+        return [] as WideNetFeedEntry[];
       });
+      const before = readJobListings().listings;
+      // With the wide net's queue full nothing is judged: a pass would have nowhere to go and be judged again.
+      const wideHasRoom = WIDE_NET_QUEUE_TARGET - countWideNetWaiting(before) > 0;
+      const offered = wideHasRoom ? Object.values(readWideNetState().offered ?? {}).slice(0, WIDE_NET_JUDGE_PER_RUN) : [];
+      if (feedError && offered.length === 0) throw new Error(feedError);
+      const { candidates: fromFeed, skipped } = selectWideNetCandidates(
+        feed,
+        known(before, turnedDown).concat(offered.map((candidate) => ({ company: candidate.company, positionTitle: candidate.positionTitle, link: candidate.link }))),
+        { now: Date.now(), limit: wideHasRoom ? WIDE_NET_JUDGE_PER_RUN - offered.length : 0 },
+      );
+      const candidates = [...offered, ...fromFeed];
       const outcome = await judgeWideNetPostings(
         candidates.map((candidate) => ({
           key: linkKey(candidate.link), company: candidate.company, title: candidate.positionTitle,
           location: candidate.location, link: candidate.link, place: candidate.place,
+          ...(candidate.source.name !== WIDE_NET_SOURCE.name ? { source: candidate.source.name } : {}),
         })),
         judge,
       );
@@ -116,24 +132,32 @@ export function runWideNetImport(
       for (const { place, ...candidate } of candidates) {
         const key = linkKey(candidate.link);
         const verdict = outcome.verdicts[key];
+        const unread = verdict?.read ? '' : ' (Judged without reading the posting.)';
         if (!verdict) {
           unjudged += 1;
         } else if (verdict.verdict === 'skip') {
           rejected += 1;
+          settled.add(key);
           turnedDown[key] = {
             company: candidate.company, title: candidate.positionTitle, location: candidate.location, link: candidate.link,
-            place, ...(candidate.postedDate ? { postedDate: candidate.postedDate } : {}),
+            place, source: candidate.source.name, ...(candidate.postedDate ? { postedDate: candidate.postedDate } : {}),
             ...(verdict.about ? { about: verdict.about } : {}), reason: verdict.reason, read: verdict.read, at,
           };
-        } else if (room > 0 && !links.has(key) && !roles.has(roleKey(candidate))) {
-          // A pass with no room left is not recorded: a later check judges it again.
-          room -= 1;
+        } else if (links.has(key) || roles.has(roleKey(candidate))) {
+          settled.add(key);
+        } else if (verdict.verdict === 'focus' || room > 0) {
+          // A wide-net pass with no room left is not recorded: a later check judges it again.
+          if (verdict.verdict === 'wide') room -= 1;
+          settled.add(key);
           links.add(key);
           roles.add(roleKey(candidate));
           added.push(asListing({
             ...candidate,
+            track: verdict.verdict,
             ...(verdict.about ? { companySummary: verdict.about } : {}),
-            notes: `Wide net: ${verdict.reason}${verdict.read ? '' : ' (Judged without reading the posting.)'}`,
+            notes: verdict.verdict === 'focus'
+              ? `${verdict.reason}${unread}\nPros: ${verdict.pros}\nCons: ${verdict.cons}`
+              : `Wide net: ${verdict.reason}${unread}`,
           }, at));
         }
       }
@@ -142,10 +166,13 @@ export function runWideNetImport(
         writeJobListings(data);
         await wakeJobApplicationWorkerIfEnabled().catch((error) => console.error('Wide net worker wake failed:', error));
       }
+      const addedToFocus = added.filter((listing) => listing.track === 'focus').length;
+      const error = outcome.error && Object.keys(outcome.verdicts).length === 0
+        ? `OpenClaw could not judge the postings: ${outcome.error}`
+        : feedError;
       run = {
-        at, trigger, added: added.length, turnedDown: rejected, unjudged,
-        waiting: countWideNetWaiting(data.listings), skipped,
-        ...(outcome.error && Object.keys(outcome.verdicts).length === 0 ? { error: `OpenClaw could not judge the postings: ${outcome.error}` } : {}),
+        at, trigger, added: added.length - addedToFocus, addedToFocus, turnedDown: rejected, unjudged,
+        waiting: countWideNetWaiting(data.listings), skipped, ...(error ? { error } : {}),
       };
     } catch (error) {
       run = {
@@ -153,12 +180,43 @@ export function runWideNetImport(
         error: error instanceof Error ? error.message : 'The wide-net check failed',
       };
     }
-    writeWideNetState({ ...readWideNetState(), lastRun: run, turnedDown });
+    const latest = readWideNetState();
+    writeWideNetState({
+      ...latest, lastRun: run, turnedDown,
+      offered: Object.fromEntries(Object.entries(latest.offered ?? {}).filter(([key]) => !settled.has(key))),
+    });
     return run;
   })().finally(() => {
     running = null;
   });
   return running;
+}
+
+/** A handed-in posting waits this long at most before a check judges it, when the finder is on. */
+const OFFER_RUN_AFTER_MS = 10 * 60 * 1000;
+/** Handed-in postings that may wait at once; a search that hands in more is told the rest did not fit. */
+const OFFERED_MAX = 120;
+
+/**
+ * A search hands in postings it found and did not keep. Each goes through the first cut and then
+ * waits to be judged with everything else. Returns what became of each, in the order given.
+ */
+export function offerPostings(offers: WideNetOffer[]): { outcomes: (OfferOutcome | 'queue-full')[]; waiting: number } {
+  const state = readWideNetState();
+  const offered = { ...(state.offered ?? {}) };
+  const waiting = Object.values(offered).map((candidate) => ({ company: candidate.company, positionTitle: candidate.positionTitle, link: candidate.link }));
+  const turnedDown = keptTurnedDown(state.turnedDown, Date.now());
+  const { candidates, outcomes } = selectOfferedCandidates(offers, known(readJobListings().listings, turnedDown).concat(waiting));
+  const accepted = [...candidates];
+  const result = outcomes.map((outcome): OfferOutcome | 'queue-full' => {
+    if (outcome !== 'accepted') return outcome;
+    const candidate = accepted.shift()!;
+    if (Object.keys(offered).length >= OFFERED_MAX) return 'queue-full';
+    offered[linkKey(candidate.link)] = candidate;
+    return 'accepted';
+  });
+  writeWideNetState({ ...readWideNetState(), offered });
+  return { outcomes: result, waiting: Object.keys(offered).length };
 }
 
 /** Adamya overrides the judge: a turned-down posting is saved to the wide net after all. */
@@ -172,7 +230,8 @@ export async function addTurnedDownPosting(key: string): Promise<boolean> {
     data.listings.unshift(asListing({
       company: entry.company, companySummary: entry.about ?? 'Company description not available yet.',
       positionTitle: entry.title, location: entry.location, applicationCategories: ['new-grad'], track: 'wide',
-      status: 'saved', salary: 'not listed', link: entry.link, source: WIDE_NET_SOURCE,
+      status: 'saved', salary: 'not listed', link: entry.link,
+      source: entry.source && entry.source !== WIDE_NET_SOURCE.name ? { name: entry.source, link: entry.link } : WIDE_NET_SOURCE,
       notes: `Wide net: added by Adamya after OpenClaw turned it down (${entry.reason})`,
       ...(entry.postedDate ? { postedDate: entry.postedDate } : {}),
     }, at));
@@ -190,8 +249,11 @@ export async function addTurnedDownPosting(key: string): Promise<boolean> {
 export async function runWideNetImportIfDue(): Promise<void> {
   const state = readWideNetState();
   if (!state.enabled || process.env.JOB_WIDE_NET_DISABLED === '1') return;
-  if (state.lastRun && Date.now() - Date.parse(state.lastRun.at) < RUN_EVERY_MS) return;
+  // Postings a search handed in are judged within minutes; the feed alone is checked a few times a day.
+  const offersWaiting =
+    Object.keys(state.offered ?? {}).length > 0 && countWideNetWaiting(readJobListings().listings) < WIDE_NET_QUEUE_TARGET;
+  if (state.lastRun && Date.now() - Date.parse(state.lastRun.at) < (offersWaiting ? OFFER_RUN_AFTER_MS : RUN_EVERY_MS)) return;
   // A queued deploy is about to stop the gateway; a judging turn started now would be cut off.
   if (deployHoldsWorker()) return;
-  await runWideNetImport('schedule');
+  await runWideNetImport(offersWaiting ? 'offer' : 'schedule');
 }

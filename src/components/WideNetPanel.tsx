@@ -9,6 +9,8 @@ interface WideNetView {
   lastRun?: WideNetRun;
   /** A check is under way: the feed is being read or OpenClaw is judging. */
   running: boolean;
+  /** Postings searches handed in that are waiting to be judged. */
+  offeredCount: number;
   turnedDownCount: number;
   turnedDown: (WideNetTurnedDown & { key: string })[];
   waiting: number;
@@ -77,7 +79,11 @@ export function WideNetPanel({ onListingsChanged, onError }: { onListingsChanged
     if (view.running) status = 'Looking: OpenClaw is reading the new postings. This takes a few minutes.';
     else if (!run) status = view.enabled ? 'Has not looked yet. The first check runs a few minutes after the Journal starts.' : 'Has not looked yet.';
     else if (run.error) status = `Last check ${ago(run.at, Date.now())} failed: ${run.error}`;
-    else if (run.added > 0) status = `Saved ${run.added} new posting${run.added === 1 ? '' : 's'}${declined} ${ago(run.at, Date.now())}.`;
+    else if (run.added > 0 || run.addedToFocus) {
+      const toFocus = run.addedToFocus ? `${run.added > 0 ? ' and ' : ''}${run.addedToFocus} to North Star` : '';
+      const toWide = run.added > 0 ? `${run.added} new posting${run.added === 1 ? '' : 's'}` : '';
+      status = `Saved ${toWide}${toFocus}${declined} ${ago(run.at, Date.now())}.`;
+    }
     else if (run.turnedDown) status = `Checked ${ago(run.at, Date.now())}. Turned down ${run.turnedDown}, saved none.`;
     else if (full) status = `Checked ${ago(run.at, Date.now())}. The queue is full, so nothing was added.`;
     else status = `Checked ${ago(run.at, Date.now())}. Nothing new in the feed.`;
@@ -104,13 +110,15 @@ export function WideNetPanel({ onListingsChanged, onError }: { onListingsChanged
       <span className="hint" style={{ fontSize: 12.5 }}>{status}</span>
       {view && (
         <span className="hint" style={{ marginLeft: 'auto', fontSize: 12.5 }}>
+          {view.offeredCount > 0 ? `${view.offeredCount} waiting to be judged · ` : ''}
           {view.waiting} of {view.queueTarget} waiting for the worker
         </span>
       )}
       <p className="hint" style={{ flexBasis: '100%', margin: 0, fontSize: 12.5 }}>
-        New-grad software and ML postings from the SimplifyJobs feed that OpenClaw has read and passed: real software
-        engineering at a credible tech company, in New York or the Bay Area, or anywhere for a very good company. The
-        worker applies to North Star postings first and to these when it has nothing else to do.
+        Every new-grad software and ML posting the searches find (the SimplifyJobs feed, and what the daily search
+        turns up on Jobright, SpeedyApply and company boards) is judged by OpenClaw for both searches. The wide net
+        keeps real software engineering at a credible tech company, in New York or the Bay Area, or anywhere for a
+        very good company. The worker applies to North Star postings first and to these when it has nothing else to do.
       </p>
       {view && view.turnedDownCount > 0 && (
         <details style={{ flexBasis: '100%', fontSize: 12.5 }}>
@@ -124,7 +132,7 @@ export function WideNetPanel({ onListingsChanged, onError }: { onListingsChanged
                   <a href={entry.link} target="_blank" rel="noreferrer">
                     {entry.company}: {entry.title}
                   </a>
-                  <span className="hint"> · {entry.location}</span>
+                  <span className="hint"> · {entry.location}{entry.source ? ` · ${entry.source}` : ''}</span>
                   <br />
                   <span className="hint">
                     {entry.reason}

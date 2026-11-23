@@ -109,7 +109,9 @@ function normalizeSource(
 
   if (typeof source === 'object' && source !== null && !Array.isArray(source)) {
     const record = source as Record<string, unknown>;
-    const name = normalizeString(record.name) || fallbackName;
+    const stored = normalizeString(record.name);
+    // "Unknown" was stored while the notes' source line could not be read; the notes win over it.
+    const name = (/^unknown$/i.test(stored) ? sourceNameFromNotes : stored) || stored || fallbackName;
     const link = normalizeString(record.link) || fallbackLink;
     return { name, link };
   }
@@ -125,7 +127,8 @@ function parseSourceFromNotes(value: unknown): { name: string; notes: string } |
     return undefined;
   }
 
-  const match = value.match(/^\s*Source:\s*([^.\n]+)\.\s*(.*)$/i);
+  // The source is the notes' first line or sentence: "Source: Jobright. Pros: …" or "source: Jobright\nPros: …".
+  const match = value.match(/^\s*Source:\s*([^.\n]+)(?:\.|\n|$)\s*([\s\S]*)$/i);
   if (!match) {
     return undefined;
   }

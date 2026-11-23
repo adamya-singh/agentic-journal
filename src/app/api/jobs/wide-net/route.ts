@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { WIDE_NET_QUEUE_TARGET } from '@/lib/job-wide-net';
 import { readJobListings } from '../job-store-utils';
-import { addTurnedDownPosting, countWideNetWaiting, isWideNetRunning, readWideNetState, runWideNetImport, writeWideNetState } from './store';
+import {
+  addTurnedDownPosting, countWideNetWaiting, isWideNetRunning, offerPostings, readWideNetState, runWideNetImport,
+  writeWideNetState,
+} from './store';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,11 +14,13 @@ export const dynamic = 'force-dynamic';
 const TURNED_DOWN_SHOWN = 40;
 
 const view = () => {
-  const { turnedDown = {}, ...state } = readWideNetState();
+  const { turnedDown = {}, offered = {}, ...state } = readWideNetState();
   const entries = Object.entries(turnedDown).map(([key, entry]) => ({ key, ...entry }));
   return {
     ...state,
     running: isWideNetRunning(),
+    /** Postings searches handed in that are waiting to be judged. */
+    offeredCount: Object.keys(offered).length,
     turnedDownCount: entries.length,
     turnedDown: entries.sort((first, second) => second.at.localeCompare(first.at)).slice(0, TURNED_DOWN_SHOWN),
     ...queue(),
@@ -40,16 +45,31 @@ const BodySchema = z.union([
   z.object({ action: z.literal('run') }),
   z.object({ action: z.literal('set-enabled'), enabled: z.boolean() }),
   z.object({ action: z.literal('add'), key: z.string().min(1) }),
+  z.object({
+    action: z.literal('offer'),
+    postings: z.array(z.object({
+      company: z.string().trim().min(1).max(200),
+      title: z.string().trim().min(1).max(300),
+      location: z.string().trim().min(1).max(400),
+      link: z.string().trim().url().regex(/^https?:\/\//i).max(2000),
+      source: z.string().trim().min(1).max(120),
+      postedDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+    })).min(1).max(60),
+  }),
 ]);
 
 export async function POST(request: NextRequest) {
   try {
     const parsed = BodySchema.safeParse(await request.json());
     if (!parsed.success) {
-      return NextResponse.json({ success: false, error: 'action must be run, set-enabled or add' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'action must be run, set-enabled, add or offer (with its postings)' }, { status: 400 });
     }
     if (parsed.data.action === 'set-enabled') {
       writeWideNetState({ ...readWideNetState(), enabled: parsed.data.enabled });
+    } else if (parsed.data.action === 'offer') {
+      // Judged by the next check, within minutes: see runWideNetImportIfDue.
+      const { outcomes, waiting } = offerPostings(parsed.data.postings);
+      return NextResponse.json({ success: true, outcomes, waitingToBeJudged: waiting });
     } else if (parsed.data.action === 'add') {
       if (!(await addTurnedDownPosting(parsed.data.key))) {
         return NextResponse.json({ success: false, error: 'That posting is no longer in the turned-down list' }, { status: 404 });

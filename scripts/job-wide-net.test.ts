@@ -3,7 +3,7 @@ import { after, before, test } from 'node:test';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { isUsLocation, linkKey, placeOf, selectWideNetCandidates, type WideNetFeedEntry } from '../src/lib/job-wide-net';
+import { isUsLocation, linkKey, placeOf, selectOfferedCandidates, selectWideNetCandidates, type WideNetFeedEntry, type WideNetOffer } from '../src/lib/job-wide-net';
 import { buildJudgeBatches, buildJudgePrompt, validateJudgeReply, type JudgeItem } from '../src/lib/job-wide-net-judge';
 import type { JudgeDeps } from '../src/app/api/jobs/wide-net/judge';
 
@@ -37,8 +37,10 @@ const entry = (overrides: Partial<WideNetFeedEntry> = {}): WideNetFeedEntry => (
 const pick = (feed: WideNetFeedEntry[], existing: Parameters<typeof selectWideNetCandidates>[1] = [], limit = 10) =>
   selectWideNetCandidates(feed, existing, { now: NOW, limit });
 
-/** A judge that passes every posting except those whose company a test names. */
-const judgeWith = (skip: (company: string) => boolean = () => false, calls: string[] = []): JudgeDeps => ({
+/** A judge that puts every posting in the wide net, except those a test turns down or sends to North Star. */
+const judgeWith = (
+  skip: (company: string) => boolean = () => false, calls: string[] = [], focus: (company: string) => boolean = () => false,
+): JudgeDeps => ({
   available: () => true,
   forAgents: () => '',
   turn: async ({ message }) => {
@@ -48,7 +50,9 @@ const judgeWith = (skip: (company: string) => boolean = () => false, calls: stri
       const item = JSON.parse(line) as { id: string; company: string };
       reply[item.id] = skip(item.company)
         ? { verdict: 'skip', reason: `${item.company} is not a tech company.`, read: true }
-        : { verdict: 'apply', reason: 'Backend work at a known tech company.', about: `${item.company} makes software.`, read: true };
+        : focus(item.company)
+        ? { verdict: 'focus', reason: 'Inference work at an AI lab.', pros: 'Real inference work.', cons: 'Early stage.', about: `${item.company} trains models.`, read: false }
+        : { verdict: 'wide', reason: 'Backend work at a known tech company.', about: `${item.company} makes software.`, read: true };
     }
     return JSON.stringify(reply);
   },
@@ -148,24 +152,28 @@ test('the judge is asked about each posting and its reply is read item by item',
   assert.match(prompt, /"id":"p1","company":"Acme 0".*"place":"elsewhere in the US","link":"https:\/\/acme.com\/jobs\/0"/);
   assert.match(prompt, /Prefer inference work\./);
   assert.match(prompt, /Do not use the browser/);
+  assert.match(buildJudgePrompt(buildJudgeBatches([{ ...items[0], source: 'Jobright' }])[0]), /"found":"Jobright"/);
   assert.doesNotMatch(buildJudgePrompt(batches[0]), /guidance for agents/);
 
   const check = validateJudgeReply(
     {
-      P1: { verdict: 'Apply', reason: '  Builds   the payments API. ', about: 'Payments company.', read: true },
+      P1: { verdict: 'Wide', reason: '  Builds   the payments API. ', about: 'Payments company.', read: true },
       p2: { verdict: 'skip', reason: 'An insurer; the role is SQL reporting.' },
       p3: { verdict: 'maybe', reason: 'Unsure.' },
-      p4: { verdict: 'apply' },
-      p99: { verdict: 'apply', reason: 'Not one of ours.' },
+      p4: { verdict: 'wide' },
+      p5: { verdict: 'focus', reason: 'Inference at a lab.', pros: 'Kernel work.' },
+      p6: { verdict: 'focus', reason: 'Inference at a lab.', pros: 'Kernel work.', cons: 'Small team.', read: true },
+      p99: { verdict: 'wide', reason: 'Not one of ours.' },
     },
     batches[0].aliases,
   );
   assert.deepEqual(check.verdicts, {
-    'acme.com/jobs/0': { verdict: 'apply', reason: 'Builds the payments API.', about: 'Payments company.', read: true },
+    'acme.com/jobs/0': { verdict: 'wide', reason: 'Builds the payments API.', about: 'Payments company.', read: true },
     'acme.com/jobs/1': { verdict: 'skip', reason: 'An insurer; the role is SQL reporting.', read: false },
+    'acme.com/jobs/5': { verdict: 'focus', reason: 'Inference at a lab.', pros: 'Kernel work.', cons: 'Small team.', read: true },
   });
-  assert.equal(check.missing.length, 6);
-  assert.equal(check.problems.length, 3);
+  assert.equal(check.missing.length, 5);
+  assert.equal(check.problems.length, 4);
   assert.equal(validateJudgeReply(null, batches[0].aliases).missing.length, 8);
 });
 
@@ -257,6 +265,70 @@ test('a turn that fails leaves its postings unjudged, and Adamya can add a turne
   assert.match(added.notes, /added by Adamya after OpenClaw turned it down/);
   assert.equal(wideNet.readWideNetState().turnedDown?.['fresh.example.com/1'], undefined);
   assert.equal((await wideNet.runWideNetImport('manual', async () => feed, judgeWith())).added, 0);
+});
+
+test('a search hands postings in, and each is judged for both searches', async () => {
+  const data = jobStore.readJobListings();
+  data.listings = data.listings.slice(0, 30);
+  jobStore.writeJobListings(data);
+  const offer = (overrides: Partial<WideNetOffer>): WideNetOffer => ({
+    company: 'Lab', title: 'Software Engineer, Inference', location: 'San Francisco, CA; London, UK',
+    link: 'https://lab.example.com/1?utm_source=jobright', source: 'Jobright', postedDate: '2026-11-20', ...overrides,
+  });
+  const offers = [
+    offer({}),
+    offer({ company: 'Shop', title: 'Software Engineer', link: 'https://shop.example.com/1', location: 'Austin, TX', source: 'SpeedyApply' }),
+    offer({ company: 'Bank', title: 'Software Engineer', link: 'https://bank.example.com/1' }),
+    offer({ company: 'Old Hand', title: 'Senior Software Engineer', link: 'https://old.example.com/1' }),
+    offer({ company: 'Abroad', link: 'https://abroad.example.com/1', location: 'Toronto, ON, Canada' }),
+    offer({ company: 'Desk', title: 'Sales Associate', link: 'https://desk.example.com/1' }),
+    offer({ company: 'Fresh', title: 'Software Engineer, New Grad', link: 'https://fresh.example.com/1' }),
+    offer({ company: 'Lab', link: 'https://lab.example.com/1' }),
+  ];
+  const { candidates } = selectOfferedCandidates(offers.slice(0, 1), []);
+  assert.deepEqual(
+    { location: candidates[0].location, place: candidates[0].place, link: candidates[0].link, source: candidates[0].source.name, postedDate: candidates[0].postedDate },
+    { location: 'San Francisco, CA', place: 'hub', link: 'https://lab.example.com/1', source: 'Jobright', postedDate: '2026-11-20' },
+  );
+
+  const handed = wideNet.offerPostings(offers);
+  assert.deepEqual(handed.outcomes, ['accepted', 'accepted', 'accepted', 'level', 'outside-us', 'not-software', 'duplicate', 'duplicate']);
+  assert.equal(handed.waiting, 3);
+  assert.deepEqual(wideNet.offerPostings(offers.slice(0, 1)).outcomes, ['duplicate']);
+
+  const calls: string[] = [];
+  const run = await wideNet.runWideNetImport('offer', async () => { throw new Error('feed down'); },
+    judgeWith((company) => company === 'Bank', calls, (company) => company === 'Lab'));
+  assert.match(calls[0], /"company":"Lab".*"found":"Jobright"/);
+  assert.deepEqual({ added: run.added, addedToFocus: run.addedToFocus, turnedDown: run.turnedDown, error: run.error },
+    { added: 1, addedToFocus: 1, turnedDown: 1, error: 'feed down' });
+  const [lab, shop] = ['Lab', 'Shop'].map((company) => jobStore.readJobListings().listings.find((listing) => listing.company === company)!);
+  assert.deepEqual({ track: lab.track, source: lab.source.name, notes: lab.notes },
+    { track: 'focus', source: 'Jobright', notes: 'Inference work at an AI lab. (Judged without reading the posting.)\nPros: Real inference work.\nCons: Early stage.' });
+  assert.deepEqual({ track: shop.track, source: shop.source.name }, { track: 'wide', source: 'SpeedyApply' });
+  const state = wideNet.readWideNetState();
+  assert.deepEqual(state.offered, {});
+  assert.equal(state.turnedDown?.['bank.example.com/1'].source, 'Jobright');
+});
+
+test('the source is read from the first line of the notes, whatever shape they are in', () => {
+  const data = jobStore.readJobListings();
+  const base = data.listings.find((listing) => listing.company === 'Lab')!;
+  const withNotes = (id: string, notes: string, name = 'Unknown') => ({ ...base, id, link: `https://x.example.com/${id}`, notes, source: { name, link: '' } });
+  data.listings.push(
+    withNotes('a', 'Source: Jobright.\nPros: one.\nCons: two.'),
+    withNotes('b', 'source: SpeedyApply\nAdvances the focus bet.\nPros: one.\nCons: two.'),
+    withNotes('c', 'Source: Autonomous Search (Greenhouse). Pros: one. Cons: two.'),
+    withNotes('d', 'Source: SimplifyJobs.\nPros: one.', 'Jobright'),
+    withNotes('e', 'Pros: one. Cons: two.'),
+  );
+  jobStore.writeJobListings(data);
+  const read = Object.fromEntries(jobStore.readJobListings().listings.map((listing) => [listing.id, listing]));
+  assert.deepEqual(['a', 'b', 'c', 'd', 'e'].map((id) => read[id].source.name),
+    ['Jobright', 'SpeedyApply', 'Autonomous Search (Greenhouse)', 'Jobright', 'Unknown']);
+  assert.equal(read.a.notes, 'Pros: one.\nCons: two.');
+  assert.equal(read.b.notes, 'Advances the focus bet.\nPros: one.\nCons: two.');
+  assert.equal(read.a.source.link, 'https://x.example.com/a');
 });
 
 test('postings without a track read as North Star, and the track survives a write', () => {
