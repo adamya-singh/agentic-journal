@@ -1704,7 +1704,10 @@ function resolveApplicationForListing(
 ): JobApplicationRecord | null {
   const existing = store.applications[listing.id];
   if (listing.status === 'archived') {
-    return existing?.status === 'closed' ? existing : null;
+    // An archived posting shows its application only when it was closed, or when the employer wrote back with
+    // more than a receipt: a reply to an application that was set aside still has to reach the board.
+    const heardBack = ['assessment', 'interview', 'offer', 'rejected'].includes(existing?.employerStage ?? '');
+    return existing?.status === 'closed' || heardBack ? existing! : null;
   }
   if (existing) {
     return existing;

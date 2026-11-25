@@ -153,7 +153,7 @@ describe('job application state', () => {
     assert.ok(body.worker);
   });
 
-  test('shows archived listings only when their application is recorded closed', async () => {
+  test('shows archived listings only when their application is closed or the employer wrote back', async () => {
     await store.mutateJobApplicationsStore((data) => {
       data.applications.archived = {
         listingId: 'archived',
@@ -167,6 +167,17 @@ describe('job application state', () => {
       };
     });
     assert.equal(store.buildJobApplicationsView().applications.archived, undefined);
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications.archived.employerStage = 'received';
+    });
+    assert.equal(store.buildJobApplicationsView().applications.archived, undefined);
+    await store.mutateJobApplicationsStore((data) => {
+      data.applications.archived.employerStage = 'assessment';
+    });
+    assert.equal(store.buildJobApplicationsView().applications.archived.employerStage, 'assessment');
+    await store.mutateJobApplicationsStore((data) => {
+      delete data.applications.archived.employerStage;
+    });
     await store.mutateJobApplicationsStore((data) => {
       store.setApplicationStatus(data.applications.archived, 'closed', now);
     });
