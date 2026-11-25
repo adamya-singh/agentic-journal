@@ -34,6 +34,7 @@ test('each posting lands in exactly one stage', () => {
     [listing('k', { status: 'archived' }), undefined, 'archived'],
     [listing('l', { status: 'archived' }), application('l'), 'archived'],
     [listing('m', { status: 'applied' }), undefined, 'submitted'],
+    [listing('n', { status: 'archived' }), application('n', { status: 'submitted', employerStage: 'received' }), 'archived'],
   ];
   for (const [item, record, stage] of cases) {
     assert.equal(jobBoardStage(item, record), stage, item.id);

@@ -187,6 +187,20 @@ test('pre-submission closure is distinct from employer rejection', () => {
   assert.equal(stats.counts.rejected, 0);
   assert.equal(stats.submitted, 0);
 });
+test('an application set aside after it went out leaves the counts until the employer writes back', () => {
+  const a = application();
+  a.employerUpdates = [];
+  delete a.employerStage;
+  const l = { ...listing, status: 'archived' as const };
+  const store = (record: typeof a) => ({
+    applications: { a: record },
+    emailUpdates: { enabled: true, pending: [], processed: {} },
+  }) as unknown as JobApplicationsStoreData;
+  assert.equal(summarize(overview([l], store(a), { milestones: {}, groups: [] }).rows).submitted, 0);
+  const heard = { ...a, employerUpdates: [{ stage: 'interview', receivedAt: '2026-11-20T12:00:00.000Z' }] } as typeof a;
+  assert.equal(summarize(overview([l], store(heard), { milestones: {}, groups: [] }).rows).submitted, 1);
+});
+
 test('informational events do not reset employer stages or move Simplify', () => {
   const a = application();
   a.employerStage = 'assessment';

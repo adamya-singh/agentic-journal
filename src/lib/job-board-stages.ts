@@ -24,7 +24,8 @@ const HEARD_BACK = new Set(['assessment', 'interview', 'offer', 'rejected']);
 export function jobBoardStage(listing: JobListing, application?: JobApplicationRecord): JobBoardStage {
   // An employer reply outranks everything, even a later archive.
   if (application?.employerStage && HEARD_BACK.has(application.employerStage)) return 'heard';
-  if (application?.status === 'submitted') return 'submitted';
+  // Archived after it went out: Adamya set the application aside (one sent before the wide net was judged, say).
+  if (application?.status === 'submitted') return listing.status === 'archived' ? 'archived' : 'submitted';
   if (application?.status === 'closed') return 'closed';
   // Questions block the application even when its listing was archived.
   if (application?.status === 'awaiting-user-input') return 'needs';

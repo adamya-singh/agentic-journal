@@ -128,7 +128,12 @@ export function overview(
     const a = store.applications[l.id];
     const snap = a?.submissionSnapshot;
     const metadata = snap?.listing ?? l;
-    const submitted = !!a?.submittedAt || a?.status === 'submitted' || l.status === 'applied';
+    // A sent application whose posting was archived afterwards was set aside (sent before the wide net was
+    // judged, say): it stays out of the counts unless the employer wrote back with more than a receipt.
+    const setAside =
+      l.status === 'archived' &&
+      !(a?.employerUpdates ?? []).some((e) => ['assessment', 'interview', 'offer', 'rejected'].includes(e.stage ?? ''));
+    const submitted = (!!a?.submittedAt || a?.status === 'submitted' || l.status === 'applied') && !setAside;
     const manual = /confirmed manually/i.test(a?.submissionEvidence?.message ?? '');
     const baseline = snap
       ? snap.baseline

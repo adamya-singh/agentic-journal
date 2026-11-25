@@ -123,7 +123,7 @@ const STAGE_HINTS: Record<JobBoardStage, string> = {
   submitted: 'Sent and waiting on the employer.',
   heard: 'Employers that replied with an assessment, interview, offer or rejection.',
   closed: 'Applications stopped because the posting disappeared, the role filled, or you cancelled.',
-  archived: 'Postings you archived before an application went out.',
+  archived: 'Postings you set aside: archived before an application went out, or after one you no longer count.',
 };
 
 // The pipeline's hues on the Mission trajectory; amber is the stage waiting on you.
@@ -447,7 +447,7 @@ export function JobListings({
     submitted: 'waiting on employers',
     heard: `${heardCounts.moving} moving · ${heardCounts.rejected} rejected`,
     closed: 'posting gone or cancelled',
-    archived: 'set aside before applying',
+    archived: 'set aside',
   };
 
   return (
