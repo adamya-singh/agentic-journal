@@ -92,11 +92,15 @@ test('only open, recent, entry-level software and ML roles in the US with no cle
     each({ company_name: 'Senior', title: 'Senior Software Engineer' }),
     each({ company_name: 'Two', title: 'Software Engineer II' }),
     each({ company_name: 'Doctor', degrees: ['PhD'] }),
+    each({ company_name: 'Lab', title: 'Member of Technical Staff - ML Systems' }),
+    each({ company_name: 'Founders', title: 'Founding Member of Technical Staff' }),
+    each({ company_name: 'Big', title: 'Senior Member of Technical Staff' }),
+    each({ company_name: 'Bigger', title: 'Staff Software Engineer' }),
   ]);
-  assert.deepEqual(candidates.map((candidate) => candidate.company), ['Models', 'Older Hub', 'Both']);
-  assert.equal(candidates[2].location, 'Remote in USA');
-  assert.equal(candidates[2].place, 'remote');
-  assert.deepEqual(skipped, { closed: 2, notSoftware: 3, clearance: 1, old: 2, outsideUs: 1, level: 3, duplicate: 0, overLimit: 0 });
+  assert.deepEqual(candidates.map((candidate) => candidate.company), ['Models', 'Lab', 'Founders', 'Older Hub', 'Both']);
+  assert.equal(candidates[4].location, 'Remote in USA');
+  assert.equal(candidates[4].place, 'remote');
+  assert.deepEqual(skipped, { closed: 2, notSoftware: 3, clearance: 1, old: 2, outsideUs: 1, level: 5, duplicate: 0, overLimit: 0 });
 });
 
 test('a posting already in the box under either track is never saved again', () => {

@@ -67,13 +67,16 @@ export interface WideNetSelection {
 }
 
 const CATEGORIES = /^(software|ai\/ml\/data|software engineering|data science, ai & machine learning)$/i;
-const ROLE = /engineer|developer|scientist|programmer|software|machine learning|\b(?:swe|sde|ml|ai|mle)\b/i;
+const ROLE = /engineer|developer|scientist|programmer|software|machine learning|technical staff|\b(?:swe|sde|ml|ai|mle|mts)\b/i;
 const NOT_THE_ROLE =
   /analyst|technician|sales|support|mechanical|electrical|civil|hardware|manufactur|test engineer|field|annotat|tutor|trainer|evaluator|specialist|part-time|\bcontract\b/i;
 /** The feed's mark for roles that need a clearance: defense contractors, which the wide net leaves out. */
 const CLEARANCE = /citizenship is required/i;
 const NOT_ENTRY_LEVEL =
   /\b(?:senior|sr|staff|principal|lead|manager|director|head|ph\.?d|intern|internship|co-?op|ii|iii|iv)\b/i;
+/** "Member of Technical Staff" is what many AI companies call an engineer of any level, not a staff engineer. */
+const TECHNICAL_STAFF = /\bmembers? of (?:the )?technical staff\b/gi;
+const notEntryLevel = (title: string) => NOT_ENTRY_LEVEL.test(title.replace(TECHNICAL_STAFF, ''));
 const US_STATES = new Set(
   ('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK ' +
     'OR PA RI SC SD TN TX UT VT VA WA WV WI WY').split(' '),
@@ -162,7 +165,7 @@ export function selectOfferedCandidates(
     const company = offer.company.trim();
     const title = offer.title.trim();
     if (!ROLE.test(title) || NOT_THE_ROLE.test(title)) return 'not-software';
-    if (NOT_ENTRY_LEVEL.test(title)) return 'level';
+    if (notEntryLevel(title)) return 'level';
     const usLocations = offer.location.split(/\s*[;|]\s*/).map((place) => place.trim()).filter(isUsLocation);
     if (usLocations.length === 0) return 'outside-us';
     const candidate: WideNetCandidate = {
@@ -221,7 +224,7 @@ export function selectWideNetCandidates(
       skipped.notSoftware += 1;
       continue;
     }
-    if (NOT_ENTRY_LEVEL.test(title) || (degrees.length > 0 && !degrees.some((degree) => /bachelor/i.test(String(degree))))) {
+    if (notEntryLevel(title) || (degrees.length > 0 && !degrees.some((degree) => /bachelor/i.test(String(degree))))) {
       skipped.level += 1;
       continue;
     }

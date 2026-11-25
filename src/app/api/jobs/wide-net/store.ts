@@ -195,7 +195,7 @@ export function runWideNetImport(
 /** A handed-in posting waits this long at most before a check judges it, when the finder is on. */
 const OFFER_RUN_AFTER_MS = 10 * 60 * 1000;
 /** Handed-in postings that may wait at once; a search that hands in more is told the rest did not fit. */
-const OFFERED_MAX = 120;
+const OFFERED_MAX = 400;
 
 /**
  * A search hands in postings it found and did not keep. Each goes through the first cut and then
