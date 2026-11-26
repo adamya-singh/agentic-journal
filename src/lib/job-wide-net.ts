@@ -18,11 +18,10 @@ export const WIDE_NET_SOURCE = {
   link: 'https://github.com/SimplifyJobs/New-Grad-Positions',
 };
 /**
- * Postings from before this day are left out: the start of the 2026–27 new-grad hiring season.
- * Companies keep one posting open all season, so a rolling window of a few weeks hid most of them.
- * Move it forward when the next season starts.
+ * Postings older than this many days are left out. Companies keep one new-grad posting open for
+ * most of a hiring season, so a window of a few weeks hid most of them.
  */
-export const WIDE_NET_POSTED_SINCE = '2026-09-01';
+export const WIDE_NET_MAX_AGE_DAYS = 90;
 /** How many postings one check sends to OpenClaw to judge. */
 export const WIDE_NET_JUDGE_PER_RUN = 24;
 /** How many postings one check has OpenClaw screen by title. Screening is cheap: it opens nothing. */
@@ -145,8 +144,8 @@ function cleanLink(link: string): string {
 }
 
 /**
- * Pick the feed entries worth a look: open, entry level, no clearance, in the US, posted since
- * `WIDE_NET_POSTED_SINCE`, not already in `existing` (the box under either track, any status, plus the postings already turned
+ * Pick the feed entries worth a look: open, entry level, no clearance, in the US, posted in the last
+ * `WIDE_NET_MAX_AGE_DAYS` days, not already in `existing` (the box under either track, any status, plus the postings already turned
  * down), and not one OpenClaw's title screen already called not software (`notSoftware`, link
  * keys). New York and the Bay Area first, then newest first, at most `limit`.
  */
@@ -199,10 +198,10 @@ export function selectOfferedCandidates(
 export function selectWideNetCandidates(
   feed: WideNetFeedEntry[],
   existing: Pick<JobListing, 'company' | 'positionTitle' | 'link'>[],
-  options: { now: number; limit: number; postedSince?: string; notSoftware?: ReadonlySet<string> },
+  options: { now: number; limit: number; maxAgeDays?: number; notSoftware?: ReadonlySet<string> },
 ): WideNetSelection {
   const skipped = { closed: 0, notSoftware: 0, clearance: 0, old: 0, outsideUs: 0, level: 0, duplicate: 0, overLimit: 0 };
-  const oldest = Date.parse(`${options.postedSince ?? WIDE_NET_POSTED_SINCE}T00:00:00Z`);
+  const oldest = options.now - (options.maxAgeDays ?? WIDE_NET_MAX_AGE_DAYS) * 86_400_000;
   const links = new Set(existing.map((listing) => linkKey(listing.link)));
   const roles = new Set(existing.map(roleKey));
   const picked: { candidate: WideNetCandidate; posted: number }[] = [];
