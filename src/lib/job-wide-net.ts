@@ -4,9 +4,8 @@ import type { JobListing } from '@/lib/types';
  * The job search's intake. Every posting any search finds comes through here: the public
  * SimplifyJobs new-grad feed, which the Journal reads itself, and whatever OpenClaw's daily search
  * (Jobright, SpeedyApply, company boards) found and did not keep. This file is the pure first cut,
- * the rules a posting's own facts settle (open, entry level, in the US, not seen before), New York
- * and the Bay Area first, then newest first. A posting's age is no rule: companies keep one open
- * for a whole hiring season, and the judge finds the ones that have closed. OpenClaw does the rest (job-wide-net-judge.ts): it screens the
+ * the rules a posting's own facts settle (open, entry level, in the US, posted this hiring season,
+ * not seen before), New York and the Bay Area first, then newest first. OpenClaw does the rest (job-wide-net-judge.ts): it screens the
  * titles for software and ML roles, then reads each one and puts it in North Star, the wide net,
  * or neither.
  * The fetch, the store and the schedule live in src/app/api/jobs/wide-net.
@@ -18,6 +17,12 @@ export const WIDE_NET_SOURCE = {
   name: 'SimplifyJobs',
   link: 'https://github.com/SimplifyJobs/New-Grad-Positions',
 };
+/**
+ * Postings from before this day are left out: the start of the 2026–27 new-grad hiring season.
+ * Companies keep one posting open all season, so a rolling window of a few weeks hid most of them.
+ * Move it forward when the next season starts.
+ */
+export const WIDE_NET_POSTED_SINCE = '2026-09-01';
 /** How many postings one check sends to OpenClaw to judge. */
 export const WIDE_NET_JUDGE_PER_RUN = 24;
 /** How many postings one check has OpenClaw screen by title. Screening is cheap: it opens nothing. */
@@ -140,11 +145,10 @@ function cleanLink(link: string): string {
 }
 
 /**
- * Pick the feed entries worth a look: open, entry level, no clearance, in the US, not already in
- * `existing` (the box under either track, any status, plus the postings already turned
+ * Pick the feed entries worth a look: open, entry level, no clearance, in the US, posted since
+ * `WIDE_NET_POSTED_SINCE`, not already in `existing` (the box under either track, any status, plus the postings already turned
  * down), and not one OpenClaw's title screen already called not software (`notSoftware`, link
- * keys). New York and the Bay Area first, then newest first, at most `limit`. `maxAgeDays` leaves
- * older postings out when a caller wants that; by default age is not a reason.
+ * keys). New York and the Bay Area first, then newest first, at most `limit`.
  */
 export type OfferOutcome = 'accepted' | 'duplicate' | 'level' | 'outside-us';
 
@@ -195,10 +199,10 @@ export function selectOfferedCandidates(
 export function selectWideNetCandidates(
   feed: WideNetFeedEntry[],
   existing: Pick<JobListing, 'company' | 'positionTitle' | 'link'>[],
-  options: { now: number; limit: number; maxAgeDays?: number; notSoftware?: ReadonlySet<string> },
+  options: { now: number; limit: number; postedSince?: string; notSoftware?: ReadonlySet<string> },
 ): WideNetSelection {
   const skipped = { closed: 0, notSoftware: 0, clearance: 0, old: 0, outsideUs: 0, level: 0, duplicate: 0, overLimit: 0 };
-  const oldest = options.maxAgeDays === undefined ? 0 : options.now - options.maxAgeDays * 86_400_000;
+  const oldest = Date.parse(`${options.postedSince ?? WIDE_NET_POSTED_SINCE}T00:00:00Z`);
   const links = new Set(existing.map((listing) => linkKey(listing.link)));
   const roles = new Set(existing.map(roleKey));
   const picked: { candidate: WideNetCandidate; posted: number }[] = [];
