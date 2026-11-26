@@ -4,7 +4,8 @@ import { randomUUID } from 'crypto';
 import { jobsDataDir, writeJsonFileAtomic } from '@/lib/backend-data';
 import {
   linkKey, roleKey, selectOfferedCandidates, selectWideNetCandidates,
-  WIDE_NET_FEED_URL, WIDE_NET_JUDGE_PER_RUN, WIDE_NET_QUEUE_TARGET, WIDE_NET_SOURCE, WIDE_NET_TURNED_DOWN_KEEP_DAYS,
+  WIDE_NET_FEED_URL, WIDE_NET_JUDGE_PER_RUN, WIDE_NET_QUEUE_TARGET, WIDE_NET_SCREEN_PER_RUN, WIDE_NET_SOURCE,
+  WIDE_NET_TURNED_DOWN_KEEP_DAYS,
   type OfferOutcome, type WideNetCandidate, type WideNetFeedEntry, type WideNetOffer, type WideNetRun, type WideNetState,
   type WideNetTurnedDown,
 } from '@/lib/job-wide-net';
@@ -13,7 +14,7 @@ import type { JobListing } from '@/lib/types';
 import { readJobApplicationsStore } from '../application-store-utils';
 import { wakeJobApplicationWorkerIfEnabled } from '../application-worker-utils';
 import { readJobListings, writeJobListings } from '../job-store-utils';
-import { cliJudgeDeps, judgeWideNetPostings, type JudgeDeps } from './judge';
+import { cliJudgeDeps, judgeWideNetPostings, screenWideNetPostings, type JudgeDeps } from './judge';
 
 const stateFile = () => path.join(jobsDataDir(), 'wide-net.json');
 /** The feed is checked a few times a day; it changes daily. */
@@ -28,6 +29,7 @@ export function readWideNetState(): WideNetState {
       ...(parsed.lastRun ? { lastRun: parsed.lastRun } : {}),
       ...(parsed.turnedDown && typeof parsed.turnedDown === 'object' ? { turnedDown: parsed.turnedDown } : {}),
       ...(parsed.offered && typeof parsed.offered === 'object' ? { offered: parsed.offered } : {}),
+      ...(parsed.screened && typeof parsed.screened === 'object' ? { screened: parsed.screened } : {}),
     };
   } catch {
     return { enabled: true };
@@ -62,14 +64,23 @@ let running: Promise<WideNetRun> | null = null;
 /** A check is under way (the feed is being read or OpenClaw is judging). */
 export const isWideNetRunning = () => running !== null;
 
-const asListing = (candidate: Omit<WideNetCandidate, 'place'>, at: string): JobListing => ({
-  ...candidate, id: randomUUID(), savedAt: at, statusHistory: [], createdAt: at, updatedAt: at,
-});
+function asListing(candidate: Omit<WideNetCandidate, 'place'>, at: string): JobListing {
+  const listing = { ...candidate, id: randomUUID(), savedAt: at, statusHistory: [], createdAt: at, updatedAt: at };
+  // The feed's category was only a hint for the title screen.
+  delete listing.category;
+  return listing;
+}
 
 /** Turned-down postings, without the ones too old to still be in the feed's recent window. */
 function keptTurnedDown(turnedDown: WideNetState['turnedDown'], now: number): Record<string, WideNetTurnedDown> {
   const oldest = now - WIDE_NET_TURNED_DOWN_KEEP_DAYS * 86_400_000;
   return Object.fromEntries(Object.entries(turnedDown ?? {}).filter(([, entry]) => Date.parse(entry.at) >= oldest));
+}
+
+/** The title screen's answers, kept as long as a turned-down posting is. */
+function keptScreened(screened: WideNetState['screened'], now: number): NonNullable<WideNetState['screened']> {
+  const oldest = now - WIDE_NET_TURNED_DOWN_KEEP_DAYS * 86_400_000;
+  return Object.fromEntries(Object.entries(screened ?? {}).filter(([, entry]) => Date.parse(entry.at) >= oldest));
 }
 
 const known = (listings: JobListing[], turnedDown: Record<string, WideNetTurnedDown>) => [
@@ -78,9 +89,9 @@ const known = (listings: JobListing[], turnedDown: Record<string, WideNetTurnedD
 ];
 
 /**
- * One check: take the postings searches handed in and the new ones in the feed, have OpenClaw judge
- * them, save the ones it puts in a search and remember the ones it turns down. One run at a time;
- * a failed run is recorded, not thrown.
+ * One check: take the postings searches handed in and the new ones in the feed, have OpenClaw screen
+ * their titles for software and ML roles, then judge those, save the ones it puts in a search and
+ * remember the ones it turns down. One run at a time; a failed run is recorded, not thrown.
  */
 export function runWideNetImport(
   trigger: WideNetRun['trigger'],
@@ -92,6 +103,7 @@ export function runWideNetImport(
     let run: WideNetRun;
     let turnedDown = keptTurnedDown(readWideNetState().turnedDown, Date.now());
     const settled = new Set<string>();
+    const newlyScreened: NonNullable<WideNetState['screened']> = {};
     try {
       if (!judge.available()) throw new Error('OpenClaw is not available to judge postings, so nothing was added');
       // A feed that is down does not hold up what the searches handed in.
@@ -103,14 +115,33 @@ export function runWideNetImport(
       const before = readJobListings().listings;
       // With the wide net's queue full nothing is judged: a pass would have nowhere to go and be judged again.
       const wideHasRoom = WIDE_NET_QUEUE_TARGET - countWideNetWaiting(before) > 0;
-      const offered = wideHasRoom ? Object.values(readWideNetState().offered ?? {}).slice(0, WIDE_NET_JUDGE_PER_RUN) : [];
+      const offered = wideHasRoom ? Object.values(readWideNetState().offered ?? {}) : [];
       if (feedError && offered.length === 0) throw new Error(feedError);
+      const screened = keptScreened(readWideNetState().screened, Date.now());
       const { candidates: fromFeed, skipped } = selectWideNetCandidates(
         feed,
         known(before, turnedDown).concat(offered.map((candidate) => ({ company: candidate.company, positionTitle: candidate.positionTitle, link: candidate.link }))),
-        { now: Date.now(), limit: wideHasRoom ? WIDE_NET_JUDGE_PER_RUN - offered.length : 0 },
+        {
+          now: Date.now(), limit: wideHasRoom ? WIDE_NET_SCREEN_PER_RUN : 0,
+          notSoftware: new Set(Object.entries(screened).filter(([, entry]) => !entry.software).map(([key]) => key)),
+        },
       );
-      const candidates = [...offered, ...fromFeed];
+      // Titles first: OpenClaw says which of the ones it has not seen are software or ML roles.
+      const pool = [...offered, ...fromFeed];
+      const screen = await screenWideNetPostings(
+        pool
+          .filter((candidate) => !screened[linkKey(candidate.link)])
+          .slice(0, WIDE_NET_SCREEN_PER_RUN)
+          .map((candidate) => ({
+            key: linkKey(candidate.link), company: candidate.company, title: candidate.positionTitle,
+            ...(candidate.category ? { category: candidate.category } : {}),
+          })),
+        judge,
+      );
+      for (const [key, software] of Object.entries(screen.software)) newlyScreened[key] = screened[key] = { software, at };
+      // A handed-in posting that is not software leaves the waiting list; one from the feed is just remembered.
+      for (const candidate of offered) if (screened[linkKey(candidate.link)]?.software === false) settled.add(linkKey(candidate.link));
+      const candidates = pool.filter((candidate) => screened[linkKey(candidate.link)]?.software).slice(0, WIDE_NET_JUDGE_PER_RUN);
       const outcome = await judgeWideNetPostings(
         candidates.map((candidate) => ({
           key: linkKey(candidate.link), company: candidate.company, title: candidate.positionTitle,
@@ -169,9 +200,12 @@ export function runWideNetImport(
       const addedToFocus = added.filter((listing) => listing.track === 'focus').length;
       const error = outcome.error && Object.keys(outcome.verdicts).length === 0
         ? `OpenClaw could not judge the postings: ${outcome.error}`
-        : feedError;
+        : screen.error && Object.keys(screen.software).length === 0
+          ? `OpenClaw could not screen the postings: ${screen.error}`
+          : feedError;
       run = {
-        at, trigger, added: added.length - addedToFocus, addedToFocus, turnedDown: rejected, unjudged,
+        at, trigger, added: added.length - addedToFocus, addedToFocus,
+        screenedOut: Object.values(newlyScreened).filter((entry) => !entry.software).length, turnedDown: rejected, unjudged,
         waiting: countWideNetWaiting(data.listings), skipped, ...(error ? { error } : {}),
       };
     } catch (error) {
@@ -183,6 +217,7 @@ export function runWideNetImport(
     const latest = readWideNetState();
     writeWideNetState({
       ...latest, lastRun: run, turnedDown,
+      screened: { ...keptScreened(latest.screened, Date.now()), ...newlyScreened },
       offered: Object.fromEntries(Object.entries(latest.offered ?? {}).filter(([key]) => !settled.has(key))),
     });
     return run;

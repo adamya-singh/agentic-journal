@@ -1,11 +1,13 @@
-// Asks OpenClaw to judge wide-net postings (src/lib/job-wide-net-judge.ts): eight to a turn, one turn
-// at a time. The turn only reads posting pages with web fetch, so it does not wait for OpenClaw's
-// browser; its session key is cron-prefixed so the deploy queue does not count it as a chat.
+// Asks OpenClaw about wide-net postings (src/lib/job-wide-net-judge.ts), one turn at a time: first a
+// screen of sixty titles a turn for software and ML roles, with no tools; then a judgement of eight
+// postings a turn, which reads their pages with web fetch. Neither waits for OpenClaw's browser, and
+// the session keys are cron-prefixed so the deploy queue does not count them as chats.
 import { readShortTermCompass } from '@/lib/compass/read';
 import { extractJsonObject } from '@/lib/done-at';
 import {
-  buildJudgeBatches, buildJudgePrompt, validateJudgeReply, JUDGE_TURN_TIMEOUT_MS,
-  type JudgeItem, type JudgeVerdict,
+  buildJudgeBatches, buildJudgePrompt, buildScreenBatches, buildScreenPrompt, validateJudgeReply, validateScreenReply,
+  JUDGE_TURN_TIMEOUT_MS, SCREEN_TURN_TIMEOUT_MS,
+  type JudgeItem, type JudgeVerdict, type ScreenItem,
 } from '@/lib/job-wide-net-judge';
 import { runOpenClawAgentTurn } from '@/lib/openclaw-agent';
 import { isOpenClawCliAvailable } from '@/lib/openclaw-cron';
@@ -56,4 +58,30 @@ export async function judgeWideNetPostings(items: JudgeItem[], deps: JudgeDeps =
     }
   }
   return { verdicts, ...(error ? { error } : {}) };
+}
+
+/**
+ * Which postings are software or ML roles, by title. Never throws: a turn that fails or leaves a
+ * posting out leaves it unscreened, and the next check asks again.
+ */
+export async function screenWideNetPostings(
+  items: ScreenItem[],
+  deps: JudgeDeps = cliJudgeDeps,
+): Promise<{ software: Record<string, boolean>; error?: string }> {
+  const software: Record<string, boolean> = {};
+  let error: string | undefined;
+  for (const [index, batch] of buildScreenBatches(items).entries()) {
+    try {
+      const answer = await deps.turn({
+        message: buildScreenPrompt(batch),
+        sessionKey: `agent:main:cron:journal-wide-net-screen-${Date.now()}-${index}`,
+        timeoutMs: SCREEN_TURN_TIMEOUT_MS,
+      });
+      Object.assign(software, validateScreenReply(extractJsonObject(answer), batch.aliases).software);
+    } catch (turnError) {
+      error = turnError instanceof Error ? turnError.message : String(turnError);
+      console.error('Wide net screen: OpenClaw turn failed:', error);
+    }
+  }
+  return { software, ...(error ? { error } : {}) };
 }

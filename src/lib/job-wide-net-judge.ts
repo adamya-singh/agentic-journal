@@ -151,3 +151,71 @@ export function validateJudgeReply(raw: unknown, aliases: Record<string, string>
   const missing = Object.values(aliases).filter((key) => !verdicts[key]);
   return { verdicts, missing, problems };
 }
+
+// ───────────── the title screen ─────────────
+
+export const SCREEN_BATCH_SIZE = 60;
+/** A screen opens nothing: it is one read of sixty titles. */
+export const SCREEN_TURN_TIMEOUT_MS = 4 * 60_000;
+
+export interface ScreenItem {
+  /** The posting's link key. */
+  key: string;
+  company: string;
+  title: string;
+  /** The feed's category, when the posting came from the feed. */
+  category?: string;
+}
+
+export interface ScreenBatch {
+  /** alias (s1…s60) → link key. */
+  aliases: Record<string, string>;
+  items: (ScreenItem & { alias: string })[];
+}
+
+export function buildScreenBatches(items: ScreenItem[]): ScreenBatch[] {
+  const batches: ScreenBatch[] = [];
+  for (let start = 0; start < items.length; start += SCREEN_BATCH_SIZE) {
+    const picked = items.slice(start, start + SCREEN_BATCH_SIZE).map((item, index) => ({ ...item, alias: `s${index + 1}` }));
+    batches.push({ aliases: Object.fromEntries(picked.map((item) => [item.alias, item.key])), items: picked });
+  }
+  return batches;
+}
+
+export function buildScreenPrompt(batch: ScreenBatch): string {
+  const lines = batch.items.map((item) =>
+    JSON.stringify({ id: item.alias, company: item.company, title: item.title, ...(item.category ? { category: item.category } : {}) }));
+  return `Agentic Journal is screening job postings for Adamya, a new grad with a computer science bachelor's degree who is looking for software engineering and machine learning engineering jobs. This is a first pass by title, so that only software and ML roles are read in full afterwards.
+
+For each posting below say whether it is a software or ML role: one where writing software or building ML systems is the core of the job. The category is a job board's own label and is often wrong; go by the title and the company.
+
+true:
+- Software, backend, frontend, full-stack, mobile, systems, infrastructure, platform, data and ML engineers; research engineers and applied scientists; "Member of Technical Staff"; forward deployed and product engineers; embedded and firmware software; robotics and autonomy software.
+- A title that hides a software job ("Analyst - Full Stack", "Technology Associate", a rotational engineering program).
+- When you cannot tell, say true: the next step opens the posting.
+
+false:
+- Hardware, chip, ASIC, electrical, mechanical, civil, manufacturing, process and test engineering with no software core; technicians and operators.
+- Analysts whose work is reporting, finance or business; product, program and project managers; sales, support, marketing, recruiting, operations.
+- Data annotation, AI tutoring and evaluation gigs.
+
+Judge from the lines below only. Use no tools: no browsing, no searching, no files, no commands. Change nothing anywhere and message no one. Your reply is the only thing you produce.
+
+Postings, one JSON object per line:
+${lines.join('\n')}
+
+Reply with ONLY one JSON object, no prose, no code fence, with one key for every id above and true or false as its value:
+{"s1":true,"s2":false}`;
+}
+
+/** Reads the screen's reply: unknown ids are dropped, and an id without a true or false is left unscreened. */
+export function validateScreenReply(raw: unknown, aliases: Record<string, string>): { software: Record<string, boolean>; missing: string[] } {
+  const software: Record<string, boolean> = {};
+  const reply = raw && typeof raw === 'object' && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+  for (const [name, value] of Object.entries(reply)) {
+    const alias = name.trim().toLowerCase();
+    const key = Object.prototype.hasOwnProperty.call(aliases, alias) ? aliases[alias] : undefined;
+    if (key && typeof value === 'boolean') software[key] = value;
+  }
+  return { software, missing: Object.values(aliases).filter((key) => !(key in software)) };
+}

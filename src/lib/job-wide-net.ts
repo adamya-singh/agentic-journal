@@ -3,9 +3,11 @@ import type { JobListing } from '@/lib/types';
 /**
  * The job search's intake. Every posting any search finds comes through here: the public
  * SimplifyJobs new-grad feed, which the Journal reads itself, and whatever OpenClaw's daily search
- * (Jobright, SpeedyApply, company boards) found and did not keep. This file is the pure first cut
- * (which postings are worth judging, New York and the Bay Area first); OpenClaw then judges each
- * one against both searches (job-wide-net-judge.ts): North Star, the wide net, or turned down.
+ * (Jobright, SpeedyApply, company boards) found and did not keep. This file is the pure first cut,
+ * the rules a posting's own facts settle (open, entry level, in the US, recent, not seen before),
+ * New York and the Bay Area first. OpenClaw does the rest (job-wide-net-judge.ts): it screens the
+ * titles for software and ML roles, then reads each one and puts it in North Star, the wide net,
+ * or neither.
  * The fetch, the store and the schedule live in src/app/api/jobs/wide-net.
  */
 
@@ -21,6 +23,8 @@ export const WIDE_NET_MAX_AGE_DAYS = 14;
 export const WIDE_NET_HUB_MAX_AGE_DAYS = 30;
 /** How many postings one check sends to OpenClaw to judge. */
 export const WIDE_NET_JUDGE_PER_RUN = 24;
+/** How many postings one check has OpenClaw screen by title. Screening is cheap: it opens nothing. */
+export const WIDE_NET_SCREEN_PER_RUN = 180;
 /** How long a turned-down posting is remembered, so it is not judged again while the feed still lists it. */
 export const WIDE_NET_TURNED_DOWN_KEEP_DAYS = 60;
 /** How many wide-net postings may wait for the worker at once. A check tops the queue up to this. */
@@ -58,7 +62,7 @@ export type WideNetCandidate = Pick<
   JobListing,
   | 'company' | 'companySummary' | 'positionTitle' | 'location' | 'applicationCategories' | 'track'
   | 'status' | 'salary' | 'link' | 'source' | 'notes' | 'postedDate'
-> & { place: WideNetPlace };
+> & { place: WideNetPlace; /** The feed's category, a hint for the title screen. */ category?: string };
 
 export interface WideNetSelection {
   candidates: WideNetCandidate[];
@@ -66,10 +70,6 @@ export interface WideNetSelection {
   skipped: { closed: number; notSoftware: number; clearance: number; old: number; outsideUs: number; level: number; duplicate: number; overLimit: number };
 }
 
-const CATEGORIES = /^(software|ai\/ml\/data|software engineering|data science, ai & machine learning)$/i;
-const ROLE = /engineer|developer|scientist|programmer|software|machine learning|technical staff|\b(?:swe|sde|ml|ai|mle|mts)\b/i;
-const NOT_THE_ROLE =
-  /analyst|technician|sales|support|mechanical|electrical|civil|hardware|manufactur|test engineer|field|annotat|tutor|trainer|evaluator|specialist|part-time|\bcontract\b/i;
 /** The feed's mark for roles that need a clearance: defense contractors, which the wide net leaves out. */
 const CLEARANCE = /citizenship is required/i;
 const NOT_ENTRY_LEVEL =
@@ -143,16 +143,17 @@ function cleanLink(link: string): string {
 }
 
 /**
- * Pick the feed entries worth judging: open, software or ML, entry level, no clearance, in the US,
- * recent, and not already in `existing` (the box under either track, any status, plus the postings
- * already turned down). New York and the Bay Area first, then newest first, at most `limit`.
+ * Pick the feed entries worth a look: open, entry level, no clearance, in the US, recent, not
+ * already in `existing` (the box under either track, any status, plus the postings already turned
+ * down), and not one OpenClaw's title screen already called not software (`notSoftware`, link
+ * keys). New York and the Bay Area first, then newest first, at most `limit`.
  */
-export type OfferOutcome = 'accepted' | 'duplicate' | 'not-software' | 'level' | 'outside-us';
+export type OfferOutcome = 'accepted' | 'duplicate' | 'level' | 'outside-us';
 
 /**
- * The same first cut for postings a search hands in: software or ML by its title, entry level, in
- * the US, and not already in `existing` (the box, the turned down, and the ones still waiting to
- * be judged). An offer has no feed category, age or clearance mark; the judge reads the rest.
+ * The same first cut for postings a search hands in: entry level, in the US, and not already in
+ * `existing` (the box, the turned down, and the ones still waiting to be judged). An offer has no
+ * feed category, age or clearance mark; OpenClaw's screen and judge settle the rest.
  */
 export function selectOfferedCandidates(
   offers: WideNetOffer[],
@@ -164,7 +165,6 @@ export function selectOfferedCandidates(
   const outcomes = offers.map((offer): OfferOutcome => {
     const company = offer.company.trim();
     const title = offer.title.trim();
-    if (!ROLE.test(title) || NOT_THE_ROLE.test(title)) return 'not-software';
     if (notEntryLevel(title)) return 'level';
     const usLocations = offer.location.split(/\s*[;|]\s*/).map((place) => place.trim()).filter(isUsLocation);
     if (usLocations.length === 0) return 'outside-us';
@@ -197,7 +197,7 @@ export function selectOfferedCandidates(
 export function selectWideNetCandidates(
   feed: WideNetFeedEntry[],
   existing: Pick<JobListing, 'company' | 'positionTitle' | 'link'>[],
-  options: { now: number; limit: number; maxAgeDays?: number },
+  options: { now: number; limit: number; maxAgeDays?: number; notSoftware?: ReadonlySet<string> },
 ): WideNetSelection {
   const skipped = { closed: 0, notSoftware: 0, clearance: 0, old: 0, outsideUs: 0, level: 0, duplicate: 0, overLimit: 0 };
   const oldest = (place: WideNetPlace) =>
@@ -220,10 +220,11 @@ export function selectWideNetCandidates(
       skipped.closed += 1;
       continue;
     }
-    if (typeof entry.category !== 'string' || !CATEGORIES.test(entry.category.trim()) || !ROLE.test(title) || NOT_THE_ROLE.test(title)) {
+    if (options.notSoftware?.has(linkKey(cleanLink(link)))) {
       skipped.notSoftware += 1;
       continue;
     }
+    const category = typeof entry.category === 'string' ? entry.category.trim() : '';
     if (notEntryLevel(title) || (degrees.length > 0 && !degrees.some((degree) => /bachelor/i.test(String(degree))))) {
       skipped.level += 1;
       continue;
@@ -255,9 +256,10 @@ export function selectWideNetCandidates(
       salary: 'not listed',
       link: cleanLink(link),
       source: WIDE_NET_SOURCE,
-      notes: `Wide net: from the SimplifyJobs new-grad feed (${entry.category.trim()}).`,
+      notes: `Wide net: from the SimplifyJobs new-grad feed${category ? ` (${category})` : ''}.`,
       postedDate: new Date(posted).toISOString().slice(0, 10),
       place,
+      ...(category ? { category } : {}),
     };
     if (links.has(linkKey(candidate.link)) || roles.has(roleKey(candidate))) {
       skipped.duplicate += 1;
@@ -285,6 +287,8 @@ export interface WideNetRun {
   added: number;
   /** Postings the judge put in the North Star search instead. */
   addedToFocus?: number;
+  /** Postings OpenClaw's title screen called not software in this run. */
+  screenedOut?: number;
   /** Postings OpenClaw judged in this run and turned down. */
   turnedDown?: number;
   /** Postings sent to OpenClaw that came back without a verdict; the next check sends them again. */
@@ -319,6 +323,8 @@ export interface WideNetState {
   lastRun?: WideNetRun;
   /** By link key. */
   turnedDown?: Record<string, WideNetTurnedDown>;
+  /** What OpenClaw's title screen said of a posting, by link key, so none is screened twice. */
+  screened?: Record<string, { software: boolean; at: string }>;
   /** Postings a search handed in that are still waiting to be judged, by link key. */
   offered?: Record<string, WideNetCandidate>;
 }

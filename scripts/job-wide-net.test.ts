@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { isUsLocation, linkKey, placeOf, selectOfferedCandidates, selectWideNetCandidates, type WideNetFeedEntry, type WideNetOffer } from '../src/lib/job-wide-net';
-import { buildJudgeBatches, buildJudgePrompt, validateJudgeReply, type JudgeItem } from '../src/lib/job-wide-net-judge';
+import { buildJudgeBatches, buildJudgePrompt, buildScreenBatches, buildScreenPrompt, validateJudgeReply, validateScreenReply, type JudgeItem } from '../src/lib/job-wide-net-judge';
 import type { JudgeDeps } from '../src/app/api/jobs/wide-net/judge';
 
 const testRoot = mkdtempSync(path.join(tmpdir(), 'agentic-journal-wide-net-'));
@@ -44,6 +44,13 @@ const judgeWith = (
   available: () => true,
   forAgents: () => '',
   turn: async ({ message }) => {
+    // The title screen comes first; these tests' postings are all software unless the company says "Not Software".
+    if (message.includes('"id":"s1"')) {
+      return JSON.stringify(Object.fromEntries(message.split('\n').filter((text) => text.startsWith('{"id":"s')).map((line) => {
+        const item = JSON.parse(line) as { id: string; company: string };
+        return [item.id, !item.company.includes('Not Software')];
+      })));
+    }
     calls.push(message);
     const reply: Record<string, object> = {};
     for (const line of message.split('\n').filter((text) => text.startsWith('{"id":"p'))) {
@@ -68,13 +75,13 @@ test('a feed entry becomes a saved wide-net posting', () => {
       positionTitle: 'Software Engineer, New Grad', location: 'New York, NY', applicationCategories: ['new-grad'],
       track: 'wide', status: 'saved', salary: 'not listed', link: 'https://acme.com/jobs/1',
       source: { name: 'SimplifyJobs', link: 'https://github.com/SimplifyJobs/New-Grad-Positions' },
-      notes: undefined, postedDate: '2026-11-16', place: 'hub',
+      notes: undefined, postedDate: '2026-11-16', place: 'hub', category: 'Software',
     },
   );
   assert.match(candidates[0].notes, /^Wide net:/);
 });
 
-test('only open, recent, entry-level software and ML roles in the US with no clearance are kept', () => {
+test('only open, recent, entry-level roles in the US with no clearance are kept, whatever their title', () => {
   const each = (overrides: Partial<WideNetFeedEntry>) => entry({ url: `https://jobs.example.com/${String(overrides.company_name)}`, ...overrides });
   const { candidates, skipped } = pick([
     each({ company_name: 'Closed', active: false }),
@@ -97,10 +104,18 @@ test('only open, recent, entry-level software and ML roles in the US with no cle
     each({ company_name: 'Big', title: 'Senior Member of Technical Staff' }),
     each({ company_name: 'Bigger', title: 'Staff Software Engineer' }),
   ]);
-  assert.deepEqual(candidates.map((candidate) => candidate.company), ['Models', 'Lab', 'Founders', 'Older Hub', 'Both']);
-  assert.equal(candidates[4].location, 'Remote in USA');
-  assert.equal(candidates[4].place, 'remote');
-  assert.deepEqual(skipped, { closed: 2, notSoftware: 3, clearance: 1, old: 2, outsideUs: 1, level: 5, duplicate: 0, overLimit: 0 });
+  // Titles and categories are OpenClaw's to screen, not a keyword list's: Chips, Numbers and Labels reach it.
+  assert.deepEqual(candidates.map((candidate) => candidate.company), ['Chips', 'Numbers', 'Models', 'Labels', 'Lab', 'Founders', 'Older Hub', 'Both']);
+  assert.equal(candidates[0].category, 'Hardware');
+  assert.equal(candidates[7].location, 'Remote in USA');
+  assert.equal(candidates[7].place, 'remote');
+  assert.deepEqual(skipped, { closed: 2, notSoftware: 0, clearance: 1, old: 2, outsideUs: 1, level: 5, duplicate: 0, overLimit: 0 });
+  const screenedOut = selectWideNetCandidates(
+    [each({ company_name: 'Chips', category: 'Hardware' }), each({ company_name: 'Models' })], [],
+    { now: NOW, limit: 10, notSoftware: new Set([linkKey('https://jobs.example.com/Chips')]) },
+  );
+  assert.deepEqual(screenedOut.candidates.map((candidate) => candidate.company), ['Models']);
+  assert.equal(screenedOut.skipped.notSoftware, 1);
 });
 
 test('a posting already in the box under either track is never saved again', () => {
@@ -181,6 +196,19 @@ test('the judge is asked about each posting and its reply is read item by item',
   assert.equal(validateJudgeReply(null, batches[0].aliases).missing.length, 8);
 });
 
+test('the title screen asks about sixty postings a turn and reads true or false for each', () => {
+  const items = Array.from({ length: 61 }, (_, index) => ({ key: `k${index}`, company: `Co ${index}`, title: 'Software Engineer', ...(index === 0 ? { category: 'Hardware' } : {}) }));
+  const batches = buildScreenBatches(items);
+  assert.deepEqual(batches.map((batch) => batch.items.length), [60, 1]);
+  const prompt = buildScreenPrompt(batches[0]);
+  assert.match(prompt, /\{"id":"s1","company":"Co 0","title":"Software Engineer","category":"Hardware"\}/);
+  assert.match(prompt, /Use no tools/);
+  const check = validateScreenReply({ S1: true, s2: false, s3: 'yes', s99: true }, batches[0].aliases);
+  assert.deepEqual(check.software, { k0: true, k1: false });
+  assert.equal(check.missing.length, 58);
+  assert.equal(validateScreenReply('nonsense', batches[0].aliases).missing.length, 60);
+});
+
 test('US locations and link keys', () => {
   assert.equal(isUsLocation('San Francisco, CA'), true);
   assert.equal(isUsLocation('Remote in USA'), true);
@@ -257,8 +285,16 @@ test('a turn that fails leaves its postings unjudged, and Adamya can add a turne
   const feed = [entry({ company_name: 'Fresh', url: 'https://fresh.example.com/1', date_posted: Math.round(Date.now() / 1000) })];
   const down: JudgeDeps = { ...judgeWith(), turn: async () => { throw new Error('gateway closed'); } };
   const failed = await wideNet.runWideNetImport('manual', async () => feed, down);
-  assert.deepEqual({ added: failed.added, unjudged: failed.unjudged }, { added: 0, unjudged: 1 });
-  assert.match(failed.error ?? '', /gateway closed/);
+  assert.equal(failed.added, 0);
+  assert.match(failed.error ?? '', /could not screen the postings: gateway closed/);
+  assert.equal(wideNet.readWideNetState().screened?.['fresh.example.com/1'], undefined);
+
+  // The screen answers but the judging turn fails: the posting stays screened and unjudged.
+  const screen = judgeWith();
+  const halfDown: JudgeDeps = { ...screen, turn: async (input) => (input.message.includes('"id":"s1"') ? screen.turn(input) : Promise.reject(new Error('gateway closed'))) };
+  const half = await wideNet.runWideNetImport('manual', async () => feed, halfDown);
+  assert.deepEqual({ added: half.added, unjudged: half.unjudged }, { added: 0, unjudged: 1 });
+  assert.match(half.error ?? '', /could not judge the postings: gateway closed/);
 
   const run = await wideNet.runWideNetImport('manual', async () => feed, judgeWith(() => true));
   assert.deepEqual({ added: run.added, turnedDown: run.turnedDown }, { added: 0, turnedDown: 1 });
@@ -285,7 +321,7 @@ test('a search hands postings in, and each is judged for both searches', async (
     offer({ company: 'Bank', title: 'Software Engineer', link: 'https://bank.example.com/1' }),
     offer({ company: 'Old Hand', title: 'Senior Software Engineer', link: 'https://old.example.com/1' }),
     offer({ company: 'Abroad', link: 'https://abroad.example.com/1', location: 'Toronto, ON, Canada' }),
-    offer({ company: 'Desk', title: 'Sales Associate', link: 'https://desk.example.com/1' }),
+    offer({ company: 'Not Software Desk', title: 'Sales Associate', link: 'https://desk.example.com/1' }),
     offer({ company: 'Fresh', title: 'Software Engineer, New Grad', link: 'https://fresh.example.com/1' }),
     offer({ company: 'Lab', link: 'https://lab.example.com/1' }),
   ];
@@ -296,16 +332,18 @@ test('a search hands postings in, and each is judged for both searches', async (
   );
 
   const handed = wideNet.offerPostings(offers);
-  assert.deepEqual(handed.outcomes, ['accepted', 'accepted', 'accepted', 'level', 'outside-us', 'not-software', 'duplicate', 'duplicate']);
-  assert.equal(handed.waiting, 3);
+  assert.deepEqual(handed.outcomes, ['accepted', 'accepted', 'accepted', 'level', 'outside-us', 'accepted', 'duplicate', 'duplicate']);
+  assert.equal(handed.waiting, 4);
   assert.deepEqual(wideNet.offerPostings(offers.slice(0, 1)).outcomes, ['duplicate']);
 
   const calls: string[] = [];
   const run = await wideNet.runWideNetImport('offer', async () => { throw new Error('feed down'); },
     judgeWith((company) => company === 'Bank', calls, (company) => company === 'Lab'));
   assert.match(calls[0], /"company":"Lab".*"found":"Jobright"/);
-  assert.deepEqual({ added: run.added, addedToFocus: run.addedToFocus, turnedDown: run.turnedDown, error: run.error },
-    { added: 1, addedToFocus: 1, turnedDown: 1, error: 'feed down' });
+  // The sales posting is screened out by its title: it is never judged, and it leaves the waiting list.
+  assert.doesNotMatch(calls.join('\n'), /Not Software Desk/);
+  assert.deepEqual({ added: run.added, addedToFocus: run.addedToFocus, screenedOut: run.screenedOut, turnedDown: run.turnedDown, error: run.error },
+    { added: 1, addedToFocus: 1, screenedOut: 1, turnedDown: 1, error: 'feed down' });
   const [lab, shop] = ['Lab', 'Shop'].map((company) => jobStore.readJobListings().listings.find((listing) => listing.company === company)!);
   assert.deepEqual({ track: lab.track, source: lab.source.name, notes: lab.notes },
     { track: 'focus', source: 'Jobright', notes: 'Inference work at an AI lab. (Judged without reading the posting.)\nPros: Real inference work.\nCons: Early stage.' });
@@ -313,6 +351,8 @@ test('a search hands postings in, and each is judged for both searches', async (
   const state = wideNet.readWideNetState();
   assert.deepEqual(state.offered, {});
   assert.equal(state.turnedDown?.['bank.example.com/1'].source, 'Jobright');
+  assert.equal(state.screened?.['desk.example.com/1'].software, false);
+  assert.equal(state.screened?.['lab.example.com/1'].software, true);
 });
 
 test('the source is read from the first line of the notes, whatever shape they are in', () => {
