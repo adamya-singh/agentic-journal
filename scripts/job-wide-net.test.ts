@@ -89,9 +89,9 @@ test('only open, recent, entry-level roles in the US with no clearance are kept,
     each({ company_name: 'Chips', category: 'Hardware' }),
     each({ company_name: 'Numbers', category: 'AI/ML/Data', title: 'Data Analyst' }),
     each({ company_name: 'Models', category: 'AI/ML/Data', title: 'Machine Learning Engineer' }),
-    each({ company_name: 'Old', date_posted: daysAgo(31) }),
-    each({ company_name: 'Old Elsewhere', date_posted: daysAgo(20), locations: ['Austin, TX'] }),
-    each({ company_name: 'Older Hub', date_posted: daysAgo(20), locations: ['SF'] }),
+    each({ company_name: 'Undated', date_posted: undefined }),
+    each({ company_name: 'Old Elsewhere', date_posted: daysAgo(200), locations: ['Austin, TX'] }),
+    each({ company_name: 'Older Hub', date_posted: daysAgo(90), locations: ['SF'] }),
     each({ company_name: 'Labels', category: 'AI/ML/Data', title: 'Data Annotator - AI Training' }),
     each({ company_name: 'Cleared', sponsorship: 'U.S. Citizenship is Required' }),
     each({ company_name: 'North', locations: ['Montreal, QC, Canada'] }),
@@ -105,11 +105,15 @@ test('only open, recent, entry-level roles in the US with no clearance are kept,
     each({ company_name: 'Bigger', title: 'Staff Software Engineer' }),
   ]);
   // Titles and categories are OpenClaw's to screen, not a keyword list's: Chips, Numbers and Labels reach it.
-  assert.deepEqual(candidates.map((candidate) => candidate.company), ['Chips', 'Numbers', 'Models', 'Labels', 'Lab', 'Founders', 'Older Hub', 'Both']);
+  // A posting open for months is still open: age is not a reason. New York and the Bay Area first, then newest.
+  assert.deepEqual(candidates.map((candidate) => candidate.company),
+    ['Chips', 'Numbers', 'Models', 'Labels', 'Lab', 'Founders', 'Older Hub', 'Both', 'Old Elsewhere']);
   assert.equal(candidates[0].category, 'Hardware');
   assert.equal(candidates[7].location, 'Remote in USA');
   assert.equal(candidates[7].place, 'remote');
-  assert.deepEqual(skipped, { closed: 2, notSoftware: 0, clearance: 1, old: 2, outsideUs: 1, level: 5, duplicate: 0, overLimit: 0 });
+  assert.deepEqual(skipped, { closed: 2, notSoftware: 0, clearance: 1, old: 1, outsideUs: 1, level: 5, duplicate: 0, overLimit: 0 });
+  assert.deepEqual(selectWideNetCandidates([each({ company_name: 'Old Elsewhere', date_posted: daysAgo(200) }), each({ company_name: 'Fresh' })], [], { now: NOW, limit: 10, maxAgeDays: 30 })
+    .candidates.map((candidate) => candidate.company), ['Fresh']);
   const screenedOut = selectWideNetCandidates(
     [each({ company_name: 'Chips', category: 'Hardware' }), each({ company_name: 'Models' })], [],
     { now: NOW, limit: 10, notSoftware: new Set([linkKey('https://jobs.example.com/Chips')]) },

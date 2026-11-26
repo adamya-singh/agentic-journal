@@ -14,7 +14,9 @@ export const dynamic = 'force-dynamic';
 const TURNED_DOWN_SHOWN = 40;
 
 const view = () => {
-  const { turnedDown = {}, offered = {}, ...state } = readWideNetState();
+  // The title screen's memory is the store's own business: thousands of entries the board has no use for.
+  const { turnedDown = {}, offered = {}, screened: _screened, ...state } = readWideNetState();
+  void _screened;
   const entries = Object.entries(turnedDown).map(([key, entry]) => ({ key, ...entry }));
   return {
     ...state,
