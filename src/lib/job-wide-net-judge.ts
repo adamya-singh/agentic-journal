@@ -87,6 +87,11 @@ Place changes the wide net's bar:
 - New York or Bay Area: the two tests above are enough.
 - Remote or elsewhere in the US: only when the company is very good, one a strong engineer would be glad to have on a resume (major tech companies, well-known engineering organisations, notable well-funded startups). Decide on the company first; if it does not clear that bar and the role is not North Star work, skip it without opening the posting.
 
+Recruiting agencies: some postings come from an agency that is hiring for a client company, under the agency's own name. The agency is not the employer. Judge the client and the job the posting describes, for both searches:
+- If the posting names the client, or describes it well enough to judge (what it builds, its stage, its funding or backers), apply the tests above to that client. Say in "reason" that an agency posted it, and describe the client in "about".
+- If the client is anonymous and the description is too thin to judge, skip it.
+- Skip it when the job would be on the agency's payroll, or is contract, contract-to-hire or staffing work.
+
 3. "skip", neither:
 - Maintenance, site upkeep, content administration, IT, support, QA-only, reporting and BI, SQL-only work.
 - Defense contractors and roles that need a security clearance.
