@@ -98,3 +98,99 @@ Windows Sunshine was not running during its initial check; the existing installe
 host was started and Pi TCP reachability to 47984/47989/48010 passed. Actual
 Moonlight gameplay was not relaunched because the user had paused Switchfin.
 No claim that Windows's weak game-stream Wi-Fi has been fixed.
+
+
+## Dropout mitigation: 2026-11-07
+
+Live lag correlated with `wlan1` beacon loss and kernel
+`rtw88_8822bu ... failed to get tx report from firmware` messages. The link
+failed despite approximately -50 dBm signal. A scoped driver unbind/rebind
+failed to restore association; a USBDEVFS_RESET of only the 0bda:b812 Wi-Fi
+adapter at USB path 2-2.3 restored association. No host-controller, HDD,
+internal Wi-Fi, Jellyfin-container, or PS4 restart was performed.
+
+The saved `ps4-direct-client` profile is now pinned to Pi BSSID
+`b8:27:eb:d4:c7:58`, channel 36. NetworkManager documents that BSSID pinning
+disables roaming/background scans. The active supplicant network also received
+an empty `bgscan` setting without another reconnect. Wi-Fi power saving and
+adapter USB autosuspend were already disabled. The private pre-change profile
+values are under `/var/lib/ps4-direct-client/lag-repair-20261107-*`.
+
+This is a recovery plus scan mitigation, not proof of a permanent driver fix.
+For rollback, clear the profile BSSID and channel using empty values (this
+NetworkManager rejects numeric channel 0); activate the profile only when a
+playback interruption is acceptable. Do not reload shared rtw88 core/PCI
+modules, which also support the internal internet uplink.
+
+
+## Driver replacement: 2026-11-07
+
+The reset/scan mitigation above did not prevent recurrence. At 16:24:54 EST,
+beacon loss/disconnection again coincided with `rtw88_8822bu` firmware TX-report
+failure. The stock driver is therefore no longer used for the dedicated adapter.
+
+Installed the separate `88x2bu` vendor driver from
+https://github.com/RinCat/RTL88x2BU-Linux-Driver at commit
+`465ae7cb522a382adc85ea5c31f228af8d172148`. It supports adapter USB ID
+`0bda:b812` and compiled against running kernel `7.0.0-42-generic`. Configuration
+is `/etc/modprobe.d/ps4-usb-vendor.conf`: only `rtw88_8822bu` is blacklisted;
+`rtw_power_mgnt=0`, `rtw_enusbss=0`, and `rtw_drv_log_level=2` are set for
+`88x2bu`. Internal `wlp2s0` retains stock `rtw88_8822be` and its internet route.
+The existing MAC-specific systemd link retains the USB interface name `wlan1`.
+No shared rtw88 core/PCI module, HDD driver, host controller, or Jellyfin
+container was reloaded.
+
+Pinned DKMS source: `/usr/src/rtl88x2bu-20261107.465ae7c`; build parallelism is
+limited to two jobs. DKMS build/install passed; the canonical module is
+`/lib/modules/7.0.0-42-generic/updates/dkms/88x2bu.ko.zst`. The temporary
+manually installed module was removed after DKMS installation. The running
+kernel initramfs was regenerated to retain driver selection at boot.
+Build and soak evidence is private under
+`/home/openclaw/.cache/ps4-client/`.
+
+Rollback: `/usr/local/sbin/ps4-wifi-stock-rollback` unloads only the vendor
+module, removes its scoped modprobe configuration, reloads the stock USB driver,
+and activates `ps4-direct-client`. This interrupts PS4 streaming. A timed
+rollback was armed before activation and canceled after association and packet
+checks succeeded. To permanently uninstall, also remove this specific DKMS
+version, then run depmod and regenerate the running kernel initramfs.
+Do not blacklist the shared core or PCIe modules. A successful short soak is
+not a guarantee against every later hardware or network fault.
+
+
+### USB transport follow-up
+
+The initial vendor-driver USB 3 soak did **not** pass: it lost the link at
+16:40:55 and again at 16:43:18 EST, reconnecting in approximately six seconds.
+The first recorded 10-minute soak contains one failed three-ping round; do not
+report it as a zero-loss success. Playback later advancing does not erase these
+failures. The user confirmed one backward playback-position jump was a manual
+seek and that playback was smooth at that time.
+
+At 16:44 EST, the vendor driver was reloaded with its supported
+`rtw_switch_usb_mode=2` option. `lsusb -t` verified that only the Wi-Fi adapter
+moved from the USB 3 bus to USB 2 at 480M; the HDD retained its USB 3 connection.
+The MAC-specific interface name, static address, Pi BSSID, and channel remain
+unchanged. Follow-up evidence is `usb2-driver-soak-20261107.json` in the private
+PS4 cache. Record its final result before calling the transport mitigation
+validated.
+
+The documented Pi SSH identity is `rpilite`, with key
+`/Users/7adam/.ssh/pppwn-mac-id_rsa` on the Mac, as recorded in an earlier local
+Claude session. A search of this Ubuntu laptop did not find that private key.
+The Pi accepts SSH connections at 10.44.44.1:22 but rejects the laptop's existing
+keys; the Mac also rejects this laptop's current SSH identity. No Pi AP settings
+have been changed during this incident. Its PI-Pwn web UI at port 80 is reachable
+but does not expose hostapd/kernel diagnostics on its visible pages.
+
+
+USB 2 validation finished at 16:55:43 EST: the adapter remained associated for
+about 11 minutes after the final activation at 16:44:42. No supplicant disconnect
+or kernel link-loss/firmware-failure entry appeared after 16:44:45. The dedicated
+8-minute observer received all 51 test pings across 17 rounds; playback advanced
+491 seconds over 491 seconds of wall time without further manual seeking in
+those samples. The USB 2 option was included in a regenerated initramfs, DKMS
+reports the pinned driver installed, and the module-alias check selects only the
+vendor USB driver. The temporary rollback timers are stopped. This validates
+the tested interval, not permanent absence of future faults. Pi hostapd logs
+remain uninspected because no usable local SSH identity was found.
