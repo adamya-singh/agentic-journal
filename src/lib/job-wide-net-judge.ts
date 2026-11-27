@@ -98,7 +98,9 @@ Recruiting agencies: some postings come from an agency that is hiring for a clie
 - Data annotation, AI tutoring, evaluation gigs, part-time and contract work.
 - Employers whose business is not technology and whose engineering is not notable (utilities, insurers, hospitals, real estate, manufacturers, local agencies, sports teams).
 - Jobs that are not software at all, whatever the title says.
-- Roles he cannot take: internships, or ones that need more experience or a later graduation than his.
+- Roles he cannot take: internships, or ones that need more experience than a new grad has, or a graduation date he cannot meet (see below).
+
+Graduation dates: he finishes his degree in January 2027, one semester before the class of 2027. A posting that asks for graduation in spring or summer 2027 (May or June 2027, "class of 2027", "2027 graduates", any window that ends in 2027) is open to him: he will have the degree before its start date, and these programmes take winter graduates. Never skip a posting for that. Skip on graduation only when the window starts after his: graduating in December 2027 or later, or the class of 2028. A posting for people who have already graduated is a skip only when the job starts before January 2027.
 
 How to judge: open the posting link with web fetch and read what the job is. Do not use the browser: the application worker is using it. If a page cannot be read, judge from the company, title and place and set "read" to false. Change nothing anywhere and message no one. Your reply is the only thing you produce.
 ${guidance ? `
