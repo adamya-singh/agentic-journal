@@ -123,3 +123,78 @@ python3 scripts/media-stack-qbit-probe.py
 The live smoke test generates a short video, incompatible-audio variant, and English subtitle locally; adds a temporary Jellyfin library; verifies direct playback, byte-range seeking, subtitles, HLS decoding, and session cleanup; then removes its fixtures. It does not acquire entertainment media. Full VPN/forwarding and real indexer acquisition tests require the user's Proton configuration and configured sources. Test Chrome and Safari controls after deployment; the live smoke test exercises the media protocol with ffmpeg rather than automating those browsers.
 
 PS4 native playback over PS4-Direct is documented in [PS4 playback](ps4-playback.md).
+
+
+### Requested AoT download order (November 11, 2026)
+
+`journal-aot-season-order.service` is a one-time local follow-up for the user's
+explicit season 3 → season 4 request. It runs as `openclaw` from the Journal
+checkout, with script/state under `/home/openclaw/media-stack/runtime/` named
+`aot-season-order.mjs` and `aot-season-order.json`. It respects global download
+pause and never enables downloads. It waits for all 22 season 3 files with
+English audio to import, then queues a recognized English-audio 1080p release
+covering season 4 episodes 1–30 through Sonarr and admits season 4 through the
+normal Journal guard. It preserves already-selected seasons, suppresses a
+redundant automatic season search, and exits after queueing. Ambiguous grab
+results require inspection rather than duplicate submissions. Canceling AoT
+selection cancels the follow-up; stopping this service cancels the deferred step
+without changing existing files or queued season 3 downloads.
+
+
+### Sequential Burn Notice acquisition (November 11, 2026)
+
+The user requested sequential seasons, now limited to seasons 1–3 as of November 12. The persistent job is
+`journal-burn-notice-sequential.service`; its script, state, tests, and unit
+source are `/home/openclaw/media-stack/runtime/burn-notice-sequential.*` and
+`journal-burn-notice-sequential.service`. Read this state when reporting the full
+queue: `desiredSeasons` retains 1–3, while the Journal request and Sonarr monitor
+only seasons through `currentSeason`. This lets the normal admission guard pause
+later-season torrents without a competing loop repeatedly restarting them.
+
+The job enables qBittorrent sequential mode and gives the earliest unfinished
+episode highest file priority. It admits the next season only after all episodes
+of the current season have imported. For each qBittorrent file at exactly 100%,
+it validates the actual size, resolves the path within the managed media root,
+and hardlinks just that completed file into a scoped `.journal-ready` folder.
+Sonarr receives a `DownloadedEpisodesScan` with `importMode: Copy`; unfinished
+files never enter that staging folder. The staging link is removed after Sonarr
+confirms import. This exposes completed episodes before the whole season pack
+finishes, while preserving the original torrent files and hardlink accounting.
+
+Global download pause is respected and never overridden. A changed request
+revision cancels the job rather than replacing a newer user selection. Import
+failures are recorded as `attention`; ambiguous import submissions are not
+replayed. The service exits after the last season in `desiredSeasons` imports; seasons 4–7 are no longer scheduled. Stop this service
+before editing its operational state; changing the request through the normal
+API cancels its saved revision. Other shows and their download policies are
+unaffected.
+
+
+Validation: complete-file/path checks passed their focused tests. The first live
+partial-season import succeeded for S01E01 while the season pack continued
+fetching S01E02. qBittorrent keeps completed individual files under its temporary
+`download_path` until the full torrent completes; the job checks that path before
+`save_path`, while still requiring file progress exactly 1 and matching size.
+The job explicitly sends Jellyfin `Library/Media/Updated` after Sonarr confirms
+each import. Pilot was indexed with English audio and text subtitles, and its
+static stream returned HTTP 206 for a byte-range read. Future seasons are
+scheduled, not already downloaded; report actual availability separately.
+
+
+### Psych season 1 search correction (November 12, 2026)
+
+The automatic `Psych : S01` search returned similarly named shows and no actual
+Psych season 1 releases. Prowlarr's exact text query `Psych 2006 S01` found
+`Psych 2006 S01 720p AMZN WEB-DL x264 [i_c]`, matching the existing season 2/3
+release style. It was pushed to Sonarr's normal download queue; the resulting
+torrent file list was checked to contain episodes S01E01 through S01E15 and the
+normal admission guard started payload downloading. Do not infer full season
+availability merely from the request's overall ready status when other seasons
+have already imported.
+
+Prowlarr's search response placed an HTTP download-proxy URL in its `magnetUrl`
+field. Classify links by URI scheme: this URL belongs in Sonarr `downloadUrl`,
+with its loopback authority translated to the existing container hostname
+`prowlarr:9696`. Passing that HTTP proxy as a literal magnet fails even though
+Sonarr's decision response says approved. Verify an actual torrent/queue entry
+and active transfer, rather than treating that decision alone as grab success.
