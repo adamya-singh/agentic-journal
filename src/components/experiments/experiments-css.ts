@@ -1,7 +1,7 @@
 // The Experiments page's own looks: the workspace an experiment opens into (cream, as a card to decide is on
 // Sunrise) and the history under the horizon (the ground going down into the dark, one line per direction).
 export const HUES = ['#f2b441', '#4cc3d9', '#ee6f8c', '#9d8cf7', '#57c78a', '#6aa6f8', '#f5804f', '#d58be8', '#b7c94a', '#a3aec6'] as const;
-export const STATUS_COLOURS = { worked: '#3f9f6c', failed: '#d5484f', mixed: '#c98a12', finding: '#3f7fd6', running: '#7b8499' } as const;
+export const STATUS_COLOURS = { worked: '#3f9f6c', failed: '#d5484f', mixed: '#c98a12', finding: '#3f7fd6', running: '#7b8499', planned: '#9b8fc4' } as const;
 
 export const EXPERIMENTS_CSS = `
 /* A 3D picture is always on a dark stage, as a frame of video is. */

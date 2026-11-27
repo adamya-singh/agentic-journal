@@ -65,17 +65,17 @@ export function skyRings(store: ExperimentStore): Record<string, number> {
 /** An experiment as a Sunrise form: its direction and outcome, its question, and its answer as the line under it. */
 export function experimentForm(e: Experiment, direction: Direction | undefined, ring: number | undefined): FormSpec {
   const name = clip(e.question, 60);
-  const next = e.status === 'running' ? 'Running now' : ring === 1 ? 'Needs follow-up' : clip(e.answer, 60);
+  const next = e.status === 'running' ? 'Running now' : e.status === 'planned' ? 'Planned' : ring === 1 ? 'Needs follow-up' : clip(e.answer, 60);
   // Its 3D picture comes first, and shows however small the form is: on the sky every experiment is its picture
   // with its name beside it, as a tile is.
   const parts: FormSpec['parts'] = [{ kind: 'media', look: `scene:${e.picture || 'stack'}`, from: 0 }];
   if (e.numbers.length > 0) parts.push({ kind: 'chips', items: e.numbers.slice(0, 4).map((n) => clip(n, 40)) });
   if (e.notes.trim() !== '') parts.push({ kind: 'quote', text: clip(e.notes, 160), by: 'your note' });
   return {
-    id: taskId(e.id), listType: 'want-to-do', shape: 'tile', icon: e.status === 'running' ? 'timer' : e.status === 'worked' ? 'check' : e.status === 'finding' ? 'spark' : 'chart',
+    id: taskId(e.id), listType: 'want-to-do', shape: 'tile', icon: e.status === 'running' ? 'timer' : e.status === 'planned' ? 'clock' : e.status === 'worked' ? 'check' : e.status === 'finding' ? 'spark' : 'chart',
     kind: `${direction?.name ?? 'No direction'} · ${STATUS_WORDS[e.status].toLowerCase()}`, name, next,
     what: clip(e.answer || e.details || 'No result yet.', 240), did: [],
-    say: [name.replace(/[.…]*$/, ''), e.status === 'running' ? 'Running now.' : clip(e.answer, 120)],
+    say: [name.replace(/[.…]*$/, ''), e.status === 'running' ? 'Running now.' : e.status === 'planned' ? 'Planned, not started.' : clip(e.answer, 120)],
     // Not ready in Sunrise's sense: OpenClaw has started nothing here, so the workspace credits it with nothing.
     parts, ready: false, hasWork: false, filling: e.status === 'running',
   };

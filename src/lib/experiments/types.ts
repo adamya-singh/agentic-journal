@@ -2,9 +2,9 @@
 // Sunrise's sky (what is in play now) and under the horizon (the history, back to the project's start).
 import type { SunriseData } from '../sunrise/data.ts';
 
-export const EXPERIMENT_STATUSES = ['worked', 'failed', 'mixed', 'finding', 'running'] as const;
+export const EXPERIMENT_STATUSES = ['worked', 'failed', 'mixed', 'finding', 'running', 'planned'] as const;
 export type ExperimentStatus = typeof EXPERIMENT_STATUSES[number];
-export const STATUS_WORDS: Record<ExperimentStatus, string> = { worked: 'Worked', failed: "Didn't work", mixed: 'Partly', finding: 'Finding', running: 'Running' };
+export const STATUS_WORDS: Record<ExperimentStatus, string> = { worked: 'Worked', failed: "Didn't work", mixed: 'Partly', finding: 'Finding', running: 'Running', planned: 'Planned' };
 
 export interface Experiment {
   id: string;            // "07": its number, in the order it was run
