@@ -63,7 +63,7 @@ export const EXPERIMENTS_CSS = `
 .xp-form .two{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
 .xp-err{margin:0;color:#a3361a;font-size:13px}
 
-/* The two tabs of an experiment's workspace: a page to read, on the workspace's white. */
+/* An experiment's write-up: a page to read, on the workspace's white. */
 .xw{max-width:820px;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:14px;color:#22130a;font:14.5px/1.55 var(--sans);--xa:#a8541c}
 .xw p{margin:0;max-width:74ch}
 .xw section{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:10px}
@@ -129,7 +129,7 @@ a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offs
 .xw-files li{display:flex;flex-wrap:wrap;gap:2px 12px;align-items:baseline}
 .xw-files code{font:12px var(--mono);overflow-wrap:anywhere}
 .xw-files span{color:#7a6656}
-/* "Run and watch" as a post: one reading column, sections that zoom, charts under the sentence that points at them. */
+/* A write-up as a post: one reading column, sections that zoom, charts under the sentence that points at them. */
 .xo{max-width:660px;width:100%;margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;font-size:15.5px;line-height:1.6;--rule:rgba(34,19,10,.14);--dim:#7a6656;--wash:#f6f1ea}
 .xo p{max-width:66ch}
 .xo code{font:.86em var(--mono);background:var(--wash);padding:1px 5px;border-radius:4px}
@@ -189,6 +189,10 @@ a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offs
 .xo-cmd{display:flex;gap:10px;align-items:center;background:var(--wash);border-radius:10px;padding:8px 10px 8px 16px}
 .xo-cmd code{background:none;padding:0;flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font-size:12.5px}
 .xo .xw-files li{display:grid;gap:1px}
+.xo-preds{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+.xo-preds li{display:grid;grid-template-columns:104px minmax(0,1fr);gap:10px;align-items:baseline}
+.xo-preds em{justify-self:start;color:inherit}
+.xw+.xw{margin-top:28px}
 @media (max-width:600px){.xo-title{font-size:27px}.xo-bars{grid-template-columns:minmax(0,max-content) minmax(40px,1fr) 30px}.xo-bars .note{grid-column:1/-1;margin-top:-6px}.xo-bars .note:empty{display:none}}
 @media (max-width:600px){.xw-step{grid-template-columns:minmax(0,1fr);gap:0 0}.xw-step dd{margin-bottom:6px}.xw-stages li{grid-template-columns:18px minmax(0,1fr)}.xw-stages li>span{grid-column:2}}
 

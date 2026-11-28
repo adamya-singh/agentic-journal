@@ -1,12 +1,12 @@
 'use client';
 
-// "Run and watch" as a post. Every section opens as a sentence or two (its gist) and zooms twice: into the story
+// A write-up as a post. Every section opens as a sentence or two (its gist) and zooms twice: into the story
 // (the paragraph and its chart), then into everything (settings, every number, files). The control at the top
 // zooms all of them at once and keeps the section being read where it is on the screen.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { PostBlock, PostFigure, PostSection, PostTone, RunPost } from '@/lib/experiments/types';
+import { PREDICTION_WORDS, type PostBlock, type PostFigure, type PostSection, type PostTone, type RunPost } from '@/lib/experiments/types';
 
 const TONE: Record<PostTone, string> = { accent: '#a8541c', blue: '#3d6fa3', soft: '#d9a57e', grey: '#7b8798', good: '#2f7d4f', bad: '#c2452d', warn: '#c98a1a' };
 const LEVELS = ['Gist', 'Story', 'Everything'] as const;
@@ -151,7 +151,28 @@ const Listing = ({ text }: { text: string }) => (
   <pre className="xo-list">{text.split(/\b(ok|failed)\b/).map((piece, i) => (piece === 'ok' ? <span key={i} className="ok">ok</span> : piece === 'failed' ? <span key={i} className="bad">failed</span> : piece))}</pre>
 );
 
-function Block({ block: b }: { block: PostBlock }) {
+/** What a block may ask of the page around it: making a follow-up an experiment, or planning it with OpenClaw. */
+export interface PostActs { follow: (next: { title: string; why: string }) => void; plan: (next: { title: string; why: string }) => void }
+
+function Block({ block: b, acts }: { block: PostBlock; acts: PostActs }) {
+  if (b.kind === 'predictions') return <ul className="xo-preds">{b.items.map((p) => <li key={p.text}><em className={`xw-st ${p.result}`}>{PREDICTION_WORDS[p.result]}</em><span>{p.text}</span></li>)}</ul>;
+  if (b.kind === 'checks') return <ul className="xw-check">{b.items.map((item) => <li key={item.text} className={item.ok ? undefined : 'no'}><i aria-hidden="true">{item.ok ? '✓' : '!'}</i><span><span className="xw-sr">{item.ok ? 'Checked: ' : 'Open: '}</span>{item.text}</span></li>)}</ul>;
+  if (b.kind === 'next') {
+    return (
+      <div className="xw-next">
+        {b.items.map((next) => (
+          <div key={next.title}>
+            <b>{next.title}</b>
+            {next.why && <span>{next.why}</span>}
+            <div className="xw-acts">
+              <button type="button" className="xw-b go" onClick={() => acts.follow(next)}>Add as experiment</button>
+              <button type="button" className="xw-b" onClick={() => acts.plan(next)}>Plan it with OpenClaw</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
   if (b.kind === 'text') return <Md text={b.text} />;
   if (b.kind === 'listing') return <Listing text={b.text} />;
   if (b.kind === 'command') return <Command text={b.text} />;
@@ -173,7 +194,7 @@ function scroller(from: HTMLElement): HTMLElement | Window {
   return window;
 }
 
-export function PostView({ post }: { post: RunPost }) {
+export function PostView({ post, acts }: { post: RunPost; acts: PostActs }) {
   const [levels, setLevels] = React.useState<number[]>(() => post.sections.map(() => 1));
   const root = React.useRef<HTMLDivElement>(null);
   const keep = React.useRef<{ el: HTMLElement; top: number } | null>(null);
@@ -225,8 +246,8 @@ export function PostView({ post }: { post: RunPost }) {
             {level === 1 && (most > 1
               ? <button type="button" className="xo-gist" aria-label={`${section.name}: read the story`} onClick={() => zoom(index, 2)}><Md text={section.gist} inline /></button>
               : <p><Md text={section.gist} inline /></p>)}
-            {level >= 2 && <div className="xo-lv">{section.story.map((block, i) => <Block key={i} block={block} />)}</div>}
-            {level >= 3 && <div className="xo-lv deep">{section.detail.map((block, i) => <Block key={i} block={block} />)}</div>}
+            {level >= 2 && <div className="xo-lv">{section.story.map((block, i) => <Block key={i} block={block} acts={acts} />)}</div>}
+            {level >= 3 && <div className="xo-lv deep">{section.detail.map((block, i) => <Block key={i} block={block} acts={acts} />)}</div>}
           </section>
         );
       })}

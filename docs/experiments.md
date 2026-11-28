@@ -18,28 +18,31 @@
 
 ## Write-ups
 
-An experiment's workspace opens on two tabs of its own (`ExperimentWork.tsx`, given to `TaskPane` as `sheets`):
+An experiment's workspace opens on one tab of its own, **Write-up** (`WriteupTab` in `ExperimentWork.tsx`, given
+to `TaskPane` as `sheets`).
 
-- **Understand it** reads top to bottom in the order the `experiment-analyze-explain` skill explains a result: the
-  short version (question, what is measured, outcome), the setup, one block per part (why, what we did, what was
-  predicted and whether it held, a table with its baseline rows, the conclusion), "Can I trust it?", what it means
-  and what next (each follow-up is one press from being an experiment), and the research-log entry, folded.
-- **Run and watch** has the status line, links to videos and curves, the command to run it live, the stages,
-  housekeeping and the files.
+When the write-up has a post (`post`, drawn by `ExperimentPost.tsx`), the tab is the status line (`run.state`,
+`run.line`) and that post; no other field is shown. A post is the research-log entry with its charts: a title (the
+question), a TL;DR and up to 12 sections, in the order Problem, Experiment, Predictions, Outcome, one "Why" per
+mechanism, Can I trust it?, Takeaway, What next, How it ran. Each section has a `name`, a `gist` (a sentence or
+two: all that shows at first), a `story` (one zoom in) and a `detail` (two zooms in, may be empty). He zooms one
+section with its − and + or by pressing the gist, and all of them with the Gist / Story / Everything control, which
+stays in view and keeps the section he is reading in place. `story` and `detail` are lists of blocks: `text`
+(markdown), `listing` (fixed-width lines; "ok" and "failed" are coloured), `table`, `command`, `files`,
+`predictions` (what was written down before the run, each `held`, `failed`, `half` or `open`), `checks` (what makes
+it fair and its limits), `next` (follow-ups, each one press from being an experiment) and `figure` with a
+`caption`. A figure is `bars` (a scoreboard out of `of`), `lines` (curves, with `marks` for level lines, `end`
+labels and `callouts`), `outcomes` (a grid of small bars, one per try, each character of a cell a `legend` code) or
+`columns` (one upright bar per case). Colours are tones: `accent`, `blue`, `soft`, `grey`, `good`, `bad`, `warn`.
+The numbers in a figure are read from the run's files by whoever writes it, with code.
 
-  When the write-up has a post (`run.post`, drawn by `ExperimentPost.tsx`), the tab is that post under the status
-  line and the lists are not shown. A post is a title (the question), a TL;DR and up to 12 sections. Each section
-  has a `name`, a `gist` (a sentence or two: all that shows at first), a `story` (one zoom in) and a `detail` (two
-  zooms in, may be empty). He zooms one section with its − and + or by pressing the gist, and all of them with the
-  Gist / Story / Everything control, which stays in view and keeps the section he is reading in place. `story` and
-  `detail` are lists of blocks: `text` (markdown), `listing` (fixed-width lines; "ok" and "failed" are coloured),
-  `table`, `command`, `files`, and `figure` with a `caption`. A figure is `bars` (a scoreboard out of `of`), `lines`
-  (curves, with `marks` for level lines, `end` labels and `callouts`), `outcomes` (a grid of small bars, one per
-  try, each character of a cell a `legend` code) or `columns` (one upright bar per case). Colours are tones:
-  `accent`, `blue`, `soft`, `grey`, `good`, `bad`, `warn`. The numbers in a figure are read from the run's files
-  by whoever writes it, with code.
+A write-up with no post shows as it did when there were two tabs, one under the other: the short version
+(question, what is measured, outcome), the setup, one block per part (why, what we did, what was predicted and
+whether it held, a table with its baseline rows, the conclusion), "Can I trust it?", what it means and what next,
+and the research-log entry, folded; then the status line, links to videos and curves, the command, the stages,
+housekeeping and the files.
 
-The work's own tab appears beside them once there is work in it; web tabs open as before. The "Ask OpenClaw"
+The work's own tab appears beside it once there is work in it; web tabs open as before. The "Ask OpenClaw"
 buttons open a new chat with the question written in it, for him to send.
 
 The content is the experiment's write-up (`Writeup` in `lib/experiments/types.ts`), kept in

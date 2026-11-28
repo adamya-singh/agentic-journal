@@ -144,16 +144,17 @@ test('a write-up is kept beside the record, checked, and told to OpenClaw in sho
   assert.throws(() => writeWriteup('36', { parts: [{ title: 'x', table: { head: ['a', 'b'], rows: [{ cells: ['only one'] }] } }] }), /1 cells and the table has 2 columns/);
   assert.throws(() => writeWriteup('36', { run: { watch: [{ title: 'video', href: 'javascript:alert(1)' }] } }), /http/);
   assert.throws(() => writeWriteup('36', { verdict: 'good' }), ExperimentError);
-  // "Run and watch" as a post: sections that zoom, with their charts. What a chart cannot draw is refused.
-  const section = (figure: unknown) => ({ run: { post: { title: 'Q', tldr: 'Yes.', sections: [{ name: 'Outcome', gist: 'It worked.', story: [{ kind: 'figure', figure }] }] } } });
+  // A write-up as a post: sections that zoom, with their charts. What a chart cannot draw is refused.
+  const section = (figure: unknown) => ({ run: { state: 'Finished' }, post: { title: 'Q', tldr: 'Yes.', sections: [{ name: 'Outcome', gist: 'It worked.', story: [{ kind: 'figure', figure }, { kind: 'predictions', items: [{ text: 'It works', result: 'held' }] }] }] } });
   const posted = writeWriteup('36', section({ type: 'outcomes', legend: [{ code: 's', label: 'success', tone: 'good' }, { code: 'x', label: 'safety stop', tone: 'bad' }], rows: [{ label: 'ours', cells: ['sss', 'xxs'], total: '4 / 6' }] }));
-  assert.equal(posted?.run.post?.sections[0]?.story[0]?.kind, 'figure');
-  assert.deepEqual(posted?.run.post?.sections[0]?.detail, []);
+  assert.equal(posted?.post?.sections[0]?.story[0]?.kind, 'figure');
+  assert.deepEqual(posted?.post?.sections[0]?.detail, []);
   assert.match(experimentBrief('exp-36')?.notesMarkdown ?? '', /In short: Yes\./);
   assert.throws(() => writeWriteup('36', section({ type: 'outcomes', legend: [{ code: 's', label: 'success' }], rows: [{ label: 'ours', cells: ['sq'] }] })), /"q" is not in the legend/);
   assert.throws(() => writeWriteup('36', section({ type: 'bars', of: 30, rows: [{ label: 'ours', value: 31 }] })), /longer than the 30/);
   assert.throws(() => writeWriteup('36', section({ type: 'lines', log: true, series: [{ name: 'loss', points: [[0, 0], [1, 0.1]] }] })), /at or below zero/);
   assert.throws(() => writeWriteup('36', section({ type: 'pie' })), ExperimentError);
+  assert.throws(() => writeWriteup('36', { run: { post: { sections: [{ name: 'Outcome', gist: 'It worked.' }] } } }), ExperimentError);
   // Removing one, a seeded one too, leaves the experiment with none.
   assert.equal(writeWriteup('53', null), null);
   assert.equal(readWriteup('53'), null);

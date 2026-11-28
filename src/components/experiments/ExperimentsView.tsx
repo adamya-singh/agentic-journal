@@ -16,14 +16,14 @@ import { EXPERIMENTS_CSS } from './experiments-css';
 import { mountScenesIn } from './scenes';
 import { ExperimentHistory } from './ExperimentHistory';
 import { ExperimentPane } from './ExperimentPane';
-import { RunTab, UnderstandTab, useWriteup } from './ExperimentWork';
+import { WriteupTab, useWriteup } from './ExperimentWork';
 import type { Experiment } from '@/lib/experiments/types';
 
 const serif = Instrument_Serif({ weight: '400', style: ['normal', 'italic'], subsets: ['latin'], variable: '--font-instrument-serif' });
 
 type Change = (body: Record<string, unknown>) => Promise<string | void>;
 
-/** The workspace of one experiment: the one a task gets, opening on the experiment's own two tabs. */
+/** The workspace of one experiment: the one a task gets, opening on the experiment's write-up. */
 function ExperimentWorkspace({ experiment, view, onGoto, onChange, onClose, onChanged }: {
   experiment: Experiment; view: View; onGoto: (id: string) => void; onChange: Change; onClose: () => void; onChanged: () => void;
 }) {
@@ -39,8 +39,7 @@ function ExperimentWorkspace({ experiment, view, onGoto, onChange, onClose, onCh
       record
       briefHead={<ExperimentPane experiment={experiment} view={view} onGoto={onGoto} onChange={onChange} />}
       sheets={[
-        { id: 'understand', label: 'Understand it', node: <UnderstandTab experiment={experiment} writeup={writeup} onChange={onChange} onAsk={ask} /> },
-        { id: 'run', label: 'Run and watch', tag: experiment.status === 'running' ? 'running' : undefined, node: <RunTab experiment={experiment} writeup={writeup} onAsk={ask} /> },
+        { id: 'writeup', label: 'Write-up', tag: experiment.status === 'running' ? 'running' : undefined, node: <WriteupTab experiment={experiment} writeup={writeup} onChange={onChange} onAsk={ask} /> },
       ]}
       asker={asker}
       onClose={onClose}

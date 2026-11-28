@@ -64,12 +64,12 @@ export interface ExperimentsView {
   sunrise: SunriseData;               // the sky as Sunrise's engine reads it; there an experiment's id is "exp-<number>"
 }
 
-// ---- The write-up of one experiment: what its workspace shows in "Understand it" and "Run and watch".
+// ---- The write-up of one experiment: what the "Write-up" tab of its workspace shows.
 export const PREDICTION_RESULTS = ['held', 'failed', 'half', 'open'] as const;
 export const PREDICTION_WORDS: Record<typeof PREDICTION_RESULTS[number], string> = { held: 'Held', failed: 'Failed', half: 'Half', open: 'Not yet known' };
 export const STAGE_STATES = ['done', 'trouble', 'running', 'waiting'] as const;
 
-// ---- The post "Run and watch" reads as: sections that open as a sentence or two and zoom into the whole story.
+// ---- The post a write-up reads as: sections that open as a sentence or two and zoom into the whole story.
 export const POST_TONES = ['accent', 'blue', 'soft', 'grey', 'good', 'bad', 'warn'] as const;
 export type PostTone = typeof POST_TONES[number];
 export type PostFigure =
@@ -89,7 +89,10 @@ export type PostBlock =
   | { kind: 'table'; head: string[]; rows: string[][] }
   | { kind: 'figure'; figure: PostFigure; caption: string }
   | { kind: 'command'; text: string }
-  | { kind: 'files'; files: { path: string; note: string }[] };
+  | { kind: 'files'; files: { path: string; note: string }[] }
+  | { kind: 'predictions'; items: { text: string; result: 'held' | 'failed' | 'half' | 'open' }[] }   // written down before the run
+  | { kind: 'checks'; items: { text: string; ok: boolean }[] }                                        // what makes it fair (ok) and its limits
+  | { kind: 'next'; items: { title: string; why: string }[] };                                        // follow-ups, each one press from being an experiment
 export interface PostSection {
   name: string;                        // "Problem", "Why · training length"
   gist: string;                        // what it says in a sentence or two: all that shows until he zooms in
@@ -107,7 +110,7 @@ export interface WriteupPart {
   conclusion: string;
 }
 export interface Writeup {
-  // Understand it
+  // Without a post: what it asks, part by part
   question: string;                    // the short version: what it asks,
   measure: string;                     // what is measured,
   outcome: string;                     // and what came out
@@ -118,7 +121,7 @@ export interface Writeup {
   lesson: string;                      // the one lesson
   next: { title: string; why: string }[];   // follow-ups, each one press from being an experiment
   log: string;                         // the research-log entry, as markdown
-  // Run and watch
+  // How the run went
   run: {
     state: string;                     // "Finished" or "Running: order, 9 of 18 trainers"
     line: string;                      // "Nov 21 · 6 of 6 stages · nothing left in the queue"
@@ -127,7 +130,8 @@ export interface Writeup {
     stages: { name: string; note: string; state: typeof STAGE_STATES[number] }[];
     housekeeping: { text: string; ok: boolean }[];
     files: { path: string; note: string }[];
-    post?: RunPost | null;             // when given, the tab reads as this post and the lists above are not shown
   };
+  // When given, the tab reads as this post and shows none of the fields above but run.state and run.line.
+  post?: RunPost | null;
   updated: string;                     // ISO time it was last written
 }

@@ -1,10 +1,9 @@
 'use client';
 
-// The two tabs an experiment's workspace opens with. "Understand it" is the write-up read top to bottom, in the
-// order the experiment-analyze-explain skill explains a result: the short version, the setup, then one block per
-// part (why, what we did, what we predicted and whether it held, the table with its baseline, the conclusion),
-// whether to trust it, and what it means and what next. "Run and watch" is how the run went and where its files are:
-// a post that zooms (ExperimentPost.tsx) when the write-up has one, the plain lists when it does not.
+// The tab an experiment's workspace opens with: its write-up. Written as a post (ExperimentPost.tsx), it is the
+// research-log entry with its charts: sections that open as a sentence or two and zoom. A write-up with no post
+// shows as it did when there were two tabs: the parts read top to bottom (the short version, the setup, one block
+// per part, whether to trust it, what it means and what next), then how the run went and where its files are.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -173,17 +172,6 @@ export function RunTab({ experiment: e, writeup: w, onAsk }: { experiment: Exper
       {['Status update', 'How much time is left?', 'Where are the latest videos?'].map((text) => <button key={text} type="button" className="xw-chip" onClick={() => onAsk(text)}>{text}</button>)}
     </div>
   );
-  // Written as a post: it is the whole tab, under the status line.
-  if (run?.post && run.post.sections.length > 0) {
-    return (
-      <div className="xw">
-        <div className={`xw-status${running && !stale ? ' live' : ''}`}><b>{run.state || (running ? 'Running' : 'Finished')}</b><span>{run.line || e.day}</span></div>
-        {stale && <p className="xw-stale">The record still says “Running”. Set its outcome in the brief.</p>}
-        <PostView post={run.post} />
-        {asks}
-      </div>
-    );
-  }
   return (
     <div className="xw">
       <div className={`xw-status${running && !stale ? ' live' : ''}`}>
@@ -226,6 +214,35 @@ export function RunTab({ experiment: e, writeup: w, onAsk }: { experiment: Exper
         </details>
       )}
       {asks}
+    </div>
+  );
+}
+
+/** The one tab of an experiment's workspace. */
+export function WriteupTab({ experiment: e, writeup: w, onChange, onAsk }: { experiment: Experiment; writeup: Writeup | null | undefined; onChange: Change; onAsk: Ask }) {
+  const [error, setError] = React.useState('');
+  if (w === undefined) return <div className="xw"><p className="xw-dim">Opening…</p></div>;
+  if (!w?.post || w.post.sections.length === 0) {
+    return <>
+      <UnderstandTab experiment={e} writeup={w} onChange={onChange} onAsk={onAsk} />
+      {(w !== null || e.status === 'running') && <RunTab experiment={e} writeup={w} onAsk={onAsk} />}
+    </>;
+  }
+  const running = e.status === 'running';
+  const stale = running && /^(finished|done|complete)/i.test(w.run.state);
+  return (
+    <div className="xw">
+      <div className={`xw-status${running && !stale ? ' live' : ''}`}><b>{w.run.state || (running ? 'Running' : 'Finished')}</b><span>{w.run.line || e.day}</span></div>
+      {stale && <p className="xw-stale">The record still says “Running”. Set its outcome in the brief.</p>}
+      <PostView post={w.post} acts={{
+        follow: (next) => void onChange({ op: 'create', experiment: { question: next.title, details: next.why, buildsOn: [e.id], direction: e.direction } }).then((problem) => setError(problem ?? '')),
+        plan: (next) => onAsk(`Plan this follow-up to experiment ${e.id} with me: ${next.title}. ${next.why}`.trim()),
+      }} />
+      {error !== '' && <p className="xw-err" role="alert">{error}</p>}
+      <div className="xw-asks" role="group" aria-label="Ask OpenClaw about this experiment">
+        <span>Ask OpenClaw</span>
+        {[...(running ? ['Status update', 'How much time is left?'] : []), ...ASKS].map((text) => <button key={text} type="button" className="xw-chip" onClick={() => onAsk(text)}>{text}</button>)}
+      </div>
     </div>
   );
 }

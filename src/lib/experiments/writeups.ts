@@ -29,7 +29,7 @@ export function readWriteup(id: string): Writeup | null {
 const text = (max: number) => z.string().trim().max(max).default('');
 const named = (max: number) => z.string().trim().min(1).max(max);
 const checks = z.array(z.object({ text: named(400), ok: z.boolean() }).strict()).max(16).default([]);
-// The post of "Run and watch". Numbers in a figure are the ones in the run's files: whoever writes it reads them with code.
+// The post a write-up reads as. Numbers in a figure are the ones in the run's files: whoever writes it reads them with code.
 const tone = z.enum(POST_TONES).default('accent');
 const num = z.number().finite();
 const marks = z.array(z.object({ y: num, label: text(60) }).strict()).max(4).default([]);
@@ -53,6 +53,9 @@ const block = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('figure'), figure, caption: text(500) }).strict(),
   z.object({ kind: z.literal('command'), text: named(600) }).strict(),
   z.object({ kind: z.literal('files'), files: z.array(z.object({ path: named(300), note: text(160) }).strict()).min(1).max(24) }).strict(),
+  z.object({ kind: z.literal('predictions'), items: z.array(z.object({ text: named(300), result: z.enum(PREDICTION_RESULTS) }).strict()).min(1).max(8) }).strict(),
+  z.object({ kind: z.literal('checks'), items: z.array(z.object({ text: named(400), ok: z.boolean() }).strict()).min(1).max(16) }).strict(),
+  z.object({ kind: z.literal('next'), items: z.array(z.object({ title: named(200), why: text(400) }).strict()).min(1).max(6) }).strict(),
 ]);
 const post = z.object({
   title: text(200), tldr: text(500),
@@ -105,8 +108,8 @@ const schema = z.object({
     stages: z.array(z.object({ name: named(80), note: text(300), state: z.enum(STAGE_STATES) }).strict()).max(24).default([]),
     housekeeping: checks,
     files: z.array(z.object({ path: named(300), note: text(160) }).strict()).max(24).default([]),
-    post: post.nullable().default(null),
   }).strict().default({}),
+  post: post.nullable().default(null),
 }).strict();
 
 /** Writes (or with null, removes) the write-up of an experiment. The whole write-up is given each time. */
@@ -124,7 +127,7 @@ export function writeWriteup(id: string, input: unknown, now = new Date()): Writ
     const wide = part.table?.rows.find((row) => row.cells.length !== part.table!.head.length);
     if (wide) throw new ExperimentError(`In "${part.title}", the row "${wide.cells[0]}" has ${wide.cells.length} cells and the table has ${part.table!.head.length} columns.`);
   }
-  const wrong = parsed.data.run.post ? postProblem(parsed.data.run.post) : '';
+  const wrong = parsed.data.post ? postProblem(parsed.data.post) : '';
   if (wrong) throw new ExperimentError(wrong);
   const writeup: Writeup = { ...parsed.data, updated: now.toISOString() };
   kept.writeups[id] = writeup;
@@ -145,7 +148,7 @@ export function writeupSummary(id: string, w: Writeup): string {
     lines.push(`${index + 1}. ${clip(part.title, 80)}${marks ? ` (predictions: ${marks})` : ''} ${clip(part.conclusion, 170)}`.trim());
   });
   if (w.meaning) lines.push(`Means: ${clip(w.meaning, 200)}`);
-  if (w.run.post?.tldr) lines.push(`In short: ${clip(w.run.post.tldr, 220)}`);
+  if (w.post?.tldr) lines.push(`In short: ${clip(w.post.tldr, 220)}`);
   if (w.run.state) lines.push(`Run: ${clip([w.run.state, w.run.line].filter(Boolean).join(' · '), 120)}`);
   lines.push(`The whole write-up (tables, checks, files): GET /api/experiments/writeup?id=${id}`);
   return lines.join('\n');
