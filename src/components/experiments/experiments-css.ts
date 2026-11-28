@@ -1,9 +1,11 @@
 // The Experiments page's own looks: the workspace an experiment opens into (cream, as a card to decide is on
 // Sunrise) and the history under the horizon (the ground going down into the dark, one line per direction).
+import { darkCss } from '@/lib/dark-css';
+
 export const HUES = ['#f2b441', '#4cc3d9', '#ee6f8c', '#9d8cf7', '#57c78a', '#6aa6f8', '#f5804f', '#d58be8', '#b7c94a', '#a3aec6'] as const;
 export const STATUS_COLOURS = { worked: '#3f9f6c', failed: '#d5484f', mixed: '#c98a12', finding: '#3f7fd6', running: '#7b8499', planned: '#9b8fc4' } as const;
 
-export const EXPERIMENTS_CSS = `
+const DAYLIGHT_CSS = `
 /* A 3D picture is always on a dark stage, as a frame of video is. */
 .art.look-scene,.xp-stage,.xh-pic{position:relative;overflow:hidden;background:radial-gradient(120% 100% at 50% 35%,#161c2c,#06080d 75%)}
 .art.look-scene canvas,.xp-stage canvas,.xh-pic canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
@@ -234,3 +236,7 @@ a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offs
 .xh-flag{position:absolute;top:0;right:10px;font:600 9px var(--mono);letter-spacing:.06em;text-transform:uppercase;background:#ff8a4c;color:#1a0d05;border-radius:0 0 5px 5px;padding:1px 6px}
 .xh-start{position:absolute;transform:translate(-50%,0);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:#a9998a;white-space:nowrap}
 `;
+
+// The workspace parts (the brief's head, the write-up, its post) follow the site's dark theme; the sky and the
+// history under the horizon are night already.
+export const EXPERIMENTS_CSS = DAYLIGHT_CSS + darkCss(DAYLIGHT_CSS, { under: '.dark', only: /\.(xp|xw|xo)(?![a-z])/, keep: /\.(xp-stage|look-scene|xh-pic|xw-tile|xw-cmd)(?![\w-])/ });

@@ -17,6 +17,9 @@
 // On a phone it is the whole screen, one part at a time: Brief (with Done and Let go at its foot), Work (the
 // surfaces' tabs across its top) and Chat, chosen at the foot, and as tall as the keyboard leaves room for. Nothing here is invented: a task with no links has no web tabs and a task with no chats has none.
 // The engine grows the pane out of the task's form; this fills it.
+import { darkCss } from '@/lib/dark-css';
+import { BRIEF_CSS } from '@/components/horizon/TaskBriefCard';
+import { CHAT_CSS } from '@/components/horizon/BriefChat';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -564,7 +567,17 @@ const WORKSPACE_CSS = `
 .cols-1 .srw-mid>.srk-mini{margin:8px -8px 0}
 `;
 
-export const PANE_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + FILE_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS + CODE_SESSIONS_CSS;
+const DAYLIGHT_CSS = BRIEF_AND_WORK_CSS + WORKSPACE_CSS + TASK_WORK_CSS + BROWSER_SURFACE_CSS + FILE_SURFACE_CSS + CHATS_CSS + SESSIONS_PANEL_CSS + CODE_SESSIONS_CSS;
+// The pane was drawn in daylight. Under the site's dark theme it is the same pane with every colour turned over
+// (lib/dark-css.ts), and so are the brief and the chat inside it, whose styles the cards on the sky also use.
+export const PANE_CSS = DAYLIGHT_CSS
+  // What is a window, a slide or a terminal keeps its own colours: it is not the pane's paper.
+  + darkCss(DAYLIGHT_CSS, { under: '.dark', root: '.srp', keep: /\.(win-deck|srp-slides|srb-top|srf-win|srf-show|srs-app|srk-out)(?![\w-])|(^|\s)pre\b/ })
+  + darkCss(BRIEF_CSS + CHAT_CSS, { under: '.dark .srp', keep: /(^|\s)pre\b/ })
+  // The ground is night with a trace of the pane's two glows, which would wash it out at daylight strength.
+  + `.dark .srp{color-scheme:dark;background:radial-gradient(90% 70% at 14% 112%,color-mix(in srgb,var(--glow) 16%,transparent) 0%,transparent 60%),radial-gradient(70% 60% at 96% -8%,color-mix(in srgb,var(--sky) 12%,transparent) 0%,transparent 68%),linear-gradient(180deg,#151311 0%,#15120f 55%,#18130e 100%)}
+.dark .srp::before,.dark .srp::after{opacity:.22}
+`;
 
 const post = (url: string, body: unknown) =>
   fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
