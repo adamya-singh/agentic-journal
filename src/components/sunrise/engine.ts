@@ -224,6 +224,7 @@ export class SunriseEngine {
   private readonly nameBoxes = new Map<HTMLElement, Box>() // on a phone, where every name at the rim is, for roomToGrow
   private smallHost: HTMLElement | null = null
   private measurer: HTMLElement | null = null
+  private openWhenUp: string | null = null   // what openTask was asked for before the sky was ready
   private readonly measureContext = document.createElement('canvas').getContext('2d')
 
   private data: SunriseData | null = null
@@ -762,11 +763,20 @@ export class SunriseEngine {
     if (this.open?.startsWith('card:') && !cards.some(card => card.id === this.open)) this.closeTask()
     this.flatKey = ''
     if (this.ready) this.solve()
+    this.openWaiting()
+  }
+  /** Opens what was asked for before the sky was up, now that it has both its size and its data. */
+  private openWaiting() {
+    if (this.openWhenUp !== null && this.ready && this.data !== null) this.openTask(this.openWhenUp)
   }
 
   /** Opens a task into the workspace, growing from its form (or from the sun, when it has none on the rings). */
   openTask(taskId: string) {
-    if (this.destroyed || this.data === null) return
+    if (this.destroyed) return
+    // Asked before the sky has its size (a link that opens one thing, followed while the fonts are still coming
+    // in): the workspace would be laid out on a stage of no width and stay that way. It opens once the sky is up.
+    if (!this.ready || this.data === null) { this.openWhenUp = taskId; return }
+    this.openWhenUp = null
     if (this.open !== null) this.open = null
     const thing = this.things.find(candidate => candidate.id === taskId)
     const at = thing?.at ?? this.motes.get(taskId)?.at ?? null
@@ -984,6 +994,7 @@ export class SunriseEngine {
 
   /** Closes the workspace: it shrinks back into the task's form. */
   closeTask() {
+    this.openWhenUp = null
     if (this.open === null) return
     const thing = this.things.find(candidate => candidate.id === this.open)
     this.open = null
@@ -2493,5 +2504,6 @@ export class SunriseEngine {
     this.solve()
     this.root.classList.add('ready')
     this.later(() => this.root.classList.remove('resizing'), 50)
+    this.openWaiting()
   }
 }
