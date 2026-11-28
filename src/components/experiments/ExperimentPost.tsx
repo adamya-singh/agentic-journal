@@ -146,9 +146,12 @@ function Command({ text }: { text: string }) {
     </div>
   );
 }
-/** A queue's log: "ok" and "failed" as whole words carry their colour. */
+/** A queue's log: the first result word of a line (ok, failed, trouble, running, waiting) carries its colour. */
 const Listing = ({ text }: { text: string }) => (
-  <pre className="xo-list">{text.split(/\b(ok|failed)\b/).map((piece, i) => (piece === 'ok' ? <span key={i} className="ok">ok</span> : piece === 'failed' ? <span key={i} className="bad">failed</span> : piece))}</pre>
+  <pre className="xo-list">{text.split('\n').map((line, i) => {
+    const found = /^(.*?\s)(ok|failed|trouble|running|waiting)(\s.*|)$/.exec(line);
+    return <React.Fragment key={i}>{i > 0 && '\n'}{found ? <>{found[1]}<span className={found[2]}>{found[2]}</span>{found[3]}</> : line}</React.Fragment>;
+  })}</pre>
 );
 
 /** What a block may ask of the page around it: making a follow-up an experiment, or planning it with OpenClaw. */

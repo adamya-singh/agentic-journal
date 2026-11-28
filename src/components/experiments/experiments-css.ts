@@ -185,7 +185,7 @@ a.xw-tile:hover,a.xw-tile:focus-visible{outline:2px solid var(--xa);outline-offs
 .xo-grid .cell i{width:8px;height:20px;border-radius:2px}
 .xo-grid .sep{grid-column:1/-1;border-top:1px solid var(--rule)}
 .xo-list{margin:0;font:12.5px/1.65 var(--mono);background:var(--wash);border-radius:10px;padding:14px 16px;overflow-x:auto;font-variant-numeric:tabular-nums}
-.xo-list .ok{color:#2f7d4f}.xo-list .bad{color:#c2452d;font-weight:600}
+.xo-list .ok{color:#2f7d4f}.xo-list .failed{color:#c2452d;font-weight:600}.xo-list .trouble{color:#9a6a08;font-weight:600}.xo-list .running{color:#a8541c;font-weight:600}.xo-list .waiting{color:#7a6656}
 .xo-cmd{display:flex;gap:10px;align-items:center;background:var(--wash);border-radius:10px;padding:8px 10px 8px 16px}
 .xo-cmd code{background:none;padding:0;flex:1;min-width:0;overflow-x:auto;white-space:nowrap;font-size:12.5px}
 .xo .xw-files li{display:grid;gap:1px}

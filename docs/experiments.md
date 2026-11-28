@@ -28,7 +28,7 @@ mechanism, Can I trust it?, Takeaway, What next, How it ran. Each section has a 
 two: all that shows at first), a `story` (one zoom in) and a `detail` (two zooms in, may be empty). He zooms one
 section with its − and + or by pressing the gist, and all of them with the Gist / Story / Everything control, which
 stays in view and keeps the section he is reading in place. `story` and `detail` are lists of blocks: `text`
-(markdown), `listing` (fixed-width lines; "ok" and "failed" are coloured), `table`, `command`, `files`,
+(markdown), `listing` (fixed-width lines; the result word of each line is coloured: ok, failed, trouble, running, waiting), `table`, `command`, `files`,
 `predictions` (what was written down before the run, each `held`, `failed`, `half` or `open`), `checks` (what makes
 it fair and its limits), `next` (follow-ups, each one press from being an experiment) and `figure` with a
 `caption`. A figure is `bars` (a scoreboard out of `of`), `lines` (curves, with `marks` for level lines, `end`
