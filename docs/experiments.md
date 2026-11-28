@@ -27,6 +27,18 @@ An experiment's workspace opens on two tabs of its own (`ExperimentWork.tsx`, gi
 - **Run and watch** has the status line, links to videos and curves, the command to run it live, the stages,
   housekeeping and the files.
 
+  When the write-up has a post (`run.post`, drawn by `ExperimentPost.tsx`), the tab is that post under the status
+  line and the lists are not shown. A post is a title (the question), a TL;DR and up to 12 sections. Each section
+  has a `name`, a `gist` (a sentence or two: all that shows at first), a `story` (one zoom in) and a `detail` (two
+  zooms in, may be empty). He zooms one section with its − and + or by pressing the gist, and all of them with the
+  Gist / Story / Everything control, which stays in view and keeps the section he is reading in place. `story` and
+  `detail` are lists of blocks: `text` (markdown), `listing` (fixed-width lines; "ok" and "failed" are coloured),
+  `table`, `command`, `files`, and `figure` with a `caption`. A figure is `bars` (a scoreboard out of `of`), `lines`
+  (curves, with `marks` for level lines, `end` labels and `callouts`), `outcomes` (a grid of small bars, one per
+  try, each character of a cell a `legend` code) or `columns` (one upright bar per case). Colours are tones:
+  `accent`, `blue`, `soft`, `grey`, `good`, `bad`, `warn`. The numbers in a figure are read from the run's files
+  by whoever writes it, with code.
+
 The work's own tab appears beside them once there is work in it; web tabs open as before. The "Ask OpenClaw"
 buttons open a new chat with the question written in it, for him to send.
 

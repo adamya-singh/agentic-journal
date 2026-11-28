@@ -69,6 +69,35 @@ export const PREDICTION_RESULTS = ['held', 'failed', 'half', 'open'] as const;
 export const PREDICTION_WORDS: Record<typeof PREDICTION_RESULTS[number], string> = { held: 'Held', failed: 'Failed', half: 'Half', open: 'Not yet known' };
 export const STAGE_STATES = ['done', 'trouble', 'running', 'waiting'] as const;
 
+// ---- The post "Run and watch" reads as: sections that open as a sentence or two and zoom into the whole story.
+export const POST_TONES = ['accent', 'blue', 'soft', 'grey', 'good', 'bad', 'warn'] as const;
+export type PostTone = typeof POST_TONES[number];
+export type PostFigure =
+  /** One bar per row, out of `of`: a scoreboard against its baselines. */
+  | { type: 'bars'; of: number; rows: { label: string; value: number; note: string; tone: PostTone; strong: boolean }[] }
+  /** Curves over one x axis. `end` labels a line's last point, `marks` are level lines (a bar set beforehand), `callouts` point at one spot. */
+  | { type: 'lines'; x: string; log: boolean;
+      series: { name: string; tone: PostTone; dashed: boolean; thin: boolean; points: [number, number][]; end: string }[];
+      marks: { y: number; label: string }[]; callouts: { x: number; y: number; label: string; tone: PostTone }[] }
+  /** One row per policy, one cell per case, one small bar per try: each character of a cell is a `legend` code. */
+  | { type: 'outcomes'; column: string; legend: { code: string; label: string; tone: PostTone }[]; rows: { label: string; cells: string[]; total: string; gap: boolean }[] }
+  /** One upright bar per case, each with its own tone and a word on top. */
+  | { type: 'columns'; x: string; log: boolean; bars: { label: string; value: number; tone: PostTone; top: string }[]; marks: { y: number; label: string }[] };
+export type PostBlock =
+  | { kind: 'text'; text: string }                       // a paragraph, as markdown (bold, italic, code, links)
+  | { kind: 'listing'; text: string }                    // fixed-width lines, like a queue's log
+  | { kind: 'table'; head: string[]; rows: string[][] }
+  | { kind: 'figure'; figure: PostFigure; caption: string }
+  | { kind: 'command'; text: string }
+  | { kind: 'files'; files: { path: string; note: string }[] };
+export interface PostSection {
+  name: string;                        // "Problem", "Why · training length"
+  gist: string;                        // what it says in a sentence or two: all that shows until he zooms in
+  story: PostBlock[];                  // one zoom in: the paragraph and its chart
+  detail: PostBlock[];                 // two zooms in: settings, every number, files. May be empty.
+}
+export interface RunPost { title: string; tldr: string; sections: PostSection[] }
+
 export interface WriteupPart {
   title: string;                       // "Do the two skills stack in one policy?"
   why: string;
@@ -98,6 +127,7 @@ export interface Writeup {
     stages: { name: string; note: string; state: typeof STAGE_STATES[number] }[];
     housekeeping: { text: string; ok: boolean }[];
     files: { path: string; note: string }[];
+    post?: RunPost | null;             // when given, the tab reads as this post and the lists above are not shown
   };
   updated: string;                     // ISO time it was last written
 }

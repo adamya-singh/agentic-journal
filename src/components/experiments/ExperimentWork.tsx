@@ -3,11 +3,13 @@
 // The two tabs an experiment's workspace opens with. "Understand it" is the write-up read top to bottom, in the
 // order the experiment-analyze-explain skill explains a result: the short version, the setup, then one block per
 // part (why, what we did, what we predicted and whether it held, the table with its baseline, the conclusion),
-// whether to trust it, and what it means and what next. "Run and watch" is how the run went and where its files are.
+// whether to trust it, and what it means and what next. "Run and watch" is how the run went and where its files are:
+// a post that zooms (ExperimentPost.tsx) when the write-up has one, the plain lists when it does not.
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PREDICTION_WORDS, type Experiment, type Writeup } from '@/lib/experiments/types';
+import { PostView } from './ExperimentPost';
 
 type Change = (body: Record<string, unknown>) => Promise<string | void>;
 export type Ask = (text: string) => void;
@@ -165,6 +167,23 @@ export function RunTab({ experiment: e, writeup: w, onAsk }: { experiment: Exper
   const known = run && (run.state || run.line || run.watch.length > 0 || run.command || run.stages.length > 0 || run.housekeeping.length > 0 || run.files.length > 0);
   // The run is over and the record was never told.
   const stale = running && run && /^(finished|done|complete)/i.test(run.state);
+  const asks = (
+    <div className="xw-asks" role="group" aria-label="Ask OpenClaw about the run">
+      <span>Ask OpenClaw</span>
+      {['Status update', 'How much time is left?', 'Where are the latest videos?'].map((text) => <button key={text} type="button" className="xw-chip" onClick={() => onAsk(text)}>{text}</button>)}
+    </div>
+  );
+  // Written as a post: it is the whole tab, under the status line.
+  if (run?.post && run.post.sections.length > 0) {
+    return (
+      <div className="xw">
+        <div className={`xw-status${running && !stale ? ' live' : ''}`}><b>{run.state || (running ? 'Running' : 'Finished')}</b><span>{run.line || e.day}</span></div>
+        {stale && <p className="xw-stale">The record still says “Running”. Set its outcome in the brief.</p>}
+        <PostView post={run.post} />
+        {asks}
+      </div>
+    );
+  }
   return (
     <div className="xw">
       <div className={`xw-status${running && !stale ? ' live' : ''}`}>
@@ -206,10 +225,7 @@ export function RunTab({ experiment: e, writeup: w, onAsk }: { experiment: Exper
           <ul className="xw-files">{run.files.map((f) => <li key={f.path}><code>{f.path}</code>{f.note && <span>{f.note}</span>}</li>)}</ul>
         </details>
       )}
-      <div className="xw-asks" role="group" aria-label="Ask OpenClaw about the run">
-        <span>Ask OpenClaw</span>
-        {['Status update', 'How much time is left?', 'Where are the latest videos?'].map((text) => <button key={text} type="button" className="xw-chip" onClick={() => onAsk(text)}>{text}</button>)}
-      </div>
+      {asks}
     </div>
   );
 }
